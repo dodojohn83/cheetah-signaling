@@ -1,0 +1,5 @@
+[build]
+rustflags = ["-D", "unsafe_code"]
+
+[registries.crates-io]
+protocol = "sparse"

@@ -1,0 +1,12 @@
+version: v2
+modules:
+  - path: proto
+    name: github.com/dodojohn83/cheetah-signaling
+lint:
+  use:
+    - STANDARD
+  except: []
+breaking:
+  use:
+    - FILE
+  except: []

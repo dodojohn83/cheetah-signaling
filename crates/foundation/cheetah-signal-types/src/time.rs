@@ -1,0 +1,205 @@
+//! Time, duration and deadline types.
+
+use crate::error::{Result, SignalError, SignalErrorKind};
+use std::fmt;
+use std::str::FromStr;
+use time::OffsetDateTime;
+use time::format_description::well_known::Rfc3339;
+
+/// A UTC timestamp.
+#[derive(
+    Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(transparent)]
+pub struct UtcTimestamp(OffsetDateTime);
+
+impl UtcTimestamp {
+    /// Creates a timestamp from an existing UTC offset datetime.
+    pub fn from_offset(value: OffsetDateTime) -> Self {
+        debug_assert_eq!(value.offset(), time::UtcOffset::UTC);
+        Self(value.to_offset(time::UtcOffset::UTC))
+    }
+
+    /// Parses an RFC 3339 string into a timestamp.
+    pub fn parse_rfc3339(value: &str) -> Result<Self> {
+        let value = OffsetDateTime::parse(value, &Rfc3339).map_err(|e| {
+            SignalError::new(SignalErrorKind::InvalidArgument, "invalid timestamp").with_source(e)
+        })?;
+        Ok(Self::from_offset(value))
+    }
+
+    /// Returns the underlying offset datetime in UTC.
+    pub fn as_offset(self) -> OffsetDateTime {
+        self.0
+    }
+
+    /// Returns the number of seconds since the Unix epoch.
+    pub fn as_unix_seconds(self) -> i64 {
+        self.0.unix_timestamp()
+    }
+
+    /// Adds a duration to this timestamp, returning `None` on overflow.
+    pub fn checked_add(self, duration: DurationMs) -> Option<Self> {
+        self.0
+            .checked_add(duration.as_duration())
+            .map(Self::from_offset)
+    }
+
+    /// Subtracts a duration from this timestamp, returning `None` on overflow.
+    pub fn checked_sub(self, duration: DurationMs) -> Option<Self> {
+        self.0
+            .checked_sub(duration.as_duration())
+            .map(Self::from_offset)
+    }
+
+    /// Returns the timestamp formatted as RFC 3339.
+    pub fn to_rfc3339(self) -> Result<String> {
+        self.0.format(&Rfc3339).map_err(|e| {
+            SignalError::new(SignalErrorKind::Internal, "failed to format timestamp").with_source(e)
+        })
+    }
+}
+
+impl fmt::Display for UtcTimestamp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.to_rfc3339() {
+            Ok(s) => f.write_str(&s),
+            Err(_) => Err(fmt::Error),
+        }
+    }
+}
+
+impl FromStr for UtcTimestamp {
+    type Err = crate::error::SignalError;
+
+    fn from_str(s: &str) -> Result<Self> {
+        Self::parse_rfc3339(s)
+    }
+}
+
+impl Default for UtcTimestamp {
+    fn default() -> Self {
+        Self(OffsetDateTime::UNIX_EPOCH)
+    }
+}
+
+/// A duration in milliseconds.
+#[derive(
+    Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(transparent)]
+pub struct DurationMs(i64);
+
+impl DurationMs {
+    /// Creates a duration from a number of milliseconds.
+    pub const fn from_millis(value: i64) -> Self {
+        Self(value)
+    }
+
+    /// Creates a duration from a number of seconds.
+    pub const fn from_seconds(value: i64) -> Self {
+        Self(value * 1_000)
+    }
+
+    /// Creates a duration from a number of minutes.
+    pub const fn from_minutes(value: i64) -> Self {
+        Self(value * 60_000)
+    }
+
+    /// Returns the duration as milliseconds.
+    pub const fn as_millis(self) -> i64 {
+        self.0
+    }
+
+    /// Returns the duration as a `time::Duration`.
+    pub const fn as_duration(self) -> time::Duration {
+        time::Duration::milliseconds(self.0)
+    }
+
+    /// Multiplies the duration by a scalar, returning `None` on overflow.
+    pub const fn checked_mul(self, scalar: i32) -> Option<Self> {
+        match self.0.checked_mul(scalar as i64) {
+            Some(value) => Some(Self(value)),
+            None => None,
+        }
+    }
+
+    /// Divides the duration by a scalar, returning `None` on division by zero.
+    pub const fn checked_div(self, scalar: i32) -> Option<Self> {
+        if scalar == 0 {
+            None
+        } else {
+            Some(Self(self.0 / (scalar as i64)))
+        }
+    }
+}
+
+impl Default for DurationMs {
+    fn default() -> Self {
+        Self::from_millis(0)
+    }
+}
+
+impl From<i64> for DurationMs {
+    fn from(value: i64) -> Self {
+        Self::from_millis(value)
+    }
+}
+
+impl From<time::Duration> for DurationMs {
+    fn from(value: time::Duration) -> Self {
+        Self::from_millis(value.whole_milliseconds() as i64)
+    }
+}
+
+impl From<DurationMs> for time::Duration {
+    fn from(value: DurationMs) -> Self {
+        value.as_duration()
+    }
+}
+
+/// A point in time by which an operation must complete.
+#[derive(
+    Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(transparent)]
+pub struct Deadline(UtcTimestamp);
+
+impl Deadline {
+    /// Creates a deadline from a wall timestamp.
+    pub fn from_timestamp(timestamp: UtcTimestamp) -> Self {
+        Self(timestamp)
+    }
+
+    /// Computes a deadline from a clock and a duration.
+    pub fn from_now(now: UtcTimestamp, duration: DurationMs) -> Option<Self> {
+        now.checked_add(duration).map(Self::from_timestamp)
+    }
+
+    /// Returns the timestamp at which the deadline expires.
+    pub fn as_timestamp(self) -> UtcTimestamp {
+        self.0
+    }
+
+    /// Returns whether the deadline has passed relative to `now`.
+    pub fn is_elapsed(self, now: UtcTimestamp) -> bool {
+        now >= self.0
+    }
+
+    /// Returns the remaining time until the deadline, or `None` if already elapsed.
+    pub fn remaining(self, now: UtcTimestamp) -> Option<DurationMs> {
+        if self.is_elapsed(now) {
+            None
+        } else {
+            let diff =
+                self.0.as_offset().unix_timestamp_nanos() - now.as_offset().unix_timestamp_nanos();
+            let diff_millis = diff / 1_000_000;
+            let diff_millis_i64 = if diff_millis > i64::MAX as i128 {
+                i64::MAX
+            } else {
+                diff_millis as i64
+            };
+            Some(DurationMs::from_millis(diff_millis_i64))
+        }
+    }
+}

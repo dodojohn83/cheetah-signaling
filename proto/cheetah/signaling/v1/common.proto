@@ -1,0 +1,7 @@
+syntax = "proto3";
+
+package cheetah.signaling.v1;
+
+option go_package = "github.com/dodojohn83/cheetah-signaling/gen/go/cheetah/signaling/v1;signalingv1";
+
+// Empty placeholder for Phase 0; will be expanded in 05_proto_contracts_and_codegen.

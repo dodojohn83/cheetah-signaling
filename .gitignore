@@ -1,0 +1,27 @@
+/target
+*.profraw
+*.profdata
+*.log
+.DS_Store
+.idea
+.vscode
+*.swp
+*.swo
+*~
+
+# SQLx offline query metadata is generated, but committed to ensure reproducible builds.
+# During active development, query metadata may be regenerated; use `.sqlx` entries below.
+# .sqlx/
+
+# Local env files may contain secrets; never commit.
+.env
+.env.local
+.env.*.local
+
+# Test artifacts and coverage
+coverage/
+*.lcov
+
+# Fuzz artifacts
+fuzz/corpus/
+fuzz/artifacts/
