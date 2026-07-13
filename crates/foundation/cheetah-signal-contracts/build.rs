@@ -26,6 +26,8 @@ fn main() -> io::Result<()> {
         proto_dir.join("cheetah/cluster/v1/cluster.proto"),
     ];
 
-    tonic_prost_build::configure().compile_protos(&proto_files, &[proto_dir])?;
+    tonic_prost_build::configure()
+        .btree_map(".")
+        .compile_protos(&proto_files, &[proto_dir])?;
     Ok(())
 }
