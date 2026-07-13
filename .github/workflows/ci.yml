@@ -62,5 +62,6 @@ jobs:
         with:
           lint: true
           format: true
+          breaking: false
           push: false
           pr_comment: false
