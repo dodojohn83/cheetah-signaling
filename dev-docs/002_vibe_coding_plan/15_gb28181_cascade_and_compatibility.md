@@ -35,9 +35,9 @@
 ### GB-CAS-004：上级点播路由
 
 - [ ] 收到上级 INVITE 后解析目标映射和 SDP。
-- [ ] 创建统一 MediaSession，调度媒体节点并向下级设备发起独立 INVITE。
+- [ ] 创建桥接 Operation 和统一 MediaSession，调度媒体节点并创建 MediaBinding，再向下级设备发起独立 INVITE。
 - [ ] 上下级 dialog、CSeq、Call-ID 完全独立，由 bridge context 关联。
-- [ ] 任一侧 BYE/CANCEL/超时触发另一侧和媒体资源收敛清理。
+- [ ] 任一侧 BYE/CANCEL/超时触发另一侧、MediaBinding 和 MediaSession 按 desired state 收敛清理。
 - [ ] 媒体节点承担必要的转发/转换，信令服务只下发控制。
 
 ### GB-CAS-005：事件上报

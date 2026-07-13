@@ -49,6 +49,7 @@
 | edge/cluster 双部署 | 02、07–09、18、22 |
 | 百万在线与分片 worker | 07、21 |
 | 多租户领域模型 | 04、06、08、10 |
+| Operation/Command/MediaSession/MediaBinding 四模型 | 05–06、08–11、14、17–18、20–21 |
 | 统一 Protobuf/插件 | 05、19 |
 | SQLite/PostgreSQL | 08 |
 | NATS/ownership/fencing | 09、18 |

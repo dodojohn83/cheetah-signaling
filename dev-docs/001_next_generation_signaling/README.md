@@ -57,8 +57,10 @@
 - **端点（Endpoint）**：设备可访问的协议地址，例如 SIP Contact 或 ONVIF XAddr。
 - **通道（Channel）**：可独立控制或产生媒体的逻辑通道。
 - **协议会话（ProtocolSession）**：REGISTER、SIP dialog、ONVIF subscription 等临时控制状态。
-- **媒体绑定（MediaBinding）**：信令会话与媒体节点 session/MediaKey 的关联。
+- **媒体会话（MediaSession）**：用户视角的逻辑媒体意图和 desired state，不等同于媒体节点资源。
+- **媒体绑定（MediaBinding）**：MediaSession 与具体媒体节点 session/MediaKey/handle 的物理关联。
 - **Operation**：对外可查询、可取消或可超时的异步控制操作。
+- **Command**：由 Operation/Saga 派发的不可变指令；其投递状态不构成第二套业务生命周期。
 - **owner epoch**：设备会话所有权每次变更时递增的 fencing token。
 - **协议 module**：内置信令能力。本文不用“动态插件”指代内置 module。
 - **进程插件**：独立进程，通过版本化协议接入未来协议或厂商 SDK。

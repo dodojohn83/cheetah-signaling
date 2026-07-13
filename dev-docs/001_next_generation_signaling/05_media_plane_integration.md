@@ -79,7 +79,7 @@ TenantId 编码必须可逆、URL safe、大小写稳定，不能使用可修改
 6. tenant placement policy 允许；
 7. 优先已有同设备绑定或最低归一化负载。
 
-调度结果形成短租约 reservation。RPC 成功后转成 MediaBinding；超时、Operation 取消或协议失败必须释放。调度不能只依赖最终一致的 metrics，媒体节点仍需在创建 RPC 内原子检查容量。
+调度开始前必须已有逻辑 MediaSession。调度结果形成短租约 reservation，持久化为 `MediaBinding(Reserved)` 后执行 RPC，成功后再推进为 Active；超时、Operation 取消或协议失败必须释放并终结该 binding。调度不能只依赖最终一致的 metrics，媒体节点仍需在创建 RPC 内原子检查容量。
 
 同一 live ChannelId 默认复用在线媒体资源，而不是每个观看者重新 INVITE。复用由 application 的 live-session coordinator 决定，并受 tenant policy、源健康和 publisher lease 约束。
 
@@ -87,19 +87,22 @@ TenantId 编码必须可逆、URL safe、大小写稳定，不能使用可修改
 
 ```text
 Create Operation
+  -> create MediaSession(Requested)
   -> resolve device owner and channel
   -> select media node
-  -> OpenRtpReceiver(idempotency, expected owner epoch)
   -> persist MediaBinding(Reserved)
+  -> OpenRtpReceiver(idempotency, expected owner epoch)
   -> send INVITE with returned address/port/SSRC policy
   -> receive 200, validate SDP, send ACK
   -> update RTP session if negotiated SSRC/transport differs
   -> wait MediaEvent(StreamOnline) until deadline
+  -> MediaBinding Active
+  -> MediaSession Active
   -> query output URLs
   -> Operation Succeeded
 ```
 
-失败补偿按逆序执行：发送 BYE（dialog 已建立时）、StopRtpSession、关闭 binding。补偿命令也使用原 idempotency key 派生键，重复执行必须安全。
+失败补偿按逆序执行：发送 BYE（dialog 已建立时）、StopRtpSession、终结 binding，并按 deadline/policy 终结或重试 MediaSession。补偿命令也使用原 idempotency key 派生键，重复执行必须安全。Operation 终态和 MediaSession 终态相互独立：Start Operation 成功后 MediaSession 正常保持 Active。
 
 设备先发媒体后回 200、SSRC 与 SDP 不一致、TCP 主被动语义反转等 quirks 由 GB module 规范化；媒体节点只按显式 update API 改变 session。
 
@@ -140,13 +143,13 @@ refresh profile/capability if stale
 
 reconciler 周期检查：
 
-- Running Operation 是否有对应协议 session 和 MediaBinding；
-- Active MediaBinding 的媒体 node lease/session 是否存在；
-- 终态 Operation 是否残留 reservation、RTP/proxy/dialog；
+- Running Operation 是否有对应 OperationStep、协议 session、MediaSession 和必要的 MediaBinding；
+- Active MediaSession 是否有有效 Active MediaBinding，Active MediaBinding 的媒体 node lease/session 是否存在；
+- 终态 Operation 是否有未完成步骤；Stopped/Failed MediaSession 是否残留 reservation、RTP/proxy/dialog；
 - live 复用计数为零时是否应按 idle policy 关闭；
 - drain/故障媒体节点的 binding 是否需要重建。
 
-对账只修复到 desired state，不能无条件重启用户已停止的媒体。
+对账只修复到 MediaSession desired state，不能因旧 Operation 或 Command 重放而无条件重启用户已停止的媒体。
 
 ## 9. 媒体仓库迁移要求
 

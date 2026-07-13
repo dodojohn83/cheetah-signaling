@@ -62,8 +62,8 @@ crates/
 
 交付：
 
-- Device/Channel/Operation/MediaBinding 聚合；
-- application command handler、Operation state machine、Saga/reconciler；
+- Device/Channel/Operation/MediaSession/MediaBinding 聚合；
+- 不可变 Command、application Operation handler、Operation state machine、Saga/reconciler；
 - SQLite repository、migration、UnitOfWork、outbox/inbox；
 - local bus、in-memory ownership、sharded worker 和 timer wheel；
 - REST devices/channels/operations、SSE；

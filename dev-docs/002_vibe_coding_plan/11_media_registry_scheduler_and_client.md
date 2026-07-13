@@ -45,21 +45,24 @@
 
 ### MED-004：会话工作流
 
-实时预览顺序：创建领域会话 → 调度节点 → 预留媒体资源 → 获取协议协商参数 → 协议 INVITE/启动 → 确认媒体节点 → Active。
+实时预览顺序：原子创建 Pending Operation/Requested MediaSession/outbox → Operation Running → 调度节点 → 创建 Reserved MediaBinding → 预留媒体资源 → 获取协议协商参数 → 协议 INVITE/启动 → MediaBinding Active → MediaSession Active → Operation Succeeded。
 
-任一步失败必须逆序补偿：终止协议事务、释放媒体资源、结束领域会话。补偿失败进入 reconciliation，不阻塞原错误返回。
+任一步失败必须逆序补偿：终止协议事务、释放媒体资源、终结 MediaBinding，并按重试策略推进或终结 MediaSession/Operation。补偿失败进入 reconciliation，不阻塞原错误返回。
 
 - [ ] 实现 start/stop live。
 - [ ] 实现 playback create/control/stop。
-- [ ] 预留 talk 会话能力，首版可返回 capability unsupported。
-- [ ] 回调处理校验 node generation、session revision 和消息 ID。
+- [ ] 实现 talk 会话；设备或媒体节点不支持时返回稳定 `Unsupported`，不创建半成品资源。
+- [ ] Stop/control 使用新的 Operation 引用既有 MediaSession，不覆盖创建会话的 Operation。
+- [ ] 每次媒体资源分配创建独立 MediaBinding；重试不复活失败 binding。
+- [ ] 回调处理校验 media node instance epoch、owner epoch、binding/session revision 和消息 ID。
 
 ### MED-005：重启与对账
 
 - [ ] 启动后分页查询媒体节点现存会话。
-- [ ] 数据库有、媒体无：按策略重建或标记失败。
-- [ ] 媒体有、数据库无：经过保护窗口后清理孤儿。
-- [ ] 双方状态不同：以 session generation 和终态优先规则收敛。
+- [ ] Active MediaBinding 在媒体节点不存在：按 MediaSession desired state 重建新 binding 或标记失败。
+- [ ] 媒体资源存在但无 MediaBinding：经过保护窗口后清理孤儿。
+- [ ] MediaSession 已 Stopped：只释放所有非终态 binding，禁止重建。
+- [ ] 双方状态不同：以 media node instance epoch、binding generation/revision 和终态优先规则收敛。
 
 ### MED-006：媒体仓库旧 GB 模块迁移
 
@@ -86,4 +89,5 @@
 - 信令进程抓包中不出现媒体 RTP/RTCP 负载。
 - media node 故障不会阻塞其他节点调度。
 - 重复创建、回调乱序、控制超时和进程重启均能通过对账收敛。
+- Start Operation 成功后 MediaSession 可以继续 Active；Operation 终态不会错误终结长期媒体会话。
 - 集成测试同时覆盖真实 gRPC server 与 mock 故障路径。

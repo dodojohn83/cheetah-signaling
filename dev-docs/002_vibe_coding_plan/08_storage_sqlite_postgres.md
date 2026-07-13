@@ -26,8 +26,10 @@ crates/storage/
 - `device_endpoints`
 - `channels`
 - `device_capabilities`
-- `commands`
+- `operations`
+- `operation_steps`（可选但推荐，用于 Saga/派发尝试和恢复诊断）
 - `media_sessions`
+- `media_bindings`
 - `device_owners`
 - `outbox_events`
 - `processed_messages`
@@ -36,7 +38,9 @@ crates/storage/
 
 所有业务表包含 `tenant_id`。时间以 UTC 微秒或数据库时间戳存储并统一转换。JSON 字段必须有 schema 版本，不能用作核心查询字段的替代。
 
-关键索引：外部设备 ID 唯一索引、在线状态查询索引、命令幂等唯一索引、outbox 未发布部分索引、owner lease 到期索引、媒体会话业务幂等索引。
+关键索引：外部设备 ID 唯一索引、在线状态查询索引、Operation 幂等作用域唯一索引、非终态 Operation deadline 索引、operation step 唯一索引、outbox 未发布部分索引、owner lease 到期索引、媒体会话业务幂等索引、MediaBinding 的 session/generation 有效状态唯一约束。
+
+禁止建立承担业务权威生命周期的 `commands` 表。若需要记录派发，`operation_steps` 保存 operation/step/message ID、attempt、owner epoch、状态摘要和诊断错误；Operation 仍是业务结果唯一来源。
 
 ## 4. 实现任务
 
@@ -63,8 +67,10 @@ crates/storage/
 
 ### DB-004：仓储与事务
 
-- [ ] 实现 `DeviceRepository`、`ChannelRepository`、`CommandRepository`、`MediaSessionRepository`、`OwnerRepository`、`OutboxRepository`。
+- [ ] 实现 `DeviceRepository`、`ChannelRepository`、`OperationRepository`、`MediaSessionRepository`、`MediaBindingRepository`、`OwnerRepository`、`OutboxRepository`。
+- [ ] 需要持久化 Saga/派发记录时实现 `OperationStepRepository`，不得实现权威 `CommandRepository`。
 - [ ] `UnitOfWork` 保证聚合更新与 outbox 写入同一事务。
+- [ ] 定义创建 Operation + 可选 MediaSession + outbox，以及更新 Operation/MediaSession/MediaBinding + outbox 的允许事务组合。
 - [ ] 所有更新带 `revision` 条件，零行更新转换为并发冲突。
 - [ ] 列表查询使用游标分页，不使用大 offset。
 
@@ -81,6 +87,8 @@ crates/storage/
 
 - [ ] CRUD、并发 revision、唯一约束错误映射。
 - [ ] 事务回滚不留下 outbox 孤儿。
+- [ ] 相同幂等作用域并发提交只创建一个 Operation；重复 Command 投递不创建第二个业务状态。
+- [ ] 同一 MediaSession generation 最多一个非终态 MediaBinding，历史 binding 可查询。
 - [ ] Unicode、最大长度、空值和时间精度一致。
 - [ ] 游标分页不重复、不遗漏。
 - [ ] 迁移前后数据兼容。

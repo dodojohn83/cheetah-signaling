@@ -18,23 +18,26 @@
 
 ### GB-MED-001：StartLive
 
-1. 应用服务创建 `MediaSession`。
-2. 调度并预留媒体接收端口/传输模式。
-3. 生成 subject 与 SDP，发送 INVITE。
-4. 处理 provisional/final response，解析设备 SDP。
-5. 发送 ACK，把协商结果确认给媒体节点。
-6. 等待媒体节点上报流就绪，置为 Active。
+1. 应用服务原子创建 Pending `Operation`、Requested `MediaSession` 和 outbox。
+2. worker 将 Operation 置为 Running，调度节点并创建 Reserved `MediaBinding`。
+3. 通过 MediaBinding 预留媒体接收端口/传输模式。
+4. 生成 subject 与 SDP，发送 INVITE。
+5. 处理 provisional/final response，解析设备 SDP。
+6. 发送 ACK，把协商结果确认给媒体节点。
+7. 媒体节点上报流就绪后依次置 MediaBinding/MediaSession 为 Active，Operation 为 Succeeded。
 
-- [ ] 每步写入 session revision 和可恢复信息。
-- [ ] 设备 200 OK 但媒体确认失败时发送 BYE 并释放资源。
-- [ ] 重复 start 使用业务幂等键返回原会话。
+- [ ] 每步写入 OperationStep、session/binding revision 和可恢复外部 handle。
+- [ ] 设备 200 OK 但媒体确认失败时发送 BYE，释放资源并终结 binding；是否重试由 MediaSession deadline/policy 决定。
+- [ ] 重复 start 使用业务幂等作用域返回原 Operation/MediaSession。
 - [ ] INVITE 超时/CANCEL 竞争通过事务状态机裁决。
 
 ### GB-MED-002：StopLive
 
+- [ ] StopLive 创建新的 Operation 并引用既有 MediaSession，将 desired state 设置为 Stopped。
 - [ ] Active dialog 发送 BYE；尚在 INVITE 阶段发送 CANCEL。
 - [ ] 无论设备是否响应，宽限期后释放媒体资源。
-- [ ] 重复 stop 返回相同终态。
+- [ ] 释放成功后 MediaBinding 为 Released、MediaSession 为 Stopped、Stop Operation 为 Succeeded。
+- [ ] 重复 stop 返回原 Operation 或已停止结果，不创建重复副作用。
 - [ ] 设备主动 BYE 时同步停止媒体会话。
 
 ## 4. 录像回放
@@ -50,7 +53,7 @@
 
 - [ ] 实现 INFO/MANSRTSP 的 Play、Pause、Teardown、Scale、Range 子集。
 - [ ] 串行化同一 dialog 的 CSeq 和控制命令。
-- [ ] 应答与统一 command ID 关联，乱序响应不覆盖新状态。
+- [ ] 应答与 operation/step/command ID 关联，乱序响应不覆盖 Operation、MediaSession 或 MediaBinding 新状态。
 - [ ] 对不支持能力返回明确错误，不模拟成功。
 
 ## 5. 下载与语音对讲
@@ -89,6 +92,6 @@
 
 ## 8. 验收标准
 
-- 任一失败路径最终释放媒体资源且 session 有确定终态。
-- SIP dialog 与媒体 session 通过 ID 关联但生命周期不耦合。
+- 任一失败路径最终释放媒体资源且 Operation、MediaSession、MediaBinding 各有确定状态。
+- SIP dialog、MediaSession 和 MediaBinding 通过强类型 ID 关联但生命周期不耦合。
 - 抓包确认所有 RTP 目的地址均为媒体节点而非信令节点。

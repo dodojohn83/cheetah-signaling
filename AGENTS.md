@@ -112,6 +112,15 @@ cheetah-<protocol>-module
 - 可变持久化聚合使用 `Revision` 乐观并发；跨节点副作用使用 `OwnerEpoch` fencing。
 - 扩展 metadata 必须有 schema 版本、键值长度和条目上限；核心查询字段不得藏在无约束 JSON 中。
 
+异步控制与媒体资源必须使用四个职责分离的模型：
+
+- `Operation` 是北向可查询、可取消、可超时的业务工作流，也是异步执行状态的唯一权威来源；
+- `Command` 是 Operation/Saga 派发的不可变 typed 指令，不得实现 `Accepted/Dispatched/Succeeded/...` 第二套领域生命周期；
+- `MediaSession` 表达用户视角的逻辑媒体意图、desired state 和长期会话状态；
+- `MediaBinding` 表达 MediaSession 与具体媒体节点 instance、MediaKey 和 handle 的物理关联。
+
+Start Operation 成功后 MediaSession 可以继续 Active；Stop/control 必须创建新的 Operation 引用既有 MediaSession。重试或迁移创建新 MediaBinding，不得复活终态 binding。同一 MediaSession generation 最多一个有效 binding，旧 owner/media node instance 的回调不得推进新状态。
+
 ## 6. 错误、Result 与 Panic
 
 - 业务错误使用稳定 enum/code。禁止通过字符串内容判断错误类型。
@@ -160,6 +169,7 @@ cheetah-<protocol>-module
 - 消息语义为“至少一次传递 + 幂等消费”，不得宣称跨数据库和消息系统 exactly-once。
 - consumer 在副作用前使用 inbox/processed message 去重；重复消息返回第一次结果或安全确认。
 - 所有修改型命令包含 message ID、idempotency key、deadline 和 owner epoch。
+- Command 必须关联 operation/step ID；ack、重投和 dead-letter 只属于 OperationStep/DispatchAttempt 诊断，不能作为业务结果。
 - owner 获取必须原子增加 epoch；旧 epoch 的状态、命令结果和媒体回调必须拒绝。
 - 迁移文件发布后只追加，不修改。SQLite/PostgreSQL 使用同一逻辑版本但可以有后端专用 SQL。
 - 大表迁移遵循 expand → backfill → switch → contract，不得在滚动升级中引入新旧版本无法共存的 schema。
