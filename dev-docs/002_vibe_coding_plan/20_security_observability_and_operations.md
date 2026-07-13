@@ -35,7 +35,7 @@
 
 ### OBS-001：结构化日志
 
-- [ ] 使用 tracing，字段名统一：`tenant_id`、`device_id`、`protocol`、`command_id`、`session_id`、`node_id`、`request_id`。
+- [ ] 使用 tracing，字段名统一：`tenant_id`、`device_id`、`protocol`、`operation_id`、`command_id`、`media_session_id`、`media_binding_id`、`node_id`、`request_id`。
 - [ ] 默认 JSON，边缘交互模式可选紧凑文本。
 - [ ] 协议报文日志默认关闭；诊断采样需脱敏、限时、限量并审计。
 - [ ] 错误链保留稳定 code 与内部原因，用户响应不暴露内部细节。
@@ -45,11 +45,12 @@
 必须提供：
 
 - 注册/在线设备、连接、请求速率与协议错误。
-- 命令各状态数量、处理延迟、超时与拒绝。
+- Operation 各状态数量、端到端延迟、取消、超时和失败码。
+- Command/OperationStep 派发、ack、重投、拒绝和积压；不得把 ack 计为业务成功。
 - runtime 邮箱、actor、timer、任务和内存。
 - DB pool/延迟/冲突，outbox/inbox 积压。
 - owner 获取/续租/切换，reconcile backlog。
-- 媒体节点健康、调度失败、会话状态。
+- 媒体节点健康、调度失败、MediaSession 与 MediaBinding 状态和孤儿资源。
 - 插件健康与重启。
 
 高基数字段（device/session ID）禁止作为 Prometheus label，只进入 trace/log。

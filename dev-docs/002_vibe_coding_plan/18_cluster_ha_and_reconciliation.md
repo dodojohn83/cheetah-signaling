@@ -2,7 +2,7 @@
 
 ## 1. 目标
 
-实现无共享内存假设的多节点控制面。节点可独立故障、滚动升级和重新加入；设备连接、命令和媒体会话通过租约 epoch、幂等消息及周期对账收敛。
+实现无共享内存假设的多节点控制面。节点可独立故障、滚动升级和重新加入；设备连接、Operation、Command 投递、MediaSession 和 MediaBinding 通过租约 epoch、幂等消息及周期对账收敛。
 
 ## 2. 节点模型与健康
 
@@ -31,7 +31,7 @@
 ### HA-003：故障接管
 
 - [ ] 设备主动重连可立即在新节点竞争 owner。
-- [ ] 无连接的长事务在 lease 过期后由新 owner 恢复或失败。
+- [ ] 非终态 Operation 在 lease 过期后由新 owner 从持久化步骤恢复或进入可诊断终态。
 - [ ] SIP/ONVIF 网络会话不能透明迁移，按协议重建并向领域层报告间隙。
 - [ ] 旧 owner 恢复后读取到高 epoch，必须丢弃本地 session。
 
@@ -40,12 +40,15 @@
 分别实现：
 
 - `OwnerReconciler`：数据库 owner 与本地 session。
-- `CommandReconciler`：非终态命令与 deadline/owner。
-- `MediaSessionReconciler`：数据库与媒体节点实际资源。
+- `OperationReconciler`：非终态 Operation、deadline、步骤和 owner；Command 没有独立 reconciler。
+- `MediaSessionReconciler`：逻辑 desired state、Operation 结果与 session 状态。
+- `MediaBindingReconciler`：数据库 binding 与媒体节点实际资源、instance epoch 和孤儿 handle。
 - `SubscriptionReconciler`：ONVIF subscription 与 owner。
 - `OutboxReconciler`：长期未发布或卡死记录。
 
 每个 reconciler 必须分页、限速、可取消、可重复执行。处理项使用 CAS/revision，不能用全表锁。
+
+对账顺序固定为 Operation → MediaSession desired state → MediaBinding/外部资源。Operation 已成功但 MediaSession Active 是正常状态；MediaSession Stopped 时禁止因旧 Operation/Command 重放而重建 binding。
 
 ### HA-005：滚动升级
 

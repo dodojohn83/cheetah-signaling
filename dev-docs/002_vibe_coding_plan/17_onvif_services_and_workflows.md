@@ -11,7 +11,7 @@
 - [ ] GetDeviceInformation 映射 manufacturer/model/firmware/serial/hardware ID。
 - [ ] GetSystemDateAndTime 映射时区、UTC 与漂移。
 - [ ] GetHostname/GetNetworkInterfaces 仅用于诊断，敏感网络信息按权限返回。
-- [ ] SystemReboot 映射为异步 Command，设备断线不直接判失败。
+- [ ] SystemReboot 创建异步 Operation，再派发 typed Command；设备断线不直接伪造成功或失败。
 
 ### ONVIF-SVC-002：纳管流程
 
@@ -29,11 +29,11 @@
 
 ### ONVIF-SVC-004：实时预览
 
-ONVIF 通常提供 RTSP URI；信令层把 URI 及凭据引用交给媒体节点，由媒体节点拉流。工作流：创建 session → 调度支持 RTSP pull 的媒体节点 → 获取短期 StreamUri → 创建媒体拉流任务 → 等待 ready。
+ONVIF 通常提供 RTSP URI；信令层把 URI 及凭据引用交给媒体节点，由媒体节点拉流。工作流：创建 Operation/MediaSession → 调度支持 RTSP pull 的媒体节点 → 创建 MediaBinding → 获取短期 StreamUri → 创建媒体拉流任务 → 等待 ready → 激活 binding/session → 完成 Operation。
 
 - [ ] StreamUri 获取尽量接近使用时刻，处理 InvalidAfterConnect/Reboot 等约束。
 - [ ] 不把明文 URI 凭据持久化到 media session。
-- [ ] stop 只控制媒体节点，不向设备伪造 RTSP 控制。
+- [ ] stop 创建新的 Operation、设置 MediaSession desired state，并只控制 MediaBinding 对应媒体节点资源，不向设备伪造 RTSP 控制。
 
 ### ONVIF-SVC-005：快照
 
@@ -43,6 +43,7 @@ ONVIF 通常提供 RTSP URI；信令层把 URI 及凭据引用交给媒体节点
 - [ ] 快照结果由媒体节点保存/返回，信令进程不解码图像负载。
 - [ ] 请求设置最大响应大小、deadline、内容类型和租户存储策略。
 - [ ] 重复请求是否复用结果由显式 cache key/TTL 决定。
+- [ ] TakeSnapshot Operation、临时/复用 MediaSession 和 MediaBinding 的创建/清理规则必须显式，不得留下长期孤儿 binding。
 
 ## 4. PTZ
 

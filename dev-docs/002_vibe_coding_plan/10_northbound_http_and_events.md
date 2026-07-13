@@ -10,7 +10,7 @@
 
 - `/api/v1/tenants`
 - `/api/v1/devices`、`/devices/{id}`、`/devices/{id}/channels`
-- `/api/v1/commands`、`/commands/{id}`
+- `/api/v1/operations`、`/operations/{id}`、`/operations/{id}/cancel`
 - `/api/v1/media/sessions`、`/media/sessions/{id}`
 - `/api/v1/nodes`、`/media-nodes`
 - `/api/v1/events/stream`
@@ -26,7 +26,7 @@
 - 乐观更新使用 `If-Match`/ETag 或明确 revision。
 - 列表使用不透明 cursor，带稳定排序。
 - 错误采用 RFC 9457 Problem Details 风格，包含稳定 `code`，不得暴露内部堆栈。
-- API 超时不等于设备命令取消；响应必须说明命令是否已接受。
+- API 请求超时不等于 Operation 取消；只有 Operation 与 outbox 成功提交后才能返回 `202 Accepted`。
 
 ## 4. 实现任务
 
@@ -44,12 +44,14 @@
 - [ ] 通道目录只读来自设备同步，人工别名作为独立字段修改。
 - [ ] 删除设备采用异步退休流程并返回 operation ID。
 
-### API-003：命令与媒体 API
+### API-003：Operation 与媒体 API
 
-- [ ] PTZ、设备重启、目录刷新等映射到统一 Command。
-- [ ] 开流返回 `202 Accepted` 或已存在会话；不得等待媒体长期建立。
-- [ ] 停流幂等，已停止会话返回成功状态。
-- [ ] 命令查询返回状态、deadline、结果和可公开错误。
+- [ ] PTZ、设备重启、目录刷新等创建统一 Operation，内部再派发 typed Command。
+- [ ] 开流返回 `202 Accepted`、Operation URL 和 MediaSession reference，或返回幂等命中的原资源；不得等待媒体长期建立。
+- [ ] 停流创建引用既有 MediaSession 的 Operation；已停止会话按幂等策略返回原结果。
+- [ ] Operation 查询返回权威状态、deadline、result reference 和可公开错误。
+- [ ] Command、OperationStep 和 DispatchAttempt 不提供公共查询资源；诊断信息通过受权限控制的 Operation details 暴露。
+- [ ] Cancel 将非终态 Operation 标记为取消意图并触发补偿，不把 HTTP 连接断开等同于取消。
 
 ### API-004：事件流
 
@@ -80,6 +82,7 @@
 ## 6. 测试与验收
 
 - [ ] 每个端点有成功、参数错误、未认证、越权、租户越界和过载测试。
+- [ ] 验证 Operation `202`、轮询、取消、超时、幂等命中，以及 Start Operation 成功后 MediaSession 仍为 Active。
 - [ ] OpenAPI 示例可作为请求真实执行。
 - [ ] 事件重连、慢消费者和游标过期有集成测试。
 - [ ] Webhook 签名、DNS rebinding、重试、熔断、死信与重放有集成测试。

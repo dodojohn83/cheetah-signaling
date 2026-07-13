@@ -8,7 +8,7 @@
 
 `EnvelopeMeta`：message_id、tenant_id、correlation_id、optional causation_id、occurred_at、deadline、source_node_id、owner_epoch、traceparent/tracestate。
 
-`CommandEnvelope`：meta、ResourceRef target、idempotency_key、typed oneof command。`EventEnvelope`：meta、aggregate、aggregate_sequence、typed oneof event。
+`CommandEnvelope`：meta、operation_id、step_id、ResourceRef target、idempotency_key、expected_owner_epoch、typed oneof command。Command 是不可变派发指令，不在 Proto 中定义与 Operation 竞争的业务生命周期。`EventEnvelope`：meta、aggregate、aggregate_sequence、typed oneof event。
 
 所有 enum 的 0 值为 `*_UNSPECIFIED`；删除字段必须 `reserved` name/number；map 默认生成 BTreeMap 以获得确定性输出。
 
@@ -26,7 +26,8 @@
 
 - [ ] 编写 common IDs、timestamp、error/status、page、resource ref。
 - [ ] 编写 device/domain snapshot，不暴露密码和原始报文。
-- [ ] 编写 control command/result/event，覆盖 001 v1 全部操作。
+- [ ] 编写 Operation snapshot/state event 与 control command/result，覆盖 001 v1 全部操作。
+- [ ] command result 必须关联 operation/step ID；accepted/dispatched 只作为投递 ack/step diagnostics，不作为公开 Operation 终态。
 - [ ] 编写 media DTO，与媒体 901 类型逐项映射并产出差异表。
 - [ ] 编写 plugin hello/welcome/frame、credit、ack、health、drain。
 - [ ] 编写 node/media descriptor、lease、capability、load snapshot。

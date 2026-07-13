@@ -120,7 +120,7 @@ host 使用故障插件验证崩溃隔离、退避、熔断和资源回收。
 - GB live 成功及每一个 Saga step 的失败补偿；
 - ONVIF pull 成功、URI/credential/zone 失败；
 - signaling crash 后 reconciler 不创建重复 RTP/proxy；
-- media node crash 后 binding 和 Operation 状态正确。
+- media node crash 后 Operation、MediaSession 和 MediaBinding 状态正确，旧 binding 回调不能覆盖新 generation。
 
 媒体 contract 未通过前不能移除媒体仓库旧 GB listener。
 
@@ -217,7 +217,7 @@ ONVIF 至少覆盖：
 - timer/queue lag 回到稳态；
 - outbox、consumer lag 和 dead-letter 可解释；
 - 无 stale owner 成功执行；
-- terminal Operation 无未回收 binding；
+- terminal Operation 无未完成 step；Stopped/Failed MediaSession 无未回收 binding；
 - 日志中无 secret 或未限长原始报文。
 
 提交最低门禁：format、clippy `-D warnings`、受影响 crate test、Proto/OpenAPI breaking check、migration test、dependency license/advisory check。共享领域、Proto、storage 或 ownership 变更需运行工作区 contract tests。

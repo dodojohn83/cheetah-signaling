@@ -44,6 +44,8 @@ message CommandEnvelope {
   EnvelopeMeta meta = 1;
   ResourceRef target = 2;
   string idempotency_key = 3;
+  string operation_id = 4;
+  string step_id = 5;
   oneof command { /* typed commands */ }
 }
 
@@ -54,6 +56,8 @@ message EventEnvelope {
   oneof event { /* typed events */ }
 }
 ```
+
+CommandEnvelope 是 Operation/Saga 派发的不可变指令，必须关联 Operation 和步骤。CommandAccepted、seq/ack、投递次数和 dead-letter 只描述传输或步骤诊断，不构成独立业务生命周期；业务成功、失败、取消和超时只写入 Operation。expected owner epoch 使用 `EnvelopeMeta.owner_epoch`，旧 epoch 结果不得推进 Operation。
 
 厂商扩展可使用 `google.protobuf.Any`，但 type URL 必须在 capability handshake 注册，payload 有大小上限，核心不能依赖未知扩展完成安全决策。
 
@@ -102,7 +106,7 @@ host 返回 `HostWelcome`：选定版本、instance ID、tenant/zone scope、流
 
 ### 5.1 NodeCommand
 
-`Execute(CommandEnvelope) -> CommandAccepted/CommandResult`。请求必须带目标 device owner epoch；节点先校验 session 与 epoch，再接受副作用。owner 不匹配返回 `StaleOwner` 和可选当前 owner hint。
+`Execute(CommandEnvelope) -> CommandAccepted/CommandResult`。请求必须带 Operation/step ID 和目标 device owner epoch；节点先校验 session 与 epoch，再接受副作用。`CommandAccepted` 只表示当前节点接收了派发，不表示 Operation 成功。owner 不匹配返回 `StaleOwner` 和可选当前 owner hint。
 
 ### 5.2 Registry
 

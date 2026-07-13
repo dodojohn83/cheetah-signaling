@@ -46,9 +46,10 @@
 
 ## 3. 系统场景
 
-- [ ] 单机 SQLite：GB/ONVIF 纳管、命令、开停流、重启恢复。
-- [ ] 三节点 PostgreSQL+NATS：设备分布、命令路由、owner 接管。
-- [ ] 媒体节点扩缩、drain、故障、回调乱序与孤儿清理。
+- [ ] 单机 SQLite：GB/ONVIF 纳管、Operation/Command 派发、开停流、重启恢复。
+- [ ] 三节点 PostgreSQL+NATS：设备分布、Operation 恢复、Command 路由、owner 接管。
+- [ ] 媒体节点扩缩、drain、故障、回调乱序、MediaBinding 迁移与孤儿清理。
+- [ ] 验证 Operation、MediaSession、MediaBinding 终态独立：Start Operation 成功不终止 Active Session，Stop Operation 成功后无有效 Binding。
 - [ ] 滚动升级 N → N+1，持续业务不破坏契约。
 - [ ] PostgreSQL/NATS 短暂中断与恢复。
 - [ ] 多租户相同外部设备 ID 严格隔离。
@@ -68,9 +69,9 @@
 
 ### PERF-002：百万设备集群
 
-测试规模逐级为 10 万、30 万、100 万设备。设备并非全部同时活跃；明确在线比例、心跳周期、目录大小、命令速率和重连曲线。
+测试规模逐级为 10 万、30 万、100 万设备。设备并非全部同时活跃；明确在线比例、心跳周期、目录大小、Operation/Command 速率和重连曲线。
 
-测量：注册 TPS、心跳 TPS、命令吞吐、端到端 P50/P95/P99、owner 分布、DB/NATS 负载、每节点 RSS/CPU、故障恢复时间和丢弃/重复率。
+测量：注册 TPS、心跳 TPS、Operation 吞吐与终态延迟、Command 派发吞吐、端到端 P50/P95/P99、owner 分布、DB/NATS 负载、每节点 RSS/CPU、故障恢复时间和丢弃/重复率。
 
 - [ ] 在线比例、GB/ONVIF 分布、心跳/presence TTL、报文大小、TLS 比例和 1%/5%/10% 媒体活跃比例写入场景清单。
 - [ ] 分别埋点 API 接收、调度、设备协议、媒体准备和媒体首帧延迟。

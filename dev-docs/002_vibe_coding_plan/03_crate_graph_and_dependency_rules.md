@@ -8,7 +8,7 @@
 | foundation | `cheetah-signal-contracts` | generated Proto/re-export，不含业务 |
 | runtime | `cheetah-runtime-api`、`cheetah-runtime-tokio` | clock、spawn、cancel、有界原语 |
 | domain | `cheetah-device-domain` | Device/Endpoint/Channel/Capability |
-| domain | `cheetah-control-domain` | Operation、MediaBinding、命令、事件、ports |
+| domain | `cheetah-control-domain` | Operation、Command、MediaSession、MediaBinding、事件、ports |
 | application | `cheetah-signal-application` | handler、Saga、reconciler、policy |
 | storage | `cheetah-storage-api/sqlite/postgres` | repository 与 UoW |
 | messaging | `cheetah-message-api/local/nats` | bus、outbox publisher、inbox |
