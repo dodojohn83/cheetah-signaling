@@ -16,7 +16,7 @@ prost = { workspace = true }
 prost-types = { workspace = true }
 
 [build-dependencies]
-tonic-prost-build = "0.14"
+tonic-prost-build = { workspace = true }
 
 [dev-dependencies]
 
