@@ -1,0 +1,19 @@
+[package]
+name = "cheetah-signaling"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+cheetah-signal-types = { path = "../../crates/foundation/cheetah-signal-types" }
+cheetah-signal-contracts = { path = "../../crates/foundation/cheetah-signal-contracts" }
+cheetah-runtime-api = { path = "../../crates/runtime/cheetah-runtime-api" }
+cheetah-runtime-tokio = { path = "../../crates/runtime/cheetah-runtime-tokio" }
+cheetah-signal-application = { path = "../../crates/application/cheetah-signal-application" }
+
+[lints]
+workspace = true
