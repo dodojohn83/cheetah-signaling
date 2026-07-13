@@ -7,7 +7,16 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+description = "Generated Protocol Buffer and gRPC bindings for Cheetah Signaling."
+
 [dependencies]
+tonic = { workspace = true }
+tonic-prost = { workspace = true }
+prost = { workspace = true }
+prost-types = { workspace = true }
+
+[build-dependencies]
+tonic-prost-build = "0.14"
 
 [dev-dependencies]
 

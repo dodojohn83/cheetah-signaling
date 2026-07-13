@@ -1,0 +1,121 @@
+syntax = "proto3";
+
+package cheetah.device.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/dodojohn83/cheetah-signaling/gen/go/cheetah/device/v1;devicev1";
+
+// Current status of a device.
+enum DeviceStatus {
+  DEVICE_STATUS_UNSPECIFIED = 0;
+  DEVICE_STATUS_ONLINE = 1;
+  DEVICE_STATUS_OFFLINE = 2;
+  DEVICE_STATUS_BUSY = 3;
+  DEVICE_STATUS_FAULT = 4;
+}
+
+// A device domain snapshot.
+message Device {
+  string device_id = 1;
+  string tenant_id = 2;
+  string protocol_identity = 3;
+  DeviceStatus status = 4;
+  string sip_id = 5;
+  string onvif_uuid = 6;
+  map<string, string> metadata = 7;
+  uint64 revision = 8;
+  uint64 owner_epoch = 9;
+  string owner_node_id = 10;
+  google.protobuf.Timestamp created_at = 11;
+  google.protobuf.Timestamp updated_at = 12;
+}
+
+// A reference to a media session for device commands.
+message DeviceMediaSessionRef {
+  string media_session_id = 1;
+  string device_id = 2;
+  string channel_id = 3;
+}
+
+// A command targeting a device.
+message DeviceCommand {
+  oneof command {
+    RegisterDevice register_device = 1;
+    UpdateDevice update_device = 2;
+    DeleteDevice delete_device = 3;
+    UpdateDeviceStatus update_status = 4;
+    StartMediaSession start_media_session = 5;
+    StopMediaSession stop_media_session = 6;
+  }
+}
+
+message RegisterDevice {
+  string tenant_id = 1;
+  string protocol_identity = 2;
+  string sip_id = 3;
+  string onvif_uuid = 4;
+  map<string, string> metadata = 5;
+}
+
+message UpdateDevice {
+  Device device = 1;
+}
+
+message DeleteDevice {
+  string device_id = 1;
+}
+
+message UpdateDeviceStatus {
+  string device_id = 1;
+  DeviceStatus status = 2;
+}
+
+message StartMediaSession {
+  string device_id = 1;
+  string channel_id = 2;
+  string media_session_id = 3;
+}
+
+message StopMediaSession {
+  string device_id = 1;
+  string channel_id = 2;
+  string media_session_id = 3;
+}
+
+// An event emitted by a device aggregate.
+message DeviceEvent {
+  oneof event {
+    DeviceRegistered device_registered = 1;
+    DeviceStatusChanged device_status_changed = 2;
+    DeviceDeleted device_deleted = 3;
+    MediaSessionStarted media_session_started = 4;
+    MediaSessionStopped media_session_stopped = 5;
+  }
+}
+
+message DeviceRegistered {
+  Device device = 1;
+}
+
+message DeviceStatusChanged {
+  string device_id = 1;
+  DeviceStatus status = 2;
+}
+
+message DeviceDeleted {
+  string device_id = 1;
+}
+
+message MediaSessionStarted {
+  string device_id = 1;
+  string channel_id = 2;
+  string media_session_id = 3;
+}
+
+message MediaSessionStopped {
+  string device_id = 1;
+  string channel_id = 2;
+  string media_session_id = 3;
+  string reason = 4;
+}

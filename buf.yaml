@@ -5,7 +5,8 @@ modules:
 lint:
   use:
     - STANDARD
-  except: []
+  except:
+    - SERVICE_SUFFIX
 breaking:
   use:
     - FILE

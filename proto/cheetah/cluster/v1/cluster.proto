@@ -1,0 +1,99 @@
+syntax = "proto3";
+
+package cheetah.cluster.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/dodojohn83/cheetah-signaling/gen/go/cheetah/cluster/v1;clusterv1";
+
+// Status of a signaling node.
+enum NodeStatus {
+  NODE_STATUS_UNSPECIFIED = 0;
+  NODE_STATUS_ACTIVE = 1;
+  NODE_STATUS_DRAINING = 2;
+  NODE_STATUS_LEFT = 3;
+}
+
+// A signaling node runtime record.
+message NodeInfo {
+  string node_id = 1;
+  string listen_addr = 2;
+  repeated string roles = 3;
+  map<string, string> labels = 4;
+  uint64 owner_epoch = 5;
+  google.protobuf.Timestamp last_heartbeat_at = 6;
+  NodeStatus status = 7;
+}
+
+// Payload to register a node.
+message NodeRegistration {
+  string node_id = 1;
+  string listen_addr = 2;
+  repeated string roles = 3;
+  map<string, string> labels = 4;
+}
+
+// Payload to heartbeat a node.
+message NodeHeartbeat {
+  string node_id = 1;
+  uint64 load = 2;
+  uint64 session_count = 3;
+}
+
+// Payload to drain a node.
+message NodeDrain {
+  string node_id = 1;
+  bool drain = 2;
+}
+
+// A command targeting cluster membership.
+message ClusterCommand {
+  oneof command {
+    RegisterNode register = 1;
+    HeartbeatNode heartbeat = 2;
+    DrainNode drain = 3;
+    LeaveNode leave = 4;
+  }
+}
+
+message RegisterNode {
+  NodeRegistration node = 1;
+}
+
+message HeartbeatNode {
+  NodeHeartbeat heartbeat = 1;
+}
+
+message DrainNode {
+  NodeDrain drain = 1;
+}
+
+message LeaveNode {
+  string node_id = 1;
+}
+
+// An event emitted by cluster membership.
+message ClusterEvent {
+  oneof event {
+    NodeJoined node_joined = 1;
+    NodeLeft node_left = 2;
+    NodeHeartbeatReceived node_heartbeat_received = 3;
+    NodeDrained node_drained = 4;
+  }
+}
+
+message NodeJoined {
+  NodeInfo node = 1;
+}
+
+message NodeLeft {
+  string node_id = 1;
+}
+
+message NodeHeartbeatReceived {
+  NodeInfo node = 1;
+}
+
+message NodeDrained {
+  string node_id = 1;
+}
