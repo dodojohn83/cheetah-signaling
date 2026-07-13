@@ -7,7 +7,17 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+description = "Foundation types for Cheetah Signaling: IDs, timestamps, errors, pagination, and common context."
+
 [dependencies]
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+time = { workspace = true }
+secrecy = { workspace = true }
+toml = { workspace = true }
+tracing = { workspace = true }
 
 [dev-dependencies]
 
