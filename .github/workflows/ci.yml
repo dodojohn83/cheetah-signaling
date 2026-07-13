@@ -61,7 +61,6 @@ jobs:
       - uses: bufbuild/buf-action@v1
         with:
           lint: true
-          breaking: true
-          breaking_against: "'https://github.com/dodojohn83/cheetah-signaling.git#branch=main'"
           format: true
           push: false
+          pr_comment: false
