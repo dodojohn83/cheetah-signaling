@@ -6,15 +6,24 @@
 
 use crate::error::{Result, SignalError, SignalErrorKind};
 use crate::{DurationMs, NodeId};
-use secrecy::SecretString;
+use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-/// Serializes a `SecretString` as a redacted placeholder.
+/// Serializes a `SecretString` as a redacted placeholder, preserving empty defaults.
+///
+/// Empty secrets are written as `""` so the default configuration round-trips
+/// correctly. Non-empty secrets are redacted to avoid leaking sensitive values
+/// in example or debug output.
 fn serialize_secret_string<S: Serializer>(
-    _value: &SecretString,
+    value: &SecretString,
     serializer: S,
 ) -> std::result::Result<S::Ok, S::Error> {
-    serializer.serialize_str("[REDACTED]")
+    let exposed = value.expose_secret();
+    if exposed.is_empty() {
+        serializer.serialize_str("")
+    } else {
+        serializer.serialize_str("[REDACTED]")
+    }
 }
 
 /// Deserializes a `SecretString` from a string.

@@ -94,7 +94,7 @@ macro_rules! uuid_id {
 
         impl Default for $name {
             fn default() -> Self {
-                Self::generate()
+                Self::from_uuid(Uuid::nil())
             }
         }
     };
@@ -173,7 +173,7 @@ uuid_id! {
 }
 
 /// An identity used by an external protocol before it has been mapped to an internal UUID.
-#[derive(Clone, Debug, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash, serde::Serialize)]
 #[serde(transparent)]
 pub struct ProtocolIdentity(String);
 
@@ -230,6 +230,40 @@ impl FromStr for ProtocolIdentity {
 impl AsRef<str> for ProtocolIdentity {
     fn as_ref(&self) -> &str {
         &self.0
+    }
+}
+
+impl TryFrom<String> for ProtocolIdentity {
+    type Error = SignalError;
+
+    fn try_from(value: String) -> std::result::Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ProtocolIdentity {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct ProtocolIdentityVisitor;
+
+        impl serde::de::Visitor<'_> for ProtocolIdentityVisitor {
+            type Value = ProtocolIdentity;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(formatter, "a non-empty protocol identity string")
+            }
+
+            fn visit_str<E>(self, value: &str) -> std::result::Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                ProtocolIdentity::new(value).map_err(E::custom)
+            }
+        }
+
+        deserializer.deserialize_str(ProtocolIdentityVisitor)
     }
 }
 
