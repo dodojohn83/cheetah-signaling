@@ -1,0 +1,96 @@
+syntax = "proto3";
+
+package cheetah.control.v1;
+
+option go_package = "github.com/dodojohn83/cheetah-signaling/gen/go/cheetah/control/v1;controlv1";
+
+// A command for controlling devices and channels.
+message ControlCommand {
+  oneof command {
+    InviteDevice invite_device = 1;
+    KickDevice kick_device = 2;
+    StartChannel start_channel = 3;
+    StopChannel stop_channel = 4;
+    ChannelCommand channel_command = 5;
+  }
+}
+
+message InviteDevice {
+  string device_id = 1;
+  string channel_id = 2;
+  string media_node_id = 3;
+  int64 invite_timeout_ms = 4;
+}
+
+message KickDevice {
+  string device_id = 1;
+  string channel_id = 2;
+  string reason = 3;
+}
+
+message StartChannel {
+  string device_id = 1;
+  string channel_id = 2;
+  string media_session_id = 3;
+}
+
+message StopChannel {
+  string device_id = 1;
+  string channel_id = 2;
+}
+
+message ChannelCommand {
+  string device_id = 1;
+  string channel_id = 2;
+  string command_type = 3;
+  bytes payload = 4;
+}
+
+// Result of a control command.
+message ControlCommandResult {
+  bool success = 1;
+  string error_code = 2;
+  string error_message = 3;
+}
+
+// An event emitted by a control aggregate.
+message ControlEvent {
+  oneof event {
+    DeviceInvited device_invited = 1;
+    DeviceKicked device_kicked = 2;
+    ChannelStarted channel_started = 3;
+    ChannelStopped channel_stopped = 4;
+    CommandCompleted command_completed = 5;
+  }
+}
+
+message DeviceInvited {
+  string device_id = 1;
+  string channel_id = 2;
+  string media_session_id = 3;
+}
+
+message DeviceKicked {
+  string device_id = 1;
+  string channel_id = 2;
+  string reason = 3;
+}
+
+message ChannelStarted {
+  string device_id = 1;
+  string channel_id = 2;
+  string media_session_id = 3;
+}
+
+message ChannelStopped {
+  string device_id = 1;
+  string channel_id = 2;
+}
+
+message CommandCompleted {
+  string operation_id = 1;
+  string device_id = 2;
+  string channel_id = 3;
+  string command_type = 4;
+  ControlCommandResult result = 5;
+}

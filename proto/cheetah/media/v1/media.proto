@@ -1,0 +1,187 @@
+syntax = "proto3";
+
+package cheetah.media.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/dodojohn83/cheetah-signaling/gen/go/cheetah/media/v1;mediav1";
+
+// Status of a media node.
+enum MediaNodeStatus {
+  MEDIA_NODE_STATUS_UNSPECIFIED = 0;
+  MEDIA_NODE_STATUS_ACTIVE = 1;
+  MEDIA_NODE_STATUS_DRAINING = 2;
+  MEDIA_NODE_STATUS_LEFT = 3;
+}
+
+// A capability advertisement for a media node.
+message MediaCapability {
+  string protocol = 1;
+  repeated string operations = 2;
+  map<string, string> constraints = 3;
+}
+
+// A reference to a media session.
+message MediaSessionRef {
+  string media_session_id = 1;
+  string device_id = 2;
+  string channel_id = 3;
+}
+
+// RTP negotiation parameters.
+message RtpNegotiation {
+  string media_session_id = 1;
+  string device_id = 2;
+  string channel_id = 3;
+  string remote_sdp = 4;
+}
+
+// Established RTP session.
+message RtpSession {
+  string media_session_id = 1;
+  string device_id = 2;
+  string channel_id = 3;
+  string remote_sdp = 4;
+  string local_sdp = 5;
+  string status = 6;
+}
+
+// Proxy negotiation parameters.
+message ProxyNegotiation {
+  string media_session_id = 1;
+  string device_id = 2;
+  string channel_id = 3;
+  string proxy_mode = 4;
+}
+
+// Established proxy session.
+message ProxySession {
+  string media_session_id = 1;
+  string device_id = 2;
+  string channel_id = 3;
+  string proxy_url = 4;
+  string status = 5;
+}
+
+// Parameters to start a recording.
+message RecordRequest {
+  string media_session_id = 1;
+  string record_id = 2;
+  string storage_path = 3;
+  int64 timeout_ms = 4;
+}
+
+// Active recording session.
+message RecordSession {
+  string media_session_id = 1;
+  string record_id = 2;
+  string storage_path = 3;
+  int64 duration_ms = 4;
+  string status = 5;
+}
+
+// Parameters to take a snapshot.
+message SnapshotRequest {
+  string media_session_id = 1;
+  string snapshot_id = 2;
+}
+
+// A captured snapshot.
+message Snapshot {
+  string snapshot_id = 1;
+  string media_session_id = 2;
+  string image_url = 3;
+  google.protobuf.Timestamp created_at = 4;
+}
+
+// A media query.
+message Query {
+  string query_type = 1;
+  map<string, string> parameters = 2;
+}
+
+// Result of a media query.
+message QueryResult {
+  string media_session_id = 1;
+  repeated Snapshot snapshots = 2;
+  bool has_more = 3;
+}
+
+// A generic control payload for media.
+message MediaControlPayload {
+  string media_session_id = 1;
+  string command_type = 2;
+  bytes payload = 3;
+}
+
+// A command targeting media.
+message MediaCommand {
+  oneof command {
+    RtpNegotiation negotiate_rtp = 1;
+    RtpSession start_rtp = 2;
+    MediaSessionRef stop_rtp = 3;
+    ProxyNegotiation start_proxy = 4;
+    MediaSessionRef stop_proxy = 5;
+    RecordRequest start_record = 6;
+    MediaSessionRef stop_record = 7;
+    SnapshotRequest take_snapshot = 8;
+    Query query = 9;
+    MediaControlPayload control = 10;
+  }
+}
+
+// An event emitted by media processing.
+message MediaEvent {
+  oneof event {
+    RtpSession rtp_negotiated = 1;
+    RtpSession stream_started = 2;
+    MediaSessionRefStopped stream_stopped = 3;
+    RecordSession record_started = 4;
+    RecordSession record_stopped = 5;
+    Snapshot snapshot_taken = 6;
+    MediaError error = 7;
+  }
+}
+
+message MediaSessionRefStopped {
+  MediaSessionRef session = 1;
+  string reason = 2;
+}
+
+message MediaError {
+  MediaSessionRef session = 1;
+  string error_code = 2;
+  string error_message = 3;
+}
+
+// Media node registration payload.
+message MediaNodeRegistration {
+  string node_id = 1;
+  string listen_addr = 2;
+  MediaCapability capability = 3;
+  string region = 4;
+}
+
+// Media node runtime information.
+message MediaNodeInfo {
+  string node_id = 1;
+  string listen_addr = 2;
+  MediaCapability capability = 3;
+  string region = 4;
+  uint64 owner_epoch = 5;
+  google.protobuf.Timestamp last_heartbeat_at = 6;
+  MediaNodeStatus status = 7;
+}
+
+// Media node heartbeat payload.
+message MediaNodeHeartbeat {
+  string node_id = 1;
+  uint64 load = 2;
+  uint64 session_count = 3;
+}
+
+// Media node drain request.
+message MediaNodeDrain {
+  string node_id = 1;
+  bool drain = 2;
+}

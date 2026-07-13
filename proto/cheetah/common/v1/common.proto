@@ -1,0 +1,142 @@
+syntax = "proto3";
+
+package cheetah.common.v1;
+
+import "cheetah/cluster/v1/cluster.proto";
+import "cheetah/control/v1/control.proto";
+import "cheetah/device/v1/device.proto";
+import "cheetah/media/v1/media.proto";
+import "cheetah/plugin/v1/plugin.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/dodojohn83/cheetah-signaling/gen/go/cheetah/common/v1;commonv1";
+
+// A UUID encoded as a lowercase hyphenated string.
+message Uuid {
+  string value = 1;
+}
+
+// A duration in milliseconds.
+message DurationMillis {
+  int64 milliseconds = 1;
+}
+
+// A field level validation failure.
+message FieldViolation {
+  string field = 1;
+  string description = 2;
+}
+
+// A safe error status suitable for wire responses.
+message ErrorStatus {
+  string code = 1;
+  string message = 2;
+  bool retryable = 3;
+  repeated FieldViolation violations = 4;
+}
+
+// Kinds of resources that can be referenced.
+enum ResourceKind {
+  RESOURCE_KIND_UNSPECIFIED = 0;
+  RESOURCE_KIND_TENANT = 1;
+  RESOURCE_KIND_DEVICE = 2;
+  RESOURCE_KIND_CHANNEL = 3;
+  RESOURCE_KIND_ENDPOINT = 4;
+  RESOURCE_KIND_PROTOCOL_SESSION = 5;
+  RESOURCE_KIND_MEDIA_SESSION = 6;
+  RESOURCE_KIND_OPERATION = 7;
+  RESOURCE_KIND_EVENT = 8;
+  RESOURCE_KIND_PLUGIN = 9;
+  RESOURCE_KIND_NODE = 10;
+}
+
+// A reference to a resource in the system.
+message ResourceRef {
+  Uuid tenant_id = 1;
+  ResourceKind kind = 2;
+  Uuid resource_id = 3;
+}
+
+// A request for a single page of results.
+message PageRequest {
+  string cursor = 1;
+  uint32 page_size = 2;
+}
+
+// Pagination information for a list response.
+message PageInfo {
+  uint64 total = 1;
+  string next_cursor = 2;
+  uint32 page_size = 3;
+}
+
+// Shared command status values.
+enum CommandStatus {
+  COMMAND_STATUS_UNSPECIFIED = 0;
+  COMMAND_STATUS_ACCEPTED = 1;
+  COMMAND_STATUS_COMPLETED = 2;
+  COMMAND_STATUS_FAILED = 3;
+  COMMAND_STATUS_REJECTED = 4;
+  COMMAND_STATUS_TIMEOUT = 5;
+}
+
+// Result of executing a command.
+message CommandResult {
+  CommandStatus status = 1;
+  string operation_id = 2;
+  ErrorStatus error = 3;
+}
+
+// Metadata carried on every envelope.
+message EnvelopeMeta {
+  Uuid message_id = 1;
+  Uuid tenant_id = 2;
+  Uuid correlation_id = 3;
+  Uuid causation_id = 4;
+  google.protobuf.Timestamp occurred_at = 5;
+  google.protobuf.Timestamp deadline = 6;
+  Uuid source_node_id = 7;
+  uint64 owner_epoch = 8;
+  string traceparent = 9;
+  string tracestate = 10;
+}
+
+// A command envelope with a typed payload.
+message CommandEnvelope {
+  EnvelopeMeta meta = 1;
+  ResourceRef target = 2;
+  string idempotency_key = 3;
+
+  oneof command {
+    cheetah.device.v1.DeviceCommand device_command = 4;
+    cheetah.control.v1.ControlCommand control_command = 5;
+    cheetah.media.v1.MediaCommand media_command = 6;
+    cheetah.plugin.v1.PluginCommand plugin_command = 7;
+    cheetah.cluster.v1.ClusterCommand cluster_command = 8;
+  }
+}
+
+// An event envelope with a typed payload.
+message EventEnvelope {
+  EnvelopeMeta meta = 1;
+  ResourceRef aggregate = 2;
+  uint64 aggregate_sequence = 3;
+
+  oneof event {
+    cheetah.device.v1.DeviceEvent device_event = 4;
+    cheetah.control.v1.ControlEvent control_event = 5;
+    cheetah.media.v1.MediaEvent media_event = 6;
+    cheetah.plugin.v1.PluginEvent plugin_event = 7;
+    cheetah.cluster.v1.ClusterEvent cluster_event = 8;
+  }
+}
+
+// Request for NodeCommand.Execute.
+message NodeCommandExecuteRequest {
+  CommandEnvelope command = 1;
+}
+
+// Response for NodeCommand.Execute.
+message NodeCommandExecuteResponse {
+  CommandResult result = 1;
+}
