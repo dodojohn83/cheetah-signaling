@@ -1,0 +1,40 @@
+# https://docs.devin.ai/onboard-devin/environment-yaml
+# Commands run from the repo root.
+# One-time setup for Cheetah Signaling development.
+initialize: |
+  rustup target add x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu || true
+  rustup component add rustfmt clippy rust-src --toolchain 1.96.1 || true
+
+  sudo apt-get update -q
+  sudo apt-get install -y -q protobuf-compiler libprotobuf-dev
+
+  curl -fsSL -o /tmp/buf.tar.gz "https://github.com/bufbuild/buf/releases/latest/download/buf-$(uname -s)-$(uname -m).tar.gz"
+  tar -xzf /tmp/buf.tar.gz -C /tmp --strip-components=2
+  sudo mv /tmp/buf /usr/local/bin/buf
+  sudo chmod +x /usr/local/bin/buf
+
+  cargo install --locked cargo-nextest cargo-deny cargo-audit
+
+maintenance: |
+  cargo fetch
+
+knowledge:
+  - name: lint
+    contents: |
+      cargo fmt --all -- --check
+      cargo clippy --workspace --all-targets -- -D warnings
+  - name: test
+    contents: |
+      cargo nextest run --workspace
+  - name: check
+    contents: |
+      cargo deny check
+      buf lint
+      buf format --diff --exit-code
+  - name: build
+    contents: |
+      cargo build --workspace
+  - name: note
+    contents: |
+      Rust 1.96.1, Edition 2024, resolver = 3, unsafe_code = "forbid".
+      Phase plans are in dev-docs/002_vibe_coding_plan/.

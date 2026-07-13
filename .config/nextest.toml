@@ -1,0 +1,19 @@
+[profile.default]
+retries = 0
+fail-fast = false
+slow-timeout = { period = "120s", terminate-after = 2 }
+
+[profile.integration]
+retries = 1
+fail-fast = false
+slow-timeout = { period = "300s", terminate-after = 1 }
+
+[profile.interop]
+retries = 0
+fail-fast = true
+slow-timeout = { period = "600s", terminate-after = 1 }
+
+[profile.soak]
+retries = 0
+fail-fast = true
+slow-timeout = { period = "72h", terminate-after = 1 }
