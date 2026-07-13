@@ -2,7 +2,7 @@
 
 use crate::{
     ChannelId, CorrelationId, DeviceId, DurationMs, EndpointId, EventId, MediaSessionId, MessageId,
-    NodeId, OperationId, PluginId, ProtocolSessionId, Result, SignalConfig, TenantId, UtcTimestamp,
+    NodeId, OperationId, PluginId, ProtocolSessionId, Result, TenantId, UtcTimestamp,
 };
 use secrecy::SecretString;
 
@@ -58,13 +58,4 @@ pub trait SecretStore: Send + Sync {
     fn delete(&self, key: &str) -> Result<()>;
     /// Rotates a secret, returning the previous value.
     fn rotate(&self, key: &str) -> Result<SecretString>;
-}
-
-/// Provides configuration snapshots and watches.
-///
-/// The source is responsible for layering defaults, files, environment variables
-/// and secrets in the correct priority.
-pub trait ConfigSource: Send + Sync {
-    /// Returns a fully resolved configuration snapshot.
-    fn snapshot(&self) -> Result<SignalConfig>;
 }

@@ -6,15 +6,15 @@
 
 use crate::error::{Result, SignalError, SignalErrorKind};
 use crate::{DurationMs, NodeId};
-use secrecy::{ExposeSecret, SecretString};
+use secrecy::SecretString;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// Serializes a `SecretString` as a redacted placeholder.
 fn serialize_secret_string<S: Serializer>(
-    value: &SecretString,
+    _value: &SecretString,
     serializer: S,
 ) -> std::result::Result<S::Ok, S::Error> {
-    serializer.serialize_str(value.expose_secret())
+    serializer.serialize_str("[REDACTED]")
 }
 
 /// Deserializes a `SecretString` from a string.
