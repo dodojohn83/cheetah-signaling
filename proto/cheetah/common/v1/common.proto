@@ -48,6 +48,7 @@ enum ResourceKind {
   RESOURCE_KIND_EVENT = 8;
   RESOURCE_KIND_PLUGIN = 9;
   RESOURCE_KIND_NODE = 10;
+  RESOURCE_KIND_MEDIA_BINDING = 11;
 }
 
 // A reference to a resource in the system.
@@ -101,11 +102,19 @@ message EnvelopeMeta {
   string tracestate = 10;
 }
 
+// A generic event used for domain events that do not yet have a typed envelope.
+message GenericEvent {
+  string event_type = 1;
+  bytes payload = 2;
+}
+
 // A command envelope with a typed payload.
 message CommandEnvelope {
   EnvelopeMeta meta = 1;
   ResourceRef target = 2;
   string idempotency_key = 3;
+  string operation_id = 9;
+  string step_id = 10;
 
   oneof command {
     cheetah.device.v1.DeviceCommand device_command = 4;
@@ -128,6 +137,7 @@ message EventEnvelope {
     cheetah.media.v1.MediaEvent media_event = 6;
     cheetah.plugin.v1.PluginEvent plugin_event = 7;
     cheetah.cluster.v1.ClusterEvent cluster_event = 8;
+    GenericEvent generic_event = 9;
   }
 }
 
