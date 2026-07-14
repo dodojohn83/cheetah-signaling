@@ -214,10 +214,26 @@ version = "0.1.0"
 [[package]]
 name = "cheetah-runtime-api"
 version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "cheetah-domain",
+ "cheetah-signal-types",
+ "thiserror",
+ "uuid",
+]
 
 [[package]]
 name = "cheetah-runtime-tokio"
 version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "cheetah-domain",
+ "cheetah-runtime-api",
+ "cheetah-signal-types",
+ "time",
+ "tokio",
+ "tracing",
+]
 
 [[package]]
 name = "cheetah-signal-application"

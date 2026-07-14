@@ -6,10 +6,18 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+description = "Tokio runtime implementation for Cheetah Signaling: fixed shard workers, hierarchical timer wheel, and bounded channels."
 
 [dependencies]
+cheetah-runtime-api = { path = "../cheetah-runtime-api" }
+cheetah-signal-types = { path = "../../foundation/cheetah-signal-types" }
+tokio = { workspace = true, features = ["sync", "time", "rt", "macros"] }
+tracing = { workspace = true }
+async-trait = { workspace = true }
+time = { workspace = true }
 
 [dev-dependencies]
+cheetah-domain = { path = "../../domain/cheetah-domain", features = ["test-util"] }
 
 [lints]
 workspace = true
