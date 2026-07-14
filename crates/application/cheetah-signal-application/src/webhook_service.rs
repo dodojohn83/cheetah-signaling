@@ -347,19 +347,19 @@ impl WebhookService {
             }
         };
 
-        let secret = self.secret_store.get(config.secret_ref())?;
-        let timestamp = self.clock.now_wall().to_rfc3339()?;
-        let signature = sign_webhook_payload(
-            secret.expose_secret(),
-            &delivery.delivery_id().to_string(),
-            &delivery.event_id().to_string(),
-            &timestamp,
-            delivery.payload(),
-        )?;
-
         let mut current = delivery;
-        current.set_signature(signature.clone());
         current.start_attempt(self.clock.as_ref());
+
+        let (signature, timestamp) = match self.sign_delivery(&current, &config).await {
+            Ok(pair) => pair,
+            Err(e) => {
+                return self
+                    .handle_send_failure(current, config.webhook_id(), e)
+                    .await;
+            }
+        };
+
+        current.set_signature(signature.clone());
 
         let mut headers = vec![
             ("Content-Type".to_string(), "application/json".to_string()),
@@ -388,9 +388,7 @@ impl WebhookService {
             timeout: Some(self.config.request_timeout_ms),
         };
 
-        let result = self.http_client.send(request).await;
-
-        match result {
+        match self.http_client.send(request).await {
             Ok(resp) if (200..300).contains(&resp.status) => {
                 current.succeed(self.clock.as_ref());
                 self.reset_failures(config.webhook_id());
@@ -398,14 +396,16 @@ impl WebhookService {
                 Ok(())
             }
             Ok(resp) => {
-                let error = format!("HTTP {}", resp.status);
-                self.bump_failures(config.webhook_id());
-                self.fail_delivery(current, error).await
+                let error = crate::SignalError::new(
+                    cheetah_signal_types::SignalErrorKind::ProtocolFailed,
+                    format!("HTTP {}", resp.status),
+                );
+                self.handle_send_failure(current, config.webhook_id(), error)
+                    .await
             }
             Err(e) => {
-                let error = e.to_string();
-                self.bump_failures(config.webhook_id());
-                self.fail_delivery(current, error).await
+                self.handle_send_failure(current, config.webhook_id(), e)
+                    .await
             }
         }
     }
@@ -435,6 +435,39 @@ impl WebhookService {
         )?;
         delivery.set_signature(signature);
         Ok(delivery)
+    }
+
+    async fn sign_delivery(
+        &self,
+        delivery: &WebhookDelivery,
+        config: &WebhookConfig,
+    ) -> crate::Result<(String, String)> {
+        let secret = self.secret_store.get(config.secret_ref())?;
+        let timestamp = self.clock.now_wall().to_rfc3339()?;
+        let signature = sign_webhook_payload(
+            secret.expose_secret(),
+            &delivery.delivery_id().to_string(),
+            &delivery.event_id().to_string(),
+            &timestamp,
+            delivery.payload(),
+        )?;
+        Ok((signature, timestamp))
+    }
+
+    async fn handle_send_failure(
+        &self,
+        mut delivery: WebhookDelivery,
+        webhook_id: WebhookId,
+        error: crate::SignalError,
+    ) -> crate::Result<()> {
+        let message = error.message().to_string();
+        if error.is_retryable() {
+            self.bump_failures(webhook_id);
+            self.fail_delivery(delivery, message).await
+        } else {
+            delivery.dead_letter(self.clock.as_ref(), message);
+            self.save_delivery(delivery).await
+        }
     }
 
     async fn fail_delivery(

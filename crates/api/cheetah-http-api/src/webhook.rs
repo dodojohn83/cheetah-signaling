@@ -4,8 +4,9 @@ use cheetah_signal_application::{
     WebhookHttpClient, WebhookHttpRequest, WebhookHttpResponse, WebhookService,
 };
 use cheetah_signal_types::{SignalError, SignalErrorKind};
+use reqwest::dns::{Addrs, Name, Resolve, Resolving};
 use reqwest::redirect::Policy;
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
@@ -16,15 +17,45 @@ pub struct ReqwestWebhookClient {
 }
 
 impl ReqwestWebhookClient {
-    /// Creates a new webhook client with redirects disabled.
+    /// Creates a new webhook client with redirects disabled and a
+    /// DNS resolver that filters disallowed addresses so the resolved IP cannot
+    /// change between validation and the actual request.
     pub fn new() -> Self {
         let client = reqwest::Client::builder()
             .redirect(Policy::none())
+            .dns_resolver(FilteringResolver)
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
         Self { client }
     }
 }
+
+#[derive(Clone, Debug)]
+struct FilteringResolver;
+
+impl Resolve for FilteringResolver {
+    fn resolve(&self, name: Name) -> Resolving {
+        let name = name.as_str().to_owned();
+        Box::pin(async move {
+            let iter = tokio::net::lookup_host((name.as_str(), 0))
+                .await
+                .map_err(|e| Box::new(e) as BoxError)?;
+            let addrs: Vec<SocketAddr> = iter
+                .filter(|addr| !is_disallowed_ip(&addr.ip()))
+                .map(|addr| SocketAddr::new(addr.ip(), 0))
+                .collect();
+            if addrs.is_empty() {
+                return Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::AddrNotAvailable,
+                    "no allowed addresses for host",
+                )) as BoxError);
+            }
+            Ok(Box::new(addrs.into_iter()) as Addrs)
+        })
+    }
+}
+
+type BoxError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
 impl Default for ReqwestWebhookClient {
     fn default() -> Self {
@@ -39,26 +70,6 @@ impl WebhookHttpClient for ReqwestWebhookClient {
             .map_err(|e| SignalError::new(SignalErrorKind::InvalidArgument, e.to_string()))?;
 
         validate_host(&url)?;
-
-        if let Some(host) = url.host_str() {
-            let port = url.port_or_known_default().unwrap_or(443);
-            if host.parse::<IpAddr>().is_err() {
-                let addrs = tokio::net::lookup_host((host, port)).await.map_err(|e| {
-                    SignalError::new(
-                        SignalErrorKind::Unavailable,
-                        format!("dns lookup failed: {e}"),
-                    )
-                })?;
-                for addr in addrs {
-                    if is_disallowed_ip(&addr.ip()) {
-                        return Err(SignalError::new(
-                            SignalErrorKind::InvalidArgument,
-                            "resolved webhook address is not allowed",
-                        ));
-                    }
-                }
-            }
-        }
 
         let timeout_ms = request
             .timeout
