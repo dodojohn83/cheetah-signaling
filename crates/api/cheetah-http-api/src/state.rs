@@ -1,5 +1,6 @@
 //! Shared application state and server entrypoint.
 
+use crate::event_cache::EventCache;
 use crate::metrics::RequestMetrics;
 use cheetah_domain::ports::{DeviceOwnerResolver, IdGenerator, MediaPort};
 use cheetah_message_api::RawEventBus;
@@ -53,6 +54,8 @@ pub struct ApiState {
     pub media_service: MediaService,
     /// Event bus for SSE subscriptions.
     pub event_bus: Arc<dyn RawEventBus>,
+    /// Bounded event cache for SSE slow consumers.
+    pub event_cache: Arc<EventCache>,
     /// Wall clock and monotonic time source.
     pub clock: Arc<dyn Clock>,
     /// Identifier generator.
@@ -96,6 +99,7 @@ impl ApiState {
             operation_service,
             media_service,
             event_bus,
+            event_cache: EventCache::new(1024),
             clock,
             id_generator,
             config,
@@ -116,6 +120,34 @@ pub struct ApiServer {
 impl ApiServer {
     /// Starts the HTTP server on the configured address.
     pub async fn start(state: ApiState) -> Result<Self, crate::HttpError> {
+        let event_bus = state.event_bus.clone();
+        let event_cache = state.event_cache.clone();
+        tokio::spawn(async move {
+            let mut sub = match event_bus
+                .subscribe("sig.v1.event.>", "http-api-event-cache")
+                .await
+            {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::error!("failed to subscribe to event bus: {e}");
+                    return;
+                }
+            };
+            loop {
+                match sub.next().await {
+                    Ok(Some(delivery)) => {
+                        if let Err(e) = event_cache.push(&delivery.envelope) {
+                            tracing::debug!("failed to cache event: {e}");
+                        }
+                    }
+                    Ok(None) => break,
+                    Err(e) => {
+                        tracing::error!("event subscription error: {e}");
+                        break;
+                    }
+                }
+            }
+        });
         let router = crate::router::build_router(state.clone());
         let addr: SocketAddr = format!("{}:{}", state.config.listen_addr, state.config.port)
             .parse()

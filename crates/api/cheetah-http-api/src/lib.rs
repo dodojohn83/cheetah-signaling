@@ -3,6 +3,7 @@
 
 pub mod auth;
 pub mod error;
+pub mod event_cache;
 pub mod extract;
 pub mod handlers;
 pub mod metrics;

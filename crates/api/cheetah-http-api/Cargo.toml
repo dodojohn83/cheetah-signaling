@@ -33,6 +33,7 @@ tracing.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+cheetah-domain = { path = "../../../crates/domain/cheetah-domain", features = ["test-util"] }
 cheetah-message-local = { path = "../../../crates/messaging/cheetah-message-local" }
 cheetah-storage-sqlite = { path = "../../../crates/storage/cheetah-storage-sqlite" }
 
