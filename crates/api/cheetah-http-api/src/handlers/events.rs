@@ -44,6 +44,7 @@ pub async fn event_stream(
 
     let cache = state.event_cache.clone();
     let (tx, rx) = tokio::sync::mpsc::channel(64);
+    let cancel = state.cancel.child_token();
 
     tokio::spawn(async move {
         let mut watch = cache.watch();
@@ -65,12 +66,17 @@ pub async fn event_stream(
                 }
                 last = ev.cursor;
             }
-            if watch.changed().await.is_err() {
-                break;
-            }
-            let cursor = *watch.borrow();
-            if cursor <= last {
-                continue;
+            tokio::select! {
+                _ = cancel.cancelled() => break,
+                changed = watch.changed() => {
+                    if changed.is_err() {
+                        break;
+                    }
+                    let cursor = *watch.borrow();
+                    if cursor <= last {
+                        continue;
+                    }
+                }
             }
         }
     });

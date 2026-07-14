@@ -77,6 +77,8 @@ pub struct ApiState {
     pub metrics: Arc<RequestMetrics>,
     /// Per-key request rate limiter.
     pub rate_limiter: RateLimiter,
+    /// Cancellation token for graceful shutdown.
+    pub cancel: CancellationToken,
 }
 
 impl std::fmt::Debug for ApiState {
@@ -122,6 +124,7 @@ impl ApiState {
             config,
             metrics: Arc::new(RequestMetrics::default()),
             rate_limiter,
+            cancel: CancellationToken::new(),
         }
     }
 }
@@ -142,7 +145,7 @@ impl ApiServer {
     pub async fn start(state: ApiState) -> Result<Self, crate::HttpError> {
         let event_bus = state.event_bus.clone();
         let event_cache = state.event_cache.clone();
-        let cancel = CancellationToken::new();
+        let cancel = state.cancel.clone();
         let event_cancel = cancel.child_token();
         tokio::spawn(async move {
             let mut sub = match event_bus
