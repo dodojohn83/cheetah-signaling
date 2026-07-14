@@ -10,7 +10,8 @@ use axum::{
 };
 use cheetah_domain::DomainError;
 use cheetah_signal_application::dto::{
-    RegisterDeviceRequest, RetireDeviceRequest, UpdateDeviceCapabilitiesRequest,
+    RegisterDeviceRequest, RegisterDeviceResult, RetireDeviceRequest,
+    UpdateDeviceCapabilitiesRequest,
 };
 use cheetah_signal_types::{DeviceId, Page};
 use std::sync::Arc;
@@ -33,14 +34,19 @@ pub async fn create_device(
 ) -> Result<(StatusCode, Json<serde_json::Value>), HttpError> {
     ctx.require_scope("operator")?;
     let mut uow = state.storage.begin().await.map_err(HttpError::from)?;
-    let result = state
+    let RegisterDeviceResult { device, created } = state
         .device_service
         .register_or_update_device(&ctx.0, &mut *uow, request)
         .await
         .map_err(HttpError::from)?;
+    let status = if created {
+        StatusCode::CREATED
+    } else {
+        StatusCode::OK
+    };
     Ok((
-        StatusCode::CREATED,
-        Json(serde_json::to_value(result).map_err(HttpError::from)?),
+        status,
+        Json(serde_json::to_value(device).map_err(HttpError::from)?),
     ))
 }
 

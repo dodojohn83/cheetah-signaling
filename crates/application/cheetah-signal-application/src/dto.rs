@@ -148,6 +148,15 @@ pub struct SubmitOperationRequest {
     pub expected_owner_epoch: OwnerEpoch,
 }
 
+/// Result of registering or updating a device.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct RegisterDeviceResult {
+    /// The resulting device.
+    pub device: DeviceDto,
+    /// Whether the device was newly created rather than updated.
+    pub created: bool,
+}
+
 /// Device response DTO.
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct DeviceDto {

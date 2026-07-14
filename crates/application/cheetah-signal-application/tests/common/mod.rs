@@ -127,7 +127,8 @@ pub async fn register_device_and_channel(
             },
         )
         .await
-        .expect("register device should succeed");
+        .expect("register device should succeed")
+        .device;
 
     ctx.device_service
         .mark_device_online(

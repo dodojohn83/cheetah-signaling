@@ -2,7 +2,8 @@
 
 use crate::dto::{
     DeviceDto, MarkDeviceOfflineRequest, MarkDeviceOnlineRequest, RegisterDeviceRequest,
-    ReplaceChannelCatalogRequest, RetireDeviceRequest, UpdateDeviceCapabilitiesRequest,
+    RegisterDeviceResult, ReplaceChannelCatalogRequest, RetireDeviceRequest,
+    UpdateDeviceCapabilitiesRequest,
 };
 use cheetah_domain::{
     Capability, Channel, ChannelKind, ChannelStatus, Device, DeviceKind, DeviceLifecycle,
@@ -39,7 +40,7 @@ impl DeviceService {
         context: &RequestContext,
         uow: &mut dyn UnitOfWork,
         request: RegisterDeviceRequest,
-    ) -> crate::Result<DeviceDto> {
+    ) -> crate::Result<RegisterDeviceResult> {
         let tenant_id = context.tenant_id;
         let protocol = request
             .protocol
@@ -62,7 +63,7 @@ impl DeviceService {
         let metadata = request.metadata.unwrap_or_default();
         let name = request.name;
 
-        let (device, event) = if let Some(mut existing) = uow
+        let (device, event, created) = if let Some(mut existing) = uow
             .device_repository()
             .get_by_external_id(tenant_id, protocol, external_id.clone())
             .await?
@@ -77,10 +78,10 @@ impl DeviceService {
                 Some(capabilities.clone()),
                 Some(metadata.clone()),
             )?;
-            (existing, event)
+            (existing, event, false)
         } else {
             let device_id = self.id_generator.generate_device_id();
-            Device::new(
+            let (device, event) = Device::new(
                 self.clock.as_ref(),
                 tenant_id,
                 device_id,
@@ -92,7 +93,8 @@ impl DeviceService {
                 capabilities,
                 metadata,
             )
-            .map_err(crate::SignalError::from)?
+            .map_err(crate::SignalError::from)?;
+            (device, event, true)
         };
 
         uow.device_repository().save(&device).await?;
@@ -108,7 +110,10 @@ impl DeviceService {
         uow.outbox().append(event).await?;
         uow.commit().await?;
 
-        Ok(DeviceDto::from(&device))
+        Ok(RegisterDeviceResult {
+            device: DeviceDto::from(&device),
+            created,
+        })
     }
 
     /// Marks a device as online.

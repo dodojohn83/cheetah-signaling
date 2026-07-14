@@ -265,7 +265,8 @@ async fn media_service_rejects_inactive_device() {
             },
         )
         .await
-        .unwrap();
+        .unwrap()
+        .device;
 
     ctx.device_service
         .replace_channel_catalog(

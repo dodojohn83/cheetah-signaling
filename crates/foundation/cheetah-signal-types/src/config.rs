@@ -100,6 +100,21 @@ impl SignalConfig {
                 "security.static_api_key must be at least 32 characters when configured",
             ));
         }
+        let jwt_public_key = self.security.jwt_public_key_ref.expose_secret();
+        if !jwt_public_key.is_empty() {
+            if self.security.jwt_audience.is_empty() {
+                return Err(SignalError::new(
+                    SignalErrorKind::InvalidArgument,
+                    "security.jwt_audience must be configured when jwt_public_key_ref is set",
+                ));
+            }
+            if self.security.jwt_issuer.is_empty() {
+                return Err(SignalError::new(
+                    SignalErrorKind::InvalidArgument,
+                    "security.jwt_issuer must be configured when jwt_public_key_ref is set",
+                ));
+            }
+        }
         if self.storage.max_connections == 0 {
             return Err(SignalError::new(
                 SignalErrorKind::InvalidArgument,
