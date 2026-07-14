@@ -103,9 +103,13 @@ impl HttpError {
                 .collect(),
             _ => Vec::new(),
         };
+        let message = match self {
+            Self::Internal(_) => "internal server error".to_string(),
+            _ => self.to_string(),
+        };
         ProblemDetails {
             code: self.code().to_string(),
-            message: self.to_string(),
+            message,
             status: self.status().as_u16(),
             request_id,
             field_violations: violations,

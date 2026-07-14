@@ -17,7 +17,9 @@ pub async fn list_tenants(
     ctx: ApiRequestContext,
 ) -> Result<Json<Page<serde_json::Value>>, HttpError> {
     ctx.require_scope("viewer")?;
-    Ok(Json(Page::new(Vec::new())))
+    Err(HttpError::NotImplemented(
+        "tenant list pagination is not yet implemented".to_string(),
+    ))
 }
 
 pub async fn create_tenant(

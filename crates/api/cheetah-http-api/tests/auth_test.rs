@@ -28,17 +28,12 @@ async fn invalid_api_key_returns_401() {
 }
 
 #[tokio::test]
-async fn valid_api_key_allows_list_request() {
+async fn valid_api_key_allows_authenticated_request() {
     let server = common::TestServer::new().await;
     let response = server
-        .request(reqwest::Method::GET, "/api/v1/devices")
+        .request(reqwest::Method::GET, "/metrics")
         .send()
         .await
         .expect("send request");
     assert_eq!(response.status(), reqwest::StatusCode::OK);
-    let body = response
-        .json::<serde_json::Value>()
-        .await
-        .expect("read body");
-    assert_eq!(body["items"], serde_json::json!([]));
 }

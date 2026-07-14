@@ -21,7 +21,9 @@ pub async fn list_sessions(
     ctx: ApiRequestContext,
 ) -> Result<Json<Page<serde_json::Value>>, HttpError> {
     ctx.require_scope("viewer")?;
-    Ok(Json(Page::new(Vec::new())))
+    Err(HttpError::NotImplemented(
+        "media session list pagination is not yet implemented".to_string(),
+    ))
 }
 
 pub async fn create_session(
@@ -35,9 +37,10 @@ pub async fn create_session(
     let purpose = body
         .get("purpose")
         .and_then(|v| v.as_str())
-        .unwrap_or("live");
-    let result = match purpose {
-        "live" | "LIVE" => {
+        .unwrap_or("live")
+        .to_lowercase();
+    let result = match purpose.as_str() {
+        "live" => {
             let mut request: StartLiveRequest =
                 serde_json::from_value(body).map_err(HttpError::from)?;
             request.idempotency_key = idempotency.0.clone();
