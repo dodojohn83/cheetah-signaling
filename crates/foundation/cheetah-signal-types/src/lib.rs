@@ -10,6 +10,7 @@
 pub mod config;
 pub mod context;
 pub mod error;
+pub mod event;
 pub mod id;
 pub mod pagination;
 pub mod ports;
@@ -20,9 +21,11 @@ pub use context::{
     Principal, PrincipalKind, RequestContext, ResourceId, ResourceKind, ResourceRef,
 };
 pub use error::{FieldViolation, Result, SignalError, SignalErrorKind};
+pub use event::Event;
 pub use id::{
-    ChannelId, CorrelationId, DeviceId, EndpointId, EventId, MediaSessionId, MessageId, NodeId,
-    OperationId, OwnerEpoch, PluginId, ProtocolIdentity, ProtocolSessionId, Revision, TenantId,
+    ChannelId, CorrelationId, DeviceId, EndpointId, EventId, MediaBindingId,
+    MediaNodeInstanceEpoch, MediaSessionId, MessageId, NodeId, OperationId, OwnerEpoch, PluginId,
+    ProtocolIdentity, ProtocolSessionId, Revision, TenantId,
 };
 pub use pagination::{DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, Page, PageRequest};
 pub use ports::{Clock, IdGenerator, SecretStore};

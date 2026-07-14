@@ -1,8 +1,9 @@
 //! Port traits for the foundation layer.
 
 use crate::{
-    ChannelId, CorrelationId, DeviceId, DurationMs, EndpointId, EventId, MediaSessionId, MessageId,
-    NodeId, OperationId, PluginId, ProtocolSessionId, Result, TenantId, UtcTimestamp,
+    ChannelId, CorrelationId, DeviceId, DurationMs, EndpointId, EventId, MediaBindingId,
+    MediaNodeInstanceEpoch, MediaSessionId, MessageId, NodeId, OperationId, PluginId,
+    ProtocolSessionId, Result, TenantId, UtcTimestamp,
 };
 use secrecy::SecretString;
 
@@ -32,6 +33,10 @@ pub trait IdGenerator: Send + Sync {
     fn generate_protocol_session_id(&self) -> ProtocolSessionId;
     /// Generates a new media session identifier.
     fn generate_media_session_id(&self) -> MediaSessionId;
+    /// Generates a new media binding identifier.
+    fn generate_media_binding_id(&self) -> MediaBindingId;
+    /// Generates a new media node instance epoch.
+    fn generate_media_node_instance_epoch(&self) -> MediaNodeInstanceEpoch;
     /// Generates a new operation identifier.
     fn generate_operation_id(&self) -> OperationId;
     /// Generates a new node identifier.

@@ -1,0 +1,120 @@
+syntax = "proto3";
+
+package cheetah.plugin.v1;
+
+option go_package = "github.com/dodojohn83/cheetah-signaling/gen/go/cheetah/plugin/v1;pluginv1";
+
+// A frame sent by a plugin to the host.
+message PluginFrame {
+  oneof frame {
+    PluginHello hello = 1;
+    PluginCredit credit = 2;
+    PluginAck ack = 3;
+    PluginHealth health = 4;
+    PluginDrain drain = 5;
+    PluginRaw raw = 6;
+  }
+}
+
+message PluginHello {
+  string plugin_id = 1;
+  string plugin_type = 2;
+  string version = 3;
+}
+
+message PluginCredit {
+  uint64 credits = 1;
+}
+
+message PluginAck {
+  string message_id = 1;
+}
+
+message PluginHealth {
+  bool ready = 1;
+  string status = 2;
+}
+
+message PluginDrain {
+  bool graceful = 1;
+}
+
+message PluginRaw {
+  bytes payload = 1;
+}
+
+// A frame sent by the host to a plugin.
+message HostFrame {
+  oneof frame {
+    HostWelcome welcome = 1;
+    HostCredit credit = 2;
+    HostAck ack = 3;
+    HostHealth health = 4;
+    HostDrain drain = 5;
+    HostRaw raw = 6;
+  }
+}
+
+message HostWelcome {
+  string host_id = 1;
+  string assigned_plugin_id = 2;
+}
+
+message HostCredit {
+  uint64 credits = 1;
+}
+
+message HostAck {
+  string message_id = 1;
+}
+
+message HostHealth {
+  bool ready = 1;
+}
+
+message HostDrain {
+  bool graceful = 1;
+  int64 deadline_ms = 2;
+}
+
+message HostRaw {
+  bytes payload = 1;
+}
+
+// A command directed at a plugin runtime.
+message PluginCommand {
+  oneof command {
+    ConnectPlugin connect = 1;
+    SendFrame send_frame = 2;
+  }
+}
+
+message ConnectPlugin {
+  string plugin_id = 1;
+}
+
+message SendFrame {
+  PluginFrame frame = 1;
+}
+
+// An event emitted by a plugin runtime.
+message PluginEvent {
+  oneof event {
+    PluginConnected connected = 1;
+    PluginFrameReceived frame_received = 2;
+    PluginError error = 3;
+  }
+}
+
+message PluginConnected {
+  string plugin_id = 1;
+}
+
+message PluginFrameReceived {
+  PluginFrame frame = 1;
+}
+
+message PluginError {
+  string error_code = 1;
+  string error_message = 2;
+}

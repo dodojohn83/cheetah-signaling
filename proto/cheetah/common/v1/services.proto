@@ -1,0 +1,205 @@
+syntax = "proto3";
+
+package cheetah.common.v1;
+
+import "cheetah/cluster/v1/cluster.proto";
+import "cheetah/common/v1/common.proto";
+import "cheetah/media/v1/media.proto";
+import "cheetah/plugin/v1/plugin.proto";
+
+option go_package = "github.com/dodojohn83/cheetah-signaling/gen/go/cheetah/common/v1;commonv1";
+
+// Generic node command dispatcher.
+service NodeCommand {
+  rpc Execute(NodeCommandExecuteRequest) returns (NodeCommandExecuteResponse);
+}
+
+// Signaling node registry.
+service ClusterRegistry {
+  rpc RegisterNode(RegisterNodeRequest) returns (RegisterNodeResponse);
+  rpc HeartbeatNode(HeartbeatNodeRequest) returns (HeartbeatNodeResponse);
+  rpc DrainNode(DrainNodeRequest) returns (DrainNodeResponse);
+}
+
+// Media node registry.
+service MediaClusterRegistry {
+  rpc RegisterMediaNode(RegisterMediaNodeRequest) returns (RegisterMediaNodeResponse);
+  rpc HeartbeatMediaNode(HeartbeatMediaNodeRequest) returns (HeartbeatMediaNodeResponse);
+  rpc DrainMediaNode(DrainMediaNodeRequest) returns (DrainMediaNodeResponse);
+}
+
+// Media capability discovery.
+service MediaCapability {
+  rpc QueryCapabilities(QueryCapabilitiesRequest) returns (QueryCapabilitiesResponse);
+}
+
+// Media query service.
+service MediaQuery {
+  rpc Query(QueryRequest) returns (QueryResponse);
+}
+
+// RTP negotiation.
+service MediaRtp {
+  rpc NegotiateRtp(NegotiateRtpRequest) returns (NegotiateRtpResponse);
+}
+
+// Media proxy service.
+service MediaProxy {
+  rpc Proxy(ProxyRequest) returns (ProxyResponse);
+}
+
+// Media recording service.
+service MediaRecord {
+  rpc Record(RecordRequest) returns (RecordResponse);
+}
+
+// Media snapshot service.
+service MediaSnapshot {
+  rpc Snapshot(SnapshotRequest) returns (SnapshotResponse);
+}
+
+// Generic media command execution.
+service MediaControl {
+  rpc Execute(MediaControlExecuteRequest) returns (MediaControlExecuteResponse);
+}
+
+// Media event stream.
+service MediaEventStream {
+  rpc StreamEvents(StreamEventsRequest) returns (stream StreamEventsResponse);
+}
+
+// Plugin runtime bi-directional stream.
+service PluginRuntime {
+  rpc ConnectStream(stream PluginRuntimeConnectStreamRequest) returns (stream PluginRuntimeConnectStreamResponse);
+}
+
+// Node command specific request/response are in common.proto.
+
+// Cluster registry request and response messages.
+message RegisterNodeRequest {
+  cheetah.cluster.v1.NodeRegistration node = 1;
+}
+
+message RegisterNodeResponse {
+  cheetah.cluster.v1.NodeInfo node = 1;
+}
+
+message HeartbeatNodeRequest {
+  cheetah.cluster.v1.NodeHeartbeat heartbeat = 1;
+}
+
+message HeartbeatNodeResponse {
+  cheetah.cluster.v1.NodeInfo node = 1;
+}
+
+message DrainNodeRequest {
+  cheetah.cluster.v1.NodeDrain drain = 1;
+}
+
+message DrainNodeResponse {
+  cheetah.cluster.v1.NodeInfo node = 1;
+}
+
+// Media cluster registry request and response messages.
+message RegisterMediaNodeRequest {
+  cheetah.media.v1.MediaNodeRegistration node = 1;
+}
+
+message RegisterMediaNodeResponse {
+  cheetah.media.v1.MediaNodeInfo node = 1;
+}
+
+message HeartbeatMediaNodeRequest {
+  cheetah.media.v1.MediaNodeHeartbeat heartbeat = 1;
+}
+
+message HeartbeatMediaNodeResponse {
+  cheetah.media.v1.MediaNodeInfo node = 1;
+}
+
+message DrainMediaNodeRequest {
+  cheetah.media.v1.MediaNodeDrain drain = 1;
+}
+
+message DrainMediaNodeResponse {
+  cheetah.media.v1.MediaNodeInfo node = 1;
+}
+
+// Media capability request and response messages.
+message QueryCapabilitiesRequest {}
+
+message QueryCapabilitiesResponse {
+  cheetah.media.v1.MediaCapability capability = 1;
+}
+
+// Media query request and response messages.
+message QueryRequest {
+  cheetah.media.v1.Query query = 1;
+}
+
+message QueryResponse {
+  cheetah.media.v1.QueryResult result = 1;
+}
+
+// RTP negotiation request and response messages.
+message NegotiateRtpRequest {
+  cheetah.media.v1.RtpNegotiation negotiation = 1;
+}
+
+message NegotiateRtpResponse {
+  cheetah.media.v1.RtpSession session = 1;
+}
+
+// Media proxy request and response messages.
+message ProxyRequest {
+  cheetah.media.v1.ProxyNegotiation negotiation = 1;
+}
+
+message ProxyResponse {
+  cheetah.media.v1.ProxySession session = 1;
+}
+
+// Media recording request and response messages.
+message RecordRequest {
+  cheetah.media.v1.RecordRequest record = 1;
+}
+
+message RecordResponse {
+  cheetah.media.v1.RecordSession session = 1;
+}
+
+// Media snapshot request and response messages.
+message SnapshotRequest {
+  cheetah.media.v1.SnapshotRequest snapshot = 1;
+}
+
+message SnapshotResponse {
+  cheetah.media.v1.Snapshot snapshot = 1;
+}
+
+// Media control request and response messages.
+message MediaControlExecuteRequest {
+  CommandEnvelope command = 1;
+}
+
+message MediaControlExecuteResponse {
+  CommandResult result = 1;
+}
+
+// Media event stream request and response messages.
+message StreamEventsRequest {
+  ResourceRef filter = 1;
+}
+
+message StreamEventsResponse {
+  EventEnvelope event = 1;
+}
+
+// Plugin runtime stream wrapper messages.
+message PluginRuntimeConnectStreamRequest {
+  cheetah.plugin.v1.PluginFrame frame = 1;
+}
+
+message PluginRuntimeConnectStreamResponse {
+  cheetah.plugin.v1.HostFrame frame = 1;
+}
