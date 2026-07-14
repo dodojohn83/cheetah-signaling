@@ -77,7 +77,15 @@ impl EventCache {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let cursor = inner.next_cursor;
-        inner.next_cursor = cursor.checked_add(1).unwrap_or(cursor);
+        let new_cursor = match cursor.checked_add(1) {
+            Some(c) => c,
+            None => {
+                tracing::warn!("event cursor overflow; clearing bounded cache");
+                inner.buffer.clear();
+                1
+            }
+        };
+        inner.next_cursor = new_cursor;
         inner.buffer.push_back(CachedEvent {
             cursor,
             tenant_id,

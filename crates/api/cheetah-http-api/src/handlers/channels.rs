@@ -34,6 +34,5 @@ pub async fn replace_catalog(
         .replace_channel_catalog(&_ctx.0, &mut *uow, device_id, request)
         .await
         .map_err(HttpError::from)?;
-    uow.commit().await.map_err(HttpError::from)?;
     Ok(Json(serde_json::to_value(result).map_err(HttpError::from)?))
 }

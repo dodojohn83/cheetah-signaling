@@ -15,11 +15,16 @@ use std::sync::Arc;
 use std::time::Duration;
 use tower::ServiceBuilder;
 use tower_http::{
-    compression::CompressionLayer, cors::CorsLayer, timeout::TimeoutLayer, trace::TraceLayer,
+    compression::CompressionLayer,
+    cors::{Any, CorsLayer},
+    timeout::TimeoutLayer,
+    trace::TraceLayer,
 };
 
 /// Builds the public API router.
 pub fn build_router(state: ApiState) -> Router {
+    let timeout = Duration::from_millis(state.config.read_timeout_ms);
+    let body_limit = state.config.request_body_limit_bytes;
     let api = Router::new()
         .route("/health/live", get(health::live))
         .route("/health/ready", get(health::ready))
@@ -84,12 +89,17 @@ pub fn build_router(state: ApiState) -> Router {
         ServiceBuilder::new()
             .layer(TraceLayer::new_for_http())
             .layer(CompressionLayer::new())
-            .layer(CorsLayer::permissive())
+            .layer(
+                CorsLayer::new()
+                    .allow_origin(Any)
+                    .allow_methods(Any)
+                    .allow_headers(Any),
+            )
             .layer(TimeoutLayer::with_status_code(
                 StatusCode::REQUEST_TIMEOUT,
-                Duration::from_secs(30),
+                timeout,
             ))
-            .layer(DefaultBodyLimit::max(1024 * 1024)),
+            .layer(DefaultBodyLimit::max(body_limit)),
     )
 }
 

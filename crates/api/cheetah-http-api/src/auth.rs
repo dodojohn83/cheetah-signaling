@@ -3,7 +3,7 @@
 use crate::{ApiState, HttpError};
 use axum::{extract::FromRequestParts, http::request::Parts};
 use cheetah_signal_types::{Principal, PrincipalKind, TenantId};
-use jsonwebtoken::{DecodingKey, TokenData, Validation, decode, decode_header};
+use jsonwebtoken::{Algorithm, DecodingKey, TokenData, Validation, decode};
 use secrecy::ExposeSecret;
 use serde::Deserialize;
 use std::sync::Arc;
@@ -119,15 +119,16 @@ async fn authenticate_bearer(
 ) -> Result<AuthContext, HttpError> {
     let pem = security.jwt_public_key_ref.expose_secret();
     if pem.is_empty() {
-        return authenticate_static_key(security, token);
+        return Err(HttpError::Unauthenticated(
+            "JWT authentication not configured".to_string(),
+        ));
     }
 
-    let header = decode_header(token)
-        .map_err(|e| HttpError::Unauthenticated(format!("invalid JWT header: {e}")))?;
-    let algorithm = header.alg;
+    // The validation algorithm is fixed to RS256 and not read from the untrusted
+    // token header to prevent algorithm confusion attacks.
     let key = DecodingKey::from_rsa_pem(pem.as_bytes())
         .map_err(|e| HttpError::Internal(format!("invalid JWT public key configuration: {e}")))?;
-    let mut validation = Validation::new(algorithm);
+    let mut validation = Validation::new(Algorithm::RS256);
     validation.set_required_spec_claims(&["exp"]);
     let token_data: TokenData<JwtClaims> = decode(token, &key, &validation)
         .map_err(|e| HttpError::Unauthenticated(format!("JWT validation failed: {e}")))?;

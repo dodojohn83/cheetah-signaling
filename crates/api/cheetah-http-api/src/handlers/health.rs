@@ -1,6 +1,6 @@
 //! Health, readiness and metrics handlers.
 
-use crate::{ApiState, HttpError};
+use crate::{ApiState, AuthContext, HttpError};
 use axum::{
     extract::State,
     http::StatusCode,
@@ -32,6 +32,10 @@ pub async fn ready(State(state): State<Arc<ApiState>>) -> Result<impl IntoRespon
 }
 
 /// Prometheus metrics exposition.
-pub async fn metrics(State(state): State<Arc<ApiState>>) -> Response {
-    crate::metrics::metrics_response(state.metrics.clone())
+pub async fn metrics(
+    State(state): State<Arc<ApiState>>,
+    auth: AuthContext,
+) -> Result<Response, HttpError> {
+    auth.require_scope("viewer")?;
+    Ok(crate::metrics::metrics_response(state.metrics.clone()))
 }

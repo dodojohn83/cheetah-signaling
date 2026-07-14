@@ -34,7 +34,6 @@ pub async fn create_device(
         .register_or_update_device(&_ctx.0, &mut *uow, request)
         .await
         .map_err(HttpError::from)?;
-    uow.commit().await.map_err(HttpError::from)?;
     Ok((
         StatusCode::CREATED,
         Json(serde_json::to_value(result).map_err(HttpError::from)?),
@@ -73,7 +72,6 @@ pub async fn update_device(
         .update_device_capabilities(&_ctx.0, &mut *uow, device_id, request)
         .await
         .map_err(HttpError::from)?;
-    uow.commit().await.map_err(HttpError::from)?;
     Ok(Json(serde_json::to_value(result).map_err(HttpError::from)?))
 }
 
@@ -90,6 +88,5 @@ pub async fn retire_device(
         .retire_device(&_ctx.0, &mut *uow, device_id, RetireDeviceRequest {})
         .await
         .map_err(HttpError::from)?;
-    uow.commit().await.map_err(HttpError::from)?;
     Ok(Json(serde_json::to_value(result).map_err(HttpError::from)?))
 }

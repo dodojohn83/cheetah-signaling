@@ -1,5 +1,7 @@
 //! Integration tests for health and readiness endpoints.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 mod common;
 
 #[tokio::test]
@@ -22,6 +24,9 @@ async fn ready_returns_ok_after_migrations() {
         .await
         .expect("send request");
     assert_eq!(response.status(), reqwest::StatusCode::OK);
-    let body = response.json::<serde_json::Value>().await.expect("read body");
+    let body = response
+        .json::<serde_json::Value>()
+        .await
+        .expect("read body");
     assert_eq!(body["status"], "ready");
 }

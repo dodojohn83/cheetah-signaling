@@ -1,14 +1,14 @@
 //! Shared test harness for `cheetah-http-api` integration tests.
 
-#![allow(dead_code)]
+#![allow(dead_code, clippy::unwrap_used, clippy::expect_used)]
 
 use cheetah_domain::in_memory::{
     InMemoryClock, InMemoryDeviceOwnerResolver, InMemoryIdGenerator, InMemoryMediaPort,
 };
 use cheetah_http_api::{ApiConfig, ApiServer, ApiState};
 use cheetah_message_local::InProcessMessageBus;
-use cheetah_signal_types::config::SecurityConfig;
 use cheetah_signal_types::IdGenerator;
+use cheetah_signal_types::config::SecurityConfig;
 use cheetah_storage_api::Storage;
 use secrecy::SecretString;
 use std::net::SocketAddr;
@@ -43,11 +43,7 @@ impl TestServer {
                 .await
                 .expect("create sqlite storage"),
         );
-        storage
-            .migration()
-            .run()
-            .await
-            .expect("run migrations");
+        storage.migration().run().await.expect("run migrations");
 
         let api_key = "test-api-key".to_string();
         let tenant_id = uuid::Uuid::now_v7().to_string();
@@ -115,7 +111,7 @@ impl TestServer {
         let url = format!("{}{}", self.base_url, path);
         self.client
             .request(method, url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("x-api-key", &self.api_key)
             .header("x-tenant-id", &self.tenant_id)
     }
 

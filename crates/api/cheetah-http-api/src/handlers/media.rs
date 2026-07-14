@@ -68,7 +68,6 @@ pub async fn create_session(
             )));
         }
     };
-    uow.commit().await.map_err(HttpError::from)?;
     Ok((
         StatusCode::ACCEPTED,
         Json(serde_json::to_value(result).map_err(HttpError::from)?),
@@ -103,7 +102,6 @@ pub async fn stop_session(
         .stop_live(&_ctx.0, &mut *uow, request)
         .await
         .map_err(HttpError::from)?;
-    uow.commit().await.map_err(HttpError::from)?;
     Ok(Json(serde_json::to_value(result).map_err(HttpError::from)?))
 }
 
@@ -123,6 +121,5 @@ pub async fn control_session(
         .control_playback(&_ctx.0, &mut *uow, request)
         .await
         .map_err(HttpError::from)?;
-    uow.commit().await.map_err(HttpError::from)?;
     Ok(Json(serde_json::to_value(result).map_err(HttpError::from)?))
 }

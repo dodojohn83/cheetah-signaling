@@ -1,5 +1,7 @@
 //! Integration tests for authentication and authorization.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 mod common;
 
 #[tokio::test]
@@ -34,6 +36,9 @@ async fn valid_api_key_allows_list_request() {
         .await
         .expect("send request");
     assert_eq!(response.status(), reqwest::StatusCode::OK);
-    let body = response.json::<serde_json::Value>().await.expect("read body");
+    let body = response
+        .json::<serde_json::Value>()
+        .await
+        .expect("read body");
     assert_eq!(body["items"], serde_json::json!([]));
 }

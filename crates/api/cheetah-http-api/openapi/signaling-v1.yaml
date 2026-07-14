@@ -4,7 +4,7 @@ info:
   version: 1.0.0
   description: Northbound REST API for Cheetah Signaling.
 servers:
-  - url: /api/v1
+  - url: /
 paths:
   /health/live:
     get:

@@ -58,7 +58,6 @@ pub async fn cancel_operation(
         .cancel_operation(&_ctx.0, &mut *uow, operation_id)
         .await
         .map_err(HttpError::from)?;
-    uow.commit().await.map_err(HttpError::from)?;
     Ok(Json(
         serde_json::to_value(operation).map_err(HttpError::from)?,
     ))
