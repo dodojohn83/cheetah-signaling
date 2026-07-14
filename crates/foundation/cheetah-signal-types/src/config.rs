@@ -170,6 +170,10 @@ pub struct HttpConfig {
     pub read_timeout_ms: DurationMs,
     /// Allowed CORS origins. Empty disables cross-origin requests.
     pub cors_allowed_origins: Vec<String>,
+    /// Rate limit allowed requests per second per (source, tenant, protocol, node).
+    pub rate_limit_requests_per_second: u32,
+    /// Rate limit burst capacity.
+    pub rate_limit_burst: u32,
 }
 
 impl Default for HttpConfig {
@@ -181,6 +185,8 @@ impl Default for HttpConfig {
             tls_key_ref: None,
             read_timeout_ms: DurationMs::from_seconds(5),
             cors_allowed_origins: Vec::new(),
+            rate_limit_requests_per_second: 100,
+            rate_limit_burst: 200,
         }
     }
 }

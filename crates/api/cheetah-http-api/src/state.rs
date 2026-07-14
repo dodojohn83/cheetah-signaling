@@ -2,6 +2,7 @@
 
 use crate::event_cache::EventCache;
 use crate::metrics::RequestMetrics;
+use crate::rate_limit::RateLimiter;
 use cheetah_domain::ports::{DeviceOwnerResolver, IdGenerator, MediaPort};
 use cheetah_message_api::RawEventBus;
 use cheetah_signal_application::{DeviceService, MediaService, OperationService};
@@ -10,6 +11,7 @@ use cheetah_signal_types::{Clock, NodeId, SignalConfig};
 use cheetah_storage_api::Storage;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
 
 /// Configuration subset used by the HTTP API.
 #[derive(Clone, Debug)]
@@ -24,6 +26,10 @@ pub struct ApiConfig {
     pub request_body_limit_bytes: usize,
     /// Allowed CORS origins. Empty disables cross-origin requests.
     pub cors_allowed_origins: Vec<String>,
+    /// Rate limit requests per second per (source, tenant, protocol, node).
+    pub rate_limit_requests_per_second: u32,
+    /// Rate limit burst capacity.
+    pub rate_limit_burst: u32,
     /// Process node identifier.
     pub node_id: NodeId,
     /// Security settings.
@@ -38,6 +44,8 @@ impl From<&SignalConfig> for ApiConfig {
             read_timeout_ms: config.http.read_timeout_ms.as_millis() as u64,
             request_body_limit_bytes: 1024 * 1024,
             cors_allowed_origins: config.http.cors_allowed_origins.clone(),
+            rate_limit_requests_per_second: config.http.rate_limit_requests_per_second,
+            rate_limit_burst: config.http.rate_limit_burst,
             node_id: config.system.node_id.unwrap_or_default(),
             security: config.security.clone(),
         }
@@ -67,6 +75,8 @@ pub struct ApiState {
     pub config: ApiConfig,
     /// Shared request metrics.
     pub metrics: Arc<RequestMetrics>,
+    /// Per-key request rate limiter.
+    pub rate_limiter: RateLimiter,
 }
 
 impl std::fmt::Debug for ApiState {
@@ -88,6 +98,10 @@ impl ApiState {
         owner_resolver: Arc<dyn DeviceOwnerResolver>,
         media_port: Arc<dyn MediaPort>,
     ) -> Self {
+        let rate_limiter = RateLimiter::new(
+            config.rate_limit_burst,
+            config.rate_limit_requests_per_second,
+        );
         let device_service = DeviceService::new(clock.clone(), id_generator.clone());
         let operation_service = OperationService::new(clock.clone(), id_generator.clone());
         let media_service = MediaService::new(
@@ -107,6 +121,7 @@ impl ApiState {
             id_generator,
             config,
             metrics: Arc::new(RequestMetrics::default()),
+            rate_limiter,
         }
     }
 }
@@ -118,6 +133,8 @@ pub struct ApiServer {
     pub local_addr: SocketAddr,
     /// Server shutdown signal.
     pub shutdown: tokio::sync::oneshot::Sender<()>,
+    /// Cancellation token for background tasks.
+    pub cancel: CancellationToken,
 }
 
 impl ApiServer {
@@ -125,6 +142,8 @@ impl ApiServer {
     pub async fn start(state: ApiState) -> Result<Self, crate::HttpError> {
         let event_bus = state.event_bus.clone();
         let event_cache = state.event_cache.clone();
+        let cancel = CancellationToken::new();
+        let event_cancel = cancel.child_token();
         tokio::spawn(async move {
             let mut sub = match event_bus
                 .subscribe("sig.v1.event.>", "http-api-event-cache")
@@ -137,16 +156,21 @@ impl ApiServer {
                 }
             };
             loop {
-                match sub.next().await {
-                    Ok(Some(delivery)) => {
-                        if let Err(e) = event_cache.push(&delivery.envelope) {
-                            tracing::debug!("failed to cache event: {e}");
+                tokio::select! {
+                    _ = event_cancel.cancelled() => break,
+                    next = sub.next() => {
+                        match next {
+                            Ok(Some(delivery)) => {
+                                if let Err(e) = event_cache.push(&delivery.envelope) {
+                                    tracing::debug!("failed to cache event: {e}");
+                                }
+                            }
+                            Ok(None) => break,
+                            Err(e) => {
+                                tracing::error!("event subscription error: {e}");
+                                break;
+                            }
                         }
-                    }
-                    Ok(None) => break,
-                    Err(e) => {
-                        tracing::error!("event subscription error: {e}");
-                        break;
                     }
                 }
             }
@@ -162,7 +186,11 @@ impl ApiServer {
             .local_addr()
             .map_err(|e| crate::HttpError::Internal(format!("failed to get local address: {e}")))?;
         let (tx, rx) = tokio::sync::oneshot::channel();
-        let server = axum::serve(listener, router).with_graceful_shutdown(async {
+        let server = axum::serve(
+            listener,
+            router.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .with_graceful_shutdown(async {
             let _ = rx.await;
         });
         tokio::spawn(async move {
@@ -173,11 +201,13 @@ impl ApiServer {
         Ok(Self {
             local_addr,
             shutdown: tx,
+            cancel,
         })
     }
 
     /// Requests a graceful shutdown.
     pub fn shutdown(self) {
+        self.cancel.cancel();
         let _ = self.shutdown.send(());
     }
 }

@@ -27,6 +27,7 @@ thiserror.workspace = true
 time.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time"] }
 tokio-stream.workspace = true
+tokio-util.workspace = true
 tower.workspace = true
 tower-http.workspace = true
 tracing.workspace = true

@@ -4,10 +4,12 @@ use crate::ApiState;
 use crate::handlers::{
     channels, devices, events, health, media, nodes, operations, tenants, webhooks,
 };
+use crate::rate_limit::rate_limit_middleware;
 use axum::{
     Router,
     extract::DefaultBodyLimit,
     http::{HeaderValue, StatusCode},
+    middleware::from_fn_with_state,
     response::Json,
     routing::{delete, get, patch, post},
 };
@@ -26,6 +28,7 @@ pub fn build_router(state: ApiState) -> Router {
     let timeout = Duration::from_millis(state.config.read_timeout_ms);
     let body_limit = state.config.request_body_limit_bytes;
     let cors = build_cors_layer(&state.config.cors_allowed_origins);
+    let shared_state = Arc::new(state);
     let api = Router::new()
         .route("/health/live", get(health::live))
         .route("/health/ready", get(health::ready))
@@ -84,7 +87,8 @@ pub fn build_router(state: ApiState) -> Router {
         .route("/api/v1/openapi.json", get(crate::openapi::serve_json))
         .route("/api/v1/openapi.yaml", get(crate::openapi::serve_yaml))
         .fallback(fallback)
-        .with_state(Arc::new(state));
+        .with_state(shared_state.clone())
+        .layer(from_fn_with_state(shared_state, rate_limit_middleware));
 
     api.layer(
         ServiceBuilder::new()

@@ -8,6 +8,7 @@ pub mod extract;
 pub mod handlers;
 pub mod metrics;
 pub mod openapi;
+pub mod rate_limit;
 pub mod router;
 pub mod state;
 pub mod webhook;

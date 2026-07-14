@@ -57,6 +57,8 @@ impl TestServer {
             read_timeout_ms: 5000,
             request_body_limit_bytes: 1024 * 1024,
             cors_allowed_origins: Vec::new(),
+            rate_limit_requests_per_second: 0,
+            rate_limit_burst: 0,
             node_id,
             security,
         };
