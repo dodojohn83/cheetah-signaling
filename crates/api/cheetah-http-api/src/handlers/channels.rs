@@ -16,22 +16,24 @@ pub async fn list_channels(
     Path(_device_id): Path<String>,
     Query(_query): Query<ListQuery>,
     State(_state): State<Arc<ApiState>>,
-    _ctx: ApiRequestContext,
+    ctx: ApiRequestContext,
 ) -> Result<Json<Page<serde_json::Value>>, HttpError> {
+    ctx.require_scope("viewer")?;
     Ok(Json(Page::new(Vec::new())))
 }
 
 pub async fn replace_catalog(
     Path(device_id): Path<String>,
     State(state): State<Arc<ApiState>>,
-    _ctx: ApiRequestContext,
+    ctx: ApiRequestContext,
     Json(request): Json<ReplaceChannelCatalogRequest>,
 ) -> Result<impl IntoResponse, HttpError> {
+    ctx.require_scope("operator")?;
     let device_id = device_id.parse::<DeviceId>().map_err(HttpError::from)?;
     let mut uow = state.storage.begin().await.map_err(HttpError::from)?;
     let result = state
         .device_service
-        .replace_channel_catalog(&_ctx.0, &mut *uow, device_id, request)
+        .replace_channel_catalog(&ctx.0, &mut *uow, device_id, request)
         .await
         .map_err(HttpError::from)?;
     Ok(Json(serde_json::to_value(result).map_err(HttpError::from)?))

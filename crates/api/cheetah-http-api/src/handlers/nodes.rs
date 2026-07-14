@@ -16,15 +16,17 @@ use crate::ListQuery;
 pub async fn list_nodes(
     Query(_query): Query<ListQuery>,
     State(_state): State<Arc<ApiState>>,
-    _ctx: ApiRequestContext,
+    ctx: ApiRequestContext,
 ) -> Result<Json<Page<serde_json::Value>>, HttpError> {
+    ctx.require_scope("viewer")?;
     Ok(Json(Page::new(Vec::new())))
 }
 
 pub async fn list_media_nodes(
     Query(_query): Query<ListQuery>,
     State(_state): State<Arc<ApiState>>,
-    _ctx: ApiRequestContext,
+    ctx: ApiRequestContext,
 ) -> Result<Json<Page<serde_json::Value>>, HttpError> {
+    ctx.require_scope("viewer")?;
     Ok(Json(Page::new(Vec::new())))
 }

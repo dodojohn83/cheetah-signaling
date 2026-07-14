@@ -17,6 +17,25 @@ impl std::ops::Deref for ApiRequestContext {
     }
 }
 
+impl ApiRequestContext {
+    /// Checks that the principal has the required scope or `system_admin`.
+    pub fn require_scope(&self, scope: &str) -> Result<(), HttpError> {
+        if self
+            .0
+            .principal
+            .scopes
+            .iter()
+            .any(|s| s == "system_admin" || s == scope)
+        {
+            Ok(())
+        } else {
+            Err(HttpError::PermissionDenied(format!(
+                "missing {scope} scope"
+            )))
+        }
+    }
+}
+
 impl FromRequestParts<Arc<ApiState>> for ApiRequestContext {
     type Rejection = HttpError;
 

@@ -94,6 +94,7 @@ fn authenticate_static_key(
                 "viewer".to_string(),
                 "operator".to_string(),
                 "tenant_admin".to_string(),
+                "system_admin".to_string(),
             ],
         },
         tenant_id: None,

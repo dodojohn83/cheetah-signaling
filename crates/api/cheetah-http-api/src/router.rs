@@ -7,7 +7,7 @@ use crate::handlers::{
 use axum::{
     Router,
     extract::DefaultBodyLimit,
-    http::StatusCode,
+    http::{HeaderValue, StatusCode},
     response::Json,
     routing::{delete, get, patch, post},
 };
@@ -16,7 +16,7 @@ use std::time::Duration;
 use tower::ServiceBuilder;
 use tower_http::{
     compression::CompressionLayer,
-    cors::{Any, CorsLayer},
+    cors::{AllowOrigin, Any, CorsLayer},
     timeout::TimeoutLayer,
     trace::TraceLayer,
 };
@@ -25,6 +25,7 @@ use tower_http::{
 pub fn build_router(state: ApiState) -> Router {
     let timeout = Duration::from_millis(state.config.read_timeout_ms);
     let body_limit = state.config.request_body_limit_bytes;
+    let cors = build_cors_layer(&state.config.cors_allowed_origins);
     let api = Router::new()
         .route("/health/live", get(health::live))
         .route("/health/ready", get(health::ready))
@@ -89,18 +90,30 @@ pub fn build_router(state: ApiState) -> Router {
         ServiceBuilder::new()
             .layer(TraceLayer::new_for_http())
             .layer(CompressionLayer::new())
-            .layer(
-                CorsLayer::new()
-                    .allow_origin(Any)
-                    .allow_methods(Any)
-                    .allow_headers(Any),
-            )
+            .layer(cors)
             .layer(TimeoutLayer::with_status_code(
                 StatusCode::REQUEST_TIMEOUT,
                 timeout,
             ))
             .layer(DefaultBodyLimit::max(body_limit)),
     )
+}
+
+fn build_cors_layer(origins: &[String]) -> CorsLayer {
+    let origins: Vec<HeaderValue> = origins
+        .iter()
+        .filter(|o| !o.is_empty() && o.as_str() != "*")
+        .filter_map(|o| HeaderValue::from_str(o).ok())
+        .collect();
+    if origins.is_empty() {
+        // No allowed origins configured; cross-origin requests are denied.
+        CorsLayer::new()
+    } else {
+        CorsLayer::new()
+            .allow_origin(AllowOrigin::list(origins))
+            .allow_methods(Any)
+            .allow_headers(Any)
+    }
 }
 
 async fn fallback() -> (StatusCode, Json<crate::ProblemDetails>) {

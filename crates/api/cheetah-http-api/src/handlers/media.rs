@@ -2,7 +2,7 @@
 
 #![allow(missing_docs)]
 
-use crate::{ApiRequestContext, ApiState, HttpError, ListQuery};
+use crate::{ApiRequestContext, ApiState, HttpError, IdempotencyKey, ListQuery};
 use axum::{
     Json,
     extract::{Path, Query, State},
@@ -18,16 +18,19 @@ use std::sync::Arc;
 pub async fn list_sessions(
     Query(_query): Query<ListQuery>,
     State(_state): State<Arc<ApiState>>,
-    _ctx: ApiRequestContext,
+    ctx: ApiRequestContext,
 ) -> Result<Json<Page<serde_json::Value>>, HttpError> {
+    ctx.require_scope("viewer")?;
     Ok(Json(Page::new(Vec::new())))
 }
 
 pub async fn create_session(
     State(state): State<Arc<ApiState>>,
-    _ctx: ApiRequestContext,
+    ctx: ApiRequestContext,
+    idempotency: IdempotencyKey,
     Json(body): Json<serde_json::Value>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), HttpError> {
+    ctx.require_scope("operator")?;
     let mut uow = state.storage.begin().await.map_err(HttpError::from)?;
     let purpose = body
         .get("purpose")
@@ -35,29 +38,32 @@ pub async fn create_session(
         .unwrap_or("live");
     let result = match purpose {
         "live" | "LIVE" => {
-            let request: StartLiveRequest =
+            let mut request: StartLiveRequest =
                 serde_json::from_value(body).map_err(HttpError::from)?;
+            request.idempotency_key = idempotency.0.clone();
             state
                 .media_service
-                .start_live(&_ctx.0, &mut *uow, request)
+                .start_live(&ctx.0, &mut *uow, request)
                 .await
                 .map_err(HttpError::from)?
         }
         "playback" => {
-            let request: StartPlaybackRequest =
+            let mut request: StartPlaybackRequest =
                 serde_json::from_value(body).map_err(HttpError::from)?;
+            request.idempotency_key = idempotency.0.clone();
             state
                 .media_service
-                .start_playback(&_ctx.0, &mut *uow, request)
+                .start_playback(&ctx.0, &mut *uow, request)
                 .await
                 .map_err(HttpError::from)?
         }
         "talk" => {
-            let request: StartTalkRequest =
+            let mut request: StartTalkRequest =
                 serde_json::from_value(body).map_err(HttpError::from)?;
+            request.idempotency_key = idempotency.0.clone();
             state
                 .media_service
-                .start_talk(&_ctx.0, &mut *uow, request)
+                .start_talk(&ctx.0, &mut *uow, request)
                 .await
                 .map_err(HttpError::from)?
         }
@@ -77,8 +83,9 @@ pub async fn create_session(
 pub async fn get_session(
     Path(id): Path<String>,
     State(_state): State<Arc<ApiState>>,
-    _ctx: ApiRequestContext,
+    ctx: ApiRequestContext,
 ) -> Result<Json<serde_json::Value>, HttpError> {
+    ctx.require_scope("viewer")?;
     let _media_session_id = id.parse::<MediaSessionId>().map_err(HttpError::from)?;
     Err(HttpError::NotImplemented(
         "get_session not implemented".to_string(),
@@ -88,18 +95,20 @@ pub async fn get_session(
 pub async fn stop_session(
     Path(id): Path<String>,
     State(state): State<Arc<ApiState>>,
-    _ctx: ApiRequestContext,
+    ctx: ApiRequestContext,
+    idempotency: IdempotencyKey,
     Json(_body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, HttpError> {
+    ctx.require_scope("operator")?;
     let media_session_id = id.parse::<MediaSessionId>().map_err(HttpError::from)?;
     let mut uow = state.storage.begin().await.map_err(HttpError::from)?;
     let request = StopLiveRequest {
         media_session_id: media_session_id.to_string(),
-        idempotency_key: uuid::Uuid::now_v7().to_string(),
+        idempotency_key: idempotency.0,
     };
     let result = state
         .media_service
-        .stop_live(&_ctx.0, &mut *uow, request)
+        .stop_live(&ctx.0, &mut *uow, request)
         .await
         .map_err(HttpError::from)?;
     Ok(Json(serde_json::to_value(result).map_err(HttpError::from)?))
@@ -108,17 +117,20 @@ pub async fn stop_session(
 pub async fn control_session(
     Path(id): Path<String>,
     State(state): State<Arc<ApiState>>,
-    _ctx: ApiRequestContext,
+    ctx: ApiRequestContext,
+    idempotency: IdempotencyKey,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, HttpError> {
+    ctx.require_scope("operator")?;
     let media_session_id = id.parse::<MediaSessionId>().map_err(HttpError::from)?;
     let mut request: ControlPlaybackRequest =
         serde_json::from_value(body).map_err(HttpError::from)?;
     request.media_session_id = media_session_id.to_string();
+    request.idempotency_key = idempotency.0;
     let mut uow = state.storage.begin().await.map_err(HttpError::from)?;
     let result = state
         .media_service
-        .control_playback(&_ctx.0, &mut *uow, request)
+        .control_playback(&ctx.0, &mut *uow, request)
         .await
         .map_err(HttpError::from)?;
     Ok(Json(serde_json::to_value(result).map_err(HttpError::from)?))

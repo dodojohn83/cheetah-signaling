@@ -32,6 +32,7 @@ pub async fn event_stream(
     State(state): State<Arc<ApiState>>,
     ctx: ApiRequestContext,
 ) -> Result<Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>>, HttpError> {
+    ctx.require_scope("viewer")?;
     let tenant_filter = Some(ctx.tenant_id.to_string());
     let device_filter = query.device_id;
     let type_filter = query.event_type;

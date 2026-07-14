@@ -18,20 +18,22 @@ use std::sync::Arc;
 pub async fn list_devices(
     Query(_query): Query<ListQuery>,
     State(_state): State<Arc<ApiState>>,
-    _ctx: ApiRequestContext,
+    ctx: ApiRequestContext,
 ) -> Result<Json<Page<serde_json::Value>>, HttpError> {
+    ctx.require_scope("viewer")?;
     Ok(Json(Page::new(Vec::new())))
 }
 
 pub async fn create_device(
     State(state): State<Arc<ApiState>>,
-    _ctx: ApiRequestContext,
+    ctx: ApiRequestContext,
     Json(request): Json<RegisterDeviceRequest>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), HttpError> {
+    ctx.require_scope("operator")?;
     let mut uow = state.storage.begin().await.map_err(HttpError::from)?;
     let result = state
         .device_service
-        .register_or_update_device(&_ctx.0, &mut *uow, request)
+        .register_or_update_device(&ctx.0, &mut *uow, request)
         .await
         .map_err(HttpError::from)?;
     Ok((
@@ -43,13 +45,14 @@ pub async fn create_device(
 pub async fn get_device(
     Path(id): Path<String>,
     State(state): State<Arc<ApiState>>,
-    _ctx: ApiRequestContext,
+    ctx: ApiRequestContext,
 ) -> Result<Json<serde_json::Value>, HttpError> {
+    ctx.require_scope("viewer")?;
     let device_id = id.parse::<DeviceId>().map_err(HttpError::from)?;
     let mut uow = state.storage.begin().await.map_err(HttpError::from)?;
     let device = uow
         .device_repository()
-        .get(_ctx.tenant_id, device_id)
+        .get(ctx.tenant_id, device_id)
         .await
         .map_err(HttpError::from)?
         .ok_or_else(|| HttpError::from(DomainError::not_found("device", device_id.to_string())))?;
@@ -62,14 +65,15 @@ pub async fn get_device(
 pub async fn update_device(
     Path(id): Path<String>,
     State(state): State<Arc<ApiState>>,
-    _ctx: ApiRequestContext,
+    ctx: ApiRequestContext,
     Json(request): Json<UpdateDeviceCapabilitiesRequest>,
 ) -> Result<Json<serde_json::Value>, HttpError> {
+    ctx.require_scope("operator")?;
     let device_id = id.parse::<DeviceId>().map_err(HttpError::from)?;
     let mut uow = state.storage.begin().await.map_err(HttpError::from)?;
     let result = state
         .device_service
-        .update_device_capabilities(&_ctx.0, &mut *uow, device_id, request)
+        .update_device_capabilities(&ctx.0, &mut *uow, device_id, request)
         .await
         .map_err(HttpError::from)?;
     Ok(Json(serde_json::to_value(result).map_err(HttpError::from)?))
@@ -78,14 +82,15 @@ pub async fn update_device(
 pub async fn retire_device(
     Path(id): Path<String>,
     State(state): State<Arc<ApiState>>,
-    _ctx: ApiRequestContext,
+    ctx: ApiRequestContext,
     Json(_request): Json<RetireDeviceRequest>,
 ) -> Result<Json<serde_json::Value>, HttpError> {
+    ctx.require_scope("operator")?;
     let device_id = id.parse::<DeviceId>().map_err(HttpError::from)?;
     let mut uow = state.storage.begin().await.map_err(HttpError::from)?;
     let result = state
         .device_service
-        .retire_device(&_ctx.0, &mut *uow, device_id, RetireDeviceRequest {})
+        .retire_device(&ctx.0, &mut *uow, device_id, RetireDeviceRequest {})
         .await
         .map_err(HttpError::from)?;
     Ok(Json(serde_json::to_value(result).map_err(HttpError::from)?))

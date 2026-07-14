@@ -22,6 +22,8 @@ pub struct ApiConfig {
     pub read_timeout_ms: u64,
     /// Maximum request body size in bytes.
     pub request_body_limit_bytes: usize,
+    /// Allowed CORS origins. Empty disables cross-origin requests.
+    pub cors_allowed_origins: Vec<String>,
     /// Process node identifier.
     pub node_id: NodeId,
     /// Security settings.
@@ -35,6 +37,7 @@ impl From<&SignalConfig> for ApiConfig {
             port: config.http.port,
             read_timeout_ms: config.http.read_timeout_ms.as_millis() as u64,
             request_body_limit_bytes: 1024 * 1024,
+            cors_allowed_origins: config.http.cors_allowed_origins.clone(),
             node_id: config.system.node_id.unwrap_or_default(),
             security: config.security.clone(),
         }

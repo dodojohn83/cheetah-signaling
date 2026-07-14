@@ -168,6 +168,8 @@ pub struct HttpConfig {
     pub tls_key_ref: Option<String>,
     /// Request read timeout.
     pub read_timeout_ms: DurationMs,
+    /// Allowed CORS origins. Empty disables cross-origin requests.
+    pub cors_allowed_origins: Vec<String>,
 }
 
 impl Default for HttpConfig {
@@ -178,6 +180,7 @@ impl Default for HttpConfig {
             tls_cert_ref: None,
             tls_key_ref: None,
             read_timeout_ms: DurationMs::from_seconds(5),
+            cors_allowed_origins: Vec::new(),
         }
     }
 }
