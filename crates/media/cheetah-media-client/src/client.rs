@@ -139,16 +139,33 @@ impl MediaControlClient {
 
         let permit = self.acquire_permit(&entry, endpoint).await?;
 
+        let deadline = request.deadline;
         let command_envelope = build_command_envelope(request)?;
 
         let mut last_error: Option<Status> = None;
         for attempt in 0..=self.config.max_retry_attempts {
-            if attempt > 0 {
-                let delay = backoff(
+            let delay = if attempt == 0 {
+                0
+            } else {
+                backoff(
                     self.config.retry_base_delay_ms,
                     self.config.retry_max_delay_ms,
                     attempt,
-                );
+                )
+            };
+
+            if let Some(deadline) = deadline {
+                let now = UtcTimestamp::from_offset(time::OffsetDateTime::now_utc());
+                let needed =
+                    time::Duration::milliseconds((self.config.request_timeout_ms + delay) as i64);
+                if now.as_offset() + needed >= deadline.as_offset() {
+                    return Err(MediaClientError::Grpc(last_error.unwrap_or_else(|| {
+                        Status::deadline_exceeded("media command deadline exceeded")
+                    })));
+                }
+            }
+
+            if delay > 0 {
                 sleep(Duration::from_millis(delay)).await;
             }
 
@@ -310,6 +327,7 @@ fn build_command_envelope(
             owner_epoch: request.owner_epoch.0,
             traceparent: String::new(),
             tracestate: String::new(),
+            contract_version: request.contract_version,
         }),
         target: Some(target),
         idempotency_key: request.idempotency_key,
@@ -337,5 +355,9 @@ fn is_retryable(code: Code) -> bool {
 
 fn backoff(base_ms: u64, max_ms: u64, attempt: usize) -> u64 {
     let base = base_ms.saturating_mul(2u64.saturating_pow(attempt as u32));
-    base.min(max_ms)
+    if base == 0 {
+        return 0;
+    }
+    let jitter = fastrand::u64(..=base);
+    base.saturating_add(jitter).min(max_ms)
 }

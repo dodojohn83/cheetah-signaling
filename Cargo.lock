@@ -507,6 +507,7 @@ dependencies = [
  "async-trait",
  "cheetah-signal-contracts",
  "cheetah-signal-types",
+ "fastrand",
  "prost-types",
  "thiserror",
  "time",

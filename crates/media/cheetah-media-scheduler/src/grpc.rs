@@ -65,7 +65,7 @@ impl MediaClusterRegistry for MediaClusterRegistryService {
             .node
             .ok_or_else(|| Status::invalid_argument("missing node registration"))?;
         check_identity(&identity, &self.config, &registration.node_id)?;
-        validate_control_endpoint(&registration.listen_addr, &self.config)?;
+        validate_control_endpoint(&registration.listen_addr, &self.config).await?;
 
         let node_id = parse_node_id(&registration.node_id)?;
         let instance_id = self.id_generator.generate_node_id().to_string();
@@ -270,7 +270,10 @@ fn to_proto_status(status: NodeStatus) -> media_proto::MediaNodeStatus {
     }
 }
 
-fn validate_control_endpoint(endpoint: &str, config: &MediaRegistryConfig) -> Result<(), Status> {
+async fn validate_control_endpoint(
+    endpoint: &str,
+    config: &MediaRegistryConfig,
+) -> Result<(), Status> {
     if endpoint.len() > config.max_endpoint_uri_length {
         return Err(Status::invalid_argument(format!(
             "control endpoint exceeds {} bytes",
@@ -294,26 +297,60 @@ fn validate_control_endpoint(endpoint: &str, config: &MediaRegistryConfig) -> Re
     if host.is_empty() {
         return Err(Status::invalid_argument("empty control endpoint host"));
     }
-    if !config.allow_internal_endpoints
-        && let Ok(ip) = std::net::IpAddr::from_str(host)
-        && is_internal_ip(ip)
-    {
-        return Err(Status::invalid_argument(
-            "internal control endpoint is not allowed",
-        ));
+
+    if !config.allow_internal_endpoints {
+        let port = uri
+            .port_u16()
+            .unwrap_or_else(|| if scheme == "https" { 443 } else { 80 });
+        let host_has_internal = host_is_internal(host, port, config.endpoint_dns_lookup_timeout_ms)
+            .await
+            .map_err(|e| {
+                Status::invalid_argument(format!("control endpoint validation failed: {e}"))
+            })?;
+        if host_has_internal {
+            return Err(Status::invalid_argument(
+                "internal control endpoint is not allowed",
+            ));
+        }
     }
     Ok(())
 }
 
+async fn host_is_internal(host: &str, port: u16, timeout_ms: u64) -> Result<bool, Status> {
+    if let Ok(ip) = std::net::IpAddr::from_str(host) {
+        return Ok(is_internal_ip(ip));
+    }
+
+    let lookup = tokio::time::timeout(
+        std::time::Duration::from_millis(timeout_ms),
+        tokio::net::lookup_host((host, port)),
+    )
+    .await
+    .map_err(|_| Status::invalid_argument("control endpoint DNS lookup timed out"))?
+    .map_err(|e| Status::invalid_argument(format!("control endpoint DNS lookup failed: {e}")))?;
+
+    for addr in lookup {
+        if is_internal_ip(addr.ip()) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 fn is_internal_ip(ip: std::net::IpAddr) -> bool {
     match ip {
-        std::net::IpAddr::V4(v4) => {
-            v4.is_unspecified() || v4.is_loopback() || v4.is_link_local() || v4.is_private()
-        }
+        std::net::IpAddr::V4(v4) => is_internal_ipv4(v4),
         std::net::IpAddr::V6(v6) => {
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return is_internal_ipv4(v4);
+            }
             v6.is_unspecified() || v6.is_loopback() || v6.is_unicast_link_local()
         }
     }
+}
+
+fn is_internal_ipv4(v4: std::net::Ipv4Addr) -> bool {
+    v4.is_unspecified() || v4.is_loopback() || v4.is_link_local() || v4.is_private()
 }
 
 fn map_scheduler_error(e: SchedulerError) -> Status {

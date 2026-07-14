@@ -16,6 +16,8 @@ pub struct MediaRegistryConfig {
     pub max_endpoint_uri_length: usize,
     /// When false, loopback, link-local and private network endpoints are rejected.
     pub allow_internal_endpoints: bool,
+    /// Timeout for DNS resolution during endpoint validation.
+    pub endpoint_dns_lookup_timeout_ms: u64,
 }
 
 impl Default for MediaRegistryConfig {
@@ -34,6 +36,7 @@ impl MediaRegistryConfig {
             allowed_endpoint_schemes: vec!["http".to_string(), "https".to_string()],
             max_endpoint_uri_length: 2048,
             allow_internal_endpoints: false,
+            endpoint_dns_lookup_timeout_ms: 1_000,
         }
     }
 
@@ -41,6 +44,7 @@ impl MediaRegistryConfig {
     pub fn test() -> Self {
         Self {
             allow_internal_endpoints: true,
+            endpoint_dns_lookup_timeout_ms: 100,
             ..Self::production()
         }
     }
