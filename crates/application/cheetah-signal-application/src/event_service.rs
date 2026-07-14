@@ -1,6 +1,6 @@
 //! Event publishing service.
 
-use cheetah_domain::{EventPublisher, Outbox};
+use cheetah_domain::{EventPublisher, Outbox, OutboxEntry};
 use cheetah_signal_types::{DurationMs, UtcTimestamp};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -19,32 +19,58 @@ impl EventService {
         Self
     }
 
-    /// Publishes up to `limit` pending outbox events as of `now`.
-    ///
-    /// Each event is published once. On success it is marked published. On
-    /// failure it is marked failed with an incrementing attempt count and a
-    /// scheduled retry time. Retry delays use exponential backoff with
-    /// deterministic jitter derived from the event ID so that multiple relay
-    /// instances do not retry at the exact same instant. After `MAX_ATTEMPTS`
-    /// the event enters the permanent failure state.
-    pub async fn publish_pending(
+    /// Reads up to `limit` pending outbox events as of `now`.
+    pub async fn read_pending(
         &self,
         outbox: &mut dyn Outbox,
-        publisher: &dyn EventPublisher,
         now: UtcTimestamp,
         limit: usize,
-    ) -> crate::Result<usize> {
-        let entries = outbox.pending(now, limit).await?;
-        let mut published = 0;
+    ) -> crate::Result<Vec<OutboxEntry>> {
+        Ok(outbox.pending(now, limit).await?)
+    }
 
-        for entry in &entries {
-            let attempts = entry.attempts + 1;
-            match publisher.publish(&entry.event).await {
+    /// Publishes each event to `publisher` and returns the per-event result.
+    ///
+    /// This call performs external I/O and must not be invoked while a database
+    /// transaction is held open.
+    pub async fn publish_events(
+        &self,
+        publisher: &dyn EventPublisher,
+        entries: &[OutboxEntry],
+    ) -> Vec<crate::Result<()>> {
+        let mut results = Vec::with_capacity(entries.len());
+        for entry in entries {
+            results.push(
+                publisher
+                    .publish(&entry.event)
+                    .await
+                    .map_err(crate::SignalError::from),
+            );
+        }
+        results
+    }
+
+    /// Records the outcome of a publish attempt for each entry.
+    ///
+    /// Successful results mark the event as published. Failures increment the
+    /// attempt count and schedule a retry with exponential backoff and
+    /// deterministic jitter derived from the event ID.
+    pub async fn record_results(
+        &self,
+        outbox: &mut dyn Outbox,
+        now: UtcTimestamp,
+        entries: &[OutboxEntry],
+        results: &[crate::Result<()>],
+    ) -> crate::Result<usize> {
+        let mut published = 0;
+        for (entry, result) in entries.iter().zip(results.iter()) {
+            match result {
                 Ok(()) => {
                     outbox.mark_published(entry.event.event_id).await?;
                     published += 1;
                 }
                 Err(e) => {
+                    let attempts = entry.attempts + 1;
                     let failed = attempts >= MAX_ATTEMPTS;
                     let (error, next_attempt_at) = if failed {
                         (Some(e.to_string()), None)
@@ -82,7 +108,24 @@ impl EventService {
                 }
             }
         }
-
         Ok(published)
+    }
+
+    /// Publishes pending outbox events in a single call.
+    ///
+    /// The caller is responsible for ensuring that `outbox` is not backed by
+    /// an open SQL transaction while external I/O is performed. For production
+    /// relays, use `read_pending`, `publish_events`, and `record_results`
+    /// outside and inside separate transactions instead.
+    pub async fn publish_pending(
+        &self,
+        outbox: &mut dyn Outbox,
+        publisher: &dyn EventPublisher,
+        now: UtcTimestamp,
+        limit: usize,
+    ) -> crate::Result<usize> {
+        let entries = self.read_pending(outbox, now, limit).await?;
+        let results = self.publish_events(publisher, &entries).await;
+        self.record_results(outbox, now, &entries, &results).await
     }
 }

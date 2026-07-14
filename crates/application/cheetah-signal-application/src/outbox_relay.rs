@@ -43,9 +43,35 @@ impl OutboxRelay {
 
     /// Reads, publishes, and marks a batch of pending outbox events.
     ///
-    /// Returns the number of events successfully published. Events that fail
-    /// are retried later according to the configured retry policy.
+    /// Pending events are read inside a short transaction, published to the
+    /// message bus outside any transaction, and then marked inside a second
+    /// short transaction. This avoids holding a database transaction open while
+    /// waiting for NATS or another external message broker.
     pub async fn run_once(&self) -> Result<usize> {
+        let now = self.clock.now_wall();
+
+        // 1. Read pending events and close the read transaction.
+        let entries = {
+            let mut uow = self
+                .storage
+                .begin()
+                .await
+                .map_err(|e| SignalError::from(cheetah_domain::DomainError::from(e)))?;
+            let entries = self
+                .event_service
+                .read_pending(uow.outbox(), now, self.batch_size)
+                .await?;
+            uow.commit().await?;
+            entries
+        };
+
+        // 2. Publish to the external message bus without holding a DB tx.
+        let results = self
+            .event_service
+            .publish_events(self.publisher.as_ref(), &entries)
+            .await;
+
+        // 3. Record outcomes in a new transaction.
         let mut uow = self
             .storage
             .begin()
@@ -53,14 +79,10 @@ impl OutboxRelay {
             .map_err(|e| SignalError::from(cheetah_domain::DomainError::from(e)))?;
         let published = self
             .event_service
-            .publish_pending(
-                uow.outbox(),
-                self.publisher.as_ref(),
-                self.clock.now_wall(),
-                self.batch_size,
-            )
+            .record_results(uow.outbox(), now, &entries, &results)
             .await?;
         uow.commit().await?;
+
         Ok(published)
     }
 }

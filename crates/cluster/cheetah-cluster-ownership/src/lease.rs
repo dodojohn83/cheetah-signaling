@@ -146,7 +146,7 @@ impl CacheState {
         }
     }
 
-    fn insert(&mut self, key: (TenantId, DeviceId), entry: CacheEntry) {
+    fn insert(&mut self, now: UtcTimestamp, key: (TenantId, DeviceId), entry: CacheEntry) {
         if let Some(existing) = self.entries.get_mut(&key) {
             *existing = entry;
             self.move_to_back(key);
@@ -154,7 +154,7 @@ impl CacheState {
         }
 
         if self.entries.len() >= self.capacity {
-            self.evict_expired(entry.valid_until);
+            self.evict_expired(now);
             if self.entries.len() >= self.capacity {
                 self.evict_lru();
             }
@@ -237,14 +237,14 @@ impl DeviceOwnerResolver for CachingDeviceOwnerResolver {
             .map_err(DomainError::from)?;
 
         if let Some(ref o) = owner {
-            let cached_at = self.clock.now_wall();
-            let valid_until = self.cache_valid_until(o, cached_at);
+            let valid_until = self.cache_valid_until(o, now);
             if valid_until > now {
                 let mut cache = self
                     .cache
                     .lock()
                     .map_err(|e| DomainError::internal(format!("owner cache poisoned: {e}")))?;
                 cache.insert(
+                    now,
                     key,
                     CacheEntry {
                         owner: o.clone(),
