@@ -12,6 +12,7 @@ pub mod context;
 pub mod error;
 pub mod event;
 pub mod id;
+pub mod net;
 pub mod pagination;
 pub mod ports;
 pub mod time;
@@ -27,6 +28,7 @@ pub use id::{
     MediaNodeInstanceEpoch, MediaSessionId, MessageId, NodeId, OperationId, OwnerEpoch, PluginId,
     ProtocolIdentity, ProtocolSessionId, Revision, TenantId, WebhookId,
 };
+pub use net::is_internal_ip;
 pub use pagination::{DEFAULT_PAGE_SIZE, ListCursor, MAX_PAGE_SIZE, Page, PageRequest};
 pub use ports::{Clock, IdGenerator, SecretStore};
 pub use time::{Deadline, DurationMs, UtcTimestamp};

@@ -12,7 +12,7 @@ description = "Media control gRPC client with connection pooling, retries, and c
 cheetah-signal-contracts = { path = "../../foundation/cheetah-signal-contracts" }
 cheetah-signal-types = { path = "../../foundation/cheetah-signal-types" }
 
-tonic = { workspace = true }
+tonic = { workspace = true, features = ["tls-native-roots"] }
 tokio = { workspace = true, features = ["sync", "time"] }
 time = { workspace = true }
 prost-types = { workspace = true }

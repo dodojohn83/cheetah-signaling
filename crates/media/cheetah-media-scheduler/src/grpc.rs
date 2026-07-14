@@ -11,7 +11,7 @@ use cheetah_signal_contracts::cheetah::common::v1::{
     RegisterMediaNodeRequest, RegisterMediaNodeResponse,
 };
 use cheetah_signal_contracts::cheetah::media::v1 as media_proto;
-use cheetah_signal_types::{Clock, IdGenerator, NodeId};
+use cheetah_signal_types::{Clock, IdGenerator, NodeId, is_internal_ip};
 use std::str::FromStr;
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
@@ -344,25 +344,6 @@ async fn host_is_internal(host: &str, port: u16, timeout_ms: u64) -> Result<bool
         }
     }
     Ok(false)
-}
-
-fn is_internal_ip(ip: std::net::IpAddr) -> bool {
-    match ip {
-        std::net::IpAddr::V4(v4) => is_internal_ipv4(v4),
-        std::net::IpAddr::V6(v6) => {
-            if let Some(v4) = v6.to_ipv4_mapped() {
-                return is_internal_ipv4(v4);
-            }
-            v6.is_unspecified()
-                || v6.is_loopback()
-                || v6.is_unicast_link_local()
-                || v6.is_unique_local()
-        }
-    }
-}
-
-fn is_internal_ipv4(v4: std::net::Ipv4Addr) -> bool {
-    v4.is_unspecified() || v4.is_loopback() || v4.is_link_local() || v4.is_private()
 }
 
 fn map_scheduler_error(e: SchedulerError) -> Status {

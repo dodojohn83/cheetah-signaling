@@ -9,14 +9,16 @@ use cheetah_signal_contracts::cheetah::common::v1::{
 };
 use cheetah_signal_contracts::cheetah::media::v1::MediaCommand;
 use cheetah_signal_types::{
-    MediaBindingId, MediaSessionId, OperationId, OwnerEpoch, TenantId, UtcTimestamp,
+    MediaBindingId, MediaSessionId, OperationId, OwnerEpoch, TenantId, UtcTimestamp, is_internal_ip,
 };
 use std::collections::BTreeMap;
+use std::net::{IpAddr, SocketAddr};
+use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio::time::{Instant, sleep, timeout};
-use tonic::transport::Channel;
+use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint, Identity, Uri};
 use tonic::{Code, Request, Status};
 
 /// A request to execute a media command on a media node.
@@ -257,13 +259,102 @@ impl MediaControlClient {
 
     async fn connect(&self, endpoint: &str) -> Result<Channel, MediaClientError> {
         let uri = endpoint
-            .parse::<tonic::transport::Uri>()
+            .parse::<Uri>()
             .map_err(|_| MediaClientError::InvalidEndpoint(endpoint.to_string()))?;
-        let endpoint = tonic::transport::Endpoint::new(uri)
+        let scheme = uri
+            .scheme_str()
+            .ok_or_else(|| MediaClientError::InvalidEndpoint(endpoint.to_string()))?;
+        let host = uri
+            .host()
+            .ok_or_else(|| MediaClientError::InvalidEndpoint(endpoint.to_string()))?;
+        if host.is_empty() {
+            return Err(MediaClientError::InvalidEndpoint(endpoint.to_string()));
+        }
+
+        let is_http = scheme.eq_ignore_ascii_case("http");
+        let is_https = scheme.eq_ignore_ascii_case("https");
+        if !is_http && !is_https {
+            return Err(MediaClientError::InvalidEndpoint(format!(
+                "unsupported scheme '{scheme}'"
+            )));
+        }
+        if is_http && !self.config.allow_insecure_http {
+            return Err(MediaClientError::InsecureEndpoint(endpoint.to_string()));
+        }
+
+        let default_port = if is_https { 443 } else { 80 };
+        let port = uri.port_u16().unwrap_or(default_port);
+
+        let target_addr = self.resolve_and_validate(host, port).await?;
+
+        let literal_uri = format!("{scheme}://{target_addr}")
+            .parse::<Uri>()
+            .map_err(|_| MediaClientError::InvalidEndpoint(endpoint.to_string()))?;
+        let mut builder = Endpoint::new(literal_uri)
             .map_err(MediaClientError::Transport)?
             .connect_timeout(Duration::from_millis(self.config.connect_timeout_ms));
-        let channel = endpoint.connect().await?;
-        Ok(channel)
+
+        let authority_uri = format!("{scheme}://{host}:{port}")
+            .parse::<Uri>()
+            .map_err(|_| MediaClientError::InvalidEndpoint(endpoint.to_string()))?;
+        builder = builder.origin(authority_uri);
+
+        if is_https {
+            let mut tls_config = ClientTlsConfig::new().with_enabled_roots();
+            if let Some(ca) = &self.config.tls_ca_pem {
+                tls_config = tls_config.ca_certificate(Certificate::from_pem(ca.as_bytes()));
+            }
+            if let (Some(cert), Some(key)) = (
+                &self.config.tls_client_cert_pem,
+                &self.config.tls_client_key_pem,
+            ) {
+                tls_config =
+                    tls_config.identity(Identity::from_pem(cert.as_bytes(), key.as_bytes()));
+            }
+            tls_config = tls_config.domain_name(host.to_string());
+            builder = builder
+                .tls_config(tls_config)
+                .map_err(MediaClientError::Transport)?;
+        }
+
+        Ok(builder.connect().await?)
+    }
+
+    async fn resolve_and_validate(
+        &self,
+        host: &str,
+        port: u16,
+    ) -> Result<SocketAddr, MediaClientError> {
+        if let Ok(ip) = IpAddr::from_str(host) {
+            if !self.config.allow_internal_endpoints && is_internal_ip(ip) {
+                return Err(MediaClientError::InternalEndpoint(format!("{host}:{port}")));
+            }
+            return Ok(SocketAddr::new(ip, port));
+        }
+
+        let lookup = timeout(
+            Duration::from_millis(self.config.endpoint_dns_lookup_timeout_ms),
+            tokio::net::lookup_host((host, port)),
+        )
+        .await
+        .map_err(|_| MediaClientError::InvalidEndpoint(format!("DNS lookup timed out for {host}")))?
+        .map_err(|e| {
+            MediaClientError::InvalidEndpoint(format!("DNS lookup failed for {host}: {e}"))
+        })?;
+
+        let mut chosen = None;
+        for addr in lookup {
+            if self.config.allow_internal_endpoints || !is_internal_ip(addr.ip()) {
+                chosen = Some(addr);
+                break;
+            }
+        }
+
+        chosen.ok_or_else(|| {
+            MediaClientError::InternalEndpoint(format!(
+                "{host}:{port} resolved only to internal addresses"
+            ))
+        })
     }
 
     async fn acquire_permit(
@@ -358,5 +449,5 @@ fn backoff(base_ms: u64, max_ms: u64, attempt: usize) -> u64 {
     if base == 0 {
         return 0;
     }
-    fastrand::u64(..=base).min(max_ms)
+    fastrand::u64(..=base.min(max_ms))
 }

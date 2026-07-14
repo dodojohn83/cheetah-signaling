@@ -29,4 +29,13 @@ pub enum MediaClientError {
     /// The connection pool reached its configured limit.
     #[error("connection pool exhausted: {0}")]
     PoolExhausted(String),
+    /// The endpoint scheme is plain HTTP but insecure HTTP is not allowed.
+    #[error("insecure endpoint not allowed: {0}")]
+    InsecureEndpoint(String),
+    /// The endpoint resolves to or uses an internal network address.
+    #[error("internal endpoint not allowed: {0}")]
+    InternalEndpoint(String),
+    /// TLS configuration is invalid.
+    #[error("TLS configuration failed: {0}")]
+    TlsConfig(String),
 }

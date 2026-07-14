@@ -21,6 +21,18 @@ pub struct MediaClientConfig {
     pub circuit_breaker_cooldown_ms: u64,
     /// Maximum number of pooled endpoint connections.
     pub max_connections: usize,
+    /// When false, plain `http://` endpoints are rejected.
+    pub allow_insecure_http: bool,
+    /// When false, loopback, link-local and private network endpoints are rejected.
+    pub allow_internal_endpoints: bool,
+    /// Optional PEM-encoded CA certificate for TLS verification.
+    pub tls_ca_pem: Option<String>,
+    /// Optional PEM-encoded client certificate for mTLS.
+    pub tls_client_cert_pem: Option<String>,
+    /// Optional PEM-encoded client private key for mTLS.
+    pub tls_client_key_pem: Option<String>,
+    /// Timeout for DNS resolution during endpoint validation.
+    pub endpoint_dns_lookup_timeout_ms: u64,
 }
 
 impl Default for MediaClientConfig {
@@ -35,6 +47,24 @@ impl Default for MediaClientConfig {
             circuit_breaker_threshold: 5,
             circuit_breaker_cooldown_ms: 30_000,
             max_connections: 10_000,
+            allow_insecure_http: false,
+            allow_internal_endpoints: false,
+            tls_ca_pem: None,
+            tls_client_cert_pem: None,
+            tls_client_key_pem: None,
+            endpoint_dns_lookup_timeout_ms: 1_000,
+        }
+    }
+}
+
+impl MediaClientConfig {
+    /// Returns a configuration suitable for tests that use loopback HTTP endpoints.
+    pub fn test() -> Self {
+        Self {
+            allow_insecure_http: true,
+            allow_internal_endpoints: true,
+            endpoint_dns_lookup_timeout_ms: 100,
+            ..Self::default()
         }
     }
 }

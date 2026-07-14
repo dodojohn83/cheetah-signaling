@@ -70,7 +70,7 @@ async fn execute_reaches_server_and_returns_result() {
             .unwrap();
     });
 
-    let client = MediaControlClient::new(MediaClientConfig::default());
+    let client = MediaControlClient::new(MediaClientConfig::test());
     let response = client
         .execute(&format!("http://{addr}"), request())
         .await
