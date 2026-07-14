@@ -314,8 +314,6 @@ impl WebhookService {
             return Ok(());
         }
 
-        let now = self.clock.now_wall();
-
         let config = {
             let mut uow = self.begin().await?;
             let config = uow
@@ -329,9 +327,10 @@ impl WebhookService {
         let config = match config {
             Some(c) if c.enabled() => c,
             Some(_) => {
-                return self
-                    .record_outcome(delivery, "webhook disabled", Some(now))
-                    .await;
+                let mut dl = delivery;
+                dl.dead_letter(self.clock.as_ref(), "webhook disabled".to_string());
+                self.save_delivery(dl).await?;
+                return Ok(());
             }
             None => {
                 let mut dl = delivery;
@@ -450,16 +449,6 @@ impl WebhookService {
             delivery.fail(self.clock.as_ref(), error, next_attempt);
         }
 
-        self.save_delivery(delivery).await
-    }
-
-    async fn record_outcome(
-        &self,
-        mut delivery: WebhookDelivery,
-        error: &str,
-        next_attempt: Option<UtcTimestamp>,
-    ) -> crate::Result<()> {
-        delivery.fail(self.clock.as_ref(), error.to_string(), next_attempt);
         self.save_delivery(delivery).await
     }
 
