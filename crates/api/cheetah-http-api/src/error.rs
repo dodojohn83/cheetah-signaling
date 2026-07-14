@@ -62,6 +62,9 @@ pub enum HttpError {
     /// The requested endpoint is not implemented.
     #[error("not implemented: {0}")]
     NotImplemented(String),
+    /// The request exceeded its rate limit.
+    #[error("rate limit exceeded: {0}")]
+    RateLimited(String),
     /// A generic internal error.
     #[error("internal error: {0}")]
     Internal(String),
@@ -77,6 +80,7 @@ impl HttpError {
             Self::Unauthenticated(_) => StatusCode::UNAUTHORIZED,
             Self::PermissionDenied(_) => StatusCode::FORBIDDEN,
             Self::NotImplemented(_) => StatusCode::NOT_IMPLEMENTED,
+            Self::RateLimited(_) => StatusCode::TOO_MANY_REQUESTS,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -89,6 +93,7 @@ impl HttpError {
             Self::Unauthenticated(_) => "UNAUTHENTICATED",
             Self::PermissionDenied(_) => "PERMISSION_DENIED",
             Self::NotImplemented(_) => "NOT_IMPLEMENTED",
+            Self::RateLimited(_) => "RATE_LIMITED",
             Self::Internal(_) => "INTERNAL",
         }
     }
@@ -105,6 +110,7 @@ impl HttpError {
         };
         let message = match self {
             Self::Internal(_) => "internal server error".to_string(),
+            Self::RateLimited(_) => "rate limit exceeded".to_string(),
             _ => self.to_string(),
         };
         ProblemDetails {

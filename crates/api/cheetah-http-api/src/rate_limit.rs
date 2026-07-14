@@ -115,15 +115,14 @@ impl Default for RateLimiter {
 }
 
 use axum::{
-    Json,
     extract::{ConnectInfo, Request, State},
-    http::StatusCode,
     middleware::Next,
     response::{IntoResponse, Response},
 };
 use std::net::SocketAddr;
 
-/// Axum middleware enforcing per-source, tenant, protocol and node rate limits.
+/// Axum middleware enforcing per-source, protocol and node rate limits before
+/// authentication. A tenant-aware check is also applied in `ApiRequestContext`.
 pub async fn rate_limit_middleware(
     State(state): State<Arc<crate::ApiState>>,
     req: Request,
@@ -139,17 +138,11 @@ pub async fn rate_limit_middleware(
         .copied()
         .map(|c| c.0.ip())
         .unwrap_or_else(|| [0, 0, 0, 0].into());
-    let tenant = req
-        .headers()
-        .get("x-tenant-id")
-        .and_then(|h| h.to_str().ok())
-        .unwrap_or("")
-        .to_string();
     let protocol = req.uri().path().split('/').nth(1).unwrap_or("").to_string();
     let node = state.config.node_id.to_string();
     let key = RateKey {
         source: ip,
-        tenant,
+        tenant: String::new(),
         protocol,
         node,
     };
@@ -157,20 +150,13 @@ pub async fn rate_limit_middleware(
     if state.rate_limiter.check(&key) {
         next.run(req).await
     } else {
-        let problem = crate::ProblemDetails {
-            code: "RATE_LIMITED".to_string(),
-            message: "rate limit exceeded".to_string(),
-            status: StatusCode::TOO_MANY_REQUESTS.as_u16(),
-            request_id: None,
-            field_violations: Vec::new(),
-        };
-        (StatusCode::TOO_MANY_REQUESTS, Json(problem)).into_response()
+        crate::HttpError::RateLimited("too many requests".to_string()).into_response()
     }
 }
 
 impl RateLimiter {
     /// Returns true when no rate limit is configured.
-    fn is_disabled(&self) -> bool {
+    pub(crate) fn is_disabled(&self) -> bool {
         self.capacity == 0 || self.refill_per_second == 0.0
     }
 }

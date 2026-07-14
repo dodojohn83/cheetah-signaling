@@ -1,8 +1,13 @@
 //! Axum extractors for request context and pagination.
 
+use crate::rate_limit::RateKey;
 use crate::{ApiState, AuthContext, HttpError};
-use axum::{extract::FromRequestParts, http::request::Parts};
+use axum::{
+    extract::{ConnectInfo, FromRequestParts},
+    http::request::Parts,
+};
 use cheetah_signal_types::{CorrelationId, MessageId, PageRequest, RequestContext, TenantId};
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 /// Request context resolved from auth and headers.
@@ -71,6 +76,8 @@ impl FromRequestParts<Arc<ApiState>> for ApiRequestContext {
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string());
 
+        check_rate_limit(parts, state, &tenant_id)?;
+
         Ok(Self(RequestContext {
             tenant_id,
             principal: auth.principal,
@@ -81,6 +88,37 @@ impl FromRequestParts<Arc<ApiState>> for ApiRequestContext {
             deadline: None,
             node_id: Some(state.config.node_id),
         }))
+    }
+}
+
+fn check_rate_limit(
+    parts: &Parts,
+    state: &ApiState,
+    tenant_id: &TenantId,
+) -> Result<(), HttpError> {
+    if state.rate_limiter.is_disabled() {
+        return Ok(());
+    }
+    let ip = parts
+        .extensions
+        .get::<ConnectInfo<SocketAddr>>()
+        .copied()
+        .map(|c| c.0.ip())
+        .unwrap_or_else(|| [0, 0, 0, 0].into());
+    let protocol = parts.uri.path().split('/').nth(1).unwrap_or("").to_string();
+    let node = state.config.node_id.to_string();
+    let key = RateKey {
+        source: ip,
+        tenant: tenant_id.to_string(),
+        protocol,
+        node,
+    };
+    if state.rate_limiter.check(&key) {
+        Ok(())
+    } else {
+        Err(HttpError::RateLimited(
+            "tenant rate limit exceeded".to_string(),
+        ))
     }
 }
 
