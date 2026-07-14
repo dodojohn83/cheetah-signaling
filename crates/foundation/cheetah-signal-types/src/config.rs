@@ -93,6 +93,13 @@ impl SignalConfig {
                 "http.read_timeout_ms must be greater than zero",
             ));
         }
+        let static_key = self.security.static_api_key.expose_secret();
+        if !static_key.is_empty() && static_key.len() < 32 {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                "security.static_api_key must be at least 32 characters when configured",
+            ));
+        }
         if self.storage.max_connections == 0 {
             return Err(SignalError::new(
                 SignalErrorKind::InvalidArgument,

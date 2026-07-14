@@ -45,7 +45,7 @@ impl TestServer {
         );
         storage.migration().run().await.expect("run migrations");
 
-        let api_key = "test-api-key".to_string();
+        let api_key = "test-api-key-with-at-least-32-characters".to_string();
         let tenant_id = uuid::Uuid::now_v7().to_string();
         let security = SecurityConfig {
             static_api_key: SecretString::from(api_key.clone()),
