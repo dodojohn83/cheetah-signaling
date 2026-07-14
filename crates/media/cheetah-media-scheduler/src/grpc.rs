@@ -68,7 +68,15 @@ impl MediaClusterRegistry for MediaClusterRegistryService {
         validate_control_endpoint(&registration.listen_addr, &self.config).await?;
 
         let node_id = parse_node_id(&registration.node_id)?;
-        let instance_id = self.id_generator.generate_node_id().to_string();
+        let instance_id = if registration.instance_id.is_empty() {
+            if let Some(existing) = self.registry.get(node_id, self.clock.as_ref()).await {
+                existing.instance_id
+            } else {
+                self.id_generator.generate_node_id().to_string()
+            }
+        } else {
+            registration.instance_id
+        };
         let node = MediaNode {
             node_id,
             instance_id,
@@ -235,6 +243,7 @@ fn to_media_node_info(node: MediaNode) -> Result<media_proto::MediaNodeInfo, Sta
         last_heartbeat_at: node.last_heartbeat_at.map(to_timestamp).transpose()?,
         status: to_proto_status(node.status) as i32,
         capacity: Some(to_media_capacity(node.capacity)),
+        instance_id: node.instance_id,
     })
 }
 
@@ -344,7 +353,10 @@ fn is_internal_ip(ip: std::net::IpAddr) -> bool {
             if let Some(v4) = v6.to_ipv4_mapped() {
                 return is_internal_ipv4(v4);
             }
-            v6.is_unspecified() || v6.is_loopback() || v6.is_unicast_link_local()
+            v6.is_unspecified()
+                || v6.is_loopback()
+                || v6.is_unicast_link_local()
+                || v6.is_unique_local()
         }
     }
 }

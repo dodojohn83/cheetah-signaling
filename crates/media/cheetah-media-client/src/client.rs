@@ -358,6 +358,5 @@ fn backoff(base_ms: u64, max_ms: u64, attempt: usize) -> u64 {
     if base == 0 {
         return 0;
     }
-    let jitter = fastrand::u64(..=base);
-    base.saturating_add(jitter).min(max_ms)
+    fastrand::u64(..=base).min(max_ms)
 }

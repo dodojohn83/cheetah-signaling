@@ -168,6 +168,8 @@ message MediaNodeRegistration {
   MediaCapability capability = 3;
   string region = 4;
   MediaNodeCapacity capacity = 5;
+  // Stable identifier for this running media node process. If empty the server generates one.
+  string instance_id = 6;
 }
 
 // Media node runtime information.
@@ -180,6 +182,8 @@ message MediaNodeInfo {
   google.protobuf.Timestamp last_heartbeat_at = 6;
   MediaNodeStatus status = 7;
   MediaNodeCapacity capacity = 8;
+  // Opaque instance identifier assigned during registration.
+  string instance_id = 9;
 }
 
 // Media node heartbeat payload.
