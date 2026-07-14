@@ -101,7 +101,9 @@ impl Shard {
 
                 match receiver.recv().await {
                     Some(RuntimeMessage::Shutdown) => {
-                        process_ready_queue(&mut ready_queue, &mut actors, &ctx).await;
+                        while !ready_queue.is_empty() {
+                            process_ready_queue(&mut ready_queue, &mut actors, &ctx).await;
+                        }
                         shutdown_all(actors, &ctx).await;
                         break;
                     }
