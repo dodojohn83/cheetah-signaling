@@ -277,13 +277,17 @@ impl UnitOfWork for InMemoryUnitOfWork {
 
 #[async_trait::async_trait]
 impl DeviceRepository for InMemoryUnitOfWork {
-    async fn get(&self, tenant_id: TenantId, device_id: DeviceId) -> crate::Result<Option<Device>> {
+    async fn get(
+        &mut self,
+        tenant_id: TenantId,
+        device_id: DeviceId,
+    ) -> crate::Result<Option<Device>> {
         let pending = lock_mutex(&self.pending);
         Ok(pending.devices.get(&(tenant_id, device_id)).cloned())
     }
 
     async fn get_by_external_id(
-        &self,
+        &mut self,
         tenant_id: TenantId,
         protocol: crate::Protocol,
         external_id: ProtocolIdentity,
@@ -300,7 +304,7 @@ impl DeviceRepository for InMemoryUnitOfWork {
             .cloned())
     }
 
-    async fn save(&self, device: &Device) -> crate::Result<()> {
+    async fn save(&mut self, device: &Device) -> crate::Result<()> {
         self.with_pending(|pending| {
             pending
                 .devices
@@ -313,7 +317,7 @@ impl DeviceRepository for InMemoryUnitOfWork {
 #[async_trait::async_trait]
 impl ChannelRepository for InMemoryUnitOfWork {
     async fn get(
-        &self,
+        &mut self,
         tenant_id: TenantId,
         device_id: DeviceId,
         channel_id: ChannelId,
@@ -326,7 +330,7 @@ impl ChannelRepository for InMemoryUnitOfWork {
     }
 
     async fn list_by_device(
-        &self,
+        &mut self,
         tenant_id: TenantId,
         device_id: DeviceId,
     ) -> crate::Result<Vec<Channel>> {
@@ -341,7 +345,7 @@ impl ChannelRepository for InMemoryUnitOfWork {
         Ok(channels)
     }
 
-    async fn save(&self, channel: &Channel) -> crate::Result<()> {
+    async fn save(&mut self, channel: &Channel) -> crate::Result<()> {
         self.with_pending(|pending| {
             pending.channels.insert(
                 (
@@ -356,7 +360,7 @@ impl ChannelRepository for InMemoryUnitOfWork {
     }
 
     async fn remove(
-        &self,
+        &mut self,
         tenant_id: TenantId,
         device_id: DeviceId,
         channel_id: ChannelId,
@@ -371,7 +375,7 @@ impl ChannelRepository for InMemoryUnitOfWork {
 #[async_trait::async_trait]
 impl OperationRepository for InMemoryUnitOfWork {
     async fn get(
-        &self,
+        &mut self,
         tenant_id: TenantId,
         operation_id: OperationId,
     ) -> crate::Result<Option<Operation>> {
@@ -380,7 +384,7 @@ impl OperationRepository for InMemoryUnitOfWork {
     }
 
     async fn get_by_idempotency(
-        &self,
+        &mut self,
         scope: &crate::IdempotencyScope,
     ) -> crate::Result<Option<Operation>> {
         let pending = lock_mutex(&self.pending);
@@ -391,7 +395,7 @@ impl OperationRepository for InMemoryUnitOfWork {
             .cloned())
     }
 
-    async fn save(&self, operation: &Operation) -> crate::Result<()> {
+    async fn save(&mut self, operation: &Operation) -> crate::Result<()> {
         self.with_pending(|pending| {
             pending.operations.insert(
                 (operation.tenant_id(), operation.operation_id()),
@@ -405,7 +409,7 @@ impl OperationRepository for InMemoryUnitOfWork {
 #[async_trait::async_trait]
 impl MediaSessionRepository for InMemoryUnitOfWork {
     async fn get(
-        &self,
+        &mut self,
         tenant_id: TenantId,
         media_session_id: MediaSessionId,
     ) -> crate::Result<Option<MediaSession>> {
@@ -417,7 +421,7 @@ impl MediaSessionRepository for InMemoryUnitOfWork {
     }
 
     async fn get_by_idempotency(
-        &self,
+        &mut self,
         scope: &crate::IdempotencyScope,
     ) -> crate::Result<Option<MediaSession>> {
         let pending = lock_mutex(&self.pending);
@@ -428,7 +432,7 @@ impl MediaSessionRepository for InMemoryUnitOfWork {
             .cloned())
     }
 
-    async fn save(&self, session: &MediaSession) -> crate::Result<()> {
+    async fn save(&mut self, session: &MediaSession) -> crate::Result<()> {
         self.with_pending(|pending| {
             pending.sessions.insert(
                 (session.tenant_id(), session.media_session_id()),
@@ -442,7 +446,7 @@ impl MediaSessionRepository for InMemoryUnitOfWork {
 #[async_trait::async_trait]
 impl MediaBindingRepository for InMemoryUnitOfWork {
     async fn get(
-        &self,
+        &mut self,
         tenant_id: TenantId,
         media_binding_id: MediaBindingId,
     ) -> crate::Result<Option<MediaBinding>> {
@@ -454,7 +458,7 @@ impl MediaBindingRepository for InMemoryUnitOfWork {
     }
 
     async fn get_by_media_session(
-        &self,
+        &mut self,
         tenant_id: TenantId,
         media_session_id: MediaSessionId,
     ) -> crate::Result<Option<MediaBinding>> {
@@ -466,7 +470,7 @@ impl MediaBindingRepository for InMemoryUnitOfWork {
             .cloned())
     }
 
-    async fn save(&self, binding: &MediaBinding) -> crate::Result<()> {
+    async fn save(&mut self, binding: &MediaBinding) -> crate::Result<()> {
         self.with_pending(|pending| {
             pending.bindings.insert(
                 (binding.tenant_id(), binding.media_binding_id()),
@@ -479,7 +483,7 @@ impl MediaBindingRepository for InMemoryUnitOfWork {
 
 #[async_trait::async_trait]
 impl Outbox for InMemoryUnitOfWork {
-    async fn append(&self, event: Event<DomainEvent>) -> crate::Result<()> {
+    async fn append(&mut self, event: Event<DomainEvent>) -> crate::Result<()> {
         self.with_pending(|pending| {
             pending.outbox.push(OutboxEntry {
                 event,
@@ -489,7 +493,7 @@ impl Outbox for InMemoryUnitOfWork {
         Ok(())
     }
 
-    async fn pending(&self, limit: usize) -> crate::Result<Vec<OutboxEntry>> {
+    async fn pending(&mut self, limit: usize) -> crate::Result<Vec<OutboxEntry>> {
         let pending = lock_mutex(&self.pending);
         Ok(pending
             .outbox
@@ -500,7 +504,10 @@ impl Outbox for InMemoryUnitOfWork {
             .collect())
     }
 
-    async fn mark_published(&self, event_id: cheetah_signal_types::EventId) -> crate::Result<()> {
+    async fn mark_published(
+        &mut self,
+        event_id: cheetah_signal_types::EventId,
+    ) -> crate::Result<()> {
         self.with_pending(|pending| {
             for entry in &mut pending.outbox {
                 if entry.event.event_id == event_id {
@@ -528,7 +535,7 @@ impl InMemoryOutbox {
 
 #[async_trait::async_trait]
 impl Outbox for InMemoryOutbox {
-    async fn append(&self, event: Event<DomainEvent>) -> crate::Result<()> {
+    async fn append(&mut self, event: Event<DomainEvent>) -> crate::Result<()> {
         let mut stores = lock_mutex(&self.stores);
         stores.outbox.push(OutboxEntry {
             event,
@@ -537,7 +544,7 @@ impl Outbox for InMemoryOutbox {
         Ok(())
     }
 
-    async fn pending(&self, limit: usize) -> crate::Result<Vec<OutboxEntry>> {
+    async fn pending(&mut self, limit: usize) -> crate::Result<Vec<OutboxEntry>> {
         let stores = lock_mutex(&self.stores);
         Ok(stores
             .outbox
@@ -548,7 +555,10 @@ impl Outbox for InMemoryOutbox {
             .collect())
     }
 
-    async fn mark_published(&self, event_id: cheetah_signal_types::EventId) -> crate::Result<()> {
+    async fn mark_published(
+        &mut self,
+        event_id: cheetah_signal_types::EventId,
+    ) -> crate::Result<()> {
         let mut stores = lock_mutex(&self.stores);
         for entry in &mut stores.outbox {
             if entry.event.event_id == event_id {

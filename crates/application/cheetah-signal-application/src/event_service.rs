@@ -15,7 +15,7 @@ impl EventService {
     /// Publishes up to `limit` pending outbox events.
     pub async fn publish_pending(
         &self,
-        outbox: &dyn Outbox,
+        outbox: &mut dyn Outbox,
         publisher: &dyn EventPublisher,
         limit: usize,
     ) -> crate::Result<usize> {

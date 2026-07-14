@@ -1,0 +1,24 @@
+[package]
+name = "cheetah-storage-tests"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Shared repository contract tests for SQLite and PostgreSQL storage adapters."
+
+[dependencies]
+cheetah-domain = { path = "../../domain/cheetah-domain", features = ["test-util"] }
+cheetah-signal-types = { path = "../../foundation/cheetah-signal-types" }
+cheetah-storage-api = { path = "../../storage/cheetah-storage-api" }
+time = { workspace = true }
+
+[dev-dependencies]
+cheetah-storage-sqlite = { path = "../../storage/cheetah-storage-sqlite" }
+cheetah-storage-postgres = { path = "../../storage/cheetah-storage-postgres" }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+testcontainers-modules = { version = "0.15", features = ["postgres"] }
+
+[lints]
+workspace = true
