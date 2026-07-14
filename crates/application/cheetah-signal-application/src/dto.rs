@@ -374,7 +374,7 @@ pub struct PtzCapabilitiesDto {
     /// Zoom support.
     pub zoom: bool,
     /// Preset support.
-    pub presets: bool,
+    pub preset: bool,
     /// Focus support.
     pub focus: bool,
     /// Iris support.
@@ -566,14 +566,7 @@ impl TryFrom<StreamProfileDto> for StreamProfile {
 
 impl From<PtzCapabilitiesDto> for PtzCapabilities {
     fn from(dto: PtzCapabilitiesDto) -> Self {
-        PtzCapabilities::new(
-            dto.pan,
-            dto.tilt,
-            dto.zoom,
-            dto.presets,
-            dto.focus,
-            dto.iris,
-        )
+        PtzCapabilities::new(dto.pan, dto.tilt, dto.zoom, dto.preset, dto.focus, dto.iris)
     }
 }
 
