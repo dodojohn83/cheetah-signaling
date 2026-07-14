@@ -1,0 +1,104 @@
+openapi: 3.1.0
+info:
+  title: Cheetah Signaling API
+  version: 1.0.0
+  description: Northbound REST API for Cheetah Signaling.
+servers:
+  - url: /api/v1
+paths:
+  /health/live:
+    get:
+      operationId: getLiveness
+      responses:
+        '200':
+          description: Service is alive.
+  /health/ready:
+    get:
+      operationId: getReadiness
+      responses:
+        '200':
+          description: Service is ready.
+  /api/v1/devices:
+    get:
+      operationId: listDevices
+      parameters:
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+        - name: cursor
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: A page of devices.
+    post:
+      operationId: createDevice
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: Device created.
+  /api/v1/devices/{id}:
+    get:
+      operationId: getDevice
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Device details.
+  /api/v1/operations:
+    post:
+      operationId: createOperation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '202':
+          description: Operation accepted.
+  /api/v1/operations/{id}:
+    get:
+      operationId: getOperation
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Operation details.
+  /api/v1/media/sessions:
+    post:
+      operationId: createMediaSession
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '202':
+          description: Media session accepted.
+  /api/v1/events/stream:
+    get:
+      operationId: eventStream
+      responses:
+        '200':
+          description: SSE event stream.
+components:
+  schemas: {}

@@ -361,6 +361,12 @@ pub struct SecurityConfig {
         deserialize_with = "deserialize_secret_string"
     )]
     pub api_key_hash: SecretString,
+    /// Static API key for edge-mode management token authentication.
+    #[serde(
+        serialize_with = "serialize_secret_string",
+        deserialize_with = "deserialize_secret_string"
+    )]
+    pub static_api_key: SecretString,
     /// Token time to live in milliseconds.
     pub token_ttl_ms: DurationMs,
 }

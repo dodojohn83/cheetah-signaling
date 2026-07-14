@@ -8,8 +8,33 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+async-trait.workspace = true
+axum.workspace = true
+cheetah-domain = { path = "../../../crates/domain/cheetah-domain" }
+cheetah-message-api = { path = "../../../crates/messaging/cheetah-message-api" }
+cheetah-signal-application = { path = "../../../crates/application/cheetah-signal-application" }
+cheetah-signal-types = { path = "../../../crates/foundation/cheetah-signal-types" }
+cheetah-storage-api = { path = "../../../crates/storage/cheetah-storage-api" }
+futures.workspace = true
+jsonwebtoken.workspace = true
+reqwest.workspace = true
+secrecy.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+subtle.workspace = true
+thiserror.workspace = true
+time.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time"] }
+tokio-stream.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
+cheetah-message-local = { path = "../../../crates/messaging/cheetah-message-local" }
+cheetah-storage-sqlite = { path = "../../../crates/storage/cheetah-storage-sqlite" }
 
 [lints]
 workspace = true
