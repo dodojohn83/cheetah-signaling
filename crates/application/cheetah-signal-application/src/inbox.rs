@@ -254,7 +254,7 @@ impl InboxService {
                 }
 
                 let now = self.clock.now_wall();
-                let _ = uow
+                if let Err(e2) = uow
                     .processed_message_repository()
                     .complete(
                         tenant_id,
@@ -263,8 +263,20 @@ impl InboxService {
                         None,
                         now,
                     )
-                    .await;
-                let _ = uow.commit().await;
+                    .await
+                {
+                    warn!(error = %e2, "failed to mark processed message as failed");
+                    let _ = uow.rollback().await;
+                    let _ = delivery.ack.nak(Some(&e.to_string())).await;
+                    return;
+                }
+
+                if let Err(e2) = uow.commit().await {
+                    warn!(error = %e2, "failed to commit failed status");
+                    let _ = delivery.ack.nak(Some(&e.to_string())).await;
+                    return;
+                }
+
                 let _ = delivery.ack.term(Some(&e.to_string())).await;
             }
         }
