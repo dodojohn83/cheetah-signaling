@@ -1,7 +1,7 @@
 //! Operation application service.
 
 use crate::dto::{OperationDto, SubmitOperationRequest};
-use cheetah_domain::{DomainEvent, Operation, OperationResult, UnitOfWork};
+use cheetah_domain::{DomainError, DomainEvent, Operation, OperationResult, UnitOfWork};
 use cheetah_signal_types::{
     Clock, Event, IdGenerator, OperationId, RequestContext, ResourceId, ResourceKind, ResourceRef,
     TenantId,
@@ -36,6 +36,11 @@ impl OperationService {
         let tenant_id = context.tenant_id;
         let idempotency_key = request.idempotency_key;
         let target = request.target;
+        if target.tenant_id != tenant_id {
+            return Err(crate::SignalError::from(DomainError::invalid_argument(
+                "target tenant does not match request context",
+            )));
+        }
         let scope = cheetah_domain::IdempotencyScope::new(
             tenant_id,
             context.principal.id.clone(),

@@ -79,73 +79,84 @@ impl CommandDispatcher {
         match self
             .owner_resolver
             .resolve(tenant_id, operation.device_id())
-            .await?
+            .await
         {
-            None => {
-                let event = operation
-                    .complete(
-                        OperationResult::failure("NO_OWNER", "no owner resolved"),
-                        self.clock.as_ref(),
-                    )
-                    .map_err(crate::SignalError::from)?;
-                uow.operation_repository().save(&operation).await?;
-                let event = wrap_event(
-                    self.id_generator.as_ref(),
-                    self.clock.as_ref(),
-                    context,
-                    tenant_id,
-                    operation_resource_ref(tenant_id, operation.operation_id()),
-                    operation.revision().0,
-                    event,
-                );
-                uow.outbox().append(event).await?;
-                uow.commit().await?;
-            }
-            Some(owner) if owner.owner_epoch != operation.expected_owner_epoch() => {
-                let event = operation
-                    .complete(
-                        OperationResult::failure("STALE_OWNER", "stale owner epoch"),
-                        self.clock.as_ref(),
-                    )
-                    .map_err(crate::SignalError::from)?;
-                uow.operation_repository().save(&operation).await?;
-                let event = wrap_event(
-                    self.id_generator.as_ref(),
-                    self.clock.as_ref(),
-                    context,
-                    tenant_id,
-                    operation_resource_ref(tenant_id, operation.operation_id()),
-                    operation.revision().0,
-                    event,
-                );
-                uow.outbox().append(event).await?;
-                uow.commit().await?;
-            }
-            Some(_) => {
+            Ok(Some(owner)) if owner.owner_epoch == operation.expected_owner_epoch() => {
                 if let Err(e) = self.command_bus.send(operation.command()).await {
-                    let event = operation
-                        .complete(
-                            OperationResult::failure("COMMAND_BUS", e.to_string()),
-                            self.clock.as_ref(),
-                        )
-                        .map_err(crate::SignalError::from)?;
-                    uow.operation_repository().save(&operation).await?;
-                    let event = wrap_event(
-                        self.id_generator.as_ref(),
-                        self.clock.as_ref(),
+                    self.complete_operation(
                         context,
+                        uow,
                         tenant_id,
-                        operation_resource_ref(tenant_id, operation.operation_id()),
-                        operation.revision().0,
-                        event,
-                    );
-                    uow.outbox().append(event).await?;
-                    uow.commit().await?;
+                        &mut operation,
+                        "COMMAND_BUS",
+                        e.to_string(),
+                    )
+                    .await?;
                 }
+            }
+            Ok(Some(_)) => {
+                self.complete_operation(
+                    context,
+                    uow,
+                    tenant_id,
+                    &mut operation,
+                    "STALE_OWNER",
+                    "stale owner epoch",
+                )
+                .await?;
+            }
+            Ok(None) => {
+                self.complete_operation(
+                    context,
+                    uow,
+                    tenant_id,
+                    &mut operation,
+                    "NO_OWNER",
+                    "no owner resolved",
+                )
+                .await?;
+            }
+            Err(e) => {
+                self.complete_operation(
+                    context,
+                    uow,
+                    tenant_id,
+                    &mut operation,
+                    "RESOLVE_ERROR",
+                    e.to_string(),
+                )
+                .await?;
             }
         }
 
         Ok(OperationDto::from(&operation))
+    }
+
+    async fn complete_operation(
+        &self,
+        context: &RequestContext,
+        uow: &mut dyn UnitOfWork,
+        tenant_id: TenantId,
+        operation: &mut cheetah_domain::Operation,
+        code: &str,
+        message: impl Into<String>,
+    ) -> crate::Result<()> {
+        let event = operation
+            .complete(OperationResult::failure(code, message), self.clock.as_ref())
+            .map_err(crate::SignalError::from)?;
+        uow.operation_repository().save(operation).await?;
+        let event = wrap_event(
+            self.id_generator.as_ref(),
+            self.clock.as_ref(),
+            context,
+            tenant_id,
+            operation_resource_ref(tenant_id, operation.operation_id()),
+            operation.revision().0,
+            event,
+        );
+        uow.outbox().append(event).await?;
+        uow.commit().await?;
+        Ok(())
     }
 }
 

@@ -94,10 +94,6 @@ impl MediaService {
                 ))
             })?;
 
-        self.media_port
-            .release(tenant_id, binding.media_binding_id())
-            .await?;
-
         let session_event = session
             .stop(self.clock.as_ref())
             .map_err(crate::SignalError::from)?;
@@ -159,6 +155,19 @@ impl MediaService {
             .await?;
 
         uow.commit().await?;
+
+        if let Err(e) = self
+            .media_port
+            .release(tenant_id, binding.media_binding_id())
+            .await
+        {
+            tracing::warn!(
+                "failed to release media binding {} after stop_live: {}",
+                binding.media_binding_id(),
+                e
+            );
+        }
+
         Ok(MediaSessionDto::from(&session))
     }
 
