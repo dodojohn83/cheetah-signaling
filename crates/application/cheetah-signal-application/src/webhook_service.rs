@@ -53,8 +53,8 @@ pub struct WebhookHttpRequest {
     pub headers: Vec<(String, String)>,
     /// Request body bytes.
     pub body: Vec<u8>,
-    /// Monotonic deadline by which the attempt should complete.
-    pub deadline: Option<DurationMs>,
+    /// Per-attempt HTTP request timeout in milliseconds.
+    pub timeout: Option<DurationMs>,
 }
 
 /// Response from an outbound webhook HTTP request.
@@ -298,7 +298,9 @@ impl WebhookService {
 
         let mut attempted = 0;
         for delivery in pending {
-            self.attempt_delivery(delivery).await?;
+            if let Err(e) = self.attempt_delivery(delivery).await {
+                tracing::error!(error = %e, "webhook delivery attempt failed");
+            }
             attempted += 1;
         }
         Ok(attempted)
@@ -313,7 +315,6 @@ impl WebhookService {
         }
 
         let now = self.clock.now_wall();
-        let now_mono = self.clock.now_monotonic();
 
         let config = {
             let mut uow = self.begin().await?;
@@ -377,14 +378,11 @@ impl WebhookService {
             .to_string();
         headers.push(("X-Cheetah-Secret-Ref".to_string(), secret_ref_header));
 
-        let deadline_ms = now_mono
-            .as_millis()
-            .saturating_add(self.config.request_timeout_ms.as_millis());
         let request = WebhookHttpRequest {
             url: config.url().to_string(),
             headers,
             body: current.payload().to_vec(),
-            deadline: Some(DurationMs::from_millis(deadline_ms)),
+            timeout: Some(self.config.request_timeout_ms),
         };
 
         let result = self.http_client.send(request).await;

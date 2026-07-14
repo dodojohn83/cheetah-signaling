@@ -1,6 +1,7 @@
 //! Webhook repository implementations for the PostgreSQL storage adapter.
 
 pub(crate) type Db = ::sqlx::Postgres;
+pub(crate) const IS_POSTGRES: bool = true;
 
 include!("../../cheetah-storage-api/include/webhook_impl.rs");
 

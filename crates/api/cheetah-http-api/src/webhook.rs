@@ -61,7 +61,7 @@ impl WebhookHttpClient for ReqwestWebhookClient {
         }
 
         let timeout_ms = request
-            .deadline
+            .timeout
             .map(|d| d.as_millis())
             .unwrap_or(30_000)
             .max(0) as u64;

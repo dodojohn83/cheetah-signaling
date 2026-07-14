@@ -173,7 +173,7 @@ pub(crate) async fn list_webhook_configs(
     conn: &mut <Db as ::sqlx::Database>::Connection,
     tenant_id: TenantId,
     enabled: Option<bool>,
-    _event_type: Option<String>,
+    event_type: Option<String>,
     page: PageRequest,
 ) -> Result<Page<WebhookConfig>> {
     let cursor = decode_cursor(&page)?;
@@ -185,6 +185,20 @@ pub(crate) async fn list_webhook_configs(
     if let Some(enabled) = enabled {
         qb.push(" AND enabled = ");
         qb.push_bind(enabled);
+    }
+
+    if let Some(event_type) = event_type {
+        if IS_POSTGRES {
+            qb.push(" AND (event_types = '[]'::jsonb OR event_types @> ");
+            qb.push_bind(Json(vec![event_type]));
+            qb.push("::jsonb)");
+        } else {
+            qb.push(
+                " AND (event_types = '[]' OR EXISTS (SELECT 1 FROM json_each(webhook_configs.event_types) WHERE value = ",
+            );
+            qb.push_bind(event_type);
+            qb.push("))");
+        }
     }
 
     if let Some(id) = cursor {
@@ -297,24 +311,31 @@ pub(crate) async fn pending_webhook_deliveries(
 
     let status_pending = DeliveryStatus::Pending.to_string();
     let status_failed = DeliveryStatus::Failed.to_string();
-    let rows: Vec<(Json<WebhookDelivery>,)> = sqlx::query_as(
-        "SELECT data FROM webhook_deliveries \
-         WHERE status IN ($1, $2) \
-         ORDER BY delivery_id \
-         LIMIT $3",
-    )
-    .bind(status_pending)
-    .bind(status_failed)
-    .bind(limit as i64)
-    .fetch_all(conn)
-    .await
-    .map_err(crate::error::sqlx_to_domain)?;
 
-    let mut items: Vec<WebhookDelivery> = rows
-        .into_iter()
-        .map(|r| r.0 .0)
-        .filter(|d| d.next_attempt_at().is_none_or(|t| t <= now))
-        .collect();
-    items.sort_by_key(|a| a.next_attempt_at());
-    Ok(items)
+    let mut qb: QueryBuilder<'_, Db> = QueryBuilder::new(
+        "SELECT data FROM webhook_deliveries WHERE status IN (",
+    );
+    let mut separated = qb.separated(',');
+    separated.push_bind(status_pending);
+    separated.push_bind(status_failed);
+
+    if IS_POSTGRES {
+        qb.push(") AND (next_attempt_at IS NULL OR next_attempt_at <= ",
+        );
+        qb.push_bind(now.as_offset());
+        qb.push(") ORDER BY next_attempt_at NULLS FIRST, delivery_id LIMIT ");
+    } else {
+        qb.push(") AND (next_attempt_at IS NULL OR julianday(next_attempt_at) <= julianday(");
+        qb.push_bind(now.as_offset());
+        qb.push(")) ORDER BY COALESCE(julianday(next_attempt_at), 0.0), delivery_id LIMIT ");
+    }
+    qb.push_bind(limit as i64);
+
+    let rows: Vec<(Json<WebhookDelivery>,)> = qb
+        .build_query_as::<(Json<WebhookDelivery>,)>()
+        .fetch_all(conn)
+        .await
+        .map_err(crate::error::sqlx_to_domain)?;
+
+    Ok(rows.into_iter().map(|r| r.0 .0).collect())
 }

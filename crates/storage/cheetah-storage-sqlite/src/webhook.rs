@@ -1,6 +1,7 @@
 //! Webhook repository implementations for the SQLite storage adapter.
 
 pub(crate) type Db = ::sqlx::Sqlite;
+pub(crate) const IS_POSTGRES: bool = false;
 
 include!("../../cheetah-storage-api/include/webhook_impl.rs");
 
