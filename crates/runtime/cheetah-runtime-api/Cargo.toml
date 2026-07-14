@@ -6,10 +6,17 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+description = "Sans-I/O runtime API for Cheetah Signaling: device actor, runtime messages, scheduler, session registry, and sharding ports."
 
 [dependencies]
+cheetah-signal-types = { path = "../../foundation/cheetah-signal-types" }
+cheetah-domain = { path = "../../domain/cheetah-domain" }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
 
 [dev-dependencies]
+cheetah-domain = { path = "../../domain/cheetah-domain", features = ["test-util"] }
+uuid = { workspace = true }
 
 [lints]
 workspace = true
