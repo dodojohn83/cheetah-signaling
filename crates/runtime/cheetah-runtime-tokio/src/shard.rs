@@ -1,6 +1,6 @@
 //! Fixed shard worker that processes device messages sequentially.
 
-use std::collections::{BTreeMap, VecDeque, btree_map::Entry};
+use std::collections::{BTreeMap, VecDeque};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -136,22 +136,31 @@ async fn process_ready_queue<A: DeviceActor>(
                 break;
             }
 
+            let actor_ctx = ctx.actor_context(key);
+
+            let actor = if let Some(existing) = actors.get_mut(&key) {
+                existing
+            } else {
+                match A::create(actor_ctx.clone()) {
+                    Ok(actor) => {
+                        actors.insert(key, actor);
+                        if let Some(new) = actors.get_mut(&key) {
+                            new
+                        } else {
+                            continue;
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(?key, "failed to create actor: {e}");
+                        ready_queue.remove(&key);
+                        continue;
+                    }
+                }
+            };
+
             let queue = match ready_queue.get_mut(&key) {
                 Some(queue) => queue,
                 None => continue,
-            };
-
-            let actor_ctx = ctx.actor_context(key);
-
-            let actor = match actors.entry(key) {
-                Entry::Vacant(e) => match A::create(actor_ctx.clone()) {
-                    Ok(actor) => e.insert(actor),
-                    Err(e) => {
-                        tracing::warn!(?key, "failed to create actor: {e}");
-                        continue;
-                    }
-                },
-                Entry::Occupied(e) => e.into_mut(),
             };
 
             for _ in 0..ctx.config.max_consecutive_per_device {
