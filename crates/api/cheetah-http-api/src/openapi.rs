@@ -1,6 +1,6 @@
 //! OpenAPI spec serving.
 
-use crate::{ApiState, HttpError};
+use crate::{ApiRequestContext, ApiState, HttpError};
 use axum::{
     extract::State,
     http::header,
@@ -11,7 +11,11 @@ use std::sync::Arc;
 const OPENAPI_YAML: &str = include_str!("../openapi/signaling-v1.yaml");
 
 /// Serves the OpenAPI specification as JSON.
-pub async fn serve_json(_state: State<Arc<ApiState>>) -> Result<Response, HttpError> {
+pub async fn serve_json(
+    _state: State<Arc<ApiState>>,
+    ctx: ApiRequestContext,
+) -> Result<Response, HttpError> {
+    ctx.require_scope("viewer")?;
     let value: serde_json::Value = serde_yaml::from_str(OPENAPI_YAML)
         .map_err(|e| HttpError::Internal(format!("failed to parse openapi spec: {e}")))?;
     let body = serde_json::to_string(&value)
@@ -20,6 +24,10 @@ pub async fn serve_json(_state: State<Arc<ApiState>>) -> Result<Response, HttpEr
 }
 
 /// Serves the OpenAPI specification as YAML.
-pub async fn serve_yaml(_state: State<Arc<ApiState>>) -> Result<Response, HttpError> {
+pub async fn serve_yaml(
+    _state: State<Arc<ApiState>>,
+    ctx: ApiRequestContext,
+) -> Result<Response, HttpError> {
+    ctx.require_scope("viewer")?;
     Ok(([(header::CONTENT_TYPE, "application/yaml")], OPENAPI_YAML).into_response())
 }

@@ -5,12 +5,11 @@
 //! an `.await` point.
 
 use crate::{
-    Channel, ChannelRepository, ChannelStatus, Command, CommandBus, Device, DeviceLifecycle,
-    DeviceRepository, DomainError, DomainEvent, EventPublisher, MediaBinding,
-    MediaBindingRepository, MediaPurpose, MediaReservation, MediaSession, MediaSessionRepository,
-    MediaSessionState, Operation, OperationRepository, OperationStatus, Outbox, OutboxEntry,
-    OwnerInfo, ProcessedMessageRecord, ProcessedMessageRepository, ProcessedMessageStatus,
-    UnitOfWork,
+    Channel, ChannelRepository, ChannelStatus, Command, CommandBus, Device, DeviceRepository,
+    DomainError, DomainEvent, EventPublisher, MediaBinding, MediaBindingRepository, MediaPurpose,
+    MediaReservation, MediaSession, MediaSessionRepository, MediaSessionState, Operation,
+    OperationRepository, OperationStatus, Outbox, OutboxEntry, OwnerInfo, ProcessedMessageRecord,
+    ProcessedMessageRepository, ProcessedMessageStatus, UnitOfWork,
 };
 use cheetah_signal_types::{
     ChannelId, Clock, DeviceId, DurationMs, Event, IdGenerator, ListCursor, MediaBindingId,
@@ -387,7 +386,6 @@ impl DeviceRepository for InMemoryUnitOfWork {
             .values()
             .filter(|d| {
                 d.tenant_id() == tenant_id
-                    && d.lifecycle() != DeviceLifecycle::Retired
                     && protocol
                         .as_ref()
                         .is_none_or(|p| d.protocol().to_string() == *p)

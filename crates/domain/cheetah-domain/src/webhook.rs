@@ -50,6 +50,54 @@ impl std::str::FromStr for DeliveryStatus {
     }
 }
 
+/// Validates that a webhook target URL has an allowed scheme and a host that is
+/// not obviously internal, loopback, link-local, multicast, or a well-known
+/// cloud metadata endpoint. DNS-based SSRF checks are performed again at delivery
+/// time because the resolution may change.
+fn validate_webhook_url(url: &str) -> Result<()> {
+    let parsed = url::Url::parse(url)
+        .map_err(|e| DomainError::invalid_argument(format!("invalid webhook url: {e}")))?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err(DomainError::invalid_argument(
+            "webhook url scheme must be http or https",
+        ));
+    }
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| DomainError::invalid_argument("webhook url must have a host"))?;
+    if host.eq_ignore_ascii_case("localhost")
+        || host.ends_with(".local")
+        || host.eq_ignore_ascii_case("metadata")
+        || host.eq_ignore_ascii_case("metadata.google.internal")
+    {
+        return Err(DomainError::invalid_argument(
+            "webhook url host is not allowed",
+        ));
+    }
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        let blocked = match ip {
+            std::net::IpAddr::V4(v4) => {
+                v4.is_loopback()
+                    || v4.is_link_local()
+                    || v4.is_multicast()
+                    || v4.is_private()
+                    || v4.is_broadcast()
+                    || v4.is_documentation()
+                    || v4.is_unspecified()
+            }
+            std::net::IpAddr::V6(v6) => {
+                v6.is_loopback() || v6.is_multicast() || v6.is_unspecified()
+            }
+        };
+        if blocked {
+            return Err(DomainError::invalid_argument(
+                "webhook url points to a disallowed address",
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// A configured outbound webhook endpoint.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct WebhookConfig {
@@ -79,6 +127,7 @@ impl WebhookConfig {
                 "webhook url must not be empty",
             ));
         }
+        validate_webhook_url(&url)?;
         if secret_ref.is_empty() {
             return Err(DomainError::invalid_argument(
                 "webhook secret_ref must not be empty",
@@ -113,6 +162,7 @@ impl WebhookConfig {
                     "webhook url must not be empty",
                 ));
             }
+            validate_webhook_url(&url)?;
             self.url = url;
         }
         if let Some(secret_ref) = secret_ref {
