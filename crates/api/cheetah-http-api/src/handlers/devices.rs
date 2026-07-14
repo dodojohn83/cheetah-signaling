@@ -83,7 +83,6 @@ pub async fn retire_device(
     Path(id): Path<String>,
     State(state): State<Arc<ApiState>>,
     ctx: ApiRequestContext,
-    Json(_request): Json<RetireDeviceRequest>,
 ) -> Result<Json<serde_json::Value>, HttpError> {
     ctx.require_scope("operator")?;
     let device_id = id.parse::<DeviceId>().map_err(HttpError::from)?;

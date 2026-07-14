@@ -130,7 +130,16 @@ async fn authenticate_bearer(
     let key = DecodingKey::from_rsa_pem(pem.as_bytes())
         .map_err(|e| HttpError::Internal(format!("invalid JWT public key configuration: {e}")))?;
     let mut validation = Validation::new(Algorithm::RS256);
-    validation.set_required_spec_claims(&["exp"]);
+    let mut required_claims = vec!["exp"];
+    if !security.jwt_audience.is_empty() {
+        validation.set_audience(&security.jwt_audience);
+        required_claims.push("aud");
+    }
+    if !security.jwt_issuer.is_empty() {
+        validation.set_issuer(&security.jwt_issuer);
+        required_claims.push("iss");
+    }
+    validation.set_required_spec_claims(&required_claims);
     let token_data: TokenData<JwtClaims> = decode(token, &key, &validation)
         .map_err(|e| HttpError::Unauthenticated(format!("JWT validation failed: {e}")))?;
 

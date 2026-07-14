@@ -358,6 +358,10 @@ pub struct SecurityConfig {
         deserialize_with = "deserialize_secret_string"
     )]
     pub jwt_public_key_ref: SecretString,
+    /// Expected JWT audiences. Empty disables audience validation.
+    pub jwt_audience: Vec<String>,
+    /// Expected JWT issuers. Empty disables issuer validation.
+    pub jwt_issuer: Vec<String>,
     /// API key hash for service to service calls.
     #[serde(
         serialize_with = "serialize_secret_string",

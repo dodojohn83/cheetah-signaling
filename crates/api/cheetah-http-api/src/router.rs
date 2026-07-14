@@ -100,9 +100,15 @@ pub fn build_router(state: ApiState) -> Router {
 }
 
 fn build_cors_layer(origins: &[String]) -> CorsLayer {
+    if origins.iter().any(|o| o.as_str() == "*") {
+        return CorsLayer::new()
+            .allow_origin(AllowOrigin::any())
+            .allow_methods(Any)
+            .allow_headers(Any);
+    }
     let origins: Vec<HeaderValue> = origins
         .iter()
-        .filter(|o| !o.is_empty() && o.as_str() != "*")
+        .filter(|o| !o.is_empty())
         .filter_map(|o| HeaderValue::from_str(o).ok())
         .collect();
     if origins.is_empty() {
