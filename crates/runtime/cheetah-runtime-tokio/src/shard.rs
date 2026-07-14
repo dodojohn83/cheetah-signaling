@@ -143,6 +143,17 @@ async fn process_ready_queue<A: DeviceActor>(
 
             let actor_ctx = ctx.actor_context(key);
 
+            let actor = match actors.entry(key) {
+                Entry::Vacant(e) => match A::create(actor_ctx.clone()) {
+                    Ok(actor) => e.insert(actor),
+                    Err(e) => {
+                        tracing::warn!(?key, "failed to create actor: {e}");
+                        continue;
+                    }
+                },
+                Entry::Occupied(e) => e.into_mut(),
+            };
+
             for _ in 0..ctx.config.max_consecutive_per_device {
                 if processed >= max {
                     break;
@@ -151,17 +162,6 @@ async fn process_ready_queue<A: DeviceActor>(
                 let msg = match queue.pop_front() {
                     Some(msg) => msg,
                     None => break,
-                };
-
-                let actor = match actors.entry(key) {
-                    Entry::Vacant(e) => match A::create(actor_ctx.clone()) {
-                        Ok(actor) => e.insert(actor),
-                        Err(e) => {
-                            tracing::warn!(?key, "failed to create actor: {e}");
-                            continue;
-                        }
-                    },
-                    Entry::Occupied(e) => e.into_mut(),
                 };
 
                 match actor.handle(msg, &actor_ctx).await {
@@ -181,7 +181,8 @@ async fn process_ready_queue<A: DeviceActor>(
                 processed += 1;
             }
 
-            if queue.is_empty() {
+            let queue_is_empty = queue.is_empty();
+            if queue_is_empty {
                 ready_queue.remove(&key);
             }
         }

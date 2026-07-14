@@ -226,6 +226,14 @@ fn dispatch(
 }
 
 fn enforce_limit(pending_dispatch: &mut VecDeque<RuntimeMessage>, max_pending_dispatch: usize) {
+    let overflow = pending_dispatch.len().saturating_sub(max_pending_dispatch);
+    if overflow > 0 {
+        tracing::warn!(
+            dropped = overflow,
+            max_pending_dispatch,
+            "timer dispatch queue overflow; dropping oldest timers"
+        );
+    }
     while pending_dispatch.len() > max_pending_dispatch {
         pending_dispatch.pop_front();
     }
