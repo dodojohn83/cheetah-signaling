@@ -21,7 +21,10 @@ async fn append_and_pending(storage: &dyn Storage, fixtures: &Fixtures) -> TestR
     uow.commit().await?;
 
     let mut uow = storage.begin().await?;
-    let pending = uow.outbox().pending(10).await?;
+    let pending = uow
+        .outbox()
+        .pending(fixtures.clock().now_wall(), 10)
+        .await?;
     uow.commit().await?;
 
     assert_eq!(pending.len(), 1);
@@ -33,7 +36,10 @@ async fn append_and_pending(storage: &dyn Storage, fixtures: &Fixtures) -> TestR
     uow.commit().await?;
 
     let mut uow = storage.begin().await?;
-    let pending = uow.outbox().pending(10).await?;
+    let pending = uow
+        .outbox()
+        .pending(fixtures.clock().now_wall(), 10)
+        .await?;
     uow.commit().await?;
 
     assert!(pending.is_empty(), "marked events must not be pending");
@@ -61,11 +67,34 @@ async fn aggregate_and_outbox_same_transaction(
         .get(tenant_id, device_id)
         .await?
         .ok_or("device not committed")?;
-    let pending = uow.outbox().pending(10).await?;
+    let pending = uow
+        .outbox()
+        .pending(fixtures.clock().now_wall(), 10)
+        .await?;
     uow.commit().await?;
 
     assert_eq!(loaded.device_id(), device_id);
-    assert_eq!(pending.len(), 1);
+    let mut event_count = pending
+        .iter()
+        .filter(|e| e.event.tenant_id == tenant_id)
+        .count();
+    assert_eq!(event_count, 1);
+
+    let mut uow = storage.begin().await?;
+    uow.outbox().mark_published(event.event_id).await?;
+    uow.commit().await?;
+
+    let mut uow = storage.begin().await?;
+    let pending = uow
+        .outbox()
+        .pending(fixtures.clock().now_wall(), 10)
+        .await?;
+    uow.commit().await?;
+    event_count = pending
+        .iter()
+        .filter(|e| e.event.tenant_id == tenant_id)
+        .count();
+    assert_eq!(event_count, 0, "test outbox event must be cleaned up");
 
     Ok(())
 }

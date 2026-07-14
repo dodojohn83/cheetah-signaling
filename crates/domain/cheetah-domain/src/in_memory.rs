@@ -8,7 +8,8 @@ use crate::{
     Channel, ChannelRepository, Command, CommandBus, Device, DeviceRepository, DomainError,
     DomainEvent, EventPublisher, MediaBinding, MediaBindingRepository, MediaReservation,
     MediaSession, MediaSessionRepository, Operation, OperationRepository, Outbox, OutboxEntry,
-    OwnerInfo, UnitOfWork,
+    OwnerInfo, ProcessedMessageRecord, ProcessedMessageRepository, ProcessedMessageStatus,
+    UnitOfWork,
 };
 use cheetah_signal_types::{
     ChannelId, Clock, DeviceId, DurationMs, Event, IdGenerator, MediaBindingId,
@@ -192,6 +193,8 @@ pub struct InMemoryStores {
     pub owners: BTreeMap<(TenantId, DeviceId), OwnerInfo>,
     /// Media reservations keyed by `(tenant_id, media_binding_id)`.
     pub media_reservations: BTreeMap<(TenantId, MediaBindingId), MediaReservation>,
+    /// Processed messages keyed by `(tenant_id, message_id)`.
+    pub processed_messages: BTreeMap<(TenantId, MessageId), ProcessedMessageRecord>,
 }
 
 /// In-memory unit of work that keeps pending writes separate until commit.
@@ -253,6 +256,10 @@ impl UnitOfWork for InMemoryUnitOfWork {
     }
 
     fn media_binding_repository(&mut self) -> &mut dyn MediaBindingRepository {
+        self
+    }
+
+    fn processed_message_repository(&mut self) -> &mut dyn ProcessedMessageRepository {
         self
     }
 
@@ -482,23 +489,77 @@ impl MediaBindingRepository for InMemoryUnitOfWork {
 }
 
 #[async_trait::async_trait]
+impl ProcessedMessageRepository for InMemoryUnitOfWork {
+    async fn find(
+        &mut self,
+        tenant_id: TenantId,
+        message_id: MessageId,
+    ) -> crate::Result<Option<ProcessedMessageRecord>> {
+        let pending = lock_mutex(&self.pending);
+        Ok(pending
+            .processed_messages
+            .get(&(tenant_id, message_id))
+            .cloned())
+    }
+
+    async fn get_or_insert(
+        &mut self,
+        record: ProcessedMessageRecord,
+    ) -> crate::Result<Option<ProcessedMessageRecord>> {
+        if let Some(existing) = self.find(record.tenant_id, record.message_id).await? {
+            return Ok(Some(existing));
+        }
+        let mut pending = lock_mutex(&self.pending);
+        pending
+            .processed_messages
+            .insert((record.tenant_id, record.message_id), record);
+        Ok(None)
+    }
+
+    async fn complete(
+        &mut self,
+        tenant_id: TenantId,
+        message_id: MessageId,
+        status: ProcessedMessageStatus,
+        result_payload: Option<String>,
+        processed_at: UtcTimestamp,
+    ) -> crate::Result<()> {
+        let mut pending = lock_mutex(&self.pending);
+        if let Some(entry) = pending.processed_messages.get_mut(&(tenant_id, message_id)) {
+            entry.status = status;
+            entry.result_payload = result_payload;
+            entry.processed_at = processed_at;
+        }
+        Ok(())
+    }
+}
+
+#[async_trait::async_trait]
 impl Outbox for InMemoryUnitOfWork {
     async fn append(&mut self, event: Event<DomainEvent>) -> crate::Result<()> {
         self.with_pending(|pending| {
             pending.outbox.push(OutboxEntry {
                 event,
                 published: false,
+                attempts: 0,
+                failed: false,
+                error: None,
+                next_attempt_at: None,
             });
         });
         Ok(())
     }
 
-    async fn pending(&mut self, limit: usize) -> crate::Result<Vec<OutboxEntry>> {
+    async fn pending(
+        &mut self,
+        now: UtcTimestamp,
+        limit: usize,
+    ) -> crate::Result<Vec<OutboxEntry>> {
         let pending = lock_mutex(&self.pending);
         Ok(pending
             .outbox
             .iter()
-            .filter(|e| !e.published)
+            .filter(|e| !e.published && !e.failed && e.next_attempt_at.is_none_or(|t| t <= now))
             .take(limit)
             .cloned()
             .collect())
@@ -512,6 +573,28 @@ impl Outbox for InMemoryUnitOfWork {
             for entry in &mut pending.outbox {
                 if entry.event.event_id == event_id {
                     entry.published = true;
+                    break;
+                }
+            }
+        });
+        Ok(())
+    }
+
+    async fn mark_failed(
+        &mut self,
+        event_id: cheetah_signal_types::EventId,
+        attempts: u32,
+        failed: bool,
+        error: Option<String>,
+        next_attempt_at: Option<UtcTimestamp>,
+    ) -> crate::Result<()> {
+        self.with_pending(|pending| {
+            for entry in &mut pending.outbox {
+                if entry.event.event_id == event_id {
+                    entry.attempts = attempts;
+                    entry.failed = failed;
+                    entry.error.clone_from(&error);
+                    entry.next_attempt_at = next_attempt_at;
                     break;
                 }
             }
@@ -540,16 +623,24 @@ impl Outbox for InMemoryOutbox {
         stores.outbox.push(OutboxEntry {
             event,
             published: false,
+            attempts: 0,
+            failed: false,
+            error: None,
+            next_attempt_at: None,
         });
         Ok(())
     }
 
-    async fn pending(&mut self, limit: usize) -> crate::Result<Vec<OutboxEntry>> {
+    async fn pending(
+        &mut self,
+        now: UtcTimestamp,
+        limit: usize,
+    ) -> crate::Result<Vec<OutboxEntry>> {
         let stores = lock_mutex(&self.stores);
         Ok(stores
             .outbox
             .iter()
-            .filter(|e| !e.published)
+            .filter(|e| !e.published && !e.failed && e.next_attempt_at.is_none_or(|t| t <= now))
             .take(limit)
             .cloned()
             .collect())
@@ -563,6 +654,27 @@ impl Outbox for InMemoryOutbox {
         for entry in &mut stores.outbox {
             if entry.event.event_id == event_id {
                 entry.published = true;
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    async fn mark_failed(
+        &mut self,
+        event_id: cheetah_signal_types::EventId,
+        attempts: u32,
+        failed: bool,
+        error: Option<String>,
+        next_attempt_at: Option<UtcTimestamp>,
+    ) -> crate::Result<()> {
+        let mut stores = lock_mutex(&self.stores);
+        for entry in &mut stores.outbox {
+            if entry.event.event_id == event_id {
+                entry.attempts = attempts;
+                entry.failed = failed;
+                entry.error.clone_from(&error);
+                entry.next_attempt_at = next_attempt_at;
                 break;
             }
         }

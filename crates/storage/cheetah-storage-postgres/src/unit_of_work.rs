@@ -3,7 +3,7 @@
 use crate::error::sqlx_to_domain;
 use cheetah_domain::{
     ChannelRepository, DeviceRepository, DomainError, MediaBindingRepository,
-    MediaSessionRepository, OperationRepository, Outbox, UnitOfWork,
+    MediaSessionRepository, OperationRepository, Outbox, ProcessedMessageRepository, UnitOfWork,
 };
 use sqlx::Transaction;
 
@@ -45,6 +45,10 @@ impl UnitOfWork for PostgresUnitOfWork {
     }
 
     fn media_binding_repository(&mut self) -> &mut dyn MediaBindingRepository {
+        self
+    }
+
+    fn processed_message_repository(&mut self) -> &mut dyn ProcessedMessageRepository {
         self
     }
 

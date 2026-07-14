@@ -2,7 +2,7 @@
 
 use crate::StorageError;
 use cheetah_domain::OwnerInfo;
-use cheetah_signal_types::{DeviceId, OperationId, TenantId};
+use cheetah_signal_types::{DeviceId, NodeId, OperationId, TenantId};
 
 /// Repository for device owner leases.
 #[async_trait::async_trait]
@@ -25,6 +25,38 @@ pub trait OwnerRepository: Send + Sync {
     /// Clears the owner for a device.
     async fn clear(&mut self, tenant_id: TenantId, device_id: DeviceId)
     -> Result<(), StorageError>;
+
+    /// Atomically acquires or re-acquires ownership of a device.
+    ///
+    /// If the device has no owner or the existing lease has expired, the
+    /// `node_id` becomes the new owner and the epoch is incremented. Returns
+    /// the new [`OwnerInfo`] on success.
+    async fn acquire(
+        &mut self,
+        tenant_id: TenantId,
+        device_id: DeviceId,
+        node_id: NodeId,
+        lease_until: cheetah_signal_types::UtcTimestamp,
+    ) -> Result<OwnerInfo, StorageError>;
+
+    /// Extends an existing lease if `node_id` still owns the device and the
+    /// lease has not expired.
+    async fn renew(
+        &mut self,
+        tenant_id: TenantId,
+        device_id: DeviceId,
+        node_id: NodeId,
+        lease_until: cheetah_signal_types::UtcTimestamp,
+    ) -> Result<Option<OwnerInfo>, StorageError>;
+
+    /// Releases ownership if `node_id` and `epoch` match the current record.
+    async fn release(
+        &mut self,
+        tenant_id: TenantId,
+        device_id: DeviceId,
+        node_id: NodeId,
+        epoch: cheetah_signal_types::OwnerEpoch,
+    ) -> Result<(), StorageError>;
 }
 
 /// A single dispatch attempt for an operation.

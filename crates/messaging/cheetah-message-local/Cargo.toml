@@ -6,10 +6,23 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+description = "In-process message bus implementation for Cheetah Signaling."
 
 [dependencies]
+cheetah-domain = { path = "../../domain/cheetah-domain" }
+cheetah-message-api = { path = "../cheetah-message-api" }
+cheetah-signal-contracts = { path = "../../foundation/cheetah-signal-contracts" }
+cheetah-signal-types = { path = "../../foundation/cheetah-signal-types" }
+tokio = { workspace = true, features = ["sync", "time"] }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+prost = { workspace = true }
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [lints]
 workspace = true

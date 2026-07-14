@@ -6,9 +6,10 @@ use cheetah_domain::Protocol;
 use cheetah_domain::{
     Channel, ChannelRepository, Device, DeviceRepository, DomainError, MediaBinding,
     MediaBindingRepository, MediaSession, MediaSessionRepository, Operation, OperationRepository,
-    Outbox, OutboxEntry,
+    Outbox, OutboxEntry, ProcessedMessageRecord, ProcessedMessageRepository,
+    ProcessedMessageStatus,
 };
-use cheetah_signal_types::Event;
+use cheetah_signal_types::{Event, MessageId, UtcTimestamp};
 use sqlx::FromRow;
 use sqlx::types::Json;
 use time::OffsetDateTime;
@@ -519,6 +520,10 @@ struct OutboxRow {
     #[sqlx(rename = "payload")]
     payload: Json<Event<DomainEvent>>,
     published: bool,
+    attempts: i64,
+    failed: bool,
+    next_attempt_at: Option<OffsetDateTime>,
+    error: Option<String>,
 }
 
 #[async_trait::async_trait]
@@ -527,8 +532,9 @@ impl Outbox for PostgresUnitOfWork {
         sqlx::query(
             "INSERT INTO outbox_events (
                 event_id, tenant_id, aggregate_ref, aggregate_sequence, payload, published,
+                attempts, failed, next_attempt_at, error,
                 occurred_at, correlation_id, causation_id, source
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
         )
         .bind(event.event_id.as_uuid())
         .bind(event.tenant_id.as_uuid())
@@ -536,6 +542,10 @@ impl Outbox for PostgresUnitOfWork {
         .bind(event.aggregate_sequence as i64)
         .bind(Json(&event))
         .bind(false)
+        .bind(0i64)
+        .bind(false)
+        .bind(Option::<OffsetDateTime>::None)
+        .bind(Option::<String>::None)
         .bind(event.occurred_at.as_offset())
         .bind(event.correlation_id.as_uuid())
         .bind(event.causation_id.as_uuid())
@@ -546,11 +556,19 @@ impl Outbox for PostgresUnitOfWork {
         Ok(())
     }
 
-    async fn pending(&mut self, limit: usize) -> cheetah_domain::Result<Vec<OutboxEntry>> {
+    async fn pending(
+        &mut self,
+        now: cheetah_signal_types::UtcTimestamp,
+        limit: usize,
+    ) -> cheetah_domain::Result<Vec<OutboxEntry>> {
         let rows: Vec<OutboxRow> = sqlx::query_as::<sqlx::Postgres, OutboxRow>(
-            "SELECT payload, published FROM outbox_events WHERE published = false ORDER BY occurred_at ASC LIMIT $1",
+            "SELECT payload, published, attempts, failed, next_attempt_at, error
+             FROM outbox_events
+             WHERE published = false AND failed = false AND (next_attempt_at IS NULL OR next_attempt_at <= $2)
+             ORDER BY occurred_at ASC LIMIT $1",
         )
         .bind(limit as i64)
+        .bind(now.as_offset())
         .fetch_all(self.tx()?.as_mut())
         .await
         .map_err(sqlx_to_domain)?;
@@ -560,6 +578,12 @@ impl Outbox for PostgresUnitOfWork {
             .map(|r| OutboxEntry {
                 event: r.payload.0,
                 published: r.published,
+                attempts: r.attempts as u32,
+                failed: r.failed,
+                error: r.error,
+                next_attempt_at: r
+                    .next_attempt_at
+                    .map(cheetah_signal_types::UtcTimestamp::from_offset),
             })
             .collect())
     }
@@ -573,6 +597,152 @@ impl Outbox for PostgresUnitOfWork {
             .execute(self.tx()?.as_mut())
             .await
             .map_err(sqlx_to_domain)?;
+        Ok(())
+    }
+
+    async fn mark_failed(
+        &mut self,
+        event_id: cheetah_signal_types::EventId,
+        attempts: u32,
+        failed: bool,
+        error: Option<String>,
+        next_attempt_at: Option<cheetah_signal_types::UtcTimestamp>,
+    ) -> cheetah_domain::Result<()> {
+        sqlx::query(
+            "UPDATE outbox_events
+             SET attempts = $1, failed = $2, error = $3, next_attempt_at = $4
+             WHERE event_id = $5",
+        )
+        .bind(attempts as i64)
+        .bind(failed)
+        .bind(error)
+        .bind(next_attempt_at.map(|t| t.as_offset()))
+        .bind(event_id.as_uuid())
+        .execute(self.tx()?.as_mut())
+        .await
+        .map_err(sqlx_to_domain)?;
+        Ok(())
+    }
+}
+
+#[derive(FromRow)]
+struct ProcessedMessageRow {
+    tenant_id: uuid::Uuid,
+    message_id: uuid::Uuid,
+    idempotency_key: Option<String>,
+    status: String,
+    result_payload: Option<String>,
+    processed_at: OffsetDateTime,
+    expires_at: Option<OffsetDateTime>,
+}
+
+fn processed_status_to_string(status: ProcessedMessageStatus) -> &'static str {
+    match status {
+        ProcessedMessageStatus::Pending => "pending",
+        ProcessedMessageStatus::Completed => "completed",
+        ProcessedMessageStatus::Failed => "failed",
+        ProcessedMessageStatus::Duplicate => "duplicate",
+    }
+}
+
+fn processed_status_from_string(status: &str) -> Result<ProcessedMessageStatus, DomainError> {
+    match status {
+        "pending" => Ok(ProcessedMessageStatus::Pending),
+        "completed" => Ok(ProcessedMessageStatus::Completed),
+        "failed" => Ok(ProcessedMessageStatus::Failed),
+        "duplicate" => Ok(ProcessedMessageStatus::Duplicate),
+        _ => Err(DomainError::internal(format!(
+            "unknown processed message status: {status}"
+        ))),
+    }
+}
+
+fn processed_row_to_record(
+    row: ProcessedMessageRow,
+) -> Result<ProcessedMessageRecord, DomainError> {
+    Ok(ProcessedMessageRecord {
+        tenant_id: row.tenant_id.into(),
+        message_id: row.message_id.into(),
+        idempotency_key: row.idempotency_key,
+        status: processed_status_from_string(&row.status)?,
+        result_payload: row.result_payload,
+        processed_at: UtcTimestamp::from_offset(row.processed_at),
+        expires_at: row.expires_at.map(UtcTimestamp::from_offset),
+    })
+}
+
+#[async_trait::async_trait]
+impl ProcessedMessageRepository for PostgresUnitOfWork {
+    async fn find(
+        &mut self,
+        tenant_id: cheetah_signal_types::TenantId,
+        message_id: MessageId,
+    ) -> cheetah_domain::Result<Option<ProcessedMessageRecord>> {
+        let row: Option<ProcessedMessageRow> =
+            sqlx::query_as::<sqlx::Postgres, ProcessedMessageRow>(
+                "SELECT tenant_id, message_id, idempotency_key, status, result_payload, processed_at, expires_at
+                 FROM processed_messages WHERE tenant_id = $1 AND message_id = $2",
+            )
+            .bind(tenant_id.as_uuid())
+            .bind(message_id.as_uuid())
+            .fetch_optional(self.tx()?.as_mut())
+            .await
+            .map_err(sqlx_to_domain)?;
+
+        row.map(processed_row_to_record).transpose()
+    }
+
+    async fn get_or_insert(
+        &mut self,
+        record: ProcessedMessageRecord,
+    ) -> cheetah_domain::Result<Option<ProcessedMessageRecord>> {
+        let inserted: Option<ProcessedMessageRow> =
+            sqlx::query_as::<sqlx::Postgres, ProcessedMessageRow>(
+                "INSERT INTO processed_messages (
+                    tenant_id, message_id, idempotency_key, status, result_payload, processed_at, expires_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+                ON CONFLICT(tenant_id, message_id) DO NOTHING
+                RETURNING tenant_id, message_id, idempotency_key, status, result_payload, processed_at, expires_at",
+            )
+            .bind(record.tenant_id.as_uuid())
+            .bind(record.message_id.as_uuid())
+            .bind(record.idempotency_key)
+            .bind(processed_status_to_string(record.status))
+            .bind(record.result_payload)
+            .bind(record.processed_at.as_offset())
+            .bind(record.expires_at.map(|t| t.as_offset()))
+            .fetch_optional(self.tx()?.as_mut())
+            .await
+            .map_err(sqlx_to_domain)?;
+
+        if inserted.is_some() {
+            Ok(None)
+        } else {
+            self.find(record.tenant_id, record.message_id).await
+        }
+    }
+
+    async fn complete(
+        &mut self,
+        tenant_id: cheetah_signal_types::TenantId,
+        message_id: MessageId,
+        status: ProcessedMessageStatus,
+        result_payload: Option<String>,
+        processed_at: UtcTimestamp,
+    ) -> cheetah_domain::Result<()> {
+        sqlx::query(
+            "UPDATE processed_messages
+             SET status = $1, result_payload = $2, processed_at = $3
+             WHERE tenant_id = $4 AND message_id = $5",
+        )
+        .bind(processed_status_to_string(status))
+        .bind(result_payload)
+        .bind(processed_at.as_offset())
+        .bind(tenant_id.as_uuid())
+        .bind(message_id.as_uuid())
+        .execute(self.tx()?.as_mut())
+        .await
+        .map_err(sqlx_to_domain)?;
         Ok(())
     }
 }

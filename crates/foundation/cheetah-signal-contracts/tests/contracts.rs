@@ -49,6 +49,8 @@ fn command_envelope_roundtrip_with_control_command() {
         meta: Some(envelope_meta()),
         target: Some(resource_ref(ResourceKind::Device)),
         idempotency_key: "idempotency-key-1".to_string(),
+        operation_id: "operation-1".to_string(),
+        step_id: "step-1".to_string(),
         command: Some(command_envelope::Command::ControlCommand(ControlCommand {
             command: Some(control_command::Command::InviteDevice(InviteDevice {
                 device_id: "device-1".to_string(),
@@ -97,6 +99,8 @@ fn node_command_request_roundtrip() {
             meta: Some(envelope_meta()),
             target: Some(resource_ref(ResourceKind::Device)),
             idempotency_key: "idempotent-key".to_string(),
+            operation_id: "operation-1".to_string(),
+            step_id: "step-1".to_string(),
             command: Some(command_envelope::Command::DeviceCommand(
                 DeviceCommand::default(),
             )),
