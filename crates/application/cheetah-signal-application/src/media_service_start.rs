@@ -21,7 +21,8 @@ impl MediaService {
         let device_id = request.device_id.parse::<DeviceId>()?;
         let channel_id = request.channel_id.parse::<ChannelId>()?;
 
-        self.ensure_device_and_channel_ready(uow, tenant_id, device_id, channel_id)
+        let (device, channel) = self
+            .ensure_device_and_channel_ready(uow, tenant_id, device_id, channel_id)
             .await?;
 
         let target = channel_resource_ref(tenant_id, channel_id);
@@ -52,6 +53,13 @@ impl MediaService {
         let media_session_id = self.id_generator.generate_media_session_id();
         let media_binding_id = self.id_generator.generate_media_binding_id();
         let deadline = parse_deadline(request.deadline)?;
+        let requirements = build_media_requirements(
+            &device,
+            &channel,
+            MediaPurpose::Live,
+            media_session_id,
+            std::collections::BTreeMap::new(),
+        );
 
         let reservation = self
             .media_port
@@ -62,6 +70,8 @@ impl MediaService {
                 media_session_id,
                 media_binding_id,
                 MediaPurpose::Live,
+                &requirements,
+                self.clock.as_ref(),
             )
             .await?;
 
@@ -169,7 +179,9 @@ impl MediaService {
         .await;
 
         let released = if result.is_err() {
-            self.media_port.release(tenant_id, media_binding_id).await
+            self.media_port
+                .release(tenant_id, media_binding_id, self.clock.as_ref())
+                .await
         } else {
             Ok(())
         };
@@ -194,7 +206,8 @@ impl MediaService {
         let start_time = request.start_time.parse::<UtcTimestamp>()?;
         let end_time = request.end_time.parse::<UtcTimestamp>()?;
 
-        self.ensure_device_and_channel_ready(uow, tenant_id, device_id, channel_id)
+        let (device, channel) = self
+            .ensure_device_and_channel_ready(uow, tenant_id, device_id, channel_id)
             .await?;
 
         let target = channel_resource_ref(tenant_id, channel_id);
@@ -225,6 +238,17 @@ impl MediaService {
         let media_session_id = self.id_generator.generate_media_session_id();
         let media_binding_id = self.id_generator.generate_media_binding_id();
         let deadline = parse_deadline(request.deadline)?;
+        let mut extra = std::collections::BTreeMap::new();
+        extra.insert("start_time".to_string(), start_time.to_string());
+        extra.insert("end_time".to_string(), end_time.to_string());
+        extra.insert("scale".to_string(), request.scale.to_string());
+        let requirements = build_media_requirements(
+            &device,
+            &channel,
+            MediaPurpose::Playback,
+            media_session_id,
+            extra,
+        );
 
         let reservation = self
             .media_port
@@ -237,6 +261,8 @@ impl MediaService {
                 start_time,
                 end_time,
                 request.scale,
+                &requirements,
+                self.clock.as_ref(),
             )
             .await?;
 
@@ -346,7 +372,9 @@ impl MediaService {
         .await;
 
         let released = if result.is_err() {
-            self.media_port.release(tenant_id, media_binding_id).await
+            self.media_port
+                .release(tenant_id, media_binding_id, self.clock.as_ref())
+                .await
         } else {
             Ok(())
         };
@@ -369,7 +397,8 @@ impl MediaService {
         let device_id = request.device_id.parse::<DeviceId>()?;
         let channel_id = request.channel_id.parse::<ChannelId>()?;
 
-        self.ensure_device_and_channel_ready(uow, tenant_id, device_id, channel_id)
+        let (device, channel) = self
+            .ensure_device_and_channel_ready(uow, tenant_id, device_id, channel_id)
             .await?;
 
         let target = channel_resource_ref(tenant_id, channel_id);
@@ -400,6 +429,13 @@ impl MediaService {
         let media_session_id = self.id_generator.generate_media_session_id();
         let media_binding_id = self.id_generator.generate_media_binding_id();
         let deadline = parse_deadline(request.deadline)?;
+        let requirements = build_media_requirements(
+            &device,
+            &channel,
+            MediaPurpose::Talk,
+            media_session_id,
+            std::collections::BTreeMap::new(),
+        );
 
         let reservation = self
             .media_port
@@ -409,6 +445,8 @@ impl MediaService {
                 channel_id,
                 media_session_id,
                 media_binding_id,
+                &requirements,
+                self.clock.as_ref(),
             )
             .await?;
 
@@ -515,7 +553,9 @@ impl MediaService {
         .await;
 
         let released = if result.is_err() {
-            self.media_port.release(tenant_id, media_binding_id).await
+            self.media_port
+                .release(tenant_id, media_binding_id, self.clock.as_ref())
+                .await
         } else {
             Ok(())
         };

@@ -154,12 +154,20 @@ message MediaError {
   string error_message = 3;
 }
 
+// Capacity advertised at registration.
+message MediaNodeCapacity {
+  uint64 max_sessions = 1;
+  uint64 max_bandwidth_mbps = 2;
+  uint64 max_cpu_percent = 3;
+}
+
 // Media node registration payload.
 message MediaNodeRegistration {
   string node_id = 1;
   string listen_addr = 2;
   MediaCapability capability = 3;
   string region = 4;
+  MediaNodeCapacity capacity = 5;
 }
 
 // Media node runtime information.
@@ -171,6 +179,7 @@ message MediaNodeInfo {
   uint64 owner_epoch = 5;
   google.protobuf.Timestamp last_heartbeat_at = 6;
   MediaNodeStatus status = 7;
+  MediaNodeCapacity capacity = 8;
 }
 
 // Media node heartbeat payload.
@@ -184,4 +193,10 @@ message MediaNodeHeartbeat {
 message MediaNodeDrain {
   string node_id = 1;
   bool drain = 2;
+}
+
+// Media node deregister request payload.
+message MediaNodeDeregister {
+  string node_id = 1;
+  string reason = 2;
 }

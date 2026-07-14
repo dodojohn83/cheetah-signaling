@@ -26,6 +26,7 @@ service MediaClusterRegistry {
   rpc RegisterMediaNode(RegisterMediaNodeRequest) returns (RegisterMediaNodeResponse);
   rpc HeartbeatMediaNode(HeartbeatMediaNodeRequest) returns (HeartbeatMediaNodeResponse);
   rpc DrainMediaNode(DrainMediaNodeRequest) returns (DrainMediaNodeResponse);
+  rpc DeregisterMediaNode(DeregisterMediaNodeRequest) returns (DeregisterMediaNodeResponse);
 }
 
 // Media capability discovery.
@@ -122,6 +123,14 @@ message DrainMediaNodeRequest {
 }
 
 message DrainMediaNodeResponse {
+  cheetah.media.v1.MediaNodeInfo node = 1;
+}
+
+message DeregisterMediaNodeRequest {
+  cheetah.media.v1.MediaNodeDeregister deregister = 1;
+}
+
+message DeregisterMediaNodeResponse {
   cheetah.media.v1.MediaNodeInfo node = 1;
 }
 
