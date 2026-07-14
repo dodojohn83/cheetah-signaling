@@ -68,6 +68,7 @@ pub async fn event_stream(
             }
             tokio::select! {
                 _ = cancel.cancelled() => break,
+                _ = tx.closed() => break,
                 changed = watch.changed() => {
                     if changed.is_err() {
                         break;

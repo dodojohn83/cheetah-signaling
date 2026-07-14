@@ -74,28 +74,42 @@ fn validate_webhook_url(url: &str) -> Result<()> {
             "webhook url host is not allowed",
         ));
     }
-    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
-        let blocked = match ip {
-            std::net::IpAddr::V4(v4) => {
-                v4.is_loopback()
-                    || v4.is_link_local()
-                    || v4.is_multicast()
-                    || v4.is_private()
-                    || v4.is_broadcast()
-                    || v4.is_documentation()
-                    || v4.is_unspecified()
-            }
-            std::net::IpAddr::V6(v6) => {
-                v6.is_loopback() || v6.is_multicast() || v6.is_unspecified()
-            }
-        };
-        if blocked {
-            return Err(DomainError::invalid_argument(
-                "webhook url points to a disallowed address",
-            ));
-        }
+    if let Ok(ip) = host.parse::<std::net::IpAddr>()
+        && is_disallowed_ip(&ip)
+    {
+        return Err(DomainError::invalid_argument(
+            "webhook url points to a disallowed address",
+        ));
     }
     Ok(())
+}
+
+fn is_disallowed_ip(ip: &std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => is_disallowed_ipv4(v4),
+        std::net::IpAddr::V6(v6) => is_disallowed_ipv6(v6),
+    }
+}
+
+fn is_disallowed_ipv4(v4: &std::net::Ipv4Addr) -> bool {
+    v4.is_loopback()
+        || v4.is_link_local()
+        || v4.is_multicast()
+        || v4.is_private()
+        || v4.is_broadcast()
+        || v4.is_documentation()
+        || v4.is_unspecified()
+}
+
+fn is_disallowed_ipv6(v6: &std::net::Ipv6Addr) -> bool {
+    if let Some(v4) = v6.to_ipv4() {
+        return is_disallowed_ipv4(&v4);
+    }
+    v6.is_loopback()
+        || v6.is_multicast()
+        || v6.is_unspecified()
+        || v6.is_unicast_link_local()
+        || v6.is_unique_local()
 }
 
 /// A configured outbound webhook endpoint.

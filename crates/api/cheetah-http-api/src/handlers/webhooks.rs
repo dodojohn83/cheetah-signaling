@@ -133,11 +133,11 @@ pub async fn replay_delivery(
     ctx: ApiRequestContext,
 ) -> Result<impl IntoResponse, HttpError> {
     ctx.require_scope("operator")?;
-    let _webhook_id = parse_webhook_id(&webhook_id)?;
+    let webhook_id = parse_webhook_id(&webhook_id)?;
     let delivery_id = parse_delivery_id(&delivery_id)?;
     let delivery = state
         .webhook_service()?
-        .replay_delivery(&ctx, delivery_id)
+        .replay_delivery(&ctx, webhook_id, delivery_id)
         .await?;
     Ok((StatusCode::CREATED, Json(delivery)))
 }

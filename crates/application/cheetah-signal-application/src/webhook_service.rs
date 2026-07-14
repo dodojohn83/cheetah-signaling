@@ -260,6 +260,7 @@ impl WebhookService {
     pub async fn replay_delivery(
         &self,
         context: &RequestContext,
+        webhook_id: WebhookId,
         delivery_id: DeliveryId,
     ) -> crate::Result<WebhookDelivery> {
         let mut uow = self.begin().await?;
@@ -268,6 +269,9 @@ impl WebhookService {
             .get(context.tenant_id, delivery_id)
             .await?
             .ok_or_else(|| DomainError::not_found("delivery", delivery_id.to_string()))?;
+        if original.webhook_id() != webhook_id {
+            return Err(DomainError::not_found("delivery", delivery_id.to_string()).into());
+        }
         let config = uow
             .webhook_config_repository()
             .get(context.tenant_id, original.webhook_id())

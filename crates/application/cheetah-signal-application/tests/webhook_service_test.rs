@@ -528,7 +528,7 @@ async fn webhook_replay_creates_new_pending_delivery() {
     ctx.http_client.push_ok(200);
     let replay = ctx
         .service
-        .replay_delivery(&context, delivery.delivery_id())
+        .replay_delivery(&context, config.webhook_id(), delivery.delivery_id())
         .await
         .unwrap();
     assert_ne!(replay.delivery_id(), delivery.delivery_id());
