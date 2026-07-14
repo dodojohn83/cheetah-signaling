@@ -102,14 +102,18 @@ fn is_disallowed_ipv4(v4: &std::net::Ipv4Addr) -> bool {
 }
 
 fn is_disallowed_ipv6(v6: &std::net::Ipv6Addr) -> bool {
-    if let Some(v4) = v6.to_ipv4() {
-        return is_disallowed_ipv4(&v4);
-    }
-    v6.is_loopback()
+    if v6.is_loopback()
         || v6.is_multicast()
         || v6.is_unspecified()
         || v6.is_unicast_link_local()
         || v6.is_unique_local()
+    {
+        return true;
+    }
+    if let Some(v4) = v6.to_ipv4() {
+        return is_disallowed_ipv4(&v4);
+    }
+    false
 }
 
 /// A configured outbound webhook endpoint.
