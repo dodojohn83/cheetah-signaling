@@ -114,7 +114,8 @@ impl OwnerRepository for SqliteOwnerRepository {
                  owner_epoch = device_owners.owner_epoch + 1,
                  expires_at = EXCLUDED.expires_at,
                  updated_at = EXCLUDED.updated_at
-             WHERE device_owners.expires_at IS NOT NULL AND device_owners.expires_at <= EXCLUDED.updated_at",
+             WHERE (device_owners.expires_at IS NOT NULL AND device_owners.expires_at <= EXCLUDED.updated_at)
+                OR device_owners.owner_node_id = EXCLUDED.owner_node_id",
         )
         .bind(tenant_id.as_uuid())
         .bind(device_id.as_uuid())
