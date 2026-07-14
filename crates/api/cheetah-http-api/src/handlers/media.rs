@@ -40,7 +40,7 @@ pub async fn list_sessions(
         .list(
             ctx.tenant_id,
             device_id,
-            query.protocol,
+            query.purpose,
             query.status,
             updated_after,
             page,

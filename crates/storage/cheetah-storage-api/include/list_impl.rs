@@ -65,12 +65,26 @@ fn push_string_filter(qb: &mut QueryBuilder<'_, Db>, column: &str, value: &Optio
     }
 }
 
+fn escape_like_pattern(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for c in value.chars() {
+        if c == '\\' || c == '%' || c == '_' {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
 fn push_name_prefix_filter(qb: &mut QueryBuilder<'_, Db>, column: &str, value: &Option<String>) {
     if let Some(value) = value {
+        let pattern = format!("{}%", escape_like_pattern(value));
         qb.push(" AND ");
         qb.push(column);
         qb.push(" LIKE ");
-        qb.push_bind(format!("{value}%"));
+        qb.push_bind(pattern);
+        qb.push(" ESCAPE ");
+        qb.push_bind("\\");
     }
 }
 

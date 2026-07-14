@@ -180,6 +180,8 @@ pub struct ListQuery {
     pub updated_after: Option<String>,
     /// Optional parent device id filter.
     pub device_id: Option<String>,
+    /// Optional media session purpose filter.
+    pub purpose: Option<String>,
 }
 
 impl Default for ListQuery {
@@ -192,6 +194,7 @@ impl Default for ListQuery {
             name_prefix: None,
             updated_after: None,
             device_id: None,
+            purpose: None,
         }
     }
 }
