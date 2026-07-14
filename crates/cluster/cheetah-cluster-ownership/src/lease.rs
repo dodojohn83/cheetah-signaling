@@ -3,7 +3,7 @@
 use cheetah_domain::{Clock, DeviceOwnerResolver, DomainError, OwnerInfo};
 use cheetah_signal_types::{DeviceId, DurationMs, NodeId, OwnerEpoch, TenantId, UtcTimestamp};
 use cheetah_storage_api::{OwnerRepository, StorageError};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use tracing::{info, warn};
 
@@ -109,26 +109,89 @@ struct CacheEntry {
     valid_until: UtcTimestamp,
 }
 
+struct CacheState {
+    entries: HashMap<(TenantId, DeviceId), CacheEntry>,
+    order: VecDeque<(TenantId, DeviceId)>,
+    capacity: usize,
+}
+
+impl CacheState {
+    fn new(capacity: usize) -> Self {
+        Self {
+            entries: HashMap::new(),
+            order: VecDeque::new(),
+            capacity,
+        }
+    }
+
+    fn move_to_back(&mut self, key: (TenantId, DeviceId)) {
+        self.order.retain(|k| k != &key);
+        self.order.push_back(key);
+    }
+
+    fn evict_expired(&mut self, now: UtcTimestamp) {
+        while let Some(key) = self.order.front().copied() {
+            let expired = self.entries.get(&key).is_some_and(|e| e.valid_until <= now);
+            if !expired {
+                break;
+            }
+            self.order.pop_front();
+            self.entries.remove(&key);
+        }
+    }
+
+    fn evict_lru(&mut self) {
+        if let Some(key) = self.order.pop_front() {
+            self.entries.remove(&key);
+        }
+    }
+
+    fn insert(&mut self, key: (TenantId, DeviceId), entry: CacheEntry) {
+        if let Some(existing) = self.entries.get_mut(&key) {
+            *existing = entry;
+            self.move_to_back(key);
+            return;
+        }
+
+        if self.entries.len() >= self.capacity {
+            self.evict_expired(entry.valid_until);
+            if self.entries.len() >= self.capacity {
+                self.evict_lru();
+            }
+        }
+
+        self.entries.insert(key, entry);
+        self.order.push_back(key);
+    }
+}
+
 /// Caching owner resolver backed by an `OwnerRepository`.
 pub struct CachingDeviceOwnerResolver {
     repository: Arc<dyn OwnerRepository>,
     clock: Arc<dyn Clock>,
     cache_ttl: DurationMs,
-    cache: Mutex<HashMap<(TenantId, DeviceId), CacheEntry>>,
+    cache: Mutex<CacheState>,
 }
 
 impl CachingDeviceOwnerResolver {
     /// Creates a new caching resolver.
+    ///
+    /// `max_capacity` is the maximum number of device owner entries retained
+    /// in memory. When the limit is reached, the least-recently-used entry is
+    /// evicted. Expired entries are removed before LRU eviction whenever
+    /// possible.
     pub fn new(
         repository: Arc<dyn OwnerRepository>,
         clock: Arc<dyn Clock>,
         cache_ttl: DurationMs,
+        max_capacity: usize,
     ) -> Self {
+        let capacity = max_capacity.max(1);
         Self {
             repository,
             clock,
             cache_ttl,
-            cache: Mutex::new(HashMap::new()),
+            cache: Mutex::new(CacheState::new(capacity)),
         }
     }
 
@@ -149,16 +212,21 @@ impl DeviceOwnerResolver for CachingDeviceOwnerResolver {
         device_id: DeviceId,
     ) -> Result<Option<OwnerInfo>, DomainError> {
         let now = self.clock.now_wall();
+        let key = (tenant_id, device_id);
 
         {
-            let cache = self
+            let mut cache = self
                 .cache
                 .lock()
                 .map_err(|e| DomainError::internal(format!("owner cache poisoned: {e}")))?;
-            if let Some(entry) = cache.get(&(tenant_id, device_id))
-                && entry.valid_until > now
-            {
-                return Ok(Some(entry.owner.clone()));
+            if let Some(entry) = cache.entries.get(&key) {
+                if entry.valid_until > now {
+                    let owner = entry.owner.clone();
+                    cache.move_to_back(key);
+                    return Ok(Some(owner));
+                }
+                cache.entries.remove(&key);
+                cache.order.retain(|k| k != &key);
             }
         }
 
@@ -177,7 +245,7 @@ impl DeviceOwnerResolver for CachingDeviceOwnerResolver {
                     .lock()
                     .map_err(|e| DomainError::internal(format!("owner cache poisoned: {e}")))?;
                 cache.insert(
-                    (tenant_id, device_id),
+                    key,
                     CacheEntry {
                         owner: o.clone(),
                         valid_until,
@@ -200,7 +268,9 @@ impl DeviceOwnerResolver for CachingDeviceOwnerResolver {
 
 impl std::fmt::Debug for CachingDeviceOwnerResolver {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let cache = self.cache.lock().map_or(0, |c| c.entries.len());
         f.debug_struct("CachingDeviceOwnerResolver")
+            .field("cached_entries", &cache)
             .finish_non_exhaustive()
     }
 }

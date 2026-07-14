@@ -2,6 +2,8 @@
 
 use cheetah_domain::{EventPublisher, Outbox};
 use cheetah_signal_types::{DurationMs, UtcTimestamp};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use tracing::warn;
 
 const MAX_ATTEMPTS: u32 = 10;
@@ -21,8 +23,10 @@ impl EventService {
     ///
     /// Each event is published once. On success it is marked published. On
     /// failure it is marked failed with an incrementing attempt count and a
-    /// scheduled retry time. After `MAX_ATTEMPTS` the event enters the permanent
-    /// failure state.
+    /// scheduled retry time. Retry delays use exponential backoff with
+    /// deterministic jitter derived from the event ID so that multiple relay
+    /// instances do not retry at the exact same instant. After `MAX_ATTEMPTS`
+    /// the event enters the permanent failure state.
     pub async fn publish_pending(
         &self,
         outbox: &mut dyn Outbox,
@@ -46,8 +50,17 @@ impl EventService {
                         (Some(e.to_string()), None)
                     } else {
                         let backoff_ms = BASE_BACKOFF_MS * (1i64 << attempts.min(20));
+                        let jitter_range = backoff_ms / 4;
+                        let jitter_ms = if jitter_range > 0 {
+                            let mut hasher = DefaultHasher::new();
+                            entry.event.event_id.hash(&mut hasher);
+                            (hasher.finish() % jitter_range as u64) as i64
+                        } else {
+                            0
+                        };
+                        let total_backoff = backoff_ms + jitter_ms;
                         let next = now
-                            .checked_add(DurationMs::from_millis(backoff_ms))
+                            .checked_add(DurationMs::from_millis(total_backoff))
                             .unwrap_or(now);
                         (Some(e.to_string()), Some(next))
                     };

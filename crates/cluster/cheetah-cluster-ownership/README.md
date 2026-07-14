@@ -8,7 +8,9 @@ This crate implements the cluster-side ownership semantics required by Phase 09:
   through the storage `OwnerRepository`.
 - `CachingDeviceOwnerResolver`: a `DeviceOwnerResolver` implementation that
   caches the result of `OwnerRepository::get` with a short TTL and respects the
-  `lease_until` deadline.
+  `lease_until` deadline. The cache is bounded by `max_capacity` and evicts the
+  least-recently-used entry when the limit is reached; expired entries are
+  removed before LRU eviction.
 
 All time-dependent logic uses the injected `Clock` so tests can run with a
 `FakeClock`.
