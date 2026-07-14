@@ -5,17 +5,18 @@
 //! an `.await` point.
 
 use crate::{
-    Channel, ChannelRepository, ChannelStatus, Command, CommandBus, Device, DeviceRepository,
-    DomainError, DomainEvent, EventPublisher, MediaBinding, MediaBindingRepository, MediaPurpose,
-    MediaReservation, MediaSession, MediaSessionRepository, MediaSessionState, Operation,
-    OperationRepository, OperationStatus, Outbox, OutboxEntry, OwnerInfo, ProcessedMessageRecord,
-    ProcessedMessageRepository, ProcessedMessageStatus, UnitOfWork,
+    Channel, ChannelRepository, ChannelStatus, Command, CommandBus, DeliveryStatus, Device,
+    DeviceRepository, DomainError, DomainEvent, EventPublisher, MediaBinding,
+    MediaBindingRepository, MediaPurpose, MediaReservation, MediaSession, MediaSessionRepository,
+    MediaSessionState, Operation, OperationRepository, OperationStatus, Outbox, OutboxEntry,
+    OwnerInfo, ProcessedMessageRecord, ProcessedMessageRepository, ProcessedMessageStatus,
+    UnitOfWork, WebhookConfig, WebhookConfigRepository, WebhookDelivery, WebhookDeliveryRepository,
 };
 use cheetah_signal_types::{
-    ChannelId, Clock, DeviceId, DurationMs, Event, IdGenerator, ListCursor, MediaBindingId,
-    MediaNodeInstanceEpoch, MediaSessionId, MessageId, NodeId, OperationId, Page, PageRequest,
-    Principal, ProtocolIdentity, RequestContext, ResourceId, ResourceKind, ResourceRef, TenantId,
-    UtcTimestamp,
+    ChannelId, Clock, DeliveryId, DeviceId, DurationMs, Event, IdGenerator, ListCursor,
+    MediaBindingId, MediaNodeInstanceEpoch, MediaSessionId, MessageId, NodeId, OperationId, Page,
+    PageRequest, Principal, ProtocolIdentity, RequestContext, ResourceId, ResourceKind,
+    ResourceRef, TenantId, UtcTimestamp, WebhookId,
 };
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -245,6 +246,10 @@ pub struct InMemoryStores {
     pub media_reservations: BTreeMap<(TenantId, MediaBindingId), MediaReservation>,
     /// Processed messages keyed by `(tenant_id, message_id)`.
     pub processed_messages: BTreeMap<(TenantId, MessageId), ProcessedMessageRecord>,
+    /// Webhook configurations keyed by `(tenant_id, webhook_id)`.
+    pub webhook_configs: BTreeMap<(TenantId, WebhookId), WebhookConfig>,
+    /// Webhook deliveries keyed by `(tenant_id, delivery_id)`.
+    pub webhook_deliveries: BTreeMap<(TenantId, DeliveryId), WebhookDelivery>,
 }
 
 /// In-memory unit of work that keeps pending writes separate until commit.
@@ -310,6 +315,14 @@ impl UnitOfWork for InMemoryUnitOfWork {
     }
 
     fn processed_message_repository(&mut self) -> &mut dyn ProcessedMessageRepository {
+        self
+    }
+
+    fn webhook_config_repository(&mut self) -> &mut dyn WebhookConfigRepository {
+        self
+    }
+
+    fn webhook_delivery_repository(&mut self) -> &mut dyn WebhookDeliveryRepository {
         self
     }
 
@@ -713,6 +726,138 @@ impl ProcessedMessageRepository for InMemoryUnitOfWork {
             entry.processed_at = processed_at;
         }
         Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl WebhookConfigRepository for InMemoryUnitOfWork {
+    async fn get(
+        &mut self,
+        tenant_id: TenantId,
+        webhook_id: WebhookId,
+    ) -> crate::Result<Option<WebhookConfig>> {
+        let pending = lock_mutex(&self.pending);
+        Ok(pending
+            .webhook_configs
+            .get(&(tenant_id, webhook_id))
+            .cloned())
+    }
+
+    async fn save(&mut self, config: &WebhookConfig) -> crate::Result<()> {
+        self.with_pending(|pending| {
+            pending
+                .webhook_configs
+                .insert((config.tenant_id(), config.webhook_id()), config.clone());
+        });
+        Ok(())
+    }
+
+    async fn delete(&mut self, tenant_id: TenantId, webhook_id: WebhookId) -> crate::Result<()> {
+        self.with_pending(|pending| {
+            pending.webhook_configs.remove(&(tenant_id, webhook_id));
+        });
+        Ok(())
+    }
+
+    async fn list(
+        &mut self,
+        tenant_id: TenantId,
+        enabled: Option<bool>,
+        event_type: Option<String>,
+        page: PageRequest,
+    ) -> crate::Result<Page<WebhookConfig>> {
+        let cursor = decode_cursor(&page.cursor)?;
+        let pending = lock_mutex(&self.pending);
+        let mut items: Vec<WebhookConfig> = pending
+            .webhook_configs
+            .values()
+            .filter(|c| {
+                c.tenant_id() == tenant_id
+                    && enabled.is_none_or(|e| c.enabled() == e)
+                    && event_type
+                        .as_ref()
+                        .is_none_or(|t| c.event_types().is_empty() || c.event_types().contains(t))
+                    && cursor.is_none_or(|cur| c.webhook_id().as_uuid() > cur)
+            })
+            .cloned()
+            .collect();
+        items.sort_by_key(|c| c.webhook_id().as_uuid());
+        drop(pending);
+        to_page(items, page, |c| c.webhook_id().as_uuid())
+    }
+}
+
+#[async_trait::async_trait]
+impl WebhookDeliveryRepository for InMemoryUnitOfWork {
+    async fn get(
+        &mut self,
+        tenant_id: TenantId,
+        delivery_id: DeliveryId,
+    ) -> crate::Result<Option<WebhookDelivery>> {
+        let pending = lock_mutex(&self.pending);
+        Ok(pending
+            .webhook_deliveries
+            .get(&(tenant_id, delivery_id))
+            .cloned())
+    }
+
+    async fn save(&mut self, delivery: &WebhookDelivery) -> crate::Result<()> {
+        self.with_pending(|pending| {
+            pending.webhook_deliveries.insert(
+                (delivery.tenant_id(), delivery.delivery_id()),
+                delivery.clone(),
+            );
+        });
+        Ok(())
+    }
+
+    async fn list(
+        &mut self,
+        tenant_id: TenantId,
+        webhook_id: WebhookId,
+        status: Option<String>,
+        page: PageRequest,
+    ) -> crate::Result<Page<WebhookDelivery>> {
+        let cursor = decode_cursor(&page.cursor)?;
+        let pending = lock_mutex(&self.pending);
+        let mut items: Vec<WebhookDelivery> = pending
+            .webhook_deliveries
+            .values()
+            .filter(|d| {
+                d.tenant_id() == tenant_id
+                    && d.webhook_id() == webhook_id
+                    && status.as_ref().is_none_or(|s| {
+                        d.status().to_string() == *s
+                            || s.parse::<DeliveryStatus>().is_ok_and(|x| x == d.status())
+                    })
+                    && cursor.is_none_or(|cur| d.delivery_id().as_uuid() > cur)
+            })
+            .cloned()
+            .collect();
+        items.sort_by_key(|d| d.delivery_id().as_uuid());
+        drop(pending);
+        to_page(items, page, |d| d.delivery_id().as_uuid())
+    }
+
+    async fn pending(
+        &mut self,
+        now: UtcTimestamp,
+        limit: usize,
+    ) -> crate::Result<Vec<WebhookDelivery>> {
+        let pending = lock_mutex(&self.pending);
+        let mut items: Vec<WebhookDelivery> = pending
+            .webhook_deliveries
+            .values()
+            .filter(|d| {
+                (d.status() == DeliveryStatus::Pending || d.status() == DeliveryStatus::Failed)
+                    && d.next_attempt_at().is_none_or(|t| t <= now)
+            })
+            .take(limit)
+            .cloned()
+            .collect();
+        drop(pending);
+        items.sort_by_key(|a| a.next_attempt_at());
+        Ok(items)
     }
 }
 

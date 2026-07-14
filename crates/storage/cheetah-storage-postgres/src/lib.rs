@@ -10,6 +10,7 @@ mod owner;
 mod repository;
 mod storage;
 mod unit_of_work;
+mod webhook;
 
 pub use migration::PostgresMigration;
 pub use operation_step::PostgresOperationStepRepository;

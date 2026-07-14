@@ -496,6 +496,7 @@ dependencies = [
  "tower",
  "tower-http",
  "tracing",
+ "url",
  "uuid",
 ]
 
@@ -621,6 +622,7 @@ dependencies = [
  "cheetah-signal-types",
  "cheetah-storage-api",
  "cheetah-storage-sqlite",
+ "secrecy",
  "serde",
  "serde_json",
  "tokio",

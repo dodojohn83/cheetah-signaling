@@ -72,6 +72,8 @@ pub fn build_router(state: ApiState) -> Router {
         .route("/api/v1/webhooks", get(webhooks::list_webhooks))
         .route("/api/v1/webhooks", post(webhooks::create_webhook))
         .route("/api/v1/webhooks/{id}", get(webhooks::get_webhook))
+        .route("/api/v1/webhooks/{id}", patch(webhooks::update_webhook))
+        .route("/api/v1/webhooks/{id}", delete(webhooks::delete_webhook))
         .route(
             "/api/v1/webhooks/{id}/deliveries",
             get(webhooks::list_deliveries),

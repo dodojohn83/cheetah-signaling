@@ -5,9 +5,12 @@ use crate::metrics::RequestMetrics;
 use crate::rate_limit::RateLimiter;
 use cheetah_domain::ports::{DeviceOwnerResolver, IdGenerator, MediaPort};
 use cheetah_message_api::RawEventBus;
-use cheetah_signal_application::{DeviceService, MediaService, OperationService};
+use cheetah_signal_application::{
+    DeviceService, MediaService, OperationService, WebhookDeliveryConfig, WebhookHttpClient,
+    WebhookService,
+};
 use cheetah_signal_types::config::SecurityConfig;
-use cheetah_signal_types::{Clock, NodeId, SignalConfig};
+use cheetah_signal_types::{Clock, NodeId, SecretStore, SignalConfig};
 use cheetah_storage_api::Storage;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -30,6 +33,8 @@ pub struct ApiConfig {
     pub rate_limit_requests_per_second: u32,
     /// Rate limit burst capacity.
     pub rate_limit_burst: u32,
+    /// Webhook delivery worker interval in milliseconds. Zero disables the worker.
+    pub webhook_delivery_interval_ms: u64,
     /// Process node identifier.
     pub node_id: NodeId,
     /// Security settings.
@@ -46,6 +51,7 @@ impl From<&SignalConfig> for ApiConfig {
             cors_allowed_origins: config.http.cors_allowed_origins.clone(),
             rate_limit_requests_per_second: config.http.rate_limit_requests_per_second,
             rate_limit_burst: config.http.rate_limit_burst,
+            webhook_delivery_interval_ms: 5000,
             node_id: config.system.node_id.unwrap_or_default(),
             security: config.security.clone(),
         }
@@ -63,6 +69,8 @@ pub struct ApiState {
     pub operation_service: OperationService,
     /// Media application service.
     pub media_service: MediaService,
+    /// Webhook application service.
+    pub webhook_service: Option<WebhookService>,
     /// Event bus for SSE subscriptions.
     pub event_bus: Arc<dyn RawEventBus>,
     /// Bounded event cache for SSE slow consumers.
@@ -117,6 +125,7 @@ impl ApiState {
             device_service,
             operation_service,
             media_service,
+            webhook_service: None,
             event_bus,
             event_cache: EventCache::new(1024),
             clock,
@@ -126,6 +135,32 @@ impl ApiState {
             rate_limiter,
             cancel: CancellationToken::new(),
         }
+    }
+
+    /// Enables the webhook service by wiring a secret store and HTTP client.
+    pub fn with_webhook_service(
+        mut self,
+        secret_store: Arc<dyn SecretStore>,
+        http_client: Arc<dyn WebhookHttpClient>,
+        config: WebhookDeliveryConfig,
+    ) -> Self {
+        let service = WebhookService::new(
+            self.storage.clone(),
+            secret_store,
+            self.clock.clone(),
+            self.id_generator.clone(),
+            http_client,
+            config,
+        );
+        self.webhook_service = Some(service);
+        self
+    }
+
+    /// Returns the webhook service if configured.
+    pub fn webhook_service(&self) -> Result<&WebhookService, crate::HttpError> {
+        self.webhook_service
+            .as_ref()
+            .ok_or_else(|| crate::HttpError::NotImplemented("webhooks not configured".to_string()))
     }
 }
 
@@ -178,6 +213,19 @@ impl ApiServer {
                 }
             }
         });
+
+        if let Some(webhook_service) = state.webhook_service.clone()
+            && state.config.webhook_delivery_interval_ms > 0
+        {
+            let webhook_cancel = cancel.child_token();
+            let interval =
+                std::time::Duration::from_millis(state.config.webhook_delivery_interval_ms);
+            tokio::spawn(async move {
+                crate::webhook::run_delivery_worker(webhook_service, webhook_cancel, interval)
+                    .await;
+            });
+        }
+
         let router = crate::router::build_router(state.clone());
         let addr: SocketAddr = format!("{}:{}", state.config.listen_addr, state.config.port)
             .parse()

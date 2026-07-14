@@ -1,0 +1,320 @@
+// Concrete webhook repository implementation for a specific SQLx driver.
+//
+// The including module must define `pub(crate) type Db = ::sqlx::<Driver>;` before
+// `include!`ing this file.
+
+use ::cheetah_domain::{DomainError, Result, WebhookConfig, WebhookDelivery};
+use ::cheetah_signal_types::{DeliveryId, Page, PageRequest, TenantId, UtcTimestamp, WebhookId};
+use ::sqlx::{types::Json, QueryBuilder};
+
+#[derive(::sqlx::FromRow)]
+struct WebhookConfigRow {
+    updated_at: ::time::OffsetDateTime,
+    #[sqlx(rename = "id")]
+    id: ::uuid::Uuid,
+    data: Json<WebhookConfig>,
+}
+
+#[derive(::sqlx::FromRow)]
+struct WebhookDeliveryRow {
+    updated_at: ::time::OffsetDateTime,
+    #[sqlx(rename = "id")]
+    id: ::uuid::Uuid,
+    data: Json<WebhookDelivery>,
+}
+
+fn decode_cursor(page: &PageRequest) -> Result<Option<::uuid::Uuid>> {
+    match &page.cursor {
+        None => Ok(None),
+        Some(value) => {
+            let cursor = ::cheetah_signal_types::ListCursor::decode(value)
+                .map_err(|e| DomainError::invalid_argument(format!("invalid cursor: {e}")))?;
+            let (_ts, id) = cursor
+                .parse()
+                .map_err(|e| DomainError::invalid_argument(format!("invalid cursor: {e}")))?;
+            Ok(Some(id))
+        }
+    }
+}
+
+fn to_config_page(rows: Vec<WebhookConfigRow>, page_size: u32) -> Result<Page<WebhookConfig>> {
+    let page_size = page_size as usize;
+    let next_cursor = if rows.len() > page_size {
+        let last = &rows[page_size - 1];
+        let ts = UtcTimestamp::from_offset(last.updated_at);
+        Some(
+            ::cheetah_signal_types::ListCursor::new(ts, last.id)
+                .map_err(|e| DomainError::invalid_argument(format!("invalid cursor: {e}")))?
+                .encode()
+                .map_err(|e| DomainError::internal(format!("failed to encode cursor: {e}")))?,
+        )
+    } else {
+        None
+    };
+    let items: Vec<WebhookConfig> = rows
+        .into_iter()
+        .take(page_size)
+        .map(|r| r.data.0)
+        .collect();
+    let mut page = Page::new(items);
+    if let Some(cursor) = next_cursor {
+        page = page.with_next_cursor(cursor);
+    }
+    Ok(page)
+}
+
+fn to_delivery_page(rows: Vec<WebhookDeliveryRow>, page_size: u32) -> Result<Page<WebhookDelivery>> {
+    let page_size = page_size as usize;
+    let next_cursor = if rows.len() > page_size {
+        let last = &rows[page_size - 1];
+        let ts = UtcTimestamp::from_offset(last.updated_at);
+        Some(
+            ::cheetah_signal_types::ListCursor::new(ts, last.id)
+                .map_err(|e| DomainError::invalid_argument(format!("invalid cursor: {e}")))?
+                .encode()
+                .map_err(|e| DomainError::internal(format!("failed to encode cursor: {e}")))?,
+        )
+    } else {
+        None
+    };
+    let items: Vec<WebhookDelivery> = rows
+        .into_iter()
+        .take(page_size)
+        .map(|r| r.data.0)
+        .collect();
+    let mut page = Page::new(items);
+    if let Some(cursor) = next_cursor {
+        page = page.with_next_cursor(cursor);
+    }
+    Ok(page)
+}
+
+pub(crate) async fn get_webhook_config(
+    conn: &mut <Db as ::sqlx::Database>::Connection,
+    tenant_id: TenantId,
+    webhook_id: WebhookId,
+) -> Result<Option<WebhookConfig>> {
+    let row: Option<(Json<WebhookConfig>,)> = sqlx::query_as(
+        "SELECT data FROM webhook_configs WHERE tenant_id = $1 AND webhook_id = $2",
+    )
+    .bind(tenant_id.as_uuid())
+    .bind(webhook_id.as_uuid())
+    .fetch_optional(conn)
+    .await
+    .map_err(crate::error::sqlx_to_domain)?;
+    Ok(row.map(|r| r.0 .0))
+}
+
+pub(crate) async fn save_webhook_config(
+    conn: &mut <Db as ::sqlx::Database>::Connection,
+    config: &WebhookConfig,
+) -> Result<()> {
+    let data = Json(config.clone());
+    let event_types = Json(config.event_types().to_vec());
+    let updated = sqlx::query(
+        "UPDATE webhook_configs SET url = $1, secret_ref = $2, event_types = $3, enabled = $4, \
+         revision = $5, updated_at = $6, data = $7, schema_version = 1 \
+         WHERE tenant_id = $8 AND webhook_id = $9 AND revision = $10",
+    )
+    .bind(config.url())
+    .bind(config.secret_ref())
+    .bind(event_types)
+    .bind(config.enabled())
+    .bind(i64::try_from(config.revision().0).unwrap_or(i64::MAX))
+    .bind(config.updated_at().as_offset())
+    .bind(data)
+    .bind(config.tenant_id().as_uuid())
+    .bind(config.webhook_id().as_uuid())
+    .bind(i64::try_from(config.revision().0.saturating_sub(1)).unwrap_or(i64::MIN))
+    .execute(&mut *conn)
+    .await
+    .map_err(crate::error::sqlx_to_domain)?
+    .rows_affected();
+
+    if updated == 0 {
+        let data = Json(config.clone());
+        let event_types = Json(config.event_types().to_vec());
+        sqlx::query(
+            "INSERT INTO webhook_configs (tenant_id, webhook_id, url, secret_ref, event_types, \
+             enabled, revision, updated_at, data, schema_version) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 1)",
+        )
+        .bind(config.tenant_id().as_uuid())
+        .bind(config.webhook_id().as_uuid())
+        .bind(config.url())
+        .bind(config.secret_ref())
+        .bind(event_types)
+        .bind(config.enabled())
+        .bind(i64::try_from(config.revision().0).unwrap_or(i64::MAX))
+        .bind(config.updated_at().as_offset())
+        .bind(data)
+        .execute(&mut *conn)
+        .await
+        .map_err(crate::error::sqlx_to_domain)?;
+    }
+    Ok(())
+}
+
+pub(crate) async fn delete_webhook_config(
+    conn: &mut <Db as ::sqlx::Database>::Connection,
+    tenant_id: TenantId,
+    webhook_id: WebhookId,
+) -> Result<()> {
+    sqlx::query("DELETE FROM webhook_configs WHERE tenant_id = $1 AND webhook_id = $2")
+        .bind(tenant_id.as_uuid())
+        .bind(webhook_id.as_uuid())
+        .execute(conn)
+        .await
+        .map_err(crate::error::sqlx_to_domain)?;
+    Ok(())
+}
+
+pub(crate) async fn list_webhook_configs(
+    conn: &mut <Db as ::sqlx::Database>::Connection,
+    tenant_id: TenantId,
+    enabled: Option<bool>,
+    _event_type: Option<String>,
+    page: PageRequest,
+) -> Result<Page<WebhookConfig>> {
+    let cursor = decode_cursor(&page)?;
+    let mut qb: QueryBuilder<'_, Db> = QueryBuilder::new(
+        "SELECT updated_at, webhook_id AS id, data FROM webhook_configs WHERE tenant_id = ",
+    );
+    qb.push_bind(tenant_id.as_uuid());
+
+    if let Some(enabled) = enabled {
+        qb.push(" AND enabled = ");
+        qb.push_bind(enabled);
+    }
+
+    if let Some(id) = cursor {
+        qb.push(" AND webhook_id > ");
+        qb.push_bind(id);
+    }
+
+    qb.push(" ORDER BY webhook_id LIMIT ");
+    qb.push_bind((page.page_size + 1) as i64);
+
+    let rows: Vec<WebhookConfigRow> = qb
+        .build_query_as::<WebhookConfigRow>()
+        .fetch_all(conn)
+        .await
+        .map_err(crate::error::sqlx_to_domain)?;
+
+    to_config_page(rows, page.page_size)
+}
+
+pub(crate) async fn get_webhook_delivery(
+    conn: &mut <Db as ::sqlx::Database>::Connection,
+    tenant_id: TenantId,
+    delivery_id: DeliveryId,
+) -> Result<Option<WebhookDelivery>> {
+    let row: Option<(Json<WebhookDelivery>,)> = sqlx::query_as(
+        "SELECT data FROM webhook_deliveries WHERE tenant_id = $1 AND delivery_id = $2",
+    )
+    .bind(tenant_id.as_uuid())
+    .bind(delivery_id.as_uuid())
+    .fetch_optional(conn)
+    .await
+    .map_err(crate::error::sqlx_to_domain)?;
+    Ok(row.map(|r| r.0 .0))
+}
+
+pub(crate) async fn save_webhook_delivery(
+    conn: &mut <Db as ::sqlx::Database>::Connection,
+    delivery: &WebhookDelivery,
+) -> Result<()> {
+    let data = Json(delivery.clone());
+    sqlx::query(
+        "INSERT INTO webhook_deliveries (tenant_id, delivery_id, webhook_id, event_id, status, \
+         attempt_count, next_attempt_at, last_error, updated_at, data, schema_version) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 1) \
+         ON CONFLICT (delivery_id) DO UPDATE SET \
+         status = excluded.status, attempt_count = excluded.attempt_count, \
+         next_attempt_at = excluded.next_attempt_at, last_error = excluded.last_error, \
+         updated_at = excluded.updated_at, data = excluded.data, \
+         schema_version = excluded.schema_version",
+    )
+    .bind(delivery.tenant_id().as_uuid())
+    .bind(delivery.delivery_id().as_uuid())
+    .bind(delivery.webhook_id().as_uuid())
+    .bind(delivery.event_id().as_uuid())
+    .bind(delivery.status().to_string())
+    .bind(i64::from(delivery.attempt_count()))
+    .bind(delivery.next_attempt_at().map(|t| t.as_offset()))
+    .bind(delivery.last_error())
+    .bind(delivery.updated_at().as_offset())
+    .bind(data)
+    .execute(&mut *conn)
+    .await
+    .map_err(crate::error::sqlx_to_domain)?;
+    Ok(())
+}
+
+pub(crate) async fn list_webhook_deliveries(
+    conn: &mut <Db as ::sqlx::Database>::Connection,
+    tenant_id: TenantId,
+    webhook_id: WebhookId,
+    status: Option<String>,
+    page: PageRequest,
+) -> Result<Page<WebhookDelivery>> {
+    let cursor = decode_cursor(&page)?;
+    let mut qb: QueryBuilder<'_, Db> = QueryBuilder::new(
+        "SELECT updated_at, delivery_id AS id, data FROM webhook_deliveries WHERE tenant_id = ",
+    );
+    qb.push_bind(tenant_id.as_uuid());
+    qb.push(" AND webhook_id = ");
+    qb.push_bind(webhook_id.as_uuid());
+
+    if let Some(status) = &status {
+        qb.push(" AND status = ");
+        qb.push_bind(status.clone());
+    }
+
+    if let Some(id) = cursor {
+        qb.push(" AND delivery_id > ");
+        qb.push_bind(id);
+    }
+
+    qb.push(" ORDER BY delivery_id LIMIT ");
+    qb.push_bind((page.page_size + 1) as i64);
+
+    let rows: Vec<WebhookDeliveryRow> = qb
+        .build_query_as::<WebhookDeliveryRow>()
+        .fetch_all(conn)
+        .await
+        .map_err(crate::error::sqlx_to_domain)?;
+
+    to_delivery_page(rows, page.page_size)
+}
+
+pub(crate) async fn pending_webhook_deliveries(
+    conn: &mut <Db as ::sqlx::Database>::Connection,
+    now: UtcTimestamp,
+    limit: usize,
+) -> Result<Vec<WebhookDelivery>> {
+    use ::cheetah_domain::DeliveryStatus;
+
+    let status_pending = DeliveryStatus::Pending.to_string();
+    let status_failed = DeliveryStatus::Failed.to_string();
+    let rows: Vec<(Json<WebhookDelivery>,)> = sqlx::query_as(
+        "SELECT data FROM webhook_deliveries \
+         WHERE status IN ($1, $2) \
+         ORDER BY delivery_id \
+         LIMIT $3",
+    )
+    .bind(status_pending)
+    .bind(status_failed)
+    .bind(limit as i64)
+    .fetch_all(conn)
+    .await
+    .map_err(crate::error::sqlx_to_domain)?;
+
+    let mut items: Vec<WebhookDelivery> = rows
+        .into_iter()
+        .map(|r| r.0 .0)
+        .filter(|d| d.next_attempt_at().is_none_or(|t| t <= now))
+        .collect();
+    items.sort_by_key(|a| a.next_attempt_at());
+    Ok(items)
+}

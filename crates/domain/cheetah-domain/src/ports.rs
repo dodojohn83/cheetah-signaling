@@ -2,11 +2,12 @@
 
 use crate::{
     Channel, Command, Device, DomainError, DomainEvent, MediaBinding, MediaSession, Operation,
+    WebhookConfig, WebhookDelivery,
 };
 use cheetah_signal_types::{
-    ChannelId, DeviceId, Event, EventId, MediaBindingId, MediaNodeInstanceEpoch, MediaSessionId,
-    MessageId, NodeId, OperationId, OwnerEpoch, Page, PageRequest, ProtocolIdentity, TenantId,
-    UtcTimestamp,
+    ChannelId, DeliveryId, DeviceId, Event, EventId, MediaBindingId, MediaNodeInstanceEpoch,
+    MediaSessionId, MessageId, NodeId, OperationId, OwnerEpoch, Page, PageRequest,
+    ProtocolIdentity, TenantId, UtcTimestamp, WebhookId,
 };
 
 pub use cheetah_signal_types::{Clock, IdGenerator};
@@ -348,6 +349,52 @@ pub trait ProcessedMessageRepository: Send {
     ) -> Result<()>;
 }
 
+/// Repository for webhook configurations.
+#[async_trait::async_trait]
+pub trait WebhookConfigRepository: Send {
+    /// Gets a webhook configuration by id.
+    async fn get(
+        &mut self,
+        tenant_id: TenantId,
+        webhook_id: WebhookId,
+    ) -> Result<Option<WebhookConfig>>;
+    /// Saves a webhook configuration.
+    async fn save(&mut self, config: &WebhookConfig) -> Result<()>;
+    /// Deletes a webhook configuration.
+    async fn delete(&mut self, tenant_id: TenantId, webhook_id: WebhookId) -> Result<()>;
+    /// Lists webhook configurations for a tenant.
+    async fn list(
+        &mut self,
+        tenant_id: TenantId,
+        enabled: Option<bool>,
+        event_type: Option<String>,
+        page: PageRequest,
+    ) -> Result<Page<WebhookConfig>>;
+}
+
+/// Repository for webhook deliveries.
+#[async_trait::async_trait]
+pub trait WebhookDeliveryRepository: Send {
+    /// Gets a delivery by id.
+    async fn get(
+        &mut self,
+        tenant_id: TenantId,
+        delivery_id: DeliveryId,
+    ) -> Result<Option<WebhookDelivery>>;
+    /// Saves a delivery.
+    async fn save(&mut self, delivery: &WebhookDelivery) -> Result<()>;
+    /// Lists deliveries for a webhook with optional status filter.
+    async fn list(
+        &mut self,
+        tenant_id: TenantId,
+        webhook_id: WebhookId,
+        status: Option<String>,
+        page: PageRequest,
+    ) -> Result<Page<WebhookDelivery>>;
+    /// Returns pending deliveries ready to be attempted before `now`.
+    async fn pending(&mut self, now: UtcTimestamp, limit: usize) -> Result<Vec<WebhookDelivery>>;
+}
+
 /// Unit of work that keeps aggregate and outbox writes in one transaction.
 #[async_trait::async_trait]
 pub trait UnitOfWork: Send {
@@ -363,6 +410,10 @@ pub trait UnitOfWork: Send {
     fn media_binding_repository(&mut self) -> &mut dyn MediaBindingRepository;
     /// Access the processed message repository.
     fn processed_message_repository(&mut self) -> &mut dyn ProcessedMessageRepository;
+    /// Access the webhook configuration repository.
+    fn webhook_config_repository(&mut self) -> &mut dyn WebhookConfigRepository;
+    /// Access the webhook delivery repository.
+    fn webhook_delivery_repository(&mut self) -> &mut dyn WebhookDeliveryRepository;
     /// Access the outbox.
     fn outbox(&mut self) -> &mut dyn Outbox;
     /// Commit the unit of work.

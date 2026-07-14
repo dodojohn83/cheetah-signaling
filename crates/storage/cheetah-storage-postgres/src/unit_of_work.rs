@@ -4,6 +4,7 @@ use crate::error::sqlx_to_domain;
 use cheetah_domain::{
     ChannelRepository, DeviceRepository, DomainError, MediaBindingRepository,
     MediaSessionRepository, OperationRepository, Outbox, ProcessedMessageRepository, UnitOfWork,
+    WebhookConfigRepository, WebhookDeliveryRepository,
 };
 use sqlx::Transaction;
 
@@ -49,6 +50,14 @@ impl UnitOfWork for PostgresUnitOfWork {
     }
 
     fn processed_message_repository(&mut self) -> &mut dyn ProcessedMessageRepository {
+        self
+    }
+
+    fn webhook_config_repository(&mut self) -> &mut dyn WebhookConfigRepository {
+        self
+    }
+
+    fn webhook_delivery_repository(&mut self) -> &mut dyn WebhookDeliveryRepository {
         self
     }
 

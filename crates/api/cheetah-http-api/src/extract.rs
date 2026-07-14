@@ -182,6 +182,10 @@ pub struct ListQuery {
     pub device_id: Option<String>,
     /// Optional media session purpose filter.
     pub purpose: Option<String>,
+    /// Optional enabled flag filter for webhooks.
+    pub enabled: Option<bool>,
+    /// Optional event type filter for webhooks.
+    pub event_type: Option<String>,
 }
 
 impl Default for ListQuery {
@@ -195,6 +199,8 @@ impl Default for ListQuery {
             updated_after: None,
             device_id: None,
             purpose: None,
+            enabled: None,
+            event_type: None,
         }
     }
 }
