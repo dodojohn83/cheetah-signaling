@@ -363,11 +363,20 @@ where
     E: Message + Send + Default + 'static,
 {
     async fn next(&mut self) -> Result<Option<Delivery<E>>, BusError> {
-        match tokio::time::timeout(self.operation_timeout, self.messages.next())
-            .await
-            .map_err(|_| nats_error_to_bus("NATS subscription next timed out"))?
-        {
-            Some(Ok(message)) => {
+        // Wait for the next message with an operation deadline. A quiet period
+        // should not terminate the consumer, so timeouts are retried.
+        let message = loop {
+            match tokio::time::timeout(self.operation_timeout, self.messages.next()).await {
+                Ok(Some(result)) => break result,
+                Ok(None) => return Ok(None),
+                Err(_) => {
+                    tracing::debug!("NATS subscription idle timeout, waiting for next batch");
+                }
+            }
+        };
+
+        match message {
+            Ok(message) => {
                 let subject = message.subject.to_string();
                 let message_id = header_message_id(&message.headers);
                 let payload = message.payload.clone();
@@ -381,8 +390,7 @@ where
                     subject,
                 }))
             }
-            Some(Err(e)) => Err(nats_error_to_bus(e)),
-            None => Ok(None),
+            Err(e) => Err(nats_error_to_bus(e)),
         }
     }
 }
