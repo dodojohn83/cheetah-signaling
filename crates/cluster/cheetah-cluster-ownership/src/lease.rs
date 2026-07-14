@@ -130,14 +130,16 @@ impl CacheState {
     }
 
     fn evict_expired(&mut self, now: UtcTimestamp) {
-        while let Some(key) = self.order.front().copied() {
-            let expired = self.entries.get(&key).is_some_and(|e| e.valid_until <= now);
-            if !expired {
-                break;
-            }
-            self.order.pop_front();
-            self.entries.remove(&key);
+        let expired_keys: Vec<(TenantId, DeviceId)> = self
+            .entries
+            .iter()
+            .filter(|(_, e)| e.valid_until <= now)
+            .map(|(k, _)| *k)
+            .collect();
+        for key in &expired_keys {
+            self.entries.remove(key);
         }
+        self.order.retain(|k| !expired_keys.contains(k));
     }
 
     fn evict_lru(&mut self) {

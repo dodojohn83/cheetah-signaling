@@ -24,6 +24,20 @@ fn nats_error_to_bus(err: impl std::fmt::Display) -> BusError {
     BusError::Unavailable(err.to_string())
 }
 
+async fn with_timeout<T, E>(
+    timeout: Duration,
+    description: &str,
+    fut: impl std::future::Future<Output = std::result::Result<T, E>>,
+) -> Result<T, BusError>
+where
+    E: std::fmt::Display,
+{
+    tokio::time::timeout(timeout, fut)
+        .await
+        .map_err(|_| nats_error_to_bus(format!("{description} timed out")))?
+        .map_err(nats_error_to_bus)
+}
+
 fn bus_error_to_domain(err: BusError) -> DomainError {
     match err {
         BusError::Busy => DomainError::unavailable("message bus busy"),
@@ -41,6 +55,7 @@ pub struct NatsBus {
     jetstream: async_nats::jetstream::Context,
     owner_resolver: Arc<dyn DeviceOwnerResolver>,
     this_node: NodeId,
+    operation_timeout: Duration,
 }
 
 impl fmt::Debug for NatsBus {
@@ -53,33 +68,57 @@ impl fmt::Debug for NatsBus {
 
 impl NatsBus {
     /// Connect to a NATS server and ensure the required JetStream streams exist.
+    ///
+    /// `connect_timeout` bounds the initial TCP/TLS handshake and stream
+    /// creation. `operation_timeout` bounds every subsequent publish, subscribe
+    /// and ack operation. TLS is required for all cluster communication.
     pub async fn connect(
         url: impl Into<String>,
         this_node: NodeId,
         owner_resolver: Arc<dyn DeviceOwnerResolver>,
+        connect_timeout: Duration,
+        operation_timeout: Duration,
     ) -> Result<Self, BusError> {
-        let client = async_nats::connect(url.into())
-            .await
-            .map_err(nats_error_to_bus)?;
+        let url = url.into();
+        let scheme = url.split("://").next().unwrap_or(&url).to_lowercase();
+        if !matches!(scheme.as_str(), "tls" | "wss") {
+            return Err(nats_error_to_bus(format!(
+                "NATS URL must use tls:// or wss:// scheme, got: {url}"
+            )));
+        }
+
+        let options = async_nats::ConnectOptions::new().require_tls(true);
+        let client = with_timeout(
+            connect_timeout,
+            "NATS connect",
+            options.connect(url.as_str()),
+        )
+        .await?;
         let jetstream = async_nats::jetstream::new(client.clone());
 
-        jetstream
-            .get_or_create_stream(async_nats::jetstream::stream::Config {
-                name: COMMANDS_STREAM.to_string(),
-                subjects: vec![COMMAND_SUBJECT_PATTERN.to_string()],
-                ..Default::default()
-            })
-            .await
-            .map_err(nats_error_to_bus)?;
+        let commands_config = async_nats::jetstream::stream::Config {
+            name: COMMANDS_STREAM.to_string(),
+            subjects: vec![COMMAND_SUBJECT_PATTERN.to_string()],
+            ..Default::default()
+        };
+        with_timeout(
+            connect_timeout,
+            "create NATS commands stream",
+            jetstream.get_or_create_stream(commands_config),
+        )
+        .await?;
 
-        jetstream
-            .get_or_create_stream(async_nats::jetstream::stream::Config {
-                name: EVENTS_STREAM.to_string(),
-                subjects: vec![EVENT_SUBJECT_PATTERN.to_string()],
-                ..Default::default()
-            })
-            .await
-            .map_err(nats_error_to_bus)?;
+        let events_config = async_nats::jetstream::stream::Config {
+            name: EVENTS_STREAM.to_string(),
+            subjects: vec![EVENT_SUBJECT_PATTERN.to_string()],
+            ..Default::default()
+        };
+        with_timeout(
+            connect_timeout,
+            "create NATS events stream",
+            jetstream.get_or_create_stream(events_config),
+        )
+        .await?;
 
         info!("NATS streams created: {COMMANDS_STREAM}, {EVENTS_STREAM}");
 
@@ -88,6 +127,7 @@ impl NatsBus {
             jetstream,
             owner_resolver,
             this_node,
+            operation_timeout,
         })
     }
 
@@ -108,14 +148,29 @@ impl NatsBus {
         }
 
         let subject = subject.to_string();
-        let ack_future = self
-            .jetstream
-            .publish_with_headers(subject, headers, payload.into())
-            .await
-            .map_err(|e| BusError::Unavailable(e.to_string()))?;
+        let ack_future = with_timeout(
+            self.operation_timeout,
+            "NATS publish",
+            self.jetstream
+                .publish_with_headers(subject, headers, payload.into()),
+        )
+        .await?;
 
-        let _ = ack_future.await.map_err(nats_error_to_bus)?;
+        let _ = with_timeout(
+            self.operation_timeout,
+            "NATS publish ack",
+            std::future::IntoFuture::into_future(ack_future),
+        )
+        .await?;
         Ok(())
+    }
+
+    fn stream_subjects(stream_name: &str) -> Vec<String> {
+        if stream_name == COMMANDS_STREAM {
+            vec![COMMAND_SUBJECT_PATTERN.to_string()]
+        } else {
+            vec![EVENT_SUBJECT_PATTERN.to_string()]
+        }
     }
 
     async fn subscribe_envelope<E>(
@@ -127,17 +182,22 @@ impl NatsBus {
     where
         E: Message + Send + Default + 'static,
     {
-        let stream = self
-            .jetstream
-            .get_or_create_stream(async_nats::jetstream::stream::Config {
-                name: stream_name.to_string(),
-                ..Default::default()
-            })
-            .await
-            .map_err(nats_error_to_bus)?;
+        let stream_config = async_nats::jetstream::stream::Config {
+            name: stream_name.to_string(),
+            subjects: Self::stream_subjects(stream_name),
+            ..Default::default()
+        };
+        let stream = with_timeout(
+            self.operation_timeout,
+            "get NATS stream",
+            self.jetstream.get_or_create_stream(stream_config),
+        )
+        .await?;
 
-        let consumer = stream
-            .get_or_create_consumer(
+        let consumer = with_timeout(
+            self.operation_timeout,
+            "create NATS consumer",
+            stream.get_or_create_consumer(
                 consumer_group,
                 async_nats::jetstream::consumer::pull::Config {
                     durable_name: Some(consumer_group.to_string()),
@@ -148,13 +208,19 @@ impl NatsBus {
                     deliver_policy: async_nats::jetstream::consumer::DeliverPolicy::All,
                     ..Default::default()
                 },
-            )
-            .await
-            .map_err(nats_error_to_bus)?;
+            ),
+        )
+        .await?;
 
-        let messages = consumer.messages().await.map_err(nats_error_to_bus)?;
+        let messages = with_timeout(
+            self.operation_timeout,
+            "open NATS consumer messages",
+            consumer.messages(),
+        )
+        .await?;
         Ok(Box::new(NatsSubscription {
             messages,
+            operation_timeout: self.operation_timeout,
             _phantom: std::marker::PhantomData,
         }))
     }
@@ -279,6 +345,7 @@ impl AckHandle for NatsAckHandle {
 
 struct NatsSubscription<E> {
     messages: async_nats::jetstream::consumer::pull::Stream,
+    operation_timeout: Duration,
     _phantom: std::marker::PhantomData<E>,
 }
 
@@ -296,7 +363,10 @@ where
     E: Message + Send + Default + 'static,
 {
     async fn next(&mut self) -> Result<Option<Delivery<E>>, BusError> {
-        match self.messages.next().await {
+        match tokio::time::timeout(self.operation_timeout, self.messages.next())
+            .await
+            .map_err(|_| nats_error_to_bus("NATS subscription next timed out"))?
+        {
             Some(Ok(message)) => {
                 let subject = message.subject.to_string();
                 let message_id = header_message_id(&message.headers);

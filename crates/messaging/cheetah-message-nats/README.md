@@ -13,6 +13,10 @@ NATS JetStream message bus implementation for clustered Cheetah Signaling.
 - Producer acknowledgement waits for server confirmation.
 - `ack` / `nak` / `term` handle success, transient failure redelivery, and
   dead-lettering of unprocessable messages.
+- All connect, publish, subscribe and stream operations are bounded by
+  configurable timeouts.
+- TLS is required for cluster communication; plaintext `nats://` URLs are
+  rejected.
 
 ## Subject layout
 
@@ -23,7 +27,15 @@ NATS JetStream message bus implementation for clustered Cheetah Signaling.
 
 ```rust
 use std::sync::Arc;
+use std::time::Duration;
 use cheetah_message_nats::NatsBus;
 
-let bus = NatsBus::connect("nats://localhost:4222", node_id, resolver).await?;
+let bus = NatsBus::connect(
+    "tls://localhost:4222",
+    node_id,
+    resolver,
+    Duration::from_secs(5),
+    Duration::from_secs(5),
+)
+.await?;
 ```
