@@ -43,7 +43,9 @@ impl std::str::FromStr for DeliveryStatus {
             "succeeded" => Ok(Self::Succeeded),
             "failed" => Ok(Self::Failed),
             "dead_letter" => Ok(Self::DeadLetter),
-            _ => Err(DomainError::invalid_argument(format!("unknown delivery status: {s}"))),
+            _ => Err(DomainError::invalid_argument(format!(
+                "unknown delivery status: {s}"
+            ))),
         }
     }
 }
@@ -73,7 +75,9 @@ impl WebhookConfig {
         event_types: Vec<String>,
     ) -> Result<Self> {
         if url.is_empty() {
-            return Err(DomainError::invalid_argument("webhook url must not be empty"));
+            return Err(DomainError::invalid_argument(
+                "webhook url must not be empty",
+            ));
         }
         if secret_ref.is_empty() {
             return Err(DomainError::invalid_argument(
@@ -105,7 +109,9 @@ impl WebhookConfig {
     ) -> Result<()> {
         if let Some(url) = url {
             if url.is_empty() {
-                return Err(DomainError::invalid_argument("webhook url must not be empty"));
+                return Err(DomainError::invalid_argument(
+                    "webhook url must not be empty",
+                ));
             }
             self.url = url;
         }
@@ -239,7 +245,12 @@ impl WebhookDelivery {
     }
 
     /// Records a failed attempt and schedules the next retry.
-    pub fn fail(&mut self, clock: &dyn Clock, error: String, next_attempt_at: Option<UtcTimestamp>) {
+    pub fn fail(
+        &mut self,
+        clock: &dyn Clock,
+        error: String,
+        next_attempt_at: Option<UtcTimestamp>,
+    ) {
         self.status = DeliveryStatus::Failed;
         self.last_error = Some(error);
         self.next_attempt_at = next_attempt_at;
