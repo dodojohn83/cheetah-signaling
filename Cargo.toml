@@ -26,6 +26,7 @@ repository = "https://github.com/dodojohn83/cheetah-signaling"
 
 [workspace.dependencies]
 # 初始 Phase 0 依赖基线；后续阶段按 002 计划逐项引入并锁定版本。
+async-trait = "0.1.86"
 tokio = { version = "1.52.3", default-features = false }
 thiserror = "2.0.18"
 serde = { version = "1.0.228", features = ["derive"] }

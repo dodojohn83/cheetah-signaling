@@ -117,8 +117,7 @@ fn domain_crates_do_not_depend_on_runtime_or_adapters() {
         .into_iter()
         .collect();
 
-    assert_not_depend(&metadata, "cheetah-device-domain", &forbidden);
-    assert_not_depend(&metadata, "cheetah-control-domain", &forbidden);
+    assert_not_depend(&metadata, "cheetah-domain", &forbidden);
 }
 
 #[test]

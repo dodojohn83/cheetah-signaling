@@ -1,0 +1,27 @@
+[package]
+name = "cheetah-domain"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+description = "Domain aggregates, ports, and in-memory test helpers for Cheetah Signaling."
+
+[dependencies]
+cheetah-signal-types = { path = "../../foundation/cheetah-signal-types" }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+time = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+futures = { version = "0.3.31", default-features = false, features = ["executor"] }
+
+[features]
+test-util = []
+
+[lints]
+workspace = true

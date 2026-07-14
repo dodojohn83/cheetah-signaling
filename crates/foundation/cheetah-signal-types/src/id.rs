@@ -137,6 +137,12 @@ uuid_id! {
 }
 
 uuid_id! {
+    /// Identifier for a media binding.
+    MediaBindingId,
+    "Media binding identifier."
+}
+
+uuid_id! {
     /// Identifier for an operation.
     OperationId,
     "Operation identifier."
@@ -300,3 +306,20 @@ pub struct Revision(pub u64);
 )]
 #[serde(transparent)]
 pub struct OwnerEpoch(pub u64);
+
+/// Instance epoch of a media node instance.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    Eq,
+    PartialEq,
+    Ord,
+    PartialOrd,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+#[serde(transparent)]
+pub struct MediaNodeInstanceEpoch(pub u64);

@@ -1,0 +1,318 @@
+//! Immutable command value object and typed payloads.
+
+use crate::{DomainError, media_session::MediaPurpose};
+use cheetah_signal_types::{
+    ChannelId, CorrelationId, Deadline, DeviceId, IdGenerator, MediaSessionId, MessageId, NodeId,
+    OperationId, OwnerEpoch, Principal, ResourceRef, TenantId, UtcTimestamp,
+};
+
+/// Scope used to deduplicate operations and media sessions.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct IdempotencyScope {
+    /// Tenant of the request.
+    pub tenant_id: TenantId,
+    /// Principal identifier that originated the request.
+    pub principal_id: String,
+    /// Target resource of the command.
+    pub target: ResourceRef,
+    /// Caller supplied idempotency key.
+    pub idempotency_key: String,
+}
+
+impl IdempotencyScope {
+    /// Creates a new idempotency scope.
+    ///
+    /// The `idempotency_key` must be non-empty.
+    pub fn new(
+        tenant_id: TenantId,
+        principal_id: impl Into<String>,
+        target: ResourceRef,
+        idempotency_key: impl Into<String>,
+    ) -> crate::Result<Self> {
+        let idempotency_key = idempotency_key.into();
+        if idempotency_key.is_empty() {
+            return Err(DomainError::invalid_argument(
+                "idempotency_key must not be empty",
+            ));
+        }
+        Ok(Self {
+            tenant_id,
+            principal_id: principal_id.into(),
+            target,
+            idempotency_key,
+        })
+    }
+}
+
+/// An immutable typed instruction dispatched to an owner, protocol driver or plugin.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
+pub struct Command {
+    command_id: MessageId,
+    message_id: MessageId,
+    operation_id: OperationId,
+    tenant_id: TenantId,
+    device_id: DeviceId,
+    target: ResourceRef,
+    payload: CommandPayload,
+    idempotency_key: String,
+    idempotency_scope: IdempotencyScope,
+    deadline: Option<Deadline>,
+    expected_owner_epoch: OwnerEpoch,
+    requested_by: Principal,
+    correlation_id: CorrelationId,
+    causation_id: MessageId,
+    traceparent: Option<String>,
+    tracestate: Option<String>,
+}
+
+impl Command {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new(
+        id_generator: &dyn IdGenerator,
+        operation_id: OperationId,
+        tenant_id: TenantId,
+        device_id: DeviceId,
+        idempotency_scope: IdempotencyScope,
+        target: ResourceRef,
+        payload: CommandPayload,
+        deadline: Option<Deadline>,
+        expected_owner_epoch: OwnerEpoch,
+        requested_by: Principal,
+        correlation_id: CorrelationId,
+        causation_id: MessageId,
+        traceparent: Option<String>,
+        tracestate: Option<String>,
+    ) -> Self {
+        Self {
+            command_id: id_generator.generate_message_id(),
+            message_id: id_generator.generate_message_id(),
+            operation_id,
+            tenant_id,
+            device_id,
+            idempotency_key: idempotency_scope.idempotency_key.clone(),
+            idempotency_scope,
+            target,
+            payload,
+            deadline,
+            expected_owner_epoch,
+            requested_by,
+            correlation_id,
+            causation_id,
+            traceparent,
+            tracestate,
+        }
+    }
+
+    /// Returns the command id.
+    pub fn command_id(&self) -> MessageId {
+        self.command_id
+    }
+
+    /// Returns the envelope message id.
+    pub fn message_id(&self) -> MessageId {
+        self.message_id
+    }
+
+    /// Returns the owning operation id.
+    pub fn operation_id(&self) -> OperationId {
+        self.operation_id
+    }
+
+    /// Returns the tenant id.
+    pub fn tenant_id(&self) -> TenantId {
+        self.tenant_id
+    }
+
+    /// Returns the device id that the command is addressed to.
+    pub fn device_id(&self) -> DeviceId {
+        self.device_id
+    }
+
+    /// Returns the target resource.
+    pub fn target(&self) -> &ResourceRef {
+        &self.target
+    }
+
+    /// Returns the typed payload.
+    pub fn payload(&self) -> &CommandPayload {
+        &self.payload
+    }
+
+    /// Returns the idempotency key.
+    pub fn idempotency_key(&self) -> &str {
+        &self.idempotency_key
+    }
+
+    /// Returns the idempotency scope.
+    pub fn idempotency_scope(&self) -> &IdempotencyScope {
+        &self.idempotency_scope
+    }
+
+    /// Returns the deadline for the command.
+    pub fn deadline(&self) -> Option<Deadline> {
+        self.deadline
+    }
+
+    /// Returns the expected owner epoch for fencing.
+    pub fn expected_owner_epoch(&self) -> OwnerEpoch {
+        self.expected_owner_epoch
+    }
+
+    /// Returns the principal that requested the command.
+    pub fn requested_by(&self) -> &Principal {
+        &self.requested_by
+    }
+
+    /// Returns the correlation id.
+    pub fn correlation_id(&self) -> CorrelationId {
+        self.correlation_id
+    }
+
+    /// Returns the causation id.
+    pub fn causation_id(&self) -> MessageId {
+        self.causation_id
+    }
+
+    /// Returns the W3C trace parent.
+    pub fn traceparent(&self) -> Option<&str> {
+        self.traceparent.as_deref()
+    }
+
+    /// Returns the W3C trace state.
+    pub fn tracestate(&self) -> Option<&str> {
+        self.tracestate.as_deref()
+    }
+
+    /// Returns the human-readable kind of the command.
+    pub fn kind(&self) -> &'static str {
+        self.payload.kind()
+    }
+}
+
+/// Typed payload of a [`Command`].
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
+pub enum CommandPayload {
+    /// Start a live media session.
+    StartLive {
+        /// Media session being started.
+        media_session_id: MediaSessionId,
+        /// Channel that provides the stream.
+        channel_id: ChannelId,
+        /// Target media node for the binding.
+        media_node_id: NodeId,
+        /// Purpose of the media session.
+        purpose: MediaPurpose,
+    },
+    /// Start a playback session.
+    StartPlayback {
+        /// Media session being started.
+        media_session_id: MediaSessionId,
+        /// Channel that provides the stream.
+        channel_id: ChannelId,
+        /// Target media node for the binding.
+        media_node_id: NodeId,
+        /// Start of the playback window.
+        start_time: UtcTimestamp,
+        /// End of the playback window.
+        end_time: UtcTimestamp,
+        /// Playback speed scale.
+        scale: f64,
+    },
+    /// Start a two-way talk session.
+    StartTalk {
+        /// Media session being started.
+        media_session_id: MediaSessionId,
+        /// Channel that provides the stream.
+        channel_id: ChannelId,
+        /// Target media node for the binding.
+        media_node_id: NodeId,
+    },
+    /// Stop a media session.
+    StopMediaSession {
+        /// Media session being stopped.
+        media_session_id: MediaSessionId,
+    },
+    /// Control an active playback session.
+    ControlPlayback {
+        /// Media session being controlled.
+        media_session_id: MediaSessionId,
+        /// Playback control command.
+        command: MediaControl,
+    },
+    /// PTZ movement on a channel.
+    Ptz {
+        /// Channel to control.
+        channel_id: ChannelId,
+        /// Direction of movement.
+        direction: PtzDirection,
+        /// Speed factor.
+        speed: f64,
+    },
+}
+
+impl CommandPayload {
+    /// Returns the human-readable kind of the payload.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::StartLive { .. } => "StartLive",
+            Self::StartPlayback { .. } => "StartPlayback",
+            Self::StartTalk { .. } => "StartTalk",
+            Self::StopMediaSession { .. } => "StopMediaSession",
+            Self::ControlPlayback { .. } => "ControlPlayback",
+            Self::Ptz { .. } => "Ptz",
+        }
+    }
+}
+
+/// Playback control commands.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
+pub enum MediaControl {
+    /// Resume or start playback.
+    Play,
+    /// Pause playback.
+    Pause,
+    /// Stop playback.
+    Stop,
+    /// Seek to a relative offset in milliseconds.
+    Seek {
+        /// Offset in milliseconds.
+        offset_ms: i64,
+    },
+    /// Change playback speed.
+    Scale {
+        /// Speed multiplier.
+        value: f64,
+    },
+}
+
+/// Direction for PTZ movement.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
+#[serde(rename_all = "snake_case")]
+pub enum PtzDirection {
+    /// Stop movement.
+    Stop,
+    /// Up.
+    Up,
+    /// Down.
+    Down,
+    /// Left.
+    Left,
+    /// Right.
+    Right,
+    /// Up and left.
+    UpLeft,
+    /// Up and right.
+    UpRight,
+    /// Down and left.
+    DownLeft,
+    /// Down and right.
+    DownRight,
+    /// Zoom in.
+    ZoomIn,
+    /// Zoom out.
+    ZoomOut,
+}

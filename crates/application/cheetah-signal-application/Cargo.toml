@@ -6,10 +6,18 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+description = "Application services for Cheetah Signaling: device, operation, command dispatch, media, and event publishing."
 
 [dependencies]
+cheetah-domain = { path = "../../../crates/domain/cheetah-domain" }
+cheetah-signal-types = { path = "../../../crates/foundation/cheetah-signal-types" }
+serde = { workspace = true }
+tracing = { workspace = true }
 
 [dev-dependencies]
+cheetah-domain = { path = "../../../crates/domain/cheetah-domain", features = ["test-util"] }
+async-trait = { workspace = true }
+tokio = { workspace = true, features = ["rt", "macros"] }
 
 [lints]
 workspace = true

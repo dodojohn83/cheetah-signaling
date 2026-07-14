@@ -1,8 +1,8 @@
 //! Request context, principal, and resource reference types.
 
 use crate::{
-    ChannelId, CorrelationId, Deadline, DeviceId, EndpointId, EventId, MediaSessionId, MessageId,
-    NodeId, OperationId, ProtocolSessionId, TenantId,
+    ChannelId, CorrelationId, Deadline, DeviceId, EndpointId, EventId, MediaBindingId,
+    MediaSessionId, MessageId, NodeId, OperationId, ProtocolSessionId, TenantId,
 };
 
 /// Authenticated actor making a request.
@@ -83,6 +83,8 @@ pub enum ResourceKind {
     ProtocolSession,
     /// Media session.
     MediaSession,
+    /// Media binding.
+    MediaBinding,
     /// Operation.
     Operation,
     /// Event.
@@ -110,6 +112,8 @@ pub enum ResourceId {
     ProtocolSession(ProtocolSessionId),
     /// Media session scoped.
     MediaSession(MediaSessionId),
+    /// Media binding scoped.
+    MediaBinding(MediaBindingId),
     /// Operation scoped.
     Operation(OperationId),
     /// Event scoped.
