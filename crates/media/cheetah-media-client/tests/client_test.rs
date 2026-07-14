@@ -10,7 +10,7 @@ use cheetah_signal_contracts::cheetah::common::v1::{
 use cheetah_signal_contracts::cheetah::media::v1::{
     MediaCommand, MediaControlPayload, media_command,
 };
-use cheetah_signal_types::{MediaBindingId, MediaSessionId, OperationId, TenantId};
+use cheetah_signal_types::{MediaBindingId, MediaSessionId, OperationId, OwnerEpoch, TenantId};
 use std::str::FromStr;
 use tokio::net::TcpListener;
 use tokio_stream::wrappers::TcpListenerStream;
@@ -43,6 +43,7 @@ fn request() -> MediaControlRequest {
         media_session_id: session_id,
         media_binding_id: MediaBindingId::from_str("33333333-3333-3333-3333-333333333333").unwrap(),
         operation_id: OperationId::from_str("55555555-5555-5555-5555-555555555555").unwrap(),
+        owner_epoch: OwnerEpoch(1),
         deadline: None,
         idempotency_key: "idem-1".to_string(),
         contract_version: 1,

@@ -26,4 +26,7 @@ pub enum MediaClientError {
     /// The deadline could not be encoded.
     #[error("invalid deadline: {0}")]
     InvalidDeadline(String),
+    /// The connection pool reached its configured limit.
+    #[error("connection pool exhausted: {0}")]
+    PoolExhausted(String),
 }

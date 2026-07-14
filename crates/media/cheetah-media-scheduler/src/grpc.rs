@@ -65,6 +65,7 @@ impl MediaClusterRegistry for MediaClusterRegistryService {
             .node
             .ok_or_else(|| Status::invalid_argument("missing node registration"))?;
         check_identity(&identity, &self.config, &registration.node_id)?;
+        validate_control_endpoint(&registration.listen_addr, &self.config)?;
 
         let node_id = parse_node_id(&registration.node_id)?;
         let instance_id = self.id_generator.generate_node_id().to_string();
@@ -266,6 +267,52 @@ fn to_proto_status(status: NodeStatus) -> media_proto::MediaNodeStatus {
         NodeStatus::Active => media_proto::MediaNodeStatus::Active,
         NodeStatus::Draining => media_proto::MediaNodeStatus::Draining,
         NodeStatus::Left => media_proto::MediaNodeStatus::Left,
+    }
+}
+
+fn validate_control_endpoint(endpoint: &str, config: &MediaRegistryConfig) -> Result<(), Status> {
+    if endpoint.len() > config.max_endpoint_uri_length {
+        return Err(Status::invalid_argument(format!(
+            "control endpoint exceeds {} bytes",
+            config.max_endpoint_uri_length
+        )));
+    }
+    let uri = endpoint
+        .parse::<tonic::transport::Uri>()
+        .map_err(|_| Status::invalid_argument("invalid control endpoint URI"))?;
+    let scheme = uri
+        .scheme_str()
+        .ok_or_else(|| Status::invalid_argument("missing control endpoint scheme"))?;
+    if !config.allowed_endpoint_schemes.iter().any(|s| s == scheme) {
+        return Err(Status::invalid_argument(format!(
+            "control endpoint scheme '{scheme}' is not allowed"
+        )));
+    }
+    let host = uri
+        .host()
+        .ok_or_else(|| Status::invalid_argument("missing control endpoint host"))?;
+    if host.is_empty() {
+        return Err(Status::invalid_argument("empty control endpoint host"));
+    }
+    if !config.allow_internal_endpoints
+        && let Ok(ip) = std::net::IpAddr::from_str(host)
+        && is_internal_ip(ip)
+    {
+        return Err(Status::invalid_argument(
+            "internal control endpoint is not allowed",
+        ));
+    }
+    Ok(())
+}
+
+fn is_internal_ip(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            v4.is_unspecified() || v4.is_loopback() || v4.is_link_local() || v4.is_private()
+        }
+        std::net::IpAddr::V6(v6) => {
+            v6.is_unspecified() || v6.is_loopback() || v6.is_unicast_link_local()
+        }
     }
 }
 

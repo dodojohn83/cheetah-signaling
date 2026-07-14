@@ -19,6 +19,8 @@ pub struct MediaClientConfig {
     pub circuit_breaker_threshold: u32,
     /// Cooldown before allowing traffic through an open circuit breaker.
     pub circuit_breaker_cooldown_ms: u64,
+    /// Maximum number of pooled endpoint connections.
+    pub max_connections: usize,
 }
 
 impl Default for MediaClientConfig {
@@ -32,6 +34,7 @@ impl Default for MediaClientConfig {
             per_node_concurrency: 16,
             circuit_breaker_threshold: 5,
             circuit_breaker_cooldown_ms: 30_000,
+            max_connections: 10_000,
         }
     }
 }

@@ -132,7 +132,12 @@ async fn register_node_and_reserve_binding() {
         SchedulerConfig::default(),
     ));
     let chosen = scheduler
-        .schedule(tenant_id(), &requirements("live", None), clock.as_ref())
+        .schedule(
+            tenant_id(),
+            &requirements("live", None),
+            &[],
+            clock.as_ref(),
+        )
         .await
         .unwrap();
     assert_eq!(chosen.node_id, node_id());
@@ -174,7 +179,7 @@ async fn wrong_protocol_returns_no_node() {
     let mut req = requirements("live", None);
     req.protocol = "onvif".to_string();
     let err = scheduler
-        .schedule(tenant_id(), &req, clock.as_ref())
+        .schedule(tenant_id(), &req, &[], clock.as_ref())
         .await
         .unwrap_err();
     assert!(err.to_string().contains("no node satisfies"));
@@ -201,7 +206,12 @@ async fn draining_node_not_chosen_for_new_sessions() {
         SchedulerConfig::default(),
     ));
     let err = scheduler
-        .schedule(tenant_id(), &requirements("live", None), clock.as_ref())
+        .schedule(
+            tenant_id(),
+            &requirements("live", None),
+            &[],
+            clock.as_ref(),
+        )
         .await
         .unwrap_err();
     assert!(err.to_string().contains("no node satisfies"));
@@ -227,7 +237,12 @@ async fn lease_expired_node_is_not_scheduled() {
         SchedulerConfig::default(),
     ));
     let err = scheduler
-        .schedule(tenant_id(), &requirements("live", None), clock.as_ref())
+        .schedule(
+            tenant_id(),
+            &requirements("live", None),
+            &[],
+            clock.as_ref(),
+        )
         .await
         .unwrap_err();
     assert!(err.to_string().contains("no registered media nodes"));
@@ -251,7 +266,7 @@ async fn same_session_prefers_original_node() {
     let session = session_id();
     let req = requirements("live", Some(session));
     let chosen = scheduler
-        .schedule(tenant_id(), &req, clock.as_ref())
+        .schedule(tenant_id(), &req, &[], clock.as_ref())
         .await
         .unwrap();
     scheduler
@@ -267,7 +282,7 @@ async fn same_session_prefers_original_node() {
 
     let other_binding = MediaBindingId::from_str("55555555-5555-5555-5555-555555555555").unwrap();
     let chosen_again = scheduler
-        .schedule(tenant_id(), &req, clock.as_ref())
+        .schedule(tenant_id(), &req, &[], clock.as_ref())
         .await
         .unwrap();
     assert_eq!(chosen.node_id, chosen_again.node_id);
@@ -311,7 +326,7 @@ async fn capacity_exhausted_falls_back_or_fails() {
     let session = session_id();
     let req = requirements("live", Some(session));
     let node = scheduler
-        .schedule(tenant_id(), &req, clock.as_ref())
+        .schedule(tenant_id(), &req, &[], clock.as_ref())
         .await
         .unwrap();
 

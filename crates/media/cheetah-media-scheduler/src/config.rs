@@ -10,6 +10,12 @@ pub struct MediaRegistryConfig {
     pub default_lease_ttl_ms: u64,
     /// Heartbeat timeout in milliseconds after which a node is considered stale.
     pub heartbeat_timeout_ms: u64,
+    /// Allowed URI schemes for a media node control endpoint.
+    pub allowed_endpoint_schemes: Vec<String>,
+    /// Maximum length of a control endpoint URI in bytes.
+    pub max_endpoint_uri_length: usize,
+    /// When false, loopback, link-local and private network endpoints are rejected.
+    pub allow_internal_endpoints: bool,
 }
 
 impl Default for MediaRegistryConfig {
@@ -25,6 +31,17 @@ impl MediaRegistryConfig {
             require_mtls: true,
             default_lease_ttl_ms: 30_000,
             heartbeat_timeout_ms: 60_000,
+            allowed_endpoint_schemes: vec!["http".to_string(), "https".to_string()],
+            max_endpoint_uri_length: 2048,
+            allow_internal_endpoints: false,
+        }
+    }
+
+    /// Returns a configuration suitable for tests that use loopback endpoints.
+    pub fn test() -> Self {
+        Self {
+            allow_internal_endpoints: true,
+            ..Self::production()
         }
     }
 }
@@ -46,6 +63,8 @@ pub struct SchedulerConfig {
     pub max_reserve_attempts: usize,
     /// Maximum number of nodes to score per scheduling request.
     pub max_candidates: usize,
+    /// Maximum number of simultaneous reservations tracked by the scheduler.
+    pub max_reservations: usize,
 }
 
 impl Default for SchedulerConfig {
@@ -58,6 +77,7 @@ impl Default for SchedulerConfig {
             stable_random_weight: 0.3,
             max_reserve_attempts: 3,
             max_candidates: 256,
+            max_reservations: 100_000,
         }
     }
 }

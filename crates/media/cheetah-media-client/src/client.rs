@@ -8,7 +8,9 @@ use cheetah_signal_contracts::cheetah::common::v1::{
     media_control_client::MediaControlClient as TonicMediaControlClient,
 };
 use cheetah_signal_contracts::cheetah::media::v1::MediaCommand;
-use cheetah_signal_types::{MediaBindingId, MediaSessionId, OperationId, TenantId, UtcTimestamp};
+use cheetah_signal_types::{
+    MediaBindingId, MediaSessionId, OperationId, OwnerEpoch, TenantId, UtcTimestamp,
+};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -30,6 +32,8 @@ pub struct MediaControlRequest {
     pub media_binding_id: MediaBindingId,
     /// Operation identifier.
     pub operation_id: OperationId,
+    /// Owner epoch of the device/session for fencing.
+    pub owner_epoch: OwnerEpoch,
     /// Optional wall-clock deadline.
     pub deadline: Option<UtcTimestamp>,
     /// Idempotency key for the command.
@@ -224,6 +228,12 @@ impl MediaControlClient {
         if let Some(existing) = pool.get(endpoint) {
             return Ok(Arc::clone(existing));
         }
+        if pool.len() >= self.config.max_connections {
+            return Err(MediaClientError::PoolExhausted(format!(
+                "connection pool limit {} reached",
+                self.config.max_connections
+            )));
+        }
         pool.insert(endpoint.to_string(), Arc::clone(&entry));
         Ok(entry)
     }
@@ -297,7 +307,7 @@ fn build_command_envelope(
             occurred_at: Some(to_timestamp(now)?),
             deadline: request.deadline.map(to_timestamp).transpose()?,
             source_node_id: None,
-            owner_epoch: 0,
+            owner_epoch: request.owner_epoch.0,
             traceparent: String::new(),
             tracestate: String::new(),
         }),

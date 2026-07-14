@@ -7,6 +7,8 @@ use cheetah_signal_types::{
 };
 use std::sync::Arc;
 
+use crate::error::SchedulerError;
+
 /// A `MediaPort` that selects media nodes using the scheduler.
 #[derive(Clone)]
 pub struct SchedulerMediaPort {
@@ -112,19 +114,38 @@ async fn reserve(
     requirements: &MediaRequirements,
     clock: &dyn Clock,
 ) -> Result<MediaReservation, DomainError> {
-    let node = scheduler
-        .schedule(tenant_id, requirements, clock)
-        .await
-        .map_err(map_scheduler_error)?;
-    let node_id = node.node_id;
-    let node = scheduler
-        .reserve(node_id, tenant_id, binding_id, requirements, clock)
-        .await
-        .map_err(map_scheduler_error)?;
-    Ok(MediaReservation {
-        media_node_id: node_id,
-        media_node_instance_epoch: node.instance_epoch_value(),
-    })
+    let mut excluded = Vec::new();
+    let max_attempts = scheduler.config().max_reserve_attempts.max(1);
+
+    for _ in 0..max_attempts {
+        let node = scheduler
+            .schedule(tenant_id, requirements, &excluded, clock)
+            .await
+            .map_err(map_scheduler_error)?;
+        let node_id = node.node_id;
+        let instance_epoch = node.instance_epoch_value();
+
+        match scheduler
+            .reserve(node_id, tenant_id, binding_id, requirements, clock)
+            .await
+        {
+            Ok(_) => {
+                return Ok(MediaReservation {
+                    media_node_id: node_id,
+                    media_node_instance_epoch: instance_epoch,
+                });
+            }
+            Err(SchedulerError::CapacityExhausted(_)) => {
+                excluded.push(node_id);
+                continue;
+            }
+            Err(e) => return Err(map_scheduler_error(e)),
+        }
+    }
+
+    Err(DomainError::unavailable(
+        "no media node had capacity after retries",
+    ))
 }
 
 fn map_scheduler_error(e: crate::error::SchedulerError) -> DomainError {
