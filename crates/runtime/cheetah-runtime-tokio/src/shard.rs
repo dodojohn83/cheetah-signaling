@@ -94,27 +94,35 @@ impl Shard {
                 session_registry,
             );
 
+            let mut shutdown = false;
+
             loop {
                 while !ready_queue.is_empty() {
                     process_ready_queue(&mut ready_queue, &mut actors, &ctx).await;
                 }
 
+                if shutdown {
+                    shutdown_all(actors, &ctx).await;
+                    break;
+                }
+
                 match receiver.recv().await {
-                    Some(RuntimeMessage::Shutdown) => {
-                        while !ready_queue.is_empty() {
-                            process_ready_queue(&mut ready_queue, &mut actors, &ctx).await;
-                        }
-                        shutdown_all(actors, &ctx).await;
-                        break;
-                    }
                     Some(msg) => {
-                        if let Some(device_key) = msg.device_key() {
+                        if matches!(&msg, RuntimeMessage::Shutdown) {
+                            shutdown = true;
+                        } else if let Some(device_key) = msg.device_key() {
                             ready_queue.entry(device_key).or_default().push_back(msg);
+                        }
+                        while let Ok(next) = receiver.try_recv() {
+                            if matches!(&next, RuntimeMessage::Shutdown) {
+                                shutdown = true;
+                            } else if let Some(device_key) = next.device_key() {
+                                ready_queue.entry(device_key).or_default().push_back(next);
+                            }
                         }
                     }
                     None => {
-                        shutdown_all(actors, &ctx).await;
-                        break;
+                        shutdown = true;
                     }
                 }
             }
