@@ -211,6 +211,14 @@ impl IdGenerator for InMemoryIdGenerator {
     fn generate_correlation_id(&self) -> cheetah_signal_types::CorrelationId {
         cheetah_signal_types::CorrelationId::from_uuid(self.next_uuid())
     }
+
+    fn generate_webhook_id(&self) -> cheetah_signal_types::WebhookId {
+        cheetah_signal_types::WebhookId::from_uuid(self.next_uuid())
+    }
+
+    fn generate_delivery_id(&self) -> cheetah_signal_types::DeliveryId {
+        cheetah_signal_types::DeliveryId::from_uuid(self.next_uuid())
+    }
 }
 
 /// In-memory stores used by the unit of work and other in-memory adapters.

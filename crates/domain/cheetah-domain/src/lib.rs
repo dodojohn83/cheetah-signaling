@@ -15,6 +15,7 @@ pub mod media_binding;
 pub mod media_session;
 pub mod operation;
 pub mod ports;
+pub mod webhook;
 
 #[cfg(any(test, feature = "test-util"))]
 pub mod in_memory;
@@ -34,3 +35,6 @@ pub use media_session::{
 };
 pub use operation::{Operation, OperationError, OperationResult, OperationStatus};
 pub use ports::*;
+pub use webhook::{
+    sign_webhook_payload, DeliveryStatus, WebhookConfig, WebhookDelivery,
+};
