@@ -3,6 +3,7 @@
 //! PostgreSQL storage adapter for Cheetah Signaling.
 
 mod error;
+mod list;
 mod migration;
 mod operation_step;
 mod owner;

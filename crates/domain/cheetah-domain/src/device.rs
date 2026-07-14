@@ -166,6 +166,37 @@ pub enum DeviceLifecycle {
     Retired,
 }
 
+impl std::fmt::Display for DeviceLifecycle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Self::Provisioning => "provisioning",
+            Self::Active => "active",
+            Self::Suspended => "suspended",
+            Self::Retired => "retired",
+        };
+        write!(f, "{s}")
+    }
+}
+
+impl std::str::FromStr for DeviceLifecycle {
+    type Err = DomainError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let lifecycle = match s.to_lowercase().as_str() {
+            "provisioning" => Self::Provisioning,
+            "active" => Self::Active,
+            "suspended" => Self::Suspended,
+            "retired" => Self::Retired,
+            _ => {
+                return Err(DomainError::invalid_argument(format!(
+                    "unknown lifecycle: {s}"
+                )));
+            }
+        };
+        Ok(lifecycle)
+    }
+}
+
 /// Device connectivity.
 #[derive(Clone, Debug, Default, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]

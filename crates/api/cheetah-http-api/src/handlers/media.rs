@@ -12,18 +12,44 @@ use cheetah_signal_application::dto::{
     ControlPlaybackRequest, StartLiveRequest, StartPlaybackRequest, StartTalkRequest,
     StopLiveRequest,
 };
-use cheetah_signal_types::{MediaSessionId, Page};
+use cheetah_signal_types::{DeviceId, MediaSessionId, Page, UtcTimestamp};
 use std::sync::Arc;
 
 pub async fn list_sessions(
-    Query(_query): Query<ListQuery>,
-    State(_state): State<Arc<ApiState>>,
+    Query(query): Query<ListQuery>,
+    State(state): State<Arc<ApiState>>,
     ctx: ApiRequestContext,
-) -> Result<Json<Page<serde_json::Value>>, HttpError> {
+) -> Result<Json<Page<cheetah_signal_application::dto::MediaSessionDto>>, HttpError> {
     ctx.require_scope("viewer")?;
-    Err(HttpError::NotImplemented(
-        "media session list pagination is not yet implemented".to_string(),
-    ))
+    let page = query.page_request()?;
+    let device_id = query
+        .device_id
+        .as_deref()
+        .map(str::parse::<DeviceId>)
+        .transpose()
+        .map_err(HttpError::from)?;
+    let updated_after = query
+        .updated_after
+        .as_deref()
+        .map(UtcTimestamp::parse_rfc3339)
+        .transpose()
+        .map_err(HttpError::from)?;
+    let mut uow = state.storage.begin().await.map_err(HttpError::from)?;
+    let result = uow
+        .media_session_repository()
+        .list(
+            ctx.tenant_id,
+            device_id,
+            query.protocol,
+            query.status,
+            updated_after,
+            page,
+        )
+        .await
+        .map_err(HttpError::from)?;
+    Ok(Json(result.map(|s| {
+        cheetah_signal_application::dto::MediaSessionDto::from(&s)
+    })))
 }
 
 pub async fn create_session(

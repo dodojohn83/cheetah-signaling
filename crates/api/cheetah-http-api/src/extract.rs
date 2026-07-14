@@ -178,6 +178,8 @@ pub struct ListQuery {
     pub name_prefix: Option<String>,
     /// Updated after timestamp.
     pub updated_after: Option<String>,
+    /// Optional parent device id filter.
+    pub device_id: Option<String>,
 }
 
 impl Default for ListQuery {
@@ -189,6 +191,7 @@ impl Default for ListQuery {
             status: None,
             name_prefix: None,
             updated_after: None,
+            device_id: None,
         }
     }
 }

@@ -13,18 +13,38 @@ use cheetah_signal_application::dto::{
     RegisterDeviceRequest, RegisterDeviceResult, RetireDeviceRequest,
     UpdateDeviceCapabilitiesRequest,
 };
-use cheetah_signal_types::{DeviceId, Page};
+use cheetah_signal_types::{DeviceId, Page, UtcTimestamp};
 use std::sync::Arc;
 
 pub async fn list_devices(
-    Query(_query): Query<ListQuery>,
-    State(_state): State<Arc<ApiState>>,
+    Query(query): Query<ListQuery>,
+    State(state): State<Arc<ApiState>>,
     ctx: ApiRequestContext,
-) -> Result<Json<Page<serde_json::Value>>, HttpError> {
+) -> Result<Json<Page<cheetah_signal_application::dto::DeviceDto>>, HttpError> {
     ctx.require_scope("viewer")?;
-    Err(HttpError::NotImplemented(
-        "device list pagination is not yet implemented".to_string(),
-    ))
+    let page = query.page_request()?;
+    let updated_after = query
+        .updated_after
+        .as_deref()
+        .map(UtcTimestamp::parse_rfc3339)
+        .transpose()
+        .map_err(HttpError::from)?;
+    let mut uow = state.storage.begin().await.map_err(HttpError::from)?;
+    let result = uow
+        .device_repository()
+        .list(
+            ctx.tenant_id,
+            query.protocol,
+            query.status,
+            query.name_prefix,
+            updated_after,
+            page,
+        )
+        .await
+        .map_err(HttpError::from)?;
+    Ok(Json(result.map(|d| {
+        cheetah_signal_application::dto::DeviceDto::from(&d)
+    })))
 }
 
 pub async fn create_device(

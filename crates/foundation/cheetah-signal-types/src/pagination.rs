@@ -1,6 +1,10 @@
 //! Pagination support for list operations.
 
-use crate::error::{Result, SignalError, SignalErrorKind};
+use crate::{
+    UtcTimestamp,
+    error::{Result, SignalError, SignalErrorKind},
+};
+use uuid::Uuid;
 
 /// Default page size when not specified.
 pub const DEFAULT_PAGE_SIZE: u32 = 20;
@@ -114,5 +118,51 @@ impl<T> Default for Page<T> {
             next_cursor: None,
             total: None,
         }
+    }
+}
+
+/// Opaque cursor used for stable pagination across list queries.
+///
+/// The cursor captures the `updated_at` and resource id of the last item on the
+/// current page so the next page can continue with `WHERE (updated_at, id) > ...`.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ListCursor {
+    /// RFC 3339 timestamp of the last item.
+    pub updated_at: String,
+    /// String form of the resource identifier.
+    pub id: String,
+}
+
+impl ListCursor {
+    /// Creates a new cursor from a timestamp and id.
+    pub fn new(updated_at: UtcTimestamp, id: Uuid) -> Result<Self> {
+        Ok(Self {
+            updated_at: updated_at.to_rfc3339()?,
+            id: id.to_string(),
+        })
+    }
+
+    /// Encodes the cursor as a JSON string.
+    pub fn encode(&self) -> Result<String> {
+        serde_json::to_string(self).map_err(|e| {
+            SignalError::new(SignalErrorKind::Internal, "failed to encode list cursor")
+                .with_source(e)
+        })
+    }
+
+    /// Decodes a cursor from its JSON string form.
+    pub fn decode(value: &str) -> Result<Self> {
+        serde_json::from_str(value).map_err(|e| {
+            SignalError::new(SignalErrorKind::InvalidArgument, "invalid list cursor").with_source(e)
+        })
+    }
+
+    /// Returns the timestamp and UUID represented by this cursor.
+    pub fn parse(&self) -> Result<(UtcTimestamp, Uuid)> {
+        let ts = UtcTimestamp::parse_rfc3339(&self.updated_at)?;
+        let id = Uuid::parse_str(&self.id).map_err(|e| {
+            SignalError::new(SignalErrorKind::InvalidArgument, "invalid cursor id").with_source(e)
+        })?;
+        Ok((ts, id))
     }
 }

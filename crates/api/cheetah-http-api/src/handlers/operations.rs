@@ -8,18 +8,37 @@ use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
 };
-use cheetah_signal_types::{OperationId, Page};
+use cheetah_signal_types::{DeviceId, OperationId, Page, UtcTimestamp};
 use std::sync::Arc;
 
 pub async fn list_operations(
-    Query(_query): Query<ListQuery>,
-    State(_state): State<Arc<ApiState>>,
+    Query(query): Query<ListQuery>,
+    State(state): State<Arc<ApiState>>,
     ctx: ApiRequestContext,
-) -> Result<Json<Page<serde_json::Value>>, HttpError> {
+) -> Result<Json<Page<cheetah_signal_application::dto::OperationDto>>, HttpError> {
     ctx.require_scope("viewer")?;
-    Err(HttpError::NotImplemented(
-        "operation list pagination is not yet implemented".to_string(),
-    ))
+    let page = query.page_request()?;
+    let device_id = query
+        .device_id
+        .as_deref()
+        .map(str::parse::<DeviceId>)
+        .transpose()
+        .map_err(HttpError::from)?;
+    let updated_after = query
+        .updated_after
+        .as_deref()
+        .map(UtcTimestamp::parse_rfc3339)
+        .transpose()
+        .map_err(HttpError::from)?;
+    let mut uow = state.storage.begin().await.map_err(HttpError::from)?;
+    let result = uow
+        .operation_repository()
+        .list(ctx.tenant_id, device_id, query.status, updated_after, page)
+        .await
+        .map_err(HttpError::from)?;
+    Ok(Json(result.map(|o| {
+        cheetah_signal_application::dto::OperationDto::from(&o)
+    })))
 }
 
 pub async fn create_operation(

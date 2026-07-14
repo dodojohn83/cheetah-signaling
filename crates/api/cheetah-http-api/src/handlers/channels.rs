@@ -9,19 +9,40 @@ use axum::{
     response::IntoResponse,
 };
 use cheetah_signal_application::dto::ReplaceChannelCatalogRequest;
-use cheetah_signal_types::{DeviceId, Page};
+use cheetah_signal_types::{DeviceId, Page, UtcTimestamp};
 use std::sync::Arc;
 
 pub async fn list_channels(
-    Path(_device_id): Path<String>,
-    Query(_query): Query<ListQuery>,
-    State(_state): State<Arc<ApiState>>,
+    Path(device_id): Path<String>,
+    Query(query): Query<ListQuery>,
+    State(state): State<Arc<ApiState>>,
     ctx: ApiRequestContext,
-) -> Result<Json<Page<serde_json::Value>>, HttpError> {
+) -> Result<Json<Page<cheetah_signal_application::dto::ChannelDto>>, HttpError> {
     ctx.require_scope("viewer")?;
-    Err(HttpError::NotImplemented(
-        "channel list pagination is not yet implemented".to_string(),
-    ))
+    let device_id = device_id.parse::<DeviceId>().map_err(HttpError::from)?;
+    let page = query.page_request()?;
+    let updated_after = query
+        .updated_after
+        .as_deref()
+        .map(UtcTimestamp::parse_rfc3339)
+        .transpose()
+        .map_err(HttpError::from)?;
+    let mut uow = state.storage.begin().await.map_err(HttpError::from)?;
+    let result = uow
+        .channel_repository()
+        .list(
+            ctx.tenant_id,
+            device_id,
+            query.status,
+            query.name_prefix,
+            updated_after,
+            page,
+        )
+        .await
+        .map_err(HttpError::from)?;
+    Ok(Json(result.map(|c| {
+        cheetah_signal_application::dto::ChannelDto::from(&c)
+    })))
 }
 
 pub async fn replace_catalog(

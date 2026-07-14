@@ -38,6 +38,41 @@ impl OperationStatus {
     }
 }
 
+impl std::fmt::Display for OperationStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Self::Pending => "pending",
+            Self::Running => "running",
+            Self::Succeeded => "succeeded",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+            Self::TimedOut => "timed_out",
+        };
+        write!(f, "{s}")
+    }
+}
+
+impl std::str::FromStr for OperationStatus {
+    type Err = DomainError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let status = match s.to_lowercase().as_str() {
+            "pending" => Self::Pending,
+            "running" => Self::Running,
+            "succeeded" => Self::Succeeded,
+            "failed" => Self::Failed,
+            "cancelled" => Self::Cancelled,
+            "timed_out" => Self::TimedOut,
+            _ => {
+                return Err(DomainError::invalid_argument(format!(
+                    "unknown status: {s}"
+                )));
+            }
+        };
+        Ok(status)
+    }
+}
+
 /// Result of an operation.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case", tag = "type")]

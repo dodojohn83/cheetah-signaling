@@ -5,7 +5,8 @@ use crate::{
 };
 use cheetah_signal_types::{
     ChannelId, DeviceId, Event, EventId, MediaBindingId, MediaNodeInstanceEpoch, MediaSessionId,
-    MessageId, NodeId, OperationId, OwnerEpoch, ProtocolIdentity, TenantId, UtcTimestamp,
+    MessageId, NodeId, OperationId, OwnerEpoch, Page, PageRequest, ProtocolIdentity, TenantId,
+    UtcTimestamp,
 };
 
 pub use cheetah_signal_types::{Clock, IdGenerator};
@@ -64,6 +65,16 @@ pub trait DeviceRepository: Send {
     ) -> Result<Option<Device>>;
     /// Saves a device.
     async fn save(&mut self, device: &Device) -> Result<()>;
+    /// Lists devices for a tenant with optional filters and stable cursor pagination.
+    async fn list(
+        &mut self,
+        tenant_id: TenantId,
+        protocol: Option<String>,
+        lifecycle: Option<String>,
+        name_prefix: Option<String>,
+        updated_after: Option<UtcTimestamp>,
+        page: PageRequest,
+    ) -> Result<Page<Device>>;
 }
 
 /// Repository for channel aggregates.
@@ -91,6 +102,16 @@ pub trait ChannelRepository: Send {
         device_id: DeviceId,
         channel_id: ChannelId,
     ) -> Result<()>;
+    /// Lists channels for a device with optional filters and stable cursor pagination.
+    async fn list(
+        &mut self,
+        tenant_id: TenantId,
+        device_id: DeviceId,
+        status: Option<String>,
+        name_prefix: Option<String>,
+        updated_after: Option<UtcTimestamp>,
+        page: PageRequest,
+    ) -> Result<Page<Channel>>;
 }
 
 /// Repository for operation aggregates.
@@ -109,6 +130,15 @@ pub trait OperationRepository: Send {
     ) -> Result<Option<Operation>>;
     /// Saves an operation.
     async fn save(&mut self, operation: &Operation) -> Result<()>;
+    /// Lists operations for a tenant with optional filters and stable cursor pagination.
+    async fn list(
+        &mut self,
+        tenant_id: TenantId,
+        device_id: Option<DeviceId>,
+        status: Option<String>,
+        updated_after: Option<UtcTimestamp>,
+        page: PageRequest,
+    ) -> Result<Page<Operation>>;
 }
 
 /// Repository for media session aggregates.
@@ -127,6 +157,16 @@ pub trait MediaSessionRepository: Send {
     ) -> Result<Option<MediaSession>>;
     /// Saves a media session.
     async fn save(&mut self, session: &MediaSession) -> Result<()>;
+    /// Lists media sessions for a tenant with optional filters and stable cursor pagination.
+    async fn list(
+        &mut self,
+        tenant_id: TenantId,
+        device_id: Option<DeviceId>,
+        purpose: Option<String>,
+        state: Option<String>,
+        updated_after: Option<UtcTimestamp>,
+        page: PageRequest,
+    ) -> Result<Page<MediaSession>>;
 }
 
 /// Repository for media binding aggregates.

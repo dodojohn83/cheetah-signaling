@@ -5,16 +5,17 @@
 //! an `.await` point.
 
 use crate::{
-    Channel, ChannelRepository, Command, CommandBus, Device, DeviceRepository, DomainError,
-    DomainEvent, EventPublisher, MediaBinding, MediaBindingRepository, MediaReservation,
-    MediaSession, MediaSessionRepository, Operation, OperationRepository, Outbox, OutboxEntry,
+    Channel, ChannelRepository, ChannelStatus, Command, CommandBus, Device, DeviceLifecycle,
+    DeviceRepository, DomainError, DomainEvent, EventPublisher, MediaBinding,
+    MediaBindingRepository, MediaPurpose, MediaReservation, MediaSession, MediaSessionRepository,
+    MediaSessionState, Operation, OperationRepository, OperationStatus, Outbox, OutboxEntry,
     OwnerInfo, ProcessedMessageRecord, ProcessedMessageRepository, ProcessedMessageStatus,
     UnitOfWork,
 };
 use cheetah_signal_types::{
-    ChannelId, Clock, DeviceId, DurationMs, Event, IdGenerator, MediaBindingId,
-    MediaNodeInstanceEpoch, MediaSessionId, MessageId, NodeId, OperationId, Principal,
-    ProtocolIdentity, RequestContext, ResourceId, ResourceKind, ResourceRef, TenantId,
+    ChannelId, Clock, DeviceId, DurationMs, Event, IdGenerator, ListCursor, MediaBindingId,
+    MediaNodeInstanceEpoch, MediaSessionId, MessageId, NodeId, OperationId, Page, PageRequest,
+    Principal, ProtocolIdentity, RequestContext, ResourceId, ResourceKind, ResourceRef, TenantId,
     UtcTimestamp,
 };
 use std::collections::BTreeMap;
@@ -28,6 +29,48 @@ fn lock_mutex<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
     }
+}
+
+/// Decodes an opaque list cursor into the UUID it represents.
+fn decode_cursor(cursor: &Option<String>) -> crate::Result<Option<uuid::Uuid>> {
+    match cursor {
+        None => Ok(None),
+        Some(value) => {
+            let c = ListCursor::decode(value)
+                .map_err(|e| DomainError::invalid_argument(format!("invalid cursor: {e}")))?;
+            let (_ts, id) = c
+                .parse()
+                .map_err(|e| DomainError::invalid_argument(format!("invalid cursor: {e}")))?;
+            Ok(Some(id))
+        }
+    }
+}
+
+/// Slices the sorted items into a page, encoding the next cursor when present.
+fn to_page<T>(
+    items: Vec<T>,
+    page: PageRequest,
+    id_of: fn(&T) -> uuid::Uuid,
+) -> crate::Result<Page<T>> {
+    let page_size = page.page_size as usize;
+    let next_cursor = if items.len() > page_size {
+        let last = &items[page_size - 1];
+        // In-memory timestamps are not part of the cursor; use a fixed epoch for encoding.
+        let ts = UtcTimestamp::from_offset(OffsetDateTime::UNIX_EPOCH);
+        Some(
+            ListCursor::new(ts, id_of(last))
+                .map_err(|e| DomainError::internal(format!("invalid cursor: {e}")))?
+                .encode()
+                .map_err(|e| DomainError::internal(format!("failed to encode cursor: {e}")))?,
+        )
+    } else {
+        None
+    };
+    let mut page = Page::new(items.into_iter().take(page_size).collect());
+    if let Some(cursor) = next_cursor {
+        page = page.with_next_cursor(cursor);
+    }
+    Ok(page)
 }
 
 /// Test clock with explicit wall and monotonic time.
@@ -319,6 +362,40 @@ impl DeviceRepository for InMemoryUnitOfWork {
         });
         Ok(())
     }
+
+    async fn list(
+        &mut self,
+        tenant_id: TenantId,
+        protocol: Option<String>,
+        lifecycle: Option<String>,
+        name_prefix: Option<String>,
+        updated_after: Option<UtcTimestamp>,
+        page: PageRequest,
+    ) -> crate::Result<Page<Device>> {
+        let cursor = decode_cursor(&page.cursor)?;
+        let pending = lock_mutex(&self.pending);
+        let mut items: Vec<Device> = pending
+            .devices
+            .values()
+            .filter(|d| {
+                d.tenant_id() == tenant_id
+                    && d.lifecycle() != DeviceLifecycle::Retired
+                    && protocol
+                        .as_ref()
+                        .is_none_or(|p| d.protocol().to_string() == *p)
+                    && lifecycle
+                        .as_ref()
+                        .is_none_or(|l| d.lifecycle().to_string() == *l)
+                    && name_prefix.as_ref().is_none_or(|p| d.name().starts_with(p))
+                    && updated_after.is_none_or(|t| d.updated_at() > t)
+                    && cursor.is_none_or(|c| d.device_id().as_uuid() > c)
+            })
+            .cloned()
+            .collect();
+        items.sort_by_key(|d| d.device_id().as_uuid());
+        drop(pending);
+        to_page(items, page, |d| d.device_id().as_uuid())
+    }
 }
 
 #[async_trait::async_trait]
@@ -377,6 +454,38 @@ impl ChannelRepository for InMemoryUnitOfWork {
         });
         Ok(())
     }
+
+    async fn list(
+        &mut self,
+        tenant_id: TenantId,
+        device_id: DeviceId,
+        status: Option<String>,
+        name_prefix: Option<String>,
+        updated_after: Option<UtcTimestamp>,
+        page: PageRequest,
+    ) -> crate::Result<Page<Channel>> {
+        let cursor = decode_cursor(&page.cursor)?;
+        let pending = lock_mutex(&self.pending);
+        let mut items: Vec<Channel> = pending
+            .channels
+            .values()
+            .filter(|c| {
+                c.tenant_id() == tenant_id
+                    && c.device_id() == device_id
+                    && status.as_ref().is_none_or(|s| {
+                        c.status().to_string() == *s
+                            || s.parse::<ChannelStatus>().is_ok_and(|x| x == c.status())
+                    })
+                    && name_prefix.as_ref().is_none_or(|p| c.name().starts_with(p))
+                    && updated_after.is_none_or(|t| c.updated_at() > t)
+                    && cursor.is_none_or(|cur| c.channel_id().as_uuid() > cur)
+            })
+            .cloned()
+            .collect();
+        items.sort_by_key(|c| c.channel_id().as_uuid());
+        drop(pending);
+        to_page(items, page, |c| c.channel_id().as_uuid())
+    }
 }
 
 #[async_trait::async_trait]
@@ -410,6 +519,36 @@ impl OperationRepository for InMemoryUnitOfWork {
             );
         });
         Ok(())
+    }
+
+    async fn list(
+        &mut self,
+        tenant_id: TenantId,
+        device_id: Option<DeviceId>,
+        status: Option<String>,
+        updated_after: Option<UtcTimestamp>,
+        page: PageRequest,
+    ) -> crate::Result<Page<Operation>> {
+        let cursor = decode_cursor(&page.cursor)?;
+        let pending = lock_mutex(&self.pending);
+        let mut items: Vec<Operation> = pending
+            .operations
+            .values()
+            .filter(|o| {
+                o.tenant_id() == tenant_id
+                    && device_id.is_none_or(|d| d == o.device_id())
+                    && status.as_ref().is_none_or(|s| {
+                        o.status().to_string() == *s
+                            || s.parse::<OperationStatus>().is_ok_and(|x| x == o.status())
+                    })
+                    && updated_after.is_none_or(|t| o.updated_at() > t)
+                    && cursor.is_none_or(|cur| o.operation_id().as_uuid() > cur)
+            })
+            .cloned()
+            .collect();
+        items.sort_by_key(|o| o.operation_id().as_uuid());
+        drop(pending);
+        to_page(items, page, |o| o.operation_id().as_uuid())
     }
 }
 
@@ -447,6 +586,43 @@ impl MediaSessionRepository for InMemoryUnitOfWork {
             );
         });
         Ok(())
+    }
+
+    async fn list(
+        &mut self,
+        tenant_id: TenantId,
+        device_id: Option<DeviceId>,
+        purpose: Option<String>,
+        state: Option<String>,
+        updated_after: Option<UtcTimestamp>,
+        page: PageRequest,
+    ) -> crate::Result<Page<MediaSession>> {
+        let cursor = decode_cursor(&page.cursor)?;
+        let pending = lock_mutex(&self.pending);
+        let mut items: Vec<MediaSession> = pending
+            .sessions
+            .values()
+            .filter(|s| {
+                s.tenant_id() == tenant_id
+                    && device_id.is_none_or(|d| d == s.device_id())
+                    && purpose.as_ref().is_none_or(|p| {
+                        s.purpose().to_string() == *p
+                            || p.parse::<MediaPurpose>().is_ok_and(|x| x == s.purpose())
+                    })
+                    && state.as_ref().is_none_or(|st| {
+                        s.state().to_string() == *st
+                            || st
+                                .parse::<MediaSessionState>()
+                                .is_ok_and(|x| x == s.state())
+                    })
+                    && updated_after.is_none_or(|t| s.updated_at() > t)
+                    && cursor.is_none_or(|cur| s.media_session_id().as_uuid() > cur)
+            })
+            .cloned()
+            .collect();
+        items.sort_by_key(|s| s.media_session_id().as_uuid());
+        drop(pending);
+        to_page(items, page, |s| s.media_session_id().as_uuid())
     }
 }
 
