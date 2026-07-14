@@ -77,10 +77,10 @@ pub fn build_router(state: ApiState) -> Router {
         )
         .route("/api/v1/openapi.json", get(crate::openapi::serve_json))
         .route("/api/v1/openapi.yaml", get(crate::openapi::serve_yaml))
-        .with_state(Arc::new(state))
-        .fallback(fallback);
+        .fallback(fallback)
+        .with_state(Arc::new(state));
 
-    Router::new().nest("/", api).layer(
+    api.layer(
         ServiceBuilder::new()
             .layer(TraceLayer::new_for_http())
             .layer(CompressionLayer::new())
