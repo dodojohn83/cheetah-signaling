@@ -42,7 +42,7 @@ async fn event_service_publishes_outbox() {
 
     let published = ctx
         .event_service
-        .publish_pending(&*ctx.uow.outbox(), &*ctx.event_publisher, 10)
+        .publish_pending(ctx.uow.outbox(), &*ctx.event_publisher, 10)
         .await
         .unwrap();
     assert!(published >= 1);

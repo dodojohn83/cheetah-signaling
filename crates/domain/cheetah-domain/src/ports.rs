@@ -42,41 +42,41 @@ pub struct OutboxEntry {
 
 /// Repository for device aggregates.
 #[async_trait::async_trait]
-pub trait DeviceRepository: Send + Sync {
+pub trait DeviceRepository: Send {
     /// Gets a device by id.
-    async fn get(&self, tenant_id: TenantId, device_id: DeviceId) -> Result<Option<Device>>;
+    async fn get(&mut self, tenant_id: TenantId, device_id: DeviceId) -> Result<Option<Device>>;
     /// Gets a device by protocol external identity.
     async fn get_by_external_id(
-        &self,
+        &mut self,
         tenant_id: TenantId,
         protocol: crate::Protocol,
         external_id: ProtocolIdentity,
     ) -> Result<Option<Device>>;
     /// Saves a device.
-    async fn save(&self, device: &Device) -> Result<()>;
+    async fn save(&mut self, device: &Device) -> Result<()>;
 }
 
 /// Repository for channel aggregates.
 #[async_trait::async_trait]
-pub trait ChannelRepository: Send + Sync {
+pub trait ChannelRepository: Send {
     /// Gets a channel by id.
     async fn get(
-        &self,
+        &mut self,
         tenant_id: TenantId,
         device_id: DeviceId,
         channel_id: ChannelId,
     ) -> Result<Option<Channel>>;
     /// Lists all channels for a device.
     async fn list_by_device(
-        &self,
+        &mut self,
         tenant_id: TenantId,
         device_id: DeviceId,
     ) -> Result<Vec<Channel>>;
     /// Saves a channel.
-    async fn save(&self, channel: &Channel) -> Result<()>;
+    async fn save(&mut self, channel: &Channel) -> Result<()>;
     /// Removes a channel.
     async fn remove(
-        &self,
+        &mut self,
         tenant_id: TenantId,
         device_id: DeviceId,
         channel_id: ChannelId,
@@ -85,68 +85,68 @@ pub trait ChannelRepository: Send + Sync {
 
 /// Repository for operation aggregates.
 #[async_trait::async_trait]
-pub trait OperationRepository: Send + Sync {
+pub trait OperationRepository: Send {
     /// Gets an operation by id.
     async fn get(
-        &self,
+        &mut self,
         tenant_id: TenantId,
         operation_id: OperationId,
     ) -> Result<Option<Operation>>;
     /// Gets an operation by idempotency scope.
     async fn get_by_idempotency(
-        &self,
+        &mut self,
         scope: &crate::IdempotencyScope,
     ) -> Result<Option<Operation>>;
     /// Saves an operation.
-    async fn save(&self, operation: &Operation) -> Result<()>;
+    async fn save(&mut self, operation: &Operation) -> Result<()>;
 }
 
 /// Repository for media session aggregates.
 #[async_trait::async_trait]
-pub trait MediaSessionRepository: Send + Sync {
+pub trait MediaSessionRepository: Send {
     /// Gets a media session by id.
     async fn get(
-        &self,
+        &mut self,
         tenant_id: TenantId,
         media_session_id: MediaSessionId,
     ) -> Result<Option<MediaSession>>;
     /// Gets a media session by idempotency scope.
     async fn get_by_idempotency(
-        &self,
+        &mut self,
         scope: &crate::IdempotencyScope,
     ) -> Result<Option<MediaSession>>;
     /// Saves a media session.
-    async fn save(&self, session: &MediaSession) -> Result<()>;
+    async fn save(&mut self, session: &MediaSession) -> Result<()>;
 }
 
 /// Repository for media binding aggregates.
 #[async_trait::async_trait]
-pub trait MediaBindingRepository: Send + Sync {
+pub trait MediaBindingRepository: Send {
     /// Gets a media binding by id.
     async fn get(
-        &self,
+        &mut self,
         tenant_id: TenantId,
         media_binding_id: MediaBindingId,
     ) -> Result<Option<MediaBinding>>;
     /// Gets a media binding by media session id.
     async fn get_by_media_session(
-        &self,
+        &mut self,
         tenant_id: TenantId,
         media_session_id: MediaSessionId,
     ) -> Result<Option<MediaBinding>>;
     /// Saves a media binding.
-    async fn save(&self, binding: &MediaBinding) -> Result<()>;
+    async fn save(&mut self, binding: &MediaBinding) -> Result<()>;
 }
 
 /// Outbox for domain events.
 #[async_trait::async_trait]
-pub trait Outbox: Send + Sync {
+pub trait Outbox: Send {
     /// Appends an event to the outbox.
-    async fn append(&self, event: Event<DomainEvent>) -> Result<()>;
+    async fn append(&mut self, event: Event<DomainEvent>) -> Result<()>;
     /// Returns pending events up to `limit`.
-    async fn pending(&self, limit: usize) -> Result<Vec<OutboxEntry>>;
+    async fn pending(&mut self, limit: usize) -> Result<Vec<OutboxEntry>>;
     /// Marks an event as published.
-    async fn mark_published(&self, event_id: EventId) -> Result<()>;
+    async fn mark_published(&mut self, event_id: EventId) -> Result<()>;
 }
 
 /// Publishes events to the message bus.
@@ -214,7 +214,7 @@ pub trait MediaPort: Send + Sync {
 
 /// Unit of work that keeps aggregate and outbox writes in one transaction.
 #[async_trait::async_trait]
-pub trait UnitOfWork: Send + Sync {
+pub trait UnitOfWork: Send {
     /// Access the device repository.
     fn device_repository(&mut self) -> &mut dyn DeviceRepository;
     /// Access the channel repository.

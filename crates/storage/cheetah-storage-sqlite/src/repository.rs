@@ -1,0 +1,578 @@
+//! Repository and outbox implementations for the SQLite unit of work.
+
+use crate::error::sqlx_to_domain;
+use crate::unit_of_work::SqliteUnitOfWork;
+use cheetah_domain::Protocol;
+use cheetah_domain::{
+    Channel, ChannelRepository, Device, DeviceRepository, DomainError, MediaBinding,
+    MediaBindingRepository, MediaSession, MediaSessionRepository, Operation, OperationRepository,
+    Outbox, OutboxEntry,
+};
+use cheetah_signal_types::Event;
+use sqlx::FromRow;
+use sqlx::types::Json;
+use time::OffsetDateTime;
+
+use cheetah_domain::DomainEvent;
+
+fn variant_name<T: serde::Serialize>(value: &T) -> Result<String, DomainError> {
+    let json = serde_json::to_string(value).map_err(|e| DomainError::internal(e.to_string()))?;
+    let trimmed = json.trim_matches('"');
+    if trimmed.len() == json.len() - 2 {
+        Ok(trimmed.to_string())
+    } else {
+        Err(DomainError::internal(
+            "enum variant has unexpected JSON shape",
+        ))
+    }
+}
+
+fn result_type(result: &cheetah_domain::OperationResult) -> Result<String, DomainError> {
+    let value = serde_json::to_value(result).map_err(|e| DomainError::internal(e.to_string()))?;
+    value
+        .get("type")
+        .and_then(|v| v.as_str())
+        .map(ToString::to_string)
+        .ok_or_else(|| DomainError::internal("missing result type"))
+}
+
+fn connectivity_kind(value: &cheetah_domain::Connectivity) -> Result<String, DomainError> {
+    let value = serde_json::to_value(value).map_err(|e| DomainError::internal(e.to_string()))?;
+    value
+        .get("kind")
+        .and_then(|v| v.as_str())
+        .map(ToString::to_string)
+        .ok_or_else(|| DomainError::internal("missing connectivity kind"))
+}
+
+fn concurrent_modification_error(revision: cheetah_signal_types::Revision) -> DomainError {
+    let expected = revision.0.saturating_sub(1);
+    let found = revision.0;
+    DomainError::ConcurrentModification { expected, found }
+}
+
+#[derive(FromRow)]
+struct DeviceRow {
+    #[sqlx(rename = "data")]
+    data: Json<Device>,
+}
+
+#[async_trait::async_trait]
+impl DeviceRepository for SqliteUnitOfWork {
+    async fn get(
+        &mut self,
+        tenant_id: cheetah_signal_types::TenantId,
+        device_id: cheetah_signal_types::DeviceId,
+    ) -> cheetah_domain::Result<Option<Device>> {
+        let row: Option<DeviceRow> = sqlx::query_as::<sqlx::Sqlite, DeviceRow>(
+            "SELECT data FROM devices WHERE tenant_id = ? AND device_id = ? AND deleted = 0",
+        )
+        .bind(tenant_id.as_uuid())
+        .bind(device_id.as_uuid())
+        .fetch_optional(self.tx()?.as_mut())
+        .await
+        .map_err(sqlx_to_domain)?;
+
+        Ok(row.map(|r| r.data.0))
+    }
+
+    async fn get_by_external_id(
+        &mut self,
+        tenant_id: cheetah_signal_types::TenantId,
+        protocol: Protocol,
+        external_id: cheetah_signal_types::ProtocolIdentity,
+    ) -> cheetah_domain::Result<Option<Device>> {
+        let row: Option<DeviceRow> = sqlx::query_as::<sqlx::Sqlite, DeviceRow>(
+            "SELECT data FROM devices WHERE tenant_id = ? AND protocol = ? AND external_id = ? AND deleted = 0",
+        )
+        .bind(tenant_id.as_uuid())
+        .bind(variant_name(&protocol)?)
+        .bind(external_id.as_str())
+        .fetch_optional(self.tx()?.as_mut())
+        .await
+        .map_err(sqlx_to_domain)?;
+
+        Ok(row.map(|r| r.data.0))
+    }
+
+    async fn save(&mut self, device: &Device) -> cheetah_domain::Result<()> {
+        let result = sqlx::query(
+            "INSERT INTO devices (
+                tenant_id, device_id, protocol, external_id, authority, name, kind, lifecycle,
+                connectivity_kind, owner_epoch, revision, created_at, updated_at, deleted, data, schema_version
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(device_id) DO UPDATE SET
+                tenant_id = EXCLUDED.tenant_id,
+                protocol = EXCLUDED.protocol,
+                external_id = EXCLUDED.external_id,
+                authority = EXCLUDED.authority,
+                name = EXCLUDED.name,
+                kind = EXCLUDED.kind,
+                lifecycle = EXCLUDED.lifecycle,
+                connectivity_kind = EXCLUDED.connectivity_kind,
+                owner_epoch = EXCLUDED.owner_epoch,
+                revision = EXCLUDED.revision,
+                created_at = COALESCE(devices.created_at, EXCLUDED.created_at),
+                updated_at = EXCLUDED.updated_at,
+                deleted = EXCLUDED.deleted,
+                data = EXCLUDED.data,
+                schema_version = EXCLUDED.schema_version
+            WHERE devices.revision = EXCLUDED.revision - 1",
+        )
+        .bind(device.tenant_id().as_uuid())
+        .bind(device.device_id().as_uuid())
+        .bind(variant_name(&device.protocol())?)
+        .bind(device.external_id().as_str())
+        .bind(device.authority())
+        .bind(device.name())
+        .bind(variant_name(&device.kind())?)
+        .bind(variant_name(&device.lifecycle())?)
+        .bind(connectivity_kind(&device.connectivity())?)
+        .bind(device.owner_epoch().0 as i64)
+        .bind(device.revision().0 as i64)
+        .bind(device.created_at().as_offset())
+        .bind(device.updated_at().as_offset())
+        .bind(0i32)
+        .bind(Json(device))
+        .bind(1i32)
+        .execute(self.tx()?.as_mut())
+        .await
+        .map_err(sqlx_to_domain)?;
+
+        if result.rows_affected() != 1 {
+            return Err(concurrent_modification_error(device.revision()));
+        }
+        Ok(())
+    }
+}
+
+#[derive(FromRow)]
+struct ChannelRow {
+    #[sqlx(rename = "data")]
+    data: Json<Channel>,
+}
+
+#[async_trait::async_trait]
+impl ChannelRepository for SqliteUnitOfWork {
+    async fn get(
+        &mut self,
+        tenant_id: cheetah_signal_types::TenantId,
+        device_id: cheetah_signal_types::DeviceId,
+        channel_id: cheetah_signal_types::ChannelId,
+    ) -> cheetah_domain::Result<Option<Channel>> {
+        let row: Option<ChannelRow> = sqlx::query_as::<sqlx::Sqlite, ChannelRow>(
+            "SELECT data FROM channels WHERE tenant_id = ? AND device_id = ? AND channel_id = ? AND deleted = 0",
+        )
+        .bind(tenant_id.as_uuid())
+        .bind(device_id.as_uuid())
+        .bind(channel_id.as_uuid())
+        .fetch_optional(self.tx()?.as_mut())
+        .await
+        .map_err(sqlx_to_domain)?;
+
+        Ok(row.map(|r| r.data.0))
+    }
+
+    async fn list_by_device(
+        &mut self,
+        tenant_id: cheetah_signal_types::TenantId,
+        device_id: cheetah_signal_types::DeviceId,
+    ) -> cheetah_domain::Result<Vec<Channel>> {
+        let rows: Vec<ChannelRow> = sqlx::query_as::<sqlx::Sqlite, ChannelRow>(
+            "SELECT data FROM channels WHERE tenant_id = ? AND device_id = ? AND deleted = 0 ORDER BY channel_id",
+        )
+        .bind(tenant_id.as_uuid())
+        .bind(device_id.as_uuid())
+        .fetch_all(self.tx()?.as_mut())
+        .await
+        .map_err(sqlx_to_domain)?;
+
+        Ok(rows.into_iter().map(|r| r.data.0).collect())
+    }
+
+    async fn save(&mut self, channel: &Channel) -> cheetah_domain::Result<()> {
+        let result = sqlx::query(
+            "INSERT INTO channels (
+                tenant_id, device_id, channel_id, name, kind, enabled, status, revision, updated_at, deleted, data, schema_version
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(tenant_id, device_id, channel_id) DO UPDATE SET
+                name = EXCLUDED.name,
+                kind = EXCLUDED.kind,
+                enabled = EXCLUDED.enabled,
+                status = EXCLUDED.status,
+                revision = EXCLUDED.revision,
+                updated_at = EXCLUDED.updated_at,
+                deleted = EXCLUDED.deleted,
+                data = EXCLUDED.data,
+                schema_version = EXCLUDED.schema_version
+            WHERE channels.revision = EXCLUDED.revision - 1",
+        )
+        .bind(channel.tenant_id().as_uuid())
+        .bind(channel.device_id().as_uuid())
+        .bind(channel.channel_id().as_uuid())
+        .bind(channel.name())
+        .bind(variant_name(&channel.kind())?)
+        .bind(channel.enabled() as i32)
+        .bind(variant_name(&channel.status())?)
+        .bind(channel.revision().0 as i64)
+        .bind(channel.updated_at().as_offset())
+        .bind(0i32)
+        .bind(Json(channel))
+        .bind(1i32)
+        .execute(self.tx()?.as_mut())
+        .await
+        .map_err(sqlx_to_domain)?;
+
+        if result.rows_affected() != 1 {
+            return Err(concurrent_modification_error(channel.revision()));
+        }
+        Ok(())
+    }
+
+    async fn remove(
+        &mut self,
+        tenant_id: cheetah_signal_types::TenantId,
+        device_id: cheetah_signal_types::DeviceId,
+        channel_id: cheetah_signal_types::ChannelId,
+    ) -> cheetah_domain::Result<()> {
+        sqlx::query(
+            "UPDATE channels SET deleted = 1, updated_at = ? WHERE tenant_id = ? AND device_id = ? AND channel_id = ?",
+        )
+        .bind(OffsetDateTime::now_utc())
+        .bind(tenant_id.as_uuid())
+        .bind(device_id.as_uuid())
+        .bind(channel_id.as_uuid())
+        .execute(self.tx()?.as_mut())
+        .await
+        .map_err(sqlx_to_domain)?;
+        Ok(())
+    }
+}
+
+#[derive(FromRow)]
+struct OperationRow {
+    #[sqlx(rename = "data")]
+    data: Json<Operation>,
+}
+
+#[async_trait::async_trait]
+impl OperationRepository for SqliteUnitOfWork {
+    async fn get(
+        &mut self,
+        tenant_id: cheetah_signal_types::TenantId,
+        operation_id: cheetah_signal_types::OperationId,
+    ) -> cheetah_domain::Result<Option<Operation>> {
+        let row: Option<OperationRow> = sqlx::query_as::<sqlx::Sqlite, OperationRow>(
+            "SELECT data FROM operations WHERE tenant_id = ? AND operation_id = ?",
+        )
+        .bind(tenant_id.as_uuid())
+        .bind(operation_id.as_uuid())
+        .fetch_optional(self.tx()?.as_mut())
+        .await
+        .map_err(sqlx_to_domain)?;
+
+        Ok(row.map(|r| r.data.0))
+    }
+
+    async fn get_by_idempotency(
+        &mut self,
+        scope: &cheetah_domain::IdempotencyScope,
+    ) -> cheetah_domain::Result<Option<Operation>> {
+        let row: Option<OperationRow> = sqlx::query_as::<sqlx::Sqlite, OperationRow>(
+            "SELECT data FROM operations WHERE tenant_id = ? AND principal_id = ? AND idempotency_key = ?",
+        )
+        .bind(scope.tenant_id.as_uuid())
+        .bind(&scope.principal_id)
+        .bind(&scope.idempotency_key)
+        .fetch_optional(self.tx()?.as_mut())
+        .await
+        .map_err(sqlx_to_domain)?;
+
+        Ok(row.map(|r| r.data.0))
+    }
+
+    async fn save(&mut self, operation: &Operation) -> cheetah_domain::Result<()> {
+        let result = sqlx::query(
+            "INSERT INTO operations (
+                tenant_id, operation_id, device_id, principal_id, idempotency_key, status, result_type,
+                revision, created_at, updated_at, deadline, data, schema_version
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(operation_id) DO UPDATE SET
+                tenant_id = EXCLUDED.tenant_id,
+                device_id = EXCLUDED.device_id,
+                principal_id = EXCLUDED.principal_id,
+                idempotency_key = EXCLUDED.idempotency_key,
+                status = EXCLUDED.status,
+                result_type = EXCLUDED.result_type,
+                revision = EXCLUDED.revision,
+                created_at = EXCLUDED.created_at,
+                updated_at = EXCLUDED.updated_at,
+                deadline = EXCLUDED.deadline,
+                data = EXCLUDED.data,
+                schema_version = EXCLUDED.schema_version
+            WHERE operations.revision = EXCLUDED.revision - 1",
+        )
+        .bind(operation.tenant_id().as_uuid())
+        .bind(operation.operation_id().as_uuid())
+        .bind(operation.device_id().as_uuid())
+        .bind(&operation.idempotency_scope().principal_id)
+        .bind(&operation.idempotency_scope().idempotency_key)
+        .bind(variant_name(&operation.status())?)
+        .bind(operation.result().as_ref().map(result_type).transpose()?)
+        .bind(operation.revision().0 as i64)
+        .bind(operation.created_at().as_offset())
+        .bind(operation.updated_at().as_offset())
+        .bind(operation.deadline().map(|d| d.as_timestamp().as_offset()))
+        .bind(Json(operation))
+        .bind(1i32)
+        .execute(self.tx()?.as_mut())
+        .await
+        .map_err(sqlx_to_domain)?;
+
+        if result.rows_affected() != 1 {
+            return Err(concurrent_modification_error(operation.revision()));
+        }
+        Ok(())
+    }
+}
+
+#[derive(FromRow)]
+struct MediaSessionRow {
+    #[sqlx(rename = "data")]
+    data: Json<MediaSession>,
+}
+
+#[async_trait::async_trait]
+impl MediaSessionRepository for SqliteUnitOfWork {
+    async fn get(
+        &mut self,
+        tenant_id: cheetah_signal_types::TenantId,
+        media_session_id: cheetah_signal_types::MediaSessionId,
+    ) -> cheetah_domain::Result<Option<MediaSession>> {
+        let row: Option<MediaSessionRow> = sqlx::query_as::<sqlx::Sqlite, MediaSessionRow>(
+            "SELECT data FROM media_sessions WHERE tenant_id = ? AND media_session_id = ?",
+        )
+        .bind(tenant_id.as_uuid())
+        .bind(media_session_id.as_uuid())
+        .fetch_optional(self.tx()?.as_mut())
+        .await
+        .map_err(sqlx_to_domain)?;
+
+        Ok(row.map(|r| r.data.0))
+    }
+
+    async fn get_by_idempotency(
+        &mut self,
+        scope: &cheetah_domain::IdempotencyScope,
+    ) -> cheetah_domain::Result<Option<MediaSession>> {
+        let row: Option<MediaSessionRow> = sqlx::query_as::<sqlx::Sqlite, MediaSessionRow>(
+            "SELECT data FROM media_sessions WHERE tenant_id = ? AND principal_id = ? AND idempotency_key = ?",
+        )
+        .bind(scope.tenant_id.as_uuid())
+        .bind(&scope.principal_id)
+        .bind(&scope.idempotency_key)
+        .fetch_optional(self.tx()?.as_mut())
+        .await
+        .map_err(sqlx_to_domain)?;
+
+        Ok(row.map(|r| r.data.0))
+    }
+
+    async fn save(&mut self, session: &MediaSession) -> cheetah_domain::Result<()> {
+        let result = sqlx::query(
+            "INSERT INTO media_sessions (
+                tenant_id, media_session_id, device_id, channel_id, operation_id, principal_id,
+                idempotency_key, purpose, state, desired_state, revision, created_at, updated_at, deadline, data, schema_version
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(media_session_id) DO UPDATE SET
+                tenant_id = EXCLUDED.tenant_id,
+                device_id = EXCLUDED.device_id,
+                channel_id = EXCLUDED.channel_id,
+                operation_id = EXCLUDED.operation_id,
+                principal_id = EXCLUDED.principal_id,
+                idempotency_key = EXCLUDED.idempotency_key,
+                purpose = EXCLUDED.purpose,
+                state = EXCLUDED.state,
+                desired_state = EXCLUDED.desired_state,
+                revision = EXCLUDED.revision,
+                created_at = EXCLUDED.created_at,
+                updated_at = EXCLUDED.updated_at,
+                deadline = EXCLUDED.deadline,
+                data = EXCLUDED.data,
+                schema_version = EXCLUDED.schema_version
+            WHERE media_sessions.revision = EXCLUDED.revision - 1",
+        )
+        .bind(session.tenant_id().as_uuid())
+        .bind(session.media_session_id().as_uuid())
+        .bind(session.device_id().as_uuid())
+        .bind(session.channel_id().as_uuid())
+        .bind(session.operation_id().as_uuid())
+        .bind(&session.idempotency_scope().principal_id)
+        .bind(&session.idempotency_scope().idempotency_key)
+        .bind(variant_name(&session.purpose())?)
+        .bind(variant_name(&session.state())?)
+        .bind(variant_name(&session.desired_state())?)
+        .bind(session.revision().0 as i64)
+        .bind(session.created_at().as_offset())
+        .bind(session.updated_at().as_offset())
+        .bind(session.deadline().map(|d| d.as_timestamp().as_offset()))
+        .bind(Json(session))
+        .bind(1i32)
+        .execute(self.tx()?.as_mut())
+        .await
+        .map_err(sqlx_to_domain)?;
+
+        if result.rows_affected() != 1 {
+            return Err(concurrent_modification_error(session.revision()));
+        }
+        Ok(())
+    }
+}
+
+#[derive(FromRow)]
+struct MediaBindingRow {
+    #[sqlx(rename = "data")]
+    data: Json<MediaBinding>,
+}
+
+#[async_trait::async_trait]
+impl MediaBindingRepository for SqliteUnitOfWork {
+    async fn get(
+        &mut self,
+        tenant_id: cheetah_signal_types::TenantId,
+        media_binding_id: cheetah_signal_types::MediaBindingId,
+    ) -> cheetah_domain::Result<Option<MediaBinding>> {
+        let row: Option<MediaBindingRow> = sqlx::query_as::<sqlx::Sqlite, MediaBindingRow>(
+            "SELECT data FROM media_bindings WHERE tenant_id = ? AND media_binding_id = ?",
+        )
+        .bind(tenant_id.as_uuid())
+        .bind(media_binding_id.as_uuid())
+        .fetch_optional(self.tx()?.as_mut())
+        .await
+        .map_err(sqlx_to_domain)?;
+
+        Ok(row.map(|r| r.data.0))
+    }
+
+    async fn get_by_media_session(
+        &mut self,
+        tenant_id: cheetah_signal_types::TenantId,
+        media_session_id: cheetah_signal_types::MediaSessionId,
+    ) -> cheetah_domain::Result<Option<MediaBinding>> {
+        let row: Option<MediaBindingRow> = sqlx::query_as::<sqlx::Sqlite, MediaBindingRow>(
+            "SELECT data FROM media_bindings WHERE tenant_id = ? AND media_session_id = ? AND state NOT IN ('released', 'failed') ORDER BY created_at DESC LIMIT 1",
+        )
+        .bind(tenant_id.as_uuid())
+        .bind(media_session_id.as_uuid())
+        .fetch_optional(self.tx()?.as_mut())
+        .await
+        .map_err(sqlx_to_domain)?;
+
+        Ok(row.map(|r| r.data.0))
+    }
+
+    async fn save(&mut self, binding: &MediaBinding) -> cheetah_domain::Result<()> {
+        let result = sqlx::query(
+            "INSERT INTO media_bindings (
+                tenant_id, media_binding_id, media_session_id, channel_id, media_node_id, owner_epoch,
+                state, revision, created_at, updated_at, data, schema_version
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(media_binding_id) DO UPDATE SET
+                tenant_id = EXCLUDED.tenant_id,
+                media_session_id = EXCLUDED.media_session_id,
+                channel_id = EXCLUDED.channel_id,
+                media_node_id = EXCLUDED.media_node_id,
+                owner_epoch = EXCLUDED.owner_epoch,
+                state = EXCLUDED.state,
+                revision = EXCLUDED.revision,
+                created_at = EXCLUDED.created_at,
+                updated_at = EXCLUDED.updated_at,
+                data = EXCLUDED.data,
+                schema_version = EXCLUDED.schema_version
+            WHERE media_bindings.revision = EXCLUDED.revision - 1",
+        )
+        .bind(binding.tenant_id().as_uuid())
+        .bind(binding.media_binding_id().as_uuid())
+        .bind(binding.media_session_id().as_uuid())
+        .bind(binding.channel_id().as_uuid())
+        .bind(binding.media_node_id().as_uuid())
+        .bind(binding.owner_epoch().0 as i64)
+        .bind(variant_name(&binding.state())?)
+        .bind(binding.revision().0 as i64)
+        .bind(binding.created_at().as_offset())
+        .bind(binding.updated_at().as_offset())
+        .bind(Json(binding))
+        .bind(1i32)
+        .execute(self.tx()?.as_mut())
+        .await
+        .map_err(sqlx_to_domain)?;
+
+        if result.rows_affected() != 1 {
+            return Err(concurrent_modification_error(binding.revision()));
+        }
+        Ok(())
+    }
+}
+
+#[derive(FromRow)]
+struct OutboxRow {
+    #[sqlx(rename = "payload")]
+    payload: Json<Event<DomainEvent>>,
+    published: i64,
+}
+
+#[async_trait::async_trait]
+impl Outbox for SqliteUnitOfWork {
+    async fn append(&mut self, event: Event<DomainEvent>) -> cheetah_domain::Result<()> {
+        sqlx::query(
+            "INSERT INTO outbox_events (
+                event_id, tenant_id, aggregate_ref, aggregate_sequence, payload, published,
+                occurred_at, correlation_id, causation_id, source
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(event.event_id.as_uuid())
+        .bind(event.tenant_id.as_uuid())
+        .bind(Json(&event.aggregate_ref))
+        .bind(event.aggregate_sequence as i64)
+        .bind(Json(&event))
+        .bind(0i32)
+        .bind(event.occurred_at.as_offset())
+        .bind(event.correlation_id.as_uuid())
+        .bind(event.causation_id.as_uuid())
+        .bind(event.source.as_uuid())
+        .execute(self.tx()?.as_mut())
+        .await
+        .map_err(sqlx_to_domain)?;
+        Ok(())
+    }
+
+    async fn pending(&mut self, limit: usize) -> cheetah_domain::Result<Vec<OutboxEntry>> {
+        let rows: Vec<OutboxRow> = sqlx::query_as::<sqlx::Sqlite, OutboxRow>(
+            "SELECT payload, published FROM outbox_events WHERE published = 0 ORDER BY occurred_at ASC LIMIT ?",
+        )
+        .bind(limit as i64)
+        .fetch_all(self.tx()?.as_mut())
+        .await
+        .map_err(sqlx_to_domain)?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| OutboxEntry {
+                event: r.payload.0,
+                published: r.published != 0,
+            })
+            .collect())
+    }
+
+    async fn mark_published(
+        &mut self,
+        event_id: cheetah_signal_types::EventId,
+    ) -> cheetah_domain::Result<()> {
+        sqlx::query("UPDATE outbox_events SET published = 1 WHERE event_id = ?")
+            .bind(event_id.as_uuid())
+            .execute(self.tx()?.as_mut())
+            .await
+            .map_err(sqlx_to_domain)?;
+        Ok(())
+    }
+}
