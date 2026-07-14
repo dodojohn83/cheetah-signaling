@@ -63,6 +63,7 @@ async fn command_dispatcher_sends_command_to_owner() {
         OwnerInfo {
             owner_node_id: ctx.id_generator.generate_node_id(),
             owner_epoch: OwnerEpoch::default(),
+            lease_until: None,
         },
     );
 
@@ -126,6 +127,7 @@ async fn command_dispatcher_fails_on_stale_owner_epoch() {
         OwnerInfo {
             owner_node_id: ctx.id_generator.generate_node_id(),
             owner_epoch: OwnerEpoch(7),
+            lease_until: None,
         },
     );
 
@@ -156,6 +158,7 @@ async fn command_dispatcher_fails_when_command_bus_rejects() {
         OwnerInfo {
             owner_node_id: ctx.id_generator.generate_node_id(),
             owner_epoch: OwnerEpoch::default(),
+            lease_until: None,
         },
     );
 

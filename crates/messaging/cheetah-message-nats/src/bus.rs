@@ -1,6 +1,8 @@
 //! NATS JetStream command and event bus implementation.
 
-use cheetah_domain::{Command, CommandBus, DeviceOwnerResolver, DomainError, DomainEvent, EventPublisher};
+use cheetah_domain::{
+    Command, CommandBus, DeviceOwnerResolver, DomainError, DomainEvent, EventPublisher,
+};
 use cheetah_message_api::{
     AckHandle, BusError, CommandEnvelope, Delivery, EventEnvelope, RawCommandBus, RawEventBus,
     Subscription, command_subject, encode_command, encode_event, event_subject,
@@ -56,7 +58,9 @@ impl NatsBus {
         this_node: NodeId,
         owner_resolver: Arc<dyn DeviceOwnerResolver>,
     ) -> Result<Self, BusError> {
-        let client = async_nats::connect(url.into()).await.map_err(nats_error_to_bus)?;
+        let client = async_nats::connect(url.into())
+            .await
+            .map_err(nats_error_to_bus)?;
         let jetstream = async_nats::jetstream::new(client.clone());
 
         jetstream
@@ -133,15 +137,18 @@ impl NatsBus {
             .map_err(nats_error_to_bus)?;
 
         let consumer = stream
-            .get_or_create_consumer(consumer_group, async_nats::jetstream::consumer::pull::Config {
-                durable_name: Some(consumer_group.to_string()),
-                filter_subject: subject.to_string(),
-                ack_policy: async_nats::jetstream::consumer::AckPolicy::Explicit,
-                ack_wait: Duration::from_secs(30),
-                max_deliver: 10,
-                deliver_policy: async_nats::jetstream::consumer::DeliverPolicy::All,
-                ..Default::default()
-            })
+            .get_or_create_consumer(
+                consumer_group,
+                async_nats::jetstream::consumer::pull::Config {
+                    durable_name: Some(consumer_group.to_string()),
+                    filter_subject: subject.to_string(),
+                    ack_policy: async_nats::jetstream::consumer::AckPolicy::Explicit,
+                    ack_wait: Duration::from_secs(30),
+                    max_deliver: 10,
+                    deliver_policy: async_nats::jetstream::consumer::DeliverPolicy::All,
+                    ..Default::default()
+                },
+            )
             .await
             .map_err(nats_error_to_bus)?;
 
@@ -171,7 +178,8 @@ impl RawCommandBus for NatsBus {
         subject: &str,
         consumer_group: &str,
     ) -> Result<Box<dyn Subscription<CommandEnvelope>>, BusError> {
-        self.subscribe_envelope(COMMANDS_STREAM, subject, consumer_group).await
+        self.subscribe_envelope(COMMANDS_STREAM, subject, consumer_group)
+            .await
     }
 }
 
@@ -193,7 +201,8 @@ impl RawEventBus for NatsBus {
         subject: &str,
         consumer_group: &str,
     ) -> Result<Box<dyn Subscription<EventEnvelope>>, BusError> {
-        self.subscribe_envelope(EVENTS_STREAM, subject, consumer_group).await
+        self.subscribe_envelope(EVENTS_STREAM, subject, consumer_group)
+            .await
     }
 }
 

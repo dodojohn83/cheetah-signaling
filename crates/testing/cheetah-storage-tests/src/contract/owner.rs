@@ -18,6 +18,7 @@ pub async fn run(storage: &dyn Storage, fixtures: &Fixtures) -> TestResult<()> {
     let owner = OwnerInfo {
         owner_node_id,
         owner_epoch: OwnerEpoch(1),
+        lease_until: None,
     };
 
     let mut owner_repo = storage.owner_repository();

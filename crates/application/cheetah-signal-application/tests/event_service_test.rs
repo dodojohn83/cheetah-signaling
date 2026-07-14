@@ -4,7 +4,7 @@
 
 pub mod common;
 
-use cheetah_domain::{CommandPayload, PtzDirection, UnitOfWork};
+use cheetah_domain::{Clock, CommandPayload, PtzDirection, UnitOfWork};
 use cheetah_signal_application::SubmitOperationRequest;
 use cheetah_signal_types::{OwnerEpoch, ResourceId, ResourceKind, ResourceRef};
 use common::*;
@@ -42,7 +42,12 @@ async fn event_service_publishes_outbox() {
 
     let published = ctx
         .event_service
-        .publish_pending(ctx.uow.outbox(), &*ctx.event_publisher, 10)
+        .publish_pending(
+            ctx.uow.outbox(),
+            &*ctx.event_publisher,
+            ctx.clock.now_wall(),
+            10,
+        )
         .await
         .unwrap();
     assert!(published >= 1);

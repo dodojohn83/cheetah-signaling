@@ -36,6 +36,7 @@ async fn media_service_start_live_and_stop_idempotent() {
         OwnerInfo {
             owner_node_id: ctx.id_generator.generate_node_id(),
             owner_epoch: OwnerEpoch::default(),
+            lease_until: None,
         },
     );
 
@@ -116,6 +117,7 @@ async fn media_service_start_playback_and_control() {
         OwnerInfo {
             owner_node_id: ctx.id_generator.generate_node_id(),
             owner_epoch: OwnerEpoch::default(),
+            lease_until: None,
         },
     );
 
@@ -200,6 +202,7 @@ async fn media_service_start_talk_and_outbox_events() {
         OwnerInfo {
             owner_node_id: ctx.id_generator.generate_node_id(),
             owner_epoch: OwnerEpoch::default(),
+            lease_until: None,
         },
     );
 
@@ -291,6 +294,7 @@ async fn media_service_rejects_inactive_device() {
         OwnerInfo {
             owner_node_id: ctx.id_generator.generate_node_id(),
             owner_epoch: OwnerEpoch::default(),
+            lease_until: None,
         },
     );
 

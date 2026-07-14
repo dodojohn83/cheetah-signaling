@@ -5,7 +5,7 @@ use crate::{
 };
 use cheetah_signal_types::{
     ChannelId, DeviceId, Event, EventId, MediaBindingId, MediaNodeInstanceEpoch, MediaSessionId,
-    NodeId, OperationId, OwnerEpoch, ProtocolIdentity, TenantId,
+    MessageId, NodeId, OperationId, OwnerEpoch, ProtocolIdentity, TenantId, UtcTimestamp,
 };
 
 pub use cheetah_signal_types::{Clock, IdGenerator};
@@ -20,6 +20,8 @@ pub struct OwnerInfo {
     pub owner_node_id: NodeId,
     /// Owner epoch.
     pub owner_epoch: OwnerEpoch,
+    /// Lease expiration time. `None` means the lease never expires.
+    pub lease_until: Option<cheetah_signal_types::UtcTimestamp>,
 }
 
 /// Reservation of a media node resource.
@@ -38,6 +40,14 @@ pub struct OutboxEntry {
     pub event: Event<DomainEvent>,
     /// Whether the event has been published.
     pub published: bool,
+    /// Number of publish attempts made so far.
+    pub attempts: u32,
+    /// Whether the event has entered the permanent failure state.
+    pub failed: bool,
+    /// Optional human-readable failure reason.
+    pub error: Option<String>,
+    /// Earliest time at which the event may be retried.
+    pub next_attempt_at: Option<UtcTimestamp>,
 }
 
 /// Repository for device aggregates.
@@ -144,9 +154,24 @@ pub trait Outbox: Send {
     /// Appends an event to the outbox.
     async fn append(&mut self, event: Event<DomainEvent>) -> Result<()>;
     /// Returns pending events up to `limit`.
-    async fn pending(&mut self, limit: usize) -> Result<Vec<OutboxEntry>>;
+    ///
+    /// Pending events are those with `published = 0`, `failed = 0`, and a
+    /// `next_attempt_at` that is `NULL` or in the past relative to `now`.
+    async fn pending(&mut self, now: UtcTimestamp, limit: usize) -> Result<Vec<OutboxEntry>>;
     /// Marks an event as published.
     async fn mark_published(&mut self, event_id: EventId) -> Result<()>;
+    /// Marks an event as failed and schedules the next retry attempt.
+    ///
+    /// When `attempts` reaches the configured maximum the caller should set
+    /// `failed` to `true` and provide a permanent failure reason.
+    async fn mark_failed(
+        &mut self,
+        event_id: EventId,
+        attempts: u32,
+        failed: bool,
+        error: Option<String>,
+        next_attempt_at: Option<UtcTimestamp>,
+    ) -> Result<()>;
 }
 
 /// Publishes events to the message bus.
@@ -212,6 +237,77 @@ pub trait MediaPort: Send + Sync {
     async fn release(&self, tenant_id: TenantId, media_binding_id: MediaBindingId) -> Result<()>;
 }
 
+/// Status of an idempotent inbox record.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProcessedMessageStatus {
+    /// The message has been accepted but not yet processed.
+    Pending,
+    /// The message was processed successfully.
+    Completed,
+    /// Processing the message failed.
+    Failed,
+    /// The message was a duplicate of an earlier processed message.
+    Duplicate,
+}
+
+impl std::fmt::Display for ProcessedMessageStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ProcessedMessageStatus::Pending => write!(f, "pending"),
+            ProcessedMessageStatus::Completed => write!(f, "completed"),
+            ProcessedMessageStatus::Failed => write!(f, "failed"),
+            ProcessedMessageStatus::Duplicate => write!(f, "duplicate"),
+        }
+    }
+}
+
+/// An idempotent inbox record.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProcessedMessageRecord {
+    /// Tenant identifier.
+    pub tenant_id: TenantId,
+    /// Message identifier.
+    pub message_id: MessageId,
+    /// Optional idempotency key supplied by the sender.
+    pub idempotency_key: Option<String>,
+    /// Current status.
+    pub status: ProcessedMessageStatus,
+    /// Optional JSON-encoded result payload.
+    pub result_payload: Option<String>,
+    /// Time at which the record was created or completed.
+    pub processed_at: UtcTimestamp,
+    /// Time at which the record may be evicted.
+    pub expires_at: Option<UtcTimestamp>,
+}
+
+/// Repository for idempotent inbox records.
+#[async_trait::async_trait]
+pub trait ProcessedMessageRepository: Send {
+    /// Finds an existing record.
+    async fn find(
+        &mut self,
+        tenant_id: TenantId,
+        message_id: MessageId,
+    ) -> Result<Option<ProcessedMessageRecord>>;
+
+    /// Inserts `record` if no record exists for `(tenant_id, message_id)` and
+    /// returns `None`; otherwise returns the existing record.
+    async fn get_or_insert(
+        &mut self,
+        record: ProcessedMessageRecord,
+    ) -> Result<Option<ProcessedMessageRecord>>;
+
+    /// Marks the record as completed (or failed) with a result payload.
+    async fn complete(
+        &mut self,
+        tenant_id: TenantId,
+        message_id: MessageId,
+        status: ProcessedMessageStatus,
+        result_payload: Option<String>,
+        processed_at: UtcTimestamp,
+    ) -> Result<()>;
+}
+
 /// Unit of work that keeps aggregate and outbox writes in one transaction.
 #[async_trait::async_trait]
 pub trait UnitOfWork: Send {
@@ -225,6 +321,8 @@ pub trait UnitOfWork: Send {
     fn media_session_repository(&mut self) -> &mut dyn MediaSessionRepository;
     /// Access the media binding repository.
     fn media_binding_repository(&mut self) -> &mut dyn MediaBindingRepository;
+    /// Access the processed message repository.
+    fn processed_message_repository(&mut self) -> &mut dyn ProcessedMessageRepository;
     /// Access the outbox.
     fn outbox(&mut self) -> &mut dyn Outbox;
     /// Commit the unit of work.

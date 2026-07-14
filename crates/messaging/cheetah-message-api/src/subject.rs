@@ -26,5 +26,10 @@ pub fn command_subject(tenant_id: TenantId, owner_node_id: NodeId) -> String {
 
 /// Returns the subject for a tenant-scoped event of the given type.
 pub fn event_subject(tenant_id: TenantId, event_type: &str) -> String {
-    format!("{}.{}.{}", EVENT_PREFIX, tenant_bucket(&tenant_id), event_type)
+    format!(
+        "{}.{}.{}",
+        EVENT_PREFIX,
+        tenant_bucket(&tenant_id),
+        event_type
+    )
 }

@@ -40,13 +40,19 @@ fn resource_ref_to_proto(value: &ResourceRef) -> proto::ResourceRef {
         cheetah_signal_types::ResourceKind::Device => proto::ResourceKind::Device as i32,
         cheetah_signal_types::ResourceKind::Channel => proto::ResourceKind::Channel as i32,
         cheetah_signal_types::ResourceKind::Endpoint => proto::ResourceKind::Endpoint as i32,
-        cheetah_signal_types::ResourceKind::ProtocolSession => proto::ResourceKind::ProtocolSession as i32,
-        cheetah_signal_types::ResourceKind::MediaSession => proto::ResourceKind::MediaSession as i32,
+        cheetah_signal_types::ResourceKind::ProtocolSession => {
+            proto::ResourceKind::ProtocolSession as i32
+        }
+        cheetah_signal_types::ResourceKind::MediaSession => {
+            proto::ResourceKind::MediaSession as i32
+        }
         cheetah_signal_types::ResourceKind::Operation => proto::ResourceKind::Operation as i32,
         cheetah_signal_types::ResourceKind::Event => proto::ResourceKind::Event as i32,
         cheetah_signal_types::ResourceKind::Plugin => proto::ResourceKind::Plugin as i32,
         cheetah_signal_types::ResourceKind::Node => proto::ResourceKind::Node as i32,
-        cheetah_signal_types::ResourceKind::MediaBinding => proto::ResourceKind::MediaBinding as i32,
+        cheetah_signal_types::ResourceKind::MediaBinding => {
+            proto::ResourceKind::MediaBinding as i32
+        }
         _ => proto::ResourceKind::Unspecified as i32,
     };
 
@@ -86,7 +92,9 @@ pub fn encode_command(command: &Command) -> Result<proto::CommandEnvelope, super
     };
 
     let control_command = control::ControlCommand {
-        command: Some(control::control_command::Command::ChannelCommand(channel_command)),
+        command: Some(control::control_command::Command::ChannelCommand(
+            channel_command,
+        )),
     };
 
     Ok(proto::CommandEnvelope {
@@ -106,7 +114,9 @@ pub fn encode_command(command: &Command) -> Result<proto::CommandEnvelope, super
         idempotency_key: command.idempotency_key().to_string(),
         operation_id: command.operation_id().to_string(),
         step_id: String::new(),
-        command: Some(proto::command_envelope::Command::ControlCommand(control_command)),
+        command: Some(proto::command_envelope::Command::ControlCommand(
+            control_command,
+        )),
     })
 }
 
@@ -121,7 +131,7 @@ pub fn decode_command(envelope: &proto::CommandEnvelope) -> Result<Command, supe
         _ => {
             return Err(super::BusError::UnsupportedEnvelope(
                 "command envelope must carry a ChannelCommand".to_string(),
-            ))
+            ));
         }
     };
 
@@ -149,21 +159,25 @@ pub fn encode_event(event: &Event<DomainEvent>) -> Result<proto::EventEnvelope, 
         }),
         aggregate: Some(resource_ref_to_proto(&event.aggregate_ref)),
         aggregate_sequence: event.aggregate_sequence,
-        event: Some(proto::event_envelope::Event::GenericEvent(proto::GenericEvent {
-            event_type: "domain_event".to_string(),
-            payload,
-        })),
+        event: Some(proto::event_envelope::Event::GenericEvent(
+            proto::GenericEvent {
+                event_type: "domain_event".to_string(),
+                payload,
+            },
+        )),
     })
 }
 
 /// Decode a proto [`EventEnvelope`] into a domain [`Event<DomainEvent>`].
-pub fn decode_event(envelope: &proto::EventEnvelope) -> Result<Event<DomainEvent>, super::BusError> {
+pub fn decode_event(
+    envelope: &proto::EventEnvelope,
+) -> Result<Event<DomainEvent>, super::BusError> {
     let generic = match &envelope.event {
         Some(proto::event_envelope::Event::GenericEvent(event)) => event,
         _ => {
             return Err(super::BusError::UnsupportedEnvelope(
                 "event envelope must carry a GenericEvent".to_string(),
-            ))
+            ));
         }
     };
 

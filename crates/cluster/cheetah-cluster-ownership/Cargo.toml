@@ -6,10 +6,20 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+description = "Device owner lease, resolver, and routing for Cheetah Signaling clusters."
 
 [dependencies]
+cheetah-domain = { path = "../../domain/cheetah-domain" }
+cheetah-signal-types = { path = "../../foundation/cheetah-signal-types" }
+cheetah-storage-api = { path = "../../storage/cheetah-storage-api" }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["sync", "time"] }
+tracing = { workspace = true }
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+cheetah-storage-sqlite = { path = "../../storage/cheetah-storage-sqlite" }
 
 [lints]
 workspace = true

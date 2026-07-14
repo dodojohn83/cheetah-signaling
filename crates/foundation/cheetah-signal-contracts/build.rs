@@ -28,7 +28,7 @@ fn main() -> io::Result<()> {
 
     tonic_prost_build::configure()
         .btree_map(".")
-        .compile_protos(&proto_files, &[proto_dir.clone()])?;
+        .compile_protos(&proto_files, std::slice::from_ref(&proto_dir))?;
 
     println!("cargo:rerun-if-changed={}", proto_dir.display());
     Ok(())

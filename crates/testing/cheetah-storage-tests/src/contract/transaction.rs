@@ -16,7 +16,10 @@ pub async fn run(storage: &dyn Storage, fixtures: &Fixtures) -> TestResult<()> {
 
     let mut uow = storage.begin().await?;
     let loaded = uow.device_repository().get(tenant_id, device_id).await?;
-    let pending = uow.outbox().pending(10).await?;
+    let pending = uow
+        .outbox()
+        .pending(fixtures.clock().now_wall(), 10)
+        .await?;
     uow.commit().await?;
 
     assert!(loaded.is_none(), "rolled-back device must not be persisted");

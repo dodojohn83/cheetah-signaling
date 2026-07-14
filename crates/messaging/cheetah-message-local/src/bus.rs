@@ -63,7 +63,11 @@ impl InProcessMessageBus {
         self.event_capacity
     }
 
-    async fn do_send_command(&self, _subject: &str, envelope: &CommandEnvelope) -> Result<(), BusError> {
+    async fn do_send_command(
+        &self,
+        _subject: &str,
+        envelope: &CommandEnvelope,
+    ) -> Result<(), BusError> {
         self.command_tx
             .try_send(envelope.clone())
             .map_err(|e| match e {
@@ -74,7 +78,11 @@ impl InProcessMessageBus {
             })
     }
 
-    async fn do_publish_event(&self, _subject: &str, envelope: &EventEnvelope) -> Result<(), BusError> {
+    async fn do_publish_event(
+        &self,
+        _subject: &str,
+        envelope: &EventEnvelope,
+    ) -> Result<(), BusError> {
         if self.event_tx.receiver_count() == 0 {
             return Ok(());
         }
@@ -99,9 +107,9 @@ impl RawCommandBus for InProcessMessageBus {
         _subject: &str,
         _consumer_group: &str,
     ) -> Result<Box<dyn Subscription<CommandEnvelope>>, BusError> {
-        let receiver = lock_mutex(&self.command_rx)
-            .take()
-            .ok_or_else(|| BusError::Unavailable("command subscription already taken".to_string()))?;
+        let receiver = lock_mutex(&self.command_rx).take().ok_or_else(|| {
+            BusError::Unavailable("command subscription already taken".to_string())
+        })?;
         Ok(Box::new(CommandSubscription { receiver }))
     }
 }

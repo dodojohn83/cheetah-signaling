@@ -10,14 +10,20 @@ description = "Application services for Cheetah Signaling: device, operation, co
 
 [dependencies]
 cheetah-domain = { path = "../../../crates/domain/cheetah-domain" }
+cheetah-message-api = { path = "../../../crates/messaging/cheetah-message-api" }
 cheetah-signal-types = { path = "../../../crates/foundation/cheetah-signal-types" }
+cheetah-storage-api = { path = "../../../crates/storage/cheetah-storage-api" }
+async-trait = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
 cheetah-domain = { path = "../../../crates/domain/cheetah-domain", features = ["test-util"] }
+cheetah-message-local = { path = "../../../crates/messaging/cheetah-message-local" }
+cheetah-storage-sqlite = { path = "../../../crates/storage/cheetah-storage-sqlite" }
 async-trait = { workspace = true }
-tokio = { workspace = true, features = ["rt", "macros"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
 
 [lints]
 workspace = true
