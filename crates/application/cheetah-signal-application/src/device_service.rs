@@ -5,8 +5,8 @@ use crate::dto::{
     ReplaceChannelCatalogRequest, RetireDeviceRequest, UpdateDeviceCapabilitiesRequest,
 };
 use cheetah_domain::{
-    Capability, Channel, ChannelKind, ChannelStatus, Device, DeviceKind, DomainEvent, Protocol,
-    StreamProfile, UnitOfWork,
+    Capability, Channel, ChannelKind, ChannelStatus, Device, DeviceKind, DeviceLifecycle,
+    DomainError, DomainEvent, Protocol, StreamProfile, UnitOfWork,
 };
 use cheetah_signal_types::{
     ChannelId, Clock, DeviceId, Event, IdGenerator, RequestContext, ResourceId, ResourceKind,
@@ -204,6 +204,14 @@ impl DeviceService {
                     device_id.to_string(),
                 ))
             })?;
+
+        if device.lifecycle() == DeviceLifecycle::Retired {
+            return Err(crate::SignalError::from(DomainError::invalid_transition(
+                "Device",
+                "Retired",
+                "replace_channel_catalog",
+            )));
+        }
 
         let mut incoming_ids = HashSet::new();
         for descriptor in &request.channels {
