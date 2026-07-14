@@ -8,6 +8,7 @@ use cheetah_storage_api::Storage;
 
 pub(crate) mod channel;
 pub(crate) mod device;
+pub(crate) mod list;
 pub(crate) mod media;
 pub(crate) mod operation;
 pub(crate) mod outbox;
@@ -29,6 +30,7 @@ pub async fn run_all(storage: &dyn Storage, fixtures: &Fixtures) -> TestResult<(
     channel::run(storage, fixtures).await?;
     operation::run(storage, fixtures).await?;
     media::run(storage, fixtures).await?;
+    list::run(storage, fixtures).await?;
     outbox::run(storage, fixtures).await?;
     outbox_retry::run(storage, fixtures).await?;
     transaction::run(storage, fixtures).await?;

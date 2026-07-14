@@ -1,9 +1,9 @@
 //! Port traits for the foundation layer.
 
 use crate::{
-    ChannelId, CorrelationId, DeviceId, DurationMs, EndpointId, EventId, MediaBindingId,
-    MediaNodeInstanceEpoch, MediaSessionId, MessageId, NodeId, OperationId, PluginId,
-    ProtocolSessionId, Result, TenantId, UtcTimestamp,
+    ChannelId, CorrelationId, DeliveryId, DeviceId, DurationMs, EndpointId, EventId,
+    MediaBindingId, MediaNodeInstanceEpoch, MediaSessionId, MessageId, NodeId, OperationId,
+    PluginId, ProtocolSessionId, Result, TenantId, UtcTimestamp, WebhookId,
 };
 use secrecy::SecretString;
 
@@ -49,6 +49,10 @@ pub trait IdGenerator: Send + Sync {
     fn generate_message_id(&self) -> MessageId;
     /// Generates a new correlation identifier.
     fn generate_correlation_id(&self) -> CorrelationId;
+    /// Generates a new webhook identifier.
+    fn generate_webhook_id(&self) -> WebhookId;
+    /// Generates a new webhook delivery identifier.
+    fn generate_delivery_id(&self) -> DeliveryId;
 }
 
 /// Secure secret storage accessed by reference.

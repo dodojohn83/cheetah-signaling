@@ -87,6 +87,34 @@ impl SignalConfig {
                 "grpc.port must not be zero",
             ));
         }
+        if self.http.read_timeout_ms.as_millis() <= 0 {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                "http.read_timeout_ms must be greater than zero",
+            ));
+        }
+        let static_key = self.security.static_api_key.expose_secret();
+        if !static_key.is_empty() && static_key.len() < 32 {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                "security.static_api_key must be at least 32 characters when configured",
+            ));
+        }
+        let jwt_public_key = self.security.jwt_public_key_ref.expose_secret();
+        if !jwt_public_key.is_empty() {
+            if self.security.jwt_audience.is_empty() {
+                return Err(SignalError::new(
+                    SignalErrorKind::InvalidArgument,
+                    "security.jwt_audience must be configured when jwt_public_key_ref is set",
+                ));
+            }
+            if self.security.jwt_issuer.is_empty() {
+                return Err(SignalError::new(
+                    SignalErrorKind::InvalidArgument,
+                    "security.jwt_issuer must be configured when jwt_public_key_ref is set",
+                ));
+            }
+        }
         if self.storage.max_connections == 0 {
             return Err(SignalError::new(
                 SignalErrorKind::InvalidArgument,
@@ -168,6 +196,12 @@ pub struct HttpConfig {
     pub tls_key_ref: Option<String>,
     /// Request read timeout.
     pub read_timeout_ms: DurationMs,
+    /// Allowed CORS origins. Empty disables cross-origin requests.
+    pub cors_allowed_origins: Vec<String>,
+    /// Rate limit allowed requests per second per (source, tenant, protocol, node).
+    pub rate_limit_requests_per_second: u32,
+    /// Rate limit burst capacity.
+    pub rate_limit_burst: u32,
 }
 
 impl Default for HttpConfig {
@@ -178,6 +212,9 @@ impl Default for HttpConfig {
             tls_cert_ref: None,
             tls_key_ref: None,
             read_timeout_ms: DurationMs::from_seconds(5),
+            cors_allowed_origins: Vec::new(),
+            rate_limit_requests_per_second: 100,
+            rate_limit_burst: 200,
         }
     }
 }
@@ -355,12 +392,22 @@ pub struct SecurityConfig {
         deserialize_with = "deserialize_secret_string"
     )]
     pub jwt_public_key_ref: SecretString,
+    /// Expected JWT audiences. Empty disables audience validation.
+    pub jwt_audience: Vec<String>,
+    /// Expected JWT issuers. Empty disables issuer validation.
+    pub jwt_issuer: Vec<String>,
     /// API key hash for service to service calls.
     #[serde(
         serialize_with = "serialize_secret_string",
         deserialize_with = "deserialize_secret_string"
     )]
     pub api_key_hash: SecretString,
+    /// Static API key for edge-mode management token authentication.
+    #[serde(
+        serialize_with = "serialize_secret_string",
+        deserialize_with = "deserialize_secret_string"
+    )]
+    pub static_api_key: SecretString,
     /// Token time to live in milliseconds.
     pub token_ttl_ms: DurationMs,
 }

@@ -14,6 +14,7 @@ cheetah-message-api = { path = "../../../crates/messaging/cheetah-message-api" }
 cheetah-signal-types = { path = "../../../crates/foundation/cheetah-signal-types" }
 cheetah-storage-api = { path = "../../../crates/storage/cheetah-storage-api" }
 async-trait = { workspace = true }
+secrecy = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }

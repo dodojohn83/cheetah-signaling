@@ -140,7 +140,7 @@ impl Fixtures {
             self.id_generator(),
             self.clock(),
             &context,
-            "ptz-key",
+            self.id_generator.generate_message_id().to_string(),
             device_id,
             target,
             payload,
@@ -167,7 +167,7 @@ impl Fixtures {
                 kind: ResourceKind::MediaSession,
                 id: ResourceId::MediaSession(media_session_id),
             },
-            "media-key",
+            self.id_generator.generate_message_id().to_string(),
         )?;
         let (session, _event) = MediaSession::new(
             self.clock(),

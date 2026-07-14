@@ -148,6 +148,15 @@ pub struct SubmitOperationRequest {
     pub expected_owner_epoch: OwnerEpoch,
 }
 
+/// Result of registering or updating a device.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct RegisterDeviceResult {
+    /// The resulting device.
+    pub device: DeviceDto,
+    /// Whether the device was newly created rather than updated.
+    pub created: bool,
+}
+
 /// Device response DTO.
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct DeviceDto {
@@ -598,4 +607,37 @@ impl From<PtzDirectionDto> for PtzDirection {
             PtzDirectionDto::ZoomOut => PtzDirection::ZoomOut,
         }
     }
+}
+
+/// Request to create a webhook configuration.
+#[derive(Clone, Debug, serde::Deserialize)]
+pub struct CreateWebhookRequest {
+    /// Target URL for deliveries.
+    pub url: String,
+    /// Secret reference used to sign payloads.
+    pub secret_ref: String,
+    /// Subscribed event types; empty means all events.
+    pub event_types: Vec<String>,
+}
+
+/// Request to update a webhook configuration.
+#[derive(Clone, Debug, serde::Deserialize)]
+pub struct UpdateWebhookRequest {
+    /// New target URL.
+    pub url: Option<String>,
+    /// New secret reference.
+    pub secret_ref: Option<String>,
+    /// New subscribed event types.
+    pub event_types: Option<Vec<String>>,
+    /// New enabled flag.
+    pub enabled: Option<bool>,
+}
+
+/// Request to manually trigger a test delivery.
+#[derive(Clone, Debug, serde::Deserialize)]
+pub struct TriggerWebhookRequest {
+    /// Event type to simulate.
+    pub event_type: String,
+    /// JSON payload to send.
+    pub payload: serde_json::Value,
 }

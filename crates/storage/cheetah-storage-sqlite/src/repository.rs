@@ -1,6 +1,7 @@
 //! Repository and outbox implementations for the SQLite unit of work.
 
 use crate::error::sqlx_to_domain;
+use crate::list;
 use crate::unit_of_work::SqliteUnitOfWork;
 use cheetah_domain::Protocol;
 use cheetah_domain::{
@@ -9,7 +10,7 @@ use cheetah_domain::{
     Outbox, OutboxEntry, ProcessedMessageRecord, ProcessedMessageRepository,
     ProcessedMessageStatus,
 };
-use cheetah_signal_types::{Event, MessageId, UtcTimestamp};
+use cheetah_signal_types::{DeviceId, Event, MessageId, Page, PageRequest, TenantId, UtcTimestamp};
 use sqlx::FromRow;
 use sqlx::types::Json;
 use time::OffsetDateTime;
@@ -145,6 +146,27 @@ impl DeviceRepository for SqliteUnitOfWork {
         }
         Ok(())
     }
+
+    async fn list(
+        &mut self,
+        tenant_id: TenantId,
+        protocol: Option<String>,
+        lifecycle: Option<String>,
+        name_prefix: Option<String>,
+        updated_after: Option<UtcTimestamp>,
+        page: PageRequest,
+    ) -> cheetah_domain::Result<Page<Device>> {
+        list::devices(
+            self.tx()?.as_mut(),
+            tenant_id,
+            protocol,
+            lifecycle,
+            name_prefix,
+            updated_after,
+            page,
+        )
+        .await
+    }
 }
 
 #[derive(FromRow)]
@@ -248,6 +270,27 @@ impl ChannelRepository for SqliteUnitOfWork {
         .map_err(sqlx_to_domain)?;
         Ok(())
     }
+
+    async fn list(
+        &mut self,
+        tenant_id: TenantId,
+        device_id: DeviceId,
+        status: Option<String>,
+        name_prefix: Option<String>,
+        updated_after: Option<UtcTimestamp>,
+        page: PageRequest,
+    ) -> cheetah_domain::Result<Page<Channel>> {
+        list::channels(
+            self.tx()?.as_mut(),
+            tenant_id,
+            device_id.as_uuid(),
+            status,
+            name_prefix,
+            updated_after,
+            page,
+        )
+        .await
+    }
 }
 
 #[derive(FromRow)]
@@ -334,6 +377,25 @@ impl OperationRepository for SqliteUnitOfWork {
             return Err(concurrent_modification_error(operation.revision()));
         }
         Ok(())
+    }
+
+    async fn list(
+        &mut self,
+        tenant_id: TenantId,
+        device_id: Option<DeviceId>,
+        status: Option<String>,
+        updated_after: Option<UtcTimestamp>,
+        page: PageRequest,
+    ) -> cheetah_domain::Result<Page<Operation>> {
+        list::operations(
+            self.tx()?.as_mut(),
+            tenant_id,
+            device_id.map(|d| d.as_uuid()),
+            status,
+            updated_after,
+            page,
+        )
+        .await
     }
 }
 
@@ -427,6 +489,27 @@ impl MediaSessionRepository for SqliteUnitOfWork {
             return Err(concurrent_modification_error(session.revision()));
         }
         Ok(())
+    }
+
+    async fn list(
+        &mut self,
+        tenant_id: TenantId,
+        device_id: Option<DeviceId>,
+        purpose: Option<String>,
+        state: Option<String>,
+        updated_after: Option<UtcTimestamp>,
+        page: PageRequest,
+    ) -> cheetah_domain::Result<Page<MediaSession>> {
+        list::media_sessions(
+            self.tx()?.as_mut(),
+            tenant_id,
+            device_id.map(|d| d.as_uuid()),
+            purpose,
+            state,
+            updated_after,
+            page,
+        )
+        .await
     }
 }
 

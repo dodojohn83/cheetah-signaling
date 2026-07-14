@@ -173,6 +173,18 @@ uuid_id! {
 }
 
 uuid_id! {
+    /// Identifier for a webhook endpoint configuration.
+    WebhookId,
+    "Webhook identifier."
+}
+
+uuid_id! {
+    /// Identifier for a webhook delivery attempt.
+    DeliveryId,
+    "Delivery identifier."
+}
+
+uuid_id! {
     /// Identifier for correlating requests across services.
     CorrelationId,
     "Correlation identifier."

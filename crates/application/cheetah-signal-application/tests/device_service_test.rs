@@ -33,7 +33,8 @@ async fn device_service_register_update_and_retire() {
             },
         )
         .await
-        .unwrap();
+        .unwrap()
+        .device;
     assert_eq!(device.lifecycle, DeviceLifecycle::Provisioning);
 
     let online = ctx
@@ -117,7 +118,8 @@ async fn device_service_replace_channel_catalog() {
             },
         )
         .await
-        .unwrap();
+        .unwrap()
+        .device;
 
     ctx.device_service
         .mark_device_online(

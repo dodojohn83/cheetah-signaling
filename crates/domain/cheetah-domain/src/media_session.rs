@@ -51,6 +51,39 @@ impl MediaSessionState {
     }
 }
 
+impl std::fmt::Display for MediaSessionState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Self::Requested => "requested",
+            Self::Allocating => "allocating",
+            Self::Inviting => "inviting",
+            Self::Active => "active",
+            Self::Stopping => "stopping",
+            Self::Stopped => "stopped",
+            Self::Failed => "failed",
+        };
+        write!(f, "{s}")
+    }
+}
+
+impl std::str::FromStr for MediaSessionState {
+    type Err = DomainError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let state = match s.to_lowercase().as_str() {
+            "requested" => Self::Requested,
+            "allocating" => Self::Allocating,
+            "inviting" => Self::Inviting,
+            "active" => Self::Active,
+            "stopping" => Self::Stopping,
+            "stopped" => Self::Stopped,
+            "failed" => Self::Failed,
+            _ => return Err(DomainError::invalid_argument(format!("unknown state: {s}"))),
+        };
+        Ok(state)
+    }
+}
+
 /// Purpose of a media session.
 #[derive(
     Clone, Copy, Debug, Default, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize,
