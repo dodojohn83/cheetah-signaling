@@ -20,13 +20,12 @@ impl ReqwestWebhookClient {
     /// Creates a new webhook client with redirects disabled and a
     /// DNS resolver that filters disallowed addresses so the resolved IP cannot
     /// change between validation and the actual request.
-    pub fn new() -> Self {
+    pub fn new() -> reqwest::Result<Self> {
         let client = reqwest::Client::builder()
             .redirect(Policy::none())
             .dns_resolver(FilteringResolver)
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
-        Self { client }
+            .build()?;
+        Ok(Self { client })
     }
 }
 
@@ -56,12 +55,6 @@ impl Resolve for FilteringResolver {
 }
 
 type BoxError = Box<dyn std::error::Error + Send + Sync + 'static>;
-
-impl Default for ReqwestWebhookClient {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 #[async_trait::async_trait]
 impl WebhookHttpClient for ReqwestWebhookClient {
