@@ -73,7 +73,13 @@ pub async fn event_stream(
                         break;
                     }
                     let cursor = *watch.borrow();
+                    if cursor == 0 {
+                        continue;
+                    }
                     if cursor <= last {
+                        // Cursor overflow/regression: the bounded cache reset,
+                        // so restart delivery from the beginning of the buffer.
+                        last = 0;
                         continue;
                     }
                 }

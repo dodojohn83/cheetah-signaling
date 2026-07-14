@@ -41,7 +41,7 @@ impl From<&SignalConfig> for ApiConfig {
         Self {
             listen_addr: config.http.listen_addr.clone(),
             port: config.http.port,
-            read_timeout_ms: config.http.read_timeout_ms.as_millis() as u64,
+            read_timeout_ms: u64::try_from(config.http.read_timeout_ms.as_millis()).unwrap_or(5000),
             request_body_limit_bytes: 1024 * 1024,
             cors_allowed_origins: config.http.cors_allowed_origins.clone(),
             rate_limit_requests_per_second: config.http.rate_limit_requests_per_second,

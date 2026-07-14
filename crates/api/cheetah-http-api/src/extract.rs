@@ -6,7 +6,9 @@ use axum::{
     extract::{ConnectInfo, FromRequestParts},
     http::request::Parts,
 };
-use cheetah_signal_types::{CorrelationId, MessageId, PageRequest, RequestContext, TenantId};
+use cheetah_signal_types::{
+    CorrelationId, Deadline, DurationMs, MessageId, PageRequest, RequestContext, TenantId,
+};
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -78,6 +80,13 @@ impl FromRequestParts<Arc<ApiState>> for ApiRequestContext {
 
         check_rate_limit(parts, state, &tenant_id)?;
 
+        let now = state.clock.now_wall();
+        let timeout_ms = i64::try_from(state.config.read_timeout_ms).unwrap_or(5000);
+        let deadline = Deadline::from_timestamp(
+            now.checked_add(DurationMs::from_millis(timeout_ms))
+                .unwrap_or(now),
+        );
+
         Ok(Self(RequestContext {
             tenant_id,
             principal: auth.principal,
@@ -85,7 +94,7 @@ impl FromRequestParts<Arc<ApiState>> for ApiRequestContext {
             correlation_id,
             traceparent,
             tracestate,
-            deadline: None,
+            deadline: Some(deadline),
             node_id: Some(state.config.node_id),
         }))
     }

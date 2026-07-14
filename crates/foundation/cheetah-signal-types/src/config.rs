@@ -87,6 +87,12 @@ impl SignalConfig {
                 "grpc.port must not be zero",
             ));
         }
+        if self.http.read_timeout_ms.as_millis() <= 0 {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                "http.read_timeout_ms must be greater than zero",
+            ));
+        }
         if self.storage.max_connections == 0 {
             return Err(SignalError::new(
                 SignalErrorKind::InvalidArgument,
