@@ -540,6 +540,162 @@ async fn media_service_reconcile_fails_missing_active_session() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn media_service_reconcile_handles_mid_release_binding() {
+    use cheetah_domain::{MediaBindingState, MediaSessionState};
+
+    let mut ctx = setup();
+    let context = request_context(&ctx);
+    let device = register_device_and_channel(&mut ctx).await;
+    let channel = find_channel(&mut ctx, device.device_id).await;
+
+    ctx.owner_resolver.set_owner(
+        ctx.tenant_id,
+        device.device_id,
+        OwnerInfo {
+            owner_node_id: ctx.id_generator.generate_node_id(),
+            owner_epoch: OwnerEpoch::default(),
+            lease_until: None,
+        },
+    );
+
+    let session = ctx
+        .media_service
+        .start_live(
+            &context,
+            &mut ctx.uow,
+            StartLiveRequest {
+                device_id: device.device_id.to_string(),
+                channel_id: channel.channel_id().to_string(),
+                idempotency_key: "reconcile-mid-release-1".to_string(),
+                deadline: None,
+            },
+        )
+        .await
+        .unwrap();
+
+    // Simulate an in-flight stop: session is Stopping, binding is Releasing.
+    let mut media_session = ctx
+        .uow
+        .media_session_repository()
+        .get(ctx.tenant_id, session.media_session_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut binding = ctx
+        .uow
+        .media_binding_repository()
+        .get_by_media_session(ctx.tenant_id, session.media_session_id)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let clock = ctx.clock.as_ref();
+    media_session.active(clock).unwrap();
+    media_session.stopping(clock).unwrap();
+    binding.release(clock).unwrap();
+
+    ctx.uow
+        .media_session_repository()
+        .save(&media_session)
+        .await
+        .unwrap();
+    ctx.uow
+        .media_binding_repository()
+        .save(&binding)
+        .await
+        .unwrap();
+    ctx.uow.commit().await.unwrap();
+
+    // Reconcile should not fail on the Releasing binding and should complete release.
+    let report = ctx
+        .media_service
+        .reconcile(&context, &mut ctx.uow)
+        .await
+        .unwrap();
+
+    assert_eq!(report.missing_released, 1);
+
+    let media_session_after = ctx
+        .uow
+        .media_session_repository()
+        .get(ctx.tenant_id, session.media_session_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let binding_after = ctx
+        .uow
+        .media_binding_repository()
+        .get_by_media_session(ctx.tenant_id, session.media_session_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(media_session_after.state(), MediaSessionState::Stopped);
+    assert_eq!(binding_after.state(), MediaBindingState::Released);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn media_service_reconcile_fails_sessions_on_deregistered_node() {
+    let mut ctx = setup();
+    let context = request_context(&ctx);
+    let device = register_device_and_channel(&mut ctx).await;
+    let channel = find_channel(&mut ctx, device.device_id).await;
+
+    ctx.owner_resolver.set_owner(
+        ctx.tenant_id,
+        device.device_id,
+        OwnerInfo {
+            owner_node_id: ctx.id_generator.generate_node_id(),
+            owner_epoch: OwnerEpoch::default(),
+            lease_until: None,
+        },
+    );
+
+    let session = ctx
+        .media_service
+        .start_live(
+            &context,
+            &mut ctx.uow,
+            StartLiveRequest {
+                device_id: device.device_id.to_string(),
+                channel_id: channel.channel_id().to_string(),
+                idempotency_key: "reconcile-deregistered-1".to_string(),
+                deadline: None,
+            },
+        )
+        .await
+        .unwrap();
+
+    let report = ctx
+        .media_service
+        .reconcile(&context, &mut ctx.uow)
+        .await
+        .unwrap();
+
+    assert_eq!(report.nodes_scanned, 0);
+    assert_eq!(report.missing_failed, 1);
+
+    let media_session = ctx
+        .uow
+        .media_session_repository()
+        .get(ctx.tenant_id, session.media_session_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let binding = ctx
+        .uow
+        .media_binding_repository()
+        .get_by_media_session(ctx.tenant_id, session.media_session_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        media_session.state(),
+        cheetah_domain::MediaSessionState::Failed
+    );
+    assert_eq!(binding.state(), cheetah_domain::MediaBindingState::Failed);
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn media_service_reconcile_converges_active_session() {
     let mut ctx = setup();
     let context = request_context(&ctx);

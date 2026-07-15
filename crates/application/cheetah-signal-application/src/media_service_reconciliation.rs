@@ -156,6 +156,26 @@ impl MediaService {
             }
         }
 
+        // Any sessions still in active_by_node are bound to media nodes that are
+        // no longer active in the cluster (crashed, deregistered, or expired).
+        for (_node_id, sessions) in active_by_node {
+            for (mut session, mut binding) in sessions {
+                self.fail_session(
+                    context,
+                    uow,
+                    &mut session,
+                    &mut binding,
+                    "node_unavailable",
+                    "media node no longer active",
+                )
+                .await?;
+                uow.media_session_repository().save(&session).await?;
+                uow.media_binding_repository().save(&binding).await?;
+                reservations_to_release.push(binding.media_binding_id());
+                report.missing_failed += 1;
+            }
+        }
+
         uow.commit().await?;
 
         for binding_id in reservations_to_release {
@@ -192,8 +212,10 @@ impl MediaService {
         }
 
         if !binding.is_terminal() {
-            let ev = binding.release(self.clock.as_ref())?;
-            append_binding_event(self, context, uow, binding, ev).await?;
+            if binding.state() != MediaBindingState::Releasing {
+                let ev = binding.release(self.clock.as_ref())?;
+                append_binding_event(self, context, uow, binding, ev).await?;
+            }
             let ev = binding.released(self.clock.as_ref())?;
             append_binding_event(self, context, uow, binding, ev).await?;
         }
