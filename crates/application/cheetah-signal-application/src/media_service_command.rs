@@ -325,9 +325,7 @@ impl MediaService {
                         op_event,
                     ))
                     .await?;
-                if let Err(e) = uow.commit().await {
-                    tracing::error!("failed to commit stop failure transitions: {e}");
-                }
+                uow.commit().await?;
 
                 if let Err(e) = self
                     .media_port
@@ -659,9 +657,7 @@ impl MediaService {
                     ))
                     .await?;
 
-                if let Err(e) = uow.commit().await {
-                    tracing::error!("failed to commit start failure transitions: {e}");
-                }
+                uow.commit().await?;
 
                 if let Err(e) = self
                     .media_port
