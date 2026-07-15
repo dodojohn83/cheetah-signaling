@@ -67,17 +67,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Install buf
         uses: bufbuild/buf-action@v1
         with:
           setup_only: true
           version: 1.50.0
       - name: Buf lint
-        run: buf lint --config proto/buf.yaml
+        run: buf lint
       - name: Buf breaking
         run: |
           if git ls-tree origin/main -- proto/ | grep -q '\.proto'; then
-            buf breaking --config proto/buf.yaml --against '.git#branch=main'
+            buf breaking --against '.git#branch=main'
           else
             echo "No previous proto module; skipping breaking check."
           fi
