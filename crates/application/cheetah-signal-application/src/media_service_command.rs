@@ -75,10 +75,23 @@ impl MediaService {
             payload,
         };
 
-        self.media_port
-            .execute(command, self.clock.as_ref())
-            .await
-            .map_err(crate::SignalError::from)
+        let result = self.media_port.execute(command, self.clock.as_ref()).await;
+        match result {
+            Ok(r) => Ok(r),
+            Err(e) => {
+                if let Err(release_err) = self
+                    .media_port
+                    .release(context.tenant_id, media_binding_id, self.clock.as_ref())
+                    .await
+                {
+                    tracing::warn!(
+                        "failed to release media binding {} after command execution failure: {release_err}",
+                        media_binding_id
+                    );
+                }
+                Err(crate::SignalError::from(e))
+            }
+        }
     }
 
     /// Dispatches a stop command to the media node and completes the stop lifecycle.
