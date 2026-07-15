@@ -76,7 +76,9 @@ fn hash_hex(algorithm: DigestAlgorithm, data: &[u8]) -> String {
 }
 
 fn ctx_md5() -> DigestContext {
-    DigestContext::new("example.com", b"server-secret").preferred_algorithm(DigestAlgorithm::Md5)
+    DigestContext::new("example.com", b"server-secret")
+        .allow_md5(true)
+        .preferred_algorithm(DigestAlgorithm::Md5)
 }
 
 #[test]
@@ -712,6 +714,15 @@ fn out_of_order_nc_is_replay() -> Result<(), DigestError> {
     };
     assert!(matches!(err, DigestError::ReplayDetected));
     Ok(())
+}
+
+#[test]
+fn parse_does_not_panic_on_non_ascii_boundary() {
+    // "中" is 3 bytes, "ä" is 2 bytes. Byte index 7 falls inside the
+    // two-byte character, which used to trigger a panic when the parser
+    // sliced `value[..7]` without a char-boundary check.
+    let value = "中中ä";
+    assert!(DigestResponse::parse(value).is_err());
 }
 
 #[test]

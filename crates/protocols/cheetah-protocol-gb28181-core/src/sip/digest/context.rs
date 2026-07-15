@@ -38,16 +38,17 @@ impl fmt::Debug for DigestContext {
 impl DigestContext {
     /// Creates a new context with sensible defaults.
     ///
-    /// MD5 is accepted for GB28181 compatibility, but the preferred challenge
-    /// algorithm defaults to SHA-256. Callers that require MD5 challenges must
-    /// explicitly set [`Self::preferred_algorithm`].
+    /// MD5 is disabled by default because it is cryptographically broken. Call
+    /// [`Self::allow_md5`] with `true` when interworking with legacy GB28181
+    /// devices that cannot use SHA-256/SHA-512. The preferred challenge
+    /// algorithm defaults to SHA-256.
     pub fn new(realm: impl Into<String>, secret: impl Into<Vec<u8>>) -> Self {
         let secret = secret.into();
         Self {
             realm: realm.into(),
             secret: SecretBox::new(Box::new(secret)),
             nonce_counter: AtomicU64::new(0),
-            allow_md5: true,
+            allow_md5: false,
             preferred_algorithm: DigestAlgorithm::Sha256,
             qop: Some(DigestQop::Auth),
             nonce_ttl_seconds: 300,
@@ -55,6 +56,9 @@ impl DigestContext {
     }
 
     /// Sets whether MD5 is allowed. Stronger algorithms use SHA-256/SHA-512.
+    ///
+    /// Enable this only when interworking with legacy devices that do not
+    /// support SHA-256/SHA-512.
     pub fn allow_md5(mut self, allow: bool) -> Self {
         self.allow_md5 = allow;
         self
@@ -192,18 +196,18 @@ fn compute_response(
     uri: &str,
 ) -> String {
     let a1 = Zeroizing::new(format!("{username}:{realm}:{password}"));
-    let ha1 = algorithm.hash_hex(a1.as_bytes());
+    let ha1 = Zeroizing::new(algorithm.hash_hex(a1.as_bytes()));
 
     let a2 = format!("{method}:{uri}");
     let ha2 = algorithm.hash_hex(a2.as_bytes());
 
-    let a3 = match qop {
+    let a3: Zeroizing<String> = match qop {
         Some(DigestQop::Auth) => {
             let cnonce = cnonce.unwrap_or("");
             let nc = format!("{nc:08x}");
-            format!("{ha1}:{nonce}:{nc}:{cnonce}:auth:{ha2}")
+            Zeroizing::new(format!("{}:{nonce}:{nc}:{cnonce}:auth:{ha2}", ha1.as_str()))
         }
-        _ => format!("{ha1}:{nonce}:{ha2}"),
+        _ => Zeroizing::new(format!("{}:{nonce}:{ha2}", ha1.as_str())),
     };
     algorithm.hash_hex(a3.as_bytes())
 }

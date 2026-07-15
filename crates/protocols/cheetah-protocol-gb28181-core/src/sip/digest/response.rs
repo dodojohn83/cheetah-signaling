@@ -180,7 +180,10 @@ impl DigestResponse {
             )));
         }
         let value = value.trim();
-        let value = if value.len() > 7 && value[..7].eq_ignore_ascii_case("digest ") {
+        let value = if value.len() > 7
+            && value.is_char_boundary(7)
+            && value[..7].eq_ignore_ascii_case("digest ")
+        {
             &value[7..]
         } else {
             value
