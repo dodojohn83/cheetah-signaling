@@ -9,6 +9,8 @@ use cheetah_protocol_gb28181_core::{
 use secrecy::SecretString;
 use sha2::{Digest, Sha256, Sha512};
 
+const SERVER_SECRET: &[u8] = b"server-secret-must-be-32-bytes-long";
+
 fn make_response(
     username: &str,
     password: &str,
@@ -76,14 +78,15 @@ fn hash_hex(algorithm: DigestAlgorithm, data: &[u8]) -> String {
 }
 
 fn ctx_md5() -> DigestContext {
-    DigestContext::new("example.com", b"server-secret")
+    DigestContext::new("example.com", SERVER_SECRET)
+        .unwrap()
         .allow_md5(true)
         .preferred_algorithm(DigestAlgorithm::Md5)
 }
 
 #[test]
 fn challenge_defaults_to_sha256() -> Result<(), DigestError> {
-    let ctx = DigestContext::new("example.com", b"server-secret");
+    let ctx = DigestContext::new("example.com", SERVER_SECRET)?;
     let challenge = ctx.generate_challenge(1000)?;
     let header = challenge.to_header_value();
     assert!(header.starts_with("Digest "));
@@ -106,7 +109,7 @@ fn md5_challenge_when_configured() -> Result<(), DigestError> {
 
 #[test]
 fn stale_challenge_includes_stale_true() -> Result<(), DigestError> {
-    let ctx = DigestContext::new("example.com", b"server-secret");
+    let ctx = DigestContext::new("example.com", SERVER_SECRET)?;
     let challenge = ctx.generate_stale_challenge(1000)?;
     let header = challenge.to_header_value();
     assert!(header.contains("stale=true"));
@@ -228,7 +231,7 @@ fn md5_auth_with_qop_succeeds() -> Result<(), DigestError> {
 
 #[test]
 fn sha256_auth_with_qop_succeeds() -> Result<(), DigestError> {
-    let ctx = DigestContext::new("example.com", b"server-secret")
+    let ctx = DigestContext::new("example.com", SERVER_SECRET)?
         .preferred_algorithm(DigestAlgorithm::Sha256)
         .allow_md5(false);
     let challenge = ctx.generate_challenge(1000)?;
@@ -435,7 +438,7 @@ fn replay_is_detected() -> Result<(), DigestError> {
 
 #[test]
 fn md5_disallowed_by_policy() -> Result<(), DigestError> {
-    let ctx = DigestContext::new("example.com", b"server-secret")
+    let ctx = DigestContext::new("example.com", SERVER_SECRET)?
         .allow_md5(false)
         .preferred_algorithm(DigestAlgorithm::Sha256);
     let challenge = ctx.generate_challenge(1000)?;
@@ -469,8 +472,16 @@ fn md5_disallowed_by_policy() -> Result<(), DigestError> {
 }
 
 #[test]
+fn short_server_secret_is_rejected() {
+    let Err(err) = DigestContext::new("example.com", b"short") else {
+        panic!("expected short server secret to be rejected");
+    };
+    assert!(matches!(err, DigestError::WeakSecret));
+}
+
+#[test]
 fn auth_int_qop_cannot_be_configured() {
-    let ctx = DigestContext::new("example.com", b"server-secret");
+    let ctx = DigestContext::new("example.com", SERVER_SECRET).unwrap();
     let Err(err) = ctx.qop(Some(DigestQop::AuthInt)) else {
         panic!("expected AuthInt qop to be rejected at configuration time");
     };
@@ -777,7 +788,7 @@ fn parse_unescapes_quotes_and_backslashes() -> Result<(), DigestError> {
 
 #[test]
 fn challenge_header_round_trips_quoted_realm_and_strips_crlf() -> Result<(), DigestError> {
-    let ctx = DigestContext::new("foo\r\n\"bar", b"server-secret");
+    let ctx = DigestContext::new("foo\r\n\"bar", SERVER_SECRET)?;
     let challenge = ctx.generate_challenge(1000)?;
     let header = challenge.to_header_value();
 

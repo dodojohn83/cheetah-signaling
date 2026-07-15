@@ -83,6 +83,8 @@ pub enum DigestError {
     InvalidQop,
     /// Nonce signature could not be verified.
     InvalidNonce,
+    /// Server secret is too short to generate secure nonce signatures.
+    WeakSecret,
     /// Nonce signature is valid but the nonce has expired.
     StaleNonce,
     /// Replay of a previously seen `nc` value.
@@ -103,6 +105,7 @@ impl fmt::Display for DigestError {
             Self::AlgorithmNotAllowed => f.write_str("MD5 not allowed by policy"),
             Self::InvalidQop => f.write_str("invalid or unsupported qop"),
             Self::InvalidNonce => f.write_str("nonce signature verification failed"),
+            Self::WeakSecret => f.write_str("server secret is too short"),
             Self::StaleNonce => f.write_str("nonce is stale"),
             Self::ReplayDetected => f.write_str("digest replay detected"),
             Self::RealmMismatch => f.write_str("digest realm mismatch"),

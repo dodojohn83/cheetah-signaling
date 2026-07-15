@@ -42,9 +42,16 @@ impl DigestContext {
     /// [`Self::allow_md5`] with `true` when interworking with legacy GB28181
     /// devices that cannot use SHA-256/SHA-512. The preferred challenge
     /// algorithm defaults to SHA-256.
-    pub fn new(realm: impl Into<String>, secret: impl Into<Vec<u8>>) -> Self {
+    ///
+    /// Returns an error if the supplied server secret is shorter than 32 bytes;
+    /// short secrets make HMAC-SHA256 nonce signatures trivially brute-forceable.
+    pub fn new(realm: impl Into<String>, secret: impl Into<Vec<u8>>) -> Result<Self, DigestError> {
+        const MIN_SECRET_LEN: usize = 32;
         let secret = secret.into();
-        Self {
+        if secret.len() < MIN_SECRET_LEN {
+            return Err(DigestError::WeakSecret);
+        }
+        Ok(Self {
             realm: realm.into(),
             secret: SecretBox::new(Box::new(secret)),
             nonce_counter: AtomicU64::new(0),
@@ -52,7 +59,7 @@ impl DigestContext {
             preferred_algorithm: DigestAlgorithm::Sha256,
             qop: Some(DigestQop::Auth),
             nonce_ttl_seconds: 300,
-        }
+        })
     }
 
     /// Sets whether MD5 is allowed. Stronger algorithms use SHA-256/SHA-512.
