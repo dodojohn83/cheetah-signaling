@@ -238,16 +238,12 @@ impl MediaService {
         let media_session_id = self.id_generator.generate_media_session_id();
         let media_binding_id = self.id_generator.generate_media_binding_id();
         let deadline = parse_deadline(request.deadline)?;
-        let mut extra = std::collections::BTreeMap::new();
-        extra.insert("start_time".to_string(), start_time.to_string());
-        extra.insert("end_time".to_string(), end_time.to_string());
-        extra.insert("scale".to_string(), request.scale.to_string());
         let requirements = build_media_requirements(
             &device,
             &channel,
             MediaPurpose::Playback,
             media_session_id,
-            extra,
+            std::collections::BTreeMap::new(),
         );
 
         let reservation = self
