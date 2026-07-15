@@ -284,7 +284,7 @@ impl MediaNodeRegistry for InMemoryMediaNodeRegistry {
         let total = entry
             .reported_session_count
             .saturating_add(entry.reserved.len() as u64);
-        if total >= entry.node.capacity.max_sessions {
+        if total >= entry.node.capacity.max_sessions.max(1) {
             return Err(SchedulerError::CapacityExhausted(node_id.to_string()));
         }
         entry.reserved.insert((tenant_id, binding_id));

@@ -92,10 +92,13 @@ impl MediaClusterRegistry for MediaClusterRegistryService {
                 .map(from_media_capability)
                 .into_iter()
                 .collect(),
-            capacity: registration
-                .capacity
-                .map(from_media_capacity)
-                .unwrap_or_default(),
+            capacity: registration.capacity.map(from_media_capacity).unwrap_or(
+                crate::model::MediaNodeCapacity {
+                    max_sessions: 1,
+                    max_bandwidth_mbps: 0,
+                    max_cpu_percent: 100,
+                },
+            ),
             load: 0,
             session_count: 0,
             health: MediaNodeHealth::Healthy,
