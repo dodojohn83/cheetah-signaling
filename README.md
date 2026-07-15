@@ -23,8 +23,9 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo nextest run --workspace
 cargo deny check
-buf lint --config proto/buf.yaml
-buf breaking --config proto/buf.yaml --against '.git#branch=main'
+buf format --diff --exit-code
+buf lint
+buf breaking --against '.git#branch=main'
 ```
 
 ## 部署角色

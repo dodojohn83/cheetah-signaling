@@ -14,7 +14,7 @@
 - [~] 引入 `cargo-nextest` 配置，区分快速、integration、interop、soak profile。已安装并使用 `cargo nextest run --workspace`；分 profile 配置在后续阶段补充。
 - [x] 配置 `cargo-deny`（`deny.toml`）并通过 `cargo deny check`。`cargo-audit` 与 SBOM 脚本在后续阶段补充。
 - [ ] 提交 `.sqlx` offline metadata 或等价可复现查询检查流程；CI 不依赖开发者私人数据库。（待 storage 实现后补充）
-- [x] 配置 Buf v2 module、lint `STANDARD`、breaking `FILE`。`proto/buf.yaml` 与 `proto/cheetah/signaling/common/v1/common.proto` 已创建；deterministic codegen 在引入 tonic/prost 后补充。
+- [x] 配置 Buf v2 module、lint `STANDARD`、breaking `FILE`。根 `buf.yaml` 与 `proto/cheetah/signaling/common/v1/common.proto` 已创建；deterministic codegen 在引入 tonic/prost 后补充。
 - [ ] 配置 OpenAPI snapshot/breaking checker；生成物变更必须伴随显式 review。（待 REST API 实现后补充）
 
 ## 3. CI jobs
@@ -49,6 +49,7 @@ aarch64-check
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo nextest run --workspace
+buf format --diff --exit-code
 buf lint && buf breaking --against '.git#branch=main'
 cargo deny check
 ```
