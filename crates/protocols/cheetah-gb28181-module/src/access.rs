@@ -337,7 +337,7 @@ fn build_success_response(
     }
     headers.append(
         HeaderName::Contact,
-        HeaderValue::new(format!("{};expires={}", contact.encode(), expires)),
+        HeaderValue::new(format!("<{}>;expires={}", contact.encode(), expires)),
     );
     headers.append(HeaderName::Expires, HeaderValue::new(expires.to_string()));
     headers.append(HeaderName::ContentLength, HeaderValue::new("0"));

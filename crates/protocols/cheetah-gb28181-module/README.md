@@ -21,3 +21,18 @@ its outputs are returned to a driver or application layer for execution.
 
 - Tokio, Axum, Tonic, SQLx, async-nats, quick-xml, or any concrete network,
   database, media or message broker client.
+
+## Features
+
+No optional features.
+
+## Public entry
+
+`lib.rs` re-exports:
+
+- `AccessInput`, `AccessOutput`, `Gb28181Access` from `access`.
+- `Gb28181DomainConfig`, `AuthPolicy`, `CharsetPolicy` from `config`.
+- `AccessError` from `error`.
+- `Gb28181Event`, `DevicePresence` from `events`.
+- `CredentialProvider` from `ports`.
+- `DeviceId`, `DomainId` from `types`.

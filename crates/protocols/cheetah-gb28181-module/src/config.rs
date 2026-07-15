@@ -54,14 +54,16 @@ impl Gb28181DomainConfig {
         digest_secret: Vec<u8>,
     ) -> Result<Self, AccessError> {
         const MIN_SECRET_LEN: usize = 32;
+        // Wrap the secret immediately so it is zeroized on any early-return path.
+        let digest_secret = SecretBox::new(Box::new(digest_secret));
         let domain_id = DomainId::new(domain_id).ok_or(AccessError::InvalidDomainId)?;
-        if digest_secret.len() < MIN_SECRET_LEN {
+        if digest_secret.expose_secret().len() < MIN_SECRET_LEN {
             return Err(AccessError::Internal("digest secret too short".to_string()));
         }
         Ok(Self {
             domain_id,
             realm: realm.as_ref().to_string(),
-            digest_secret: SecretBox::new(Box::new(digest_secret)),
+            digest_secret,
             allow_md5: false,
             preferred_algorithm: DigestAlgorithm::Sha256,
             default_expires_seconds: 3600,
@@ -154,10 +156,12 @@ impl Gb28181DomainConfig {
     /// Returns `Err` if `secret` is shorter than 32 bytes.
     pub fn with_digest_secret(mut self, secret: Vec<u8>) -> Result<Self, AccessError> {
         const MIN_SECRET_LEN: usize = 32;
-        if secret.len() < MIN_SECRET_LEN {
+        // Wrap the secret immediately so it is zeroized on any early-return path.
+        let secret = SecretBox::new(Box::new(secret));
+        if secret.expose_secret().len() < MIN_SECRET_LEN {
             return Err(AccessError::Internal("digest secret too short".to_string()));
         }
-        self.digest_secret = SecretBox::new(Box::new(secret));
+        self.digest_secret = secret;
         Ok(self)
     }
 }

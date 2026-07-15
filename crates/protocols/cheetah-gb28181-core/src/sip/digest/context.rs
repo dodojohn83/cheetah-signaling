@@ -52,13 +52,14 @@ impl DigestContext {
     pub fn new(realm: impl Into<String>, secret: impl AsRef<[u8]>) -> Result<Self, DigestError> {
         const MIN_SECRET_LEN: usize = 32;
         let realm = strip_crlf(&realm.into());
-        let secret = secret.as_ref().to_vec();
-        if secret.len() < MIN_SECRET_LEN {
+        // Wrap the copied secret immediately so it is zeroized on any early-return path.
+        let secret = SecretBox::new(Box::new(secret.as_ref().to_vec()));
+        if secret.expose_secret().len() < MIN_SECRET_LEN {
             return Err(DigestError::WeakSecret);
         }
         Ok(Self {
             realm,
-            secret: SecretBox::new(Box::new(secret)),
+            secret,
             nonce_counter: AtomicU64::new(0),
             allow_md5: false,
             preferred_algorithm: DigestAlgorithm::Sha256,
