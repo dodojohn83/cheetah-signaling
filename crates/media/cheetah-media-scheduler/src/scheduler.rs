@@ -52,6 +52,9 @@ pub trait MediaScheduler: Send + Sync {
 
     /// Returns the current runtime view of a node, if known.
     async fn get_node(&self, node_id: NodeId, clock: &dyn Clock) -> Option<MediaNode>;
+
+    /// Lists all media nodes known to the scheduler.
+    async fn list_nodes(&self, clock: &dyn Clock) -> Vec<NodeId>;
 }
 
 /// Least-loaded scheduler with stable scoring and per-session affinity.
@@ -221,6 +224,15 @@ impl MediaScheduler for LeastLoadedScheduler {
 
     async fn get_node(&self, node_id: NodeId, clock: &dyn Clock) -> Option<MediaNode> {
         self.registry.get(node_id, clock).await
+    }
+
+    async fn list_nodes(&self, clock: &dyn Clock) -> Vec<NodeId> {
+        self.registry
+            .list_active(clock)
+            .await
+            .into_iter()
+            .map(|n| n.node_id)
+            .collect()
     }
 }
 

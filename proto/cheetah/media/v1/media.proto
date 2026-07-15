@@ -26,6 +26,7 @@ message MediaSessionRef {
   string media_session_id = 1;
   string device_id = 2;
   string channel_id = 3;
+  uint64 media_node_instance_epoch = 4;
 }
 
 // RTP negotiation parameters.

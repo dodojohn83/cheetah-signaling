@@ -644,3 +644,18 @@ pub struct TriggerWebhookRequest {
     /// JSON payload to send.
     pub payload: serde_json::Value,
 }
+
+/// Result of a tenant media-session reconciliation pass.
+#[derive(Clone, Debug, Default, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ReconciliationReport {
+    /// Number of media nodes scanned.
+    pub nodes_scanned: u64,
+    /// Number of active sessions found on media nodes.
+    pub sessions_found: u64,
+    /// Number of non-terminal bindings for stopped sessions that were released.
+    pub missing_released: u64,
+    /// Number of active sessions missing on the media node that were marked failed.
+    pub missing_failed: u64,
+    /// Number of orphan sessions detected but not yet cleaned.
+    pub orphans_detected: u64,
+}

@@ -37,6 +37,7 @@ service MediaCapability {
 // Media query service.
 service MediaQuery {
   rpc Query(QueryRequest) returns (QueryResponse);
+  rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse);
 }
 
 // RTP negotiation.
@@ -148,6 +149,19 @@ message QueryRequest {
 
 message QueryResponse {
   cheetah.media.v1.QueryResult result = 1;
+}
+
+// Media session enumeration request and response messages.
+message ListSessionsRequest {
+  string media_node_id = 1;
+  string tenant_id = 2;
+  uint32 page_size = 3;
+  string page_token = 4;
+}
+
+message ListSessionsResponse {
+  repeated cheetah.media.v1.MediaSessionRef sessions = 1;
+  string next_page_token = 2;
 }
 
 // RTP negotiation request and response messages.

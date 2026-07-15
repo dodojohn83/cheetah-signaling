@@ -2,16 +2,22 @@
 
 use crate::scheduler::MediaScheduler;
 use cheetah_domain::{
-    DomainError, MediaNodeCommand, MediaNodeCommandResult, MediaPort, MediaRequirements,
-    MediaReservation,
+    DomainError, MediaNodeCommand, MediaNodeCommandResult, MediaNodeSessionRef, MediaPort,
+    MediaRequirements, MediaReservation,
 };
-use cheetah_media_client::{MediaClientError, MediaControlClient, MediaControlRequest};
+use cheetah_media_client::{
+    MediaClientError, MediaControlClient, MediaControlRequest, MediaListSessionsRequest,
+};
 use cheetah_signal_contracts::cheetah::media::v1::{
     MediaCommand, MediaControlPayload, media_command,
 };
+use cheetah_signal_types::MediaNodeInstanceEpoch;
+use cheetah_signal_types::Page;
 use cheetah_signal_types::{
-    ChannelId, Clock, DeviceId, MediaBindingId, MediaSessionId, TenantId, UtcTimestamp,
+    ChannelId, Clock, DeviceId, MediaBindingId, MediaSessionId, NodeId, PageRequest, TenantId,
+    UtcTimestamp,
 };
+use std::str::FromStr;
 use std::sync::Arc;
 
 use crate::error::SchedulerError;
@@ -203,6 +209,78 @@ impl MediaPort for SchedulerMediaPort {
                     .unwrap_or_default(),
             }),
         }
+    }
+
+    async fn list_nodes(
+        &self,
+        _tenant_id: TenantId,
+        clock: &dyn Clock,
+    ) -> Result<Vec<NodeId>, DomainError> {
+        Ok(self.scheduler.list_nodes(clock).await)
+    }
+
+    async fn list_sessions(
+        &self,
+        tenant_id: TenantId,
+        media_node_id: NodeId,
+        page: PageRequest,
+        clock: &dyn Clock,
+    ) -> Result<Page<MediaNodeSessionRef>, DomainError> {
+        let node = self
+            .scheduler
+            .get_node(media_node_id, clock)
+            .await
+            .ok_or_else(|| DomainError::not_found("media_node", media_node_id.to_string()))?;
+
+        let endpoint = node.control_endpoint;
+        let request = MediaListSessionsRequest {
+            media_node_id,
+            tenant_id,
+            page_size: page.page_size,
+            page_token: page.cursor,
+        };
+
+        let response = self
+            .client
+            .list_sessions(&endpoint, request)
+            .await
+            .map_err(map_client_error)?;
+
+        let mut items = Vec::with_capacity(response.sessions.len());
+        for proto in response.sessions {
+            let media_session_id = match MediaSessionId::from_str(&proto.media_session_id) {
+                Ok(id) => id,
+                Err(_) => continue,
+            };
+            let device_id = if proto.device_id.is_empty() {
+                None
+            } else {
+                DeviceId::from_str(&proto.device_id).ok()
+            };
+            let channel_id = if proto.channel_id.is_empty() {
+                None
+            } else {
+                ChannelId::from_str(&proto.channel_id).ok()
+            };
+            items.push(MediaNodeSessionRef {
+                media_session_id,
+                device_id,
+                channel_id,
+                media_node_instance_epoch: MediaNodeInstanceEpoch(proto.media_node_instance_epoch),
+            });
+        }
+
+        let next_cursor = if response.next_page_token.is_empty() {
+            None
+        } else {
+            Some(response.next_page_token)
+        };
+
+        Ok(Page {
+            items,
+            next_cursor,
+            total: None,
+        })
     }
 }
 

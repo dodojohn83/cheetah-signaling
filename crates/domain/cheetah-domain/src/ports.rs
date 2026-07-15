@@ -370,6 +370,18 @@ pub trait MediaPort: Send + Sync {
         command: MediaNodeCommand,
         clock: &dyn Clock,
     ) -> Result<MediaNodeCommandResult>;
+
+    /// Lists the media nodes that are reachable through this port.
+    async fn list_nodes(&self, tenant_id: TenantId, clock: &dyn Clock) -> Result<Vec<NodeId>>;
+
+    /// Lists active sessions on the given media node.
+    async fn list_sessions(
+        &self,
+        tenant_id: TenantId,
+        media_node_id: NodeId,
+        page: PageRequest,
+        clock: &dyn Clock,
+    ) -> Result<Page<crate::MediaNodeSessionRef>>;
 }
 
 /// Status of an idempotent inbox record.

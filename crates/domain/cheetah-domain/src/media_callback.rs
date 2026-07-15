@@ -1,8 +1,8 @@
 //! Types for media-node callbacks into the signaling control plane.
 
 use cheetah_signal_types::{
-    MediaBindingId, MediaNodeInstanceEpoch, MediaSessionId, NodeId, OperationId, OwnerEpoch,
-    Revision,
+    ChannelId, DeviceId, MediaBindingId, MediaNodeInstanceEpoch, MediaSessionId, NodeId,
+    OperationId, OwnerEpoch, Revision,
 };
 
 /// A callback event emitted by a media node for a specific binding/session.
@@ -47,4 +47,17 @@ pub enum MediaNodeCallbackKind {
         /// Human-readable error message.
         message: String,
     },
+}
+
+/// A media session as reported by a media node for reconciliation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MediaNodeSessionRef {
+    /// Media session identifier.
+    pub media_session_id: MediaSessionId,
+    /// Device identifier, if known to the media node.
+    pub device_id: Option<DeviceId>,
+    /// Channel identifier, if known to the media node.
+    pub channel_id: Option<ChannelId>,
+    /// Instance epoch of the media node that reported the session.
+    pub media_node_instance_epoch: MediaNodeInstanceEpoch,
 }
