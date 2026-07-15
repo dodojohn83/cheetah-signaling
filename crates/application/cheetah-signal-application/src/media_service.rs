@@ -2,8 +2,9 @@
 
 use crate::dto::{ControlPlaybackRequest, MediaSessionDto, OperationDto, StopLiveRequest};
 use cheetah_domain::{
-    ChannelStatus, CommandPayload, DeviceLifecycle, DeviceOwnerResolver, DomainError, DomainEvent,
-    IdempotencyScope, MediaPort, MediaPurpose, MediaSessionState, Operation, UnitOfWork,
+    Channel, ChannelStatus, CommandPayload, Device, DeviceLifecycle, DeviceOwnerResolver,
+    DomainError, DomainEvent, IdempotencyScope, MediaPort, MediaPurpose, MediaRequirements,
+    MediaSessionState, Operation, UnitOfWork,
 };
 use cheetah_signal_types::{
     ChannelId, Clock, Deadline, DeviceId, Event, IdGenerator, MediaBindingId, MediaSessionId,
@@ -158,7 +159,7 @@ impl MediaService {
 
         if let Err(e) = self
             .media_port
-            .release(tenant_id, binding.media_binding_id())
+            .release(tenant_id, binding.media_binding_id(), self.clock.as_ref())
             .await
         {
             tracing::warn!(
@@ -257,7 +258,7 @@ impl MediaService {
         tenant_id: TenantId,
         device_id: DeviceId,
         channel_id: ChannelId,
-    ) -> crate::Result<()> {
+    ) -> crate::Result<(Device, Channel)> {
         let device = uow
             .device_repository()
             .get(tenant_id, device_id)
@@ -283,7 +284,34 @@ impl MediaService {
                 "channel is not ready",
             )));
         }
-        Ok(())
+        Ok((device, channel))
+    }
+}
+
+pub(crate) fn build_media_requirements(
+    device: &Device,
+    channel: &Channel,
+    purpose: MediaPurpose,
+    media_session_id: MediaSessionId,
+    extra_constraints: std::collections::BTreeMap<String, String>,
+) -> MediaRequirements {
+    let mut codecs = Vec::new();
+    for profile in channel.stream_profiles() {
+        if !profile.encoding.is_empty() && !codecs.contains(&profile.encoding) {
+            codecs.push(profile.encoding.clone());
+        }
+    }
+    MediaRequirements {
+        protocol: device.protocol().to_string(),
+        operation: purpose.to_string(),
+        session_type: purpose.to_string(),
+        transport: None,
+        encapsulation: None,
+        codecs,
+        zone: None,
+        tenant_constraints: std::collections::BTreeMap::new(),
+        required_constraints: extra_constraints,
+        media_session_id: Some(media_session_id.to_string()),
     }
 }
 

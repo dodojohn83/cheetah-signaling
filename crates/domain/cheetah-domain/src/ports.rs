@@ -35,6 +35,31 @@ pub struct MediaReservation {
     pub media_node_instance_epoch: MediaNodeInstanceEpoch,
 }
 
+/// Requirements used to select a media node for a session.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MediaRequirements {
+    /// Target protocol, such as `gb28181` or `onvif`.
+    pub protocol: String,
+    /// Operation the node must support, such as `live`, `playback` or `talk`.
+    pub operation: String,
+    /// Required transport, e.g. `rtp` or `proxy`.
+    pub transport: Option<String>,
+    /// Required encapsulation, e.g. `ps` or `es`.
+    pub encapsulation: Option<String>,
+    /// Acceptable codecs, such as `h264` or `h265`.
+    pub codecs: Vec<String>,
+    /// Session type, such as `live`, `playback` or `talk`.
+    pub session_type: String,
+    /// Preferred availability zone.
+    pub zone: Option<String>,
+    /// Tenant-level constraints that the node must satisfy.
+    pub tenant_constraints: std::collections::BTreeMap<String, String>,
+    /// Additional capability constraints required by the request.
+    pub required_constraints: std::collections::BTreeMap<String, String>,
+    /// Optional media session id used for stable affinity during retries.
+    pub media_session_id: Option<String>,
+}
+
 /// A single outbox entry.
 #[derive(Clone, Debug, PartialEq)]
 pub struct OutboxEntry {
@@ -240,6 +265,7 @@ pub trait DeviceOwnerResolver: Send + Sync {
 #[async_trait::async_trait]
 pub trait MediaPort: Send + Sync {
     /// Reserves a media node for a live session.
+    #[allow(clippy::too_many_arguments)]
     async fn reserve_live(
         &self,
         tenant_id: TenantId,
@@ -248,6 +274,8 @@ pub trait MediaPort: Send + Sync {
         media_session_id: MediaSessionId,
         media_binding_id: MediaBindingId,
         purpose: crate::MediaPurpose,
+        requirements: &MediaRequirements,
+        clock: &dyn Clock,
     ) -> Result<MediaReservation>;
 
     /// Reserves a media node for a playback session.
@@ -262,9 +290,12 @@ pub trait MediaPort: Send + Sync {
         start_time: cheetah_signal_types::UtcTimestamp,
         end_time: cheetah_signal_types::UtcTimestamp,
         scale: f64,
+        requirements: &MediaRequirements,
+        clock: &dyn Clock,
     ) -> Result<MediaReservation>;
 
     /// Reserves a media node for a talk session.
+    #[allow(clippy::too_many_arguments)]
     async fn reserve_talk(
         &self,
         tenant_id: TenantId,
@@ -272,10 +303,17 @@ pub trait MediaPort: Send + Sync {
         channel_id: ChannelId,
         media_session_id: MediaSessionId,
         media_binding_id: MediaBindingId,
+        requirements: &MediaRequirements,
+        clock: &dyn Clock,
     ) -> Result<MediaReservation>;
 
     /// Releases a media binding.
-    async fn release(&self, tenant_id: TenantId, media_binding_id: MediaBindingId) -> Result<()>;
+    async fn release(
+        &self,
+        tenant_id: TenantId,
+        media_binding_id: MediaBindingId,
+        clock: &dyn Clock,
+    ) -> Result<()>;
 }
 
 /// Status of an idempotent inbox record.

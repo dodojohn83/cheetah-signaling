@@ -1118,6 +1118,8 @@ impl crate::MediaPort for InMemoryMediaPort {
         _media_session_id: MediaSessionId,
         media_binding_id: MediaBindingId,
         _purpose: crate::MediaPurpose,
+        _requirements: &crate::MediaRequirements,
+        _clock: &dyn Clock,
     ) -> crate::Result<MediaReservation> {
         self.reserve(tenant_id, media_binding_id)
     }
@@ -1132,6 +1134,8 @@ impl crate::MediaPort for InMemoryMediaPort {
         _start_time: UtcTimestamp,
         _end_time: UtcTimestamp,
         _scale: f64,
+        _requirements: &crate::MediaRequirements,
+        _clock: &dyn Clock,
     ) -> crate::Result<MediaReservation> {
         self.reserve(tenant_id, media_binding_id)
     }
@@ -1143,6 +1147,8 @@ impl crate::MediaPort for InMemoryMediaPort {
         _channel_id: ChannelId,
         _media_session_id: MediaSessionId,
         media_binding_id: MediaBindingId,
+        _requirements: &crate::MediaRequirements,
+        _clock: &dyn Clock,
     ) -> crate::Result<MediaReservation> {
         self.reserve(tenant_id, media_binding_id)
     }
@@ -1151,6 +1157,7 @@ impl crate::MediaPort for InMemoryMediaPort {
         &self,
         tenant_id: TenantId,
         media_binding_id: MediaBindingId,
+        _clock: &dyn Clock,
     ) -> crate::Result<()> {
         lock_mutex(&self.reservations).remove(&(tenant_id, media_binding_id));
         Ok(())

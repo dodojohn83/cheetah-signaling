@@ -6,10 +6,24 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+description = "Media node registry, health tracking, and scheduling for Cheetah Signaling."
 
 [dependencies]
+cheetah-domain = { path = "../../domain/cheetah-domain" }
+cheetah-signal-types = { path = "../../foundation/cheetah-signal-types" }
+cheetah-signal-contracts = { path = "../../foundation/cheetah-signal-contracts" }
+
+tonic = { workspace = true }
+tokio = { workspace = true, features = ["sync", "time"] }
+time = { workspace = true }
+prost-types = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }
 
 [lints]
 workspace = true

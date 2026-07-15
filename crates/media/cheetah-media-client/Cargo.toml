@@ -6,10 +6,25 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+description = "Media control gRPC client with connection pooling, retries, and circuit breaker."
 
 [dependencies]
+cheetah-signal-contracts = { path = "../../foundation/cheetah-signal-contracts" }
+cheetah-signal-types = { path = "../../foundation/cheetah-signal-types" }
+
+tonic = { workspace = true, features = ["tls-native-roots"] }
+tokio = { workspace = true, features = ["sync", "time"] }
+time = { workspace = true }
+prost-types = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+secrecy = { workspace = true }
+fastrand = "2.4.1"
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }
+tokio-stream = "0.1.18"
+async-trait = { workspace = true }
 
 [lints]
 workspace = true

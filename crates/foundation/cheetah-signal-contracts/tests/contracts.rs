@@ -32,6 +32,7 @@ fn envelope_meta() -> EnvelopeMeta {
         owner_epoch: 1,
         traceparent: "traceparent".to_string(),
         tracestate: "tracestate".to_string(),
+        contract_version: 1,
     }
 }
 
