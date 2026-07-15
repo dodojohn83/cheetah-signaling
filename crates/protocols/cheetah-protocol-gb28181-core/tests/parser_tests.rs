@@ -204,6 +204,19 @@ fn header_values_are_trimmed() {
 }
 
 #[test]
+fn unknown_header_lookup_is_case_insensitive() {
+    let data = "SIP/2.0 200 OK\r\nX-Custom: value\r\nContent-Length: 0\r\n\r\n";
+    let msg = SipParser::parse_datagram(data.as_bytes(), SipParserConfig::default())
+        .expect("should parse");
+    let lower = HeaderName::Other("x-custom".to_string());
+    let value = msg
+        .headers()
+        .get(&lower)
+        .expect("lookup by lowercase should find");
+    assert_eq!(value.as_str(), "value");
+}
+
+#[test]
 fn unknown_header_is_preserved() {
     let data = "SIP/2.0 200 OK\r\nX-Custom: value\r\nContent-Length: 0\r\n\r\n";
     let msg = SipParser::parse_datagram(data.as_bytes(), SipParserConfig::default())
