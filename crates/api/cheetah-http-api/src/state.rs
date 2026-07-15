@@ -114,11 +114,13 @@ impl ApiState {
         );
         let device_service = DeviceService::new(clock.clone(), id_generator.clone());
         let operation_service = OperationService::new(clock.clone(), id_generator.clone());
+        let source_node_id = id_generator.generate_node_id();
         let media_service = MediaService::new(
             clock.clone(),
             id_generator.clone(),
             owner_resolver,
             media_port,
+            source_node_id,
         );
         Self {
             storage,

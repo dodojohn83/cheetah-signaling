@@ -6,6 +6,8 @@ pub mod dto;
 pub mod event_service;
 pub mod inbox;
 pub mod media_service;
+pub(crate) mod media_service_callback;
+pub(crate) mod media_service_command;
 pub(crate) mod media_service_start;
 pub mod operation_service;
 pub mod outbox_relay;

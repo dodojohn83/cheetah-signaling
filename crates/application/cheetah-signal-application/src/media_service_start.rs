@@ -80,7 +80,7 @@ impl MediaService {
                 self.id_generator.as_ref(),
                 self.clock.as_ref(),
                 context,
-                scope.idempotency_key,
+                scope.idempotency_key.clone(),
                 device_id,
                 scope.target,
                 CommandPayload::StartLive {
@@ -174,7 +174,16 @@ impl MediaService {
                 .await?;
 
             uow.commit().await?;
-            Ok(MediaSessionDto::from(&session))
+            Ok((
+                operation.operation_id(),
+                session.media_session_id(),
+                binding.media_binding_id(),
+                reservation,
+                owner.owner_epoch,
+                deadline,
+                scope.idempotency_key.clone(),
+                operation.command().payload().clone(),
+            ))
         }
         .await;
 
@@ -189,7 +198,33 @@ impl MediaService {
             tracing::warn!("failed to release media reservation after failed start_live: {e}");
         }
 
-        result
+        match result {
+            Ok((
+                operation_id,
+                media_session_id,
+                media_binding_id,
+                reservation,
+                owner_epoch,
+                deadline,
+                idempotency_key,
+                payload,
+            )) => {
+                self.dispatch_media_command(
+                    context,
+                    uow,
+                    operation_id,
+                    media_session_id,
+                    media_binding_id,
+                    &reservation,
+                    owner_epoch,
+                    deadline,
+                    idempotency_key,
+                    payload,
+                )
+                .await
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// Starts a playback session.
@@ -267,7 +302,7 @@ impl MediaService {
                 self.id_generator.as_ref(),
                 self.clock.as_ref(),
                 context,
-                scope.idempotency_key,
+                scope.idempotency_key.clone(),
                 device_id,
                 scope.target,
                 CommandPayload::StartPlayback {
@@ -363,7 +398,16 @@ impl MediaService {
                 .await?;
 
             uow.commit().await?;
-            Ok(MediaSessionDto::from(&session))
+            Ok((
+                operation.operation_id(),
+                session.media_session_id(),
+                binding.media_binding_id(),
+                reservation,
+                owner.owner_epoch,
+                deadline,
+                scope.idempotency_key.clone(),
+                operation.command().payload().clone(),
+            ))
         }
         .await;
 
@@ -378,7 +422,33 @@ impl MediaService {
             tracing::warn!("failed to release media reservation after failed start_playback: {e}");
         }
 
-        result
+        match result {
+            Ok((
+                operation_id,
+                media_session_id,
+                media_binding_id,
+                reservation,
+                owner_epoch,
+                deadline,
+                idempotency_key,
+                payload,
+            )) => {
+                self.dispatch_media_command(
+                    context,
+                    uow,
+                    operation_id,
+                    media_session_id,
+                    media_binding_id,
+                    &reservation,
+                    owner_epoch,
+                    deadline,
+                    idempotency_key,
+                    payload,
+                )
+                .await
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// Starts a two-way talk session.
@@ -451,7 +521,7 @@ impl MediaService {
                 self.id_generator.as_ref(),
                 self.clock.as_ref(),
                 context,
-                scope.idempotency_key,
+                scope.idempotency_key.clone(),
                 device_id,
                 scope.target,
                 CommandPayload::StartTalk {
@@ -544,7 +614,16 @@ impl MediaService {
                 .await?;
 
             uow.commit().await?;
-            Ok(MediaSessionDto::from(&session))
+            Ok((
+                operation.operation_id(),
+                session.media_session_id(),
+                binding.media_binding_id(),
+                reservation,
+                owner.owner_epoch,
+                deadline,
+                scope.idempotency_key.clone(),
+                operation.command().payload().clone(),
+            ))
         }
         .await;
 
@@ -559,6 +638,32 @@ impl MediaService {
             tracing::warn!("failed to release media reservation after failed start_talk: {e}");
         }
 
-        result
+        match result {
+            Ok((
+                operation_id,
+                media_session_id,
+                media_binding_id,
+                reservation,
+                owner_epoch,
+                deadline,
+                idempotency_key,
+                payload,
+            )) => {
+                self.dispatch_media_command(
+                    context,
+                    uow,
+                    operation_id,
+                    media_session_id,
+                    media_binding_id,
+                    &reservation,
+                    owner_epoch,
+                    deadline,
+                    idempotency_key,
+                    payload,
+                )
+                .await
+            }
+            Err(e) => Err(e),
+        }
     }
 }

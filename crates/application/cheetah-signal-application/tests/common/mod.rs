@@ -13,7 +13,7 @@ use cheetah_signal_application::{
     ChannelDescriptor, CommandDispatcher, DeviceService, EventService, MarkDeviceOnlineRequest,
     MediaService, OperationService, RegisterDeviceRequest, ReplaceChannelCatalogRequest,
 };
-use cheetah_signal_types::{ChannelId, DeviceId, IdGenerator, TenantId};
+use cheetah_signal_types::{ChannelId, DeviceId, IdGenerator, NodeId, TenantId};
 
 /// Shared test context for application service integration tests.
 #[allow(missing_debug_implementations)]
@@ -28,6 +28,8 @@ pub struct TestContext {
     pub clock: Arc<InMemoryClock>,
     /// In-memory deterministic id generator.
     pub id_generator: Arc<InMemoryIdGenerator>,
+    /// Signaling node identifier used for media commands.
+    pub source_node_id: NodeId,
     /// In-memory unit of work.
     pub uow: InMemoryUnitOfWork,
     /// Device application service.
@@ -64,11 +66,13 @@ pub fn setup() -> TestContext {
 
     let device_service = DeviceService::new(clock_dyn.clone(), id_gen_dyn.clone());
     let operation_service = OperationService::new(clock_dyn.clone(), id_gen_dyn.clone());
+    let source_node_id = id_generator.generate_node_id();
     let media_service = MediaService::new(
         clock_dyn.clone(),
         id_gen_dyn.clone(),
         owner_resolver.clone(),
         media_port.clone(),
+        source_node_id,
     );
     let command_dispatcher = CommandDispatcher::new(
         clock_dyn.clone(),
@@ -88,6 +92,7 @@ pub fn setup() -> TestContext {
         channel_id,
         clock,
         id_generator,
+        source_node_id,
         uow: InMemoryUnitOfWork::new(),
         device_service,
         operation_service,

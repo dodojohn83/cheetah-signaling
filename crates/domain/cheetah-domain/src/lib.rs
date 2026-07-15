@@ -12,6 +12,7 @@ pub mod device;
 pub mod error;
 pub mod event;
 pub mod media_binding;
+pub mod media_callback;
 pub mod media_session;
 pub mod operation;
 pub mod ports;
@@ -30,6 +31,7 @@ pub use device::{
 pub use error::DomainError;
 pub use event::DomainEvent;
 pub use media_binding::{MediaBinding, MediaBindingError, MediaBindingState};
+pub use media_callback::{MediaNodeCallback, MediaNodeCallbackKind};
 pub use media_session::{
     MediaPurpose, MediaSession, MediaSessionDesiredState, MediaSessionError, MediaSessionState,
 };

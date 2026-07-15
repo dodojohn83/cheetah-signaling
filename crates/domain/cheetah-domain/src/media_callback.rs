@@ -1,0 +1,50 @@
+//! Types for media-node callbacks into the signaling control plane.
+
+use cheetah_signal_types::{
+    MediaBindingId, MediaNodeInstanceEpoch, MediaSessionId, NodeId, OperationId, OwnerEpoch,
+    Revision,
+};
+
+/// A callback event emitted by a media node for a specific binding/session.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MediaNodeCallback {
+    /// Media node that emitted the callback.
+    pub media_node_id: NodeId,
+    /// Instance epoch of the media node.
+    pub media_node_instance_epoch: MediaNodeInstanceEpoch,
+    /// Media session identifier.
+    pub media_session_id: MediaSessionId,
+    /// Media binding identifier.
+    pub media_binding_id: MediaBindingId,
+    /// Operation that triggered the callback.
+    pub operation_id: OperationId,
+    /// Owner epoch of the device/session.
+    pub owner_epoch: OwnerEpoch,
+    /// Message / request identifier of the original command.
+    pub message_id: String,
+    /// Revision of the binding at the time the command was issued.
+    pub binding_revision: Revision,
+    /// Revision of the session at the time the command was issued.
+    pub session_revision: Revision,
+    /// Kind of callback event.
+    pub kind: MediaNodeCallbackKind,
+}
+
+/// Kind of media-node callback event.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MediaNodeCallbackKind {
+    /// The media session has started on the node.
+    Started,
+    /// The media session has stopped on the node.
+    Stopped {
+        /// Human-readable reason.
+        reason: String,
+    },
+    /// The media session failed on the node.
+    Failed {
+        /// Stable error code.
+        code: String,
+        /// Human-readable error message.
+        message: String,
+    },
+}

@@ -261,6 +261,8 @@ pub struct OperationDto {
 pub struct MediaSessionDto {
     /// Media session identifier.
     pub media_session_id: MediaSessionId,
+    /// Operation that created the session.
+    pub operation_id: OperationId,
     /// Tenant identifier.
     pub tenant_id: TenantId,
     /// Device identifier.
@@ -509,6 +511,7 @@ impl From<&MediaSession> for MediaSessionDto {
     fn from(session: &MediaSession) -> Self {
         Self {
             media_session_id: session.media_session_id(),
+            operation_id: session.operation_id(),
             tenant_id: session.tenant_id(),
             device_id: session.device_id(),
             channel_id: session.channel_id(),

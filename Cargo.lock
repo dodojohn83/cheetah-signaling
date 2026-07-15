@@ -524,10 +524,12 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "cheetah-domain",
+ "cheetah-media-client",
  "cheetah-signal-contracts",
  "cheetah-signal-types",
  "prost-types",
  "serde",
+ "serde_json",
  "thiserror",
  "time",
  "tokio",
