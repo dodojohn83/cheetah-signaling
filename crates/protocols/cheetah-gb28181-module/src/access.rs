@@ -2,9 +2,11 @@
 
 use crate::config::{AuthPolicy, Gb28181DomainConfig};
 use crate::error::AccessError;
-use crate::events::Gb28181Event;
+use crate::events::{DevicePresence, Gb28181Event};
 use crate::ports::CredentialProvider;
+use crate::registration::RegistrationTable;
 use crate::types::DeviceId;
+use crate::xml::parse_keepalive;
 use cheetah_gb28181_core::{
     DigestChallenge, DigestContext, DigestQop, DigestReplayCache, DigestResponse, HeaderName,
     HeaderValue, Method, SipHeaders, SipMessage, SipUri, StatusLine,
@@ -40,6 +42,7 @@ pub struct Gb28181Access<P: CredentialProvider> {
     replay_cache: DigestReplayCache,
     credential_provider: P,
     tag_counter: AtomicU64,
+    registrations: RegistrationTable,
 }
 
 impl<P: CredentialProvider> std::fmt::Debug for Gb28181Access<P> {
@@ -71,6 +74,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
             replay_cache: DigestReplayCache::new(1024),
             credential_provider,
             tag_counter: AtomicU64::new(1),
+            registrations: RegistrationTable::new(),
         })
     }
 
@@ -134,6 +138,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                 device_id,
                 source,
                 user_agent,
+                now,
             ))
         } else if self.config.auth_policy() == AuthPolicy::ChallengeOptional {
             let user_agent = headers
@@ -146,6 +151,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                 device_id,
                 source,
                 user_agent,
+                now,
             ))
         } else {
             let challenge = self
@@ -157,6 +163,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn register_accepted(
         &mut self,
         message: &SipMessage,
@@ -165,9 +172,11 @@ impl<P: CredentialProvider> Gb28181Access<P> {
         device_id: DeviceId,
         source: SocketAddr,
         user_agent: Option<String>,
+        now: u64,
     ) -> Vec<AccessOutput> {
         let response = build_success_response(message, contact_uri, expires, self.next_tag());
         if expires == 0 {
+            self.registrations.remove(&device_id);
             vec![
                 AccessOutput::SendResponse(response),
                 AccessOutput::EmitEvent(Gb28181Event::DeviceUnregistered {
@@ -178,6 +187,14 @@ impl<P: CredentialProvider> Gb28181Access<P> {
             ]
         } else {
             let contact = contact_uri.encode();
+            self.registrations.upsert(
+                device_id.clone(),
+                source,
+                contact.clone(),
+                expires,
+                now,
+                user_agent.clone(),
+            );
             vec![
                 AccessOutput::SendResponse(response),
                 AccessOutput::EmitEvent(Gb28181Event::DeviceRegistered {
@@ -192,8 +209,92 @@ impl<P: CredentialProvider> Gb28181Access<P> {
         }
     }
 
-    fn process_message(&mut self, _input: AccessInput) -> Result<Vec<AccessOutput>, AccessError> {
-        Err(AccessError::UnsupportedMethod)
+    fn process_message(&mut self, input: AccessInput) -> Result<Vec<AccessOutput>, AccessError> {
+        let AccessInput {
+            source,
+            now,
+            message,
+        } = input;
+        let SipMessage::Request { headers, body, .. } = &message else {
+            return Err(AccessError::Internal("expected request".to_string()));
+        };
+
+        let from = headers
+            .get(&HeaderName::From)
+            .map(|v| v.as_str())
+            .ok_or(AccessError::InvalidDeviceId)?;
+        let device_id = device_from_address(from).ok_or(AccessError::InvalidDeviceId)?;
+
+        let keepalive = parse_keepalive(body)?;
+        if keepalive.device_id != device_id.as_ref() {
+            return Err(AccessError::InvalidDeviceId);
+        }
+
+        let Some(was_offline) = self.registrations.touch(&device_id, source, now) else {
+            // Keepalive from a device that is not currently registered must not
+            // bypass the registration policy.
+            return Err(AccessError::NotRegistered);
+        };
+
+        let mut outputs = Vec::with_capacity(3);
+        if was_offline {
+            outputs.push(AccessOutput::EmitEvent(
+                Gb28181Event::DevicePresenceChanged {
+                    domain_id: self.config.domain_id().clone(),
+                    device_id: device_id.clone(),
+                    source,
+                    presence: DevicePresence::Online,
+                },
+            ));
+        }
+        outputs.push(AccessOutput::EmitEvent(Gb28181Event::Keepalive {
+            domain_id: self.config.domain_id().clone(),
+            device_id,
+            source,
+            status: keepalive.status,
+        }));
+        outputs.push(AccessOutput::SendResponse(build_message_response(&message)));
+        Ok(outputs)
+    }
+
+    /// Advances the registration timer wheel and returns any resulting events.
+    ///
+    /// Should be called by the driver at regular intervals with a monotonic
+    /// second counter.
+    pub fn tick(&mut self, now: u64) -> Vec<AccessOutput> {
+        let heartbeat_timeout = self.config.heartbeat_timeout_seconds();
+        let mut outputs = Vec::new();
+        let mut expired = Vec::new();
+
+        for (device_id, reg) in self.registrations.iter_mut() {
+            if now.saturating_sub(reg.registered_at) >= reg.expires as u64 {
+                expired.push(device_id.clone());
+                outputs.push(AccessOutput::EmitEvent(Gb28181Event::DeviceUnregistered {
+                    domain_id: self.config.domain_id().clone(),
+                    device_id: device_id.clone(),
+                    source: reg.source,
+                }));
+                continue;
+            }
+
+            if !reg.offline && now.saturating_sub(reg.last_seen) >= heartbeat_timeout {
+                reg.offline = true;
+                outputs.push(AccessOutput::EmitEvent(
+                    Gb28181Event::DevicePresenceChanged {
+                        domain_id: self.config.domain_id().clone(),
+                        device_id: device_id.clone(),
+                        source: reg.source,
+                        presence: DevicePresence::Offline,
+                    },
+                ));
+            }
+        }
+
+        for device_id in expired {
+            self.registrations.remove(&device_id);
+        }
+
+        outputs
     }
 
     fn next_tag(&self) -> String {
@@ -340,6 +441,22 @@ fn build_success_response(
         HeaderValue::new(format!("<{}>;expires={}", contact.encode(), expires)),
     );
     headers.append(HeaderName::Expires, HeaderValue::new(expires.to_string()));
+    headers.append(HeaderName::ContentLength, HeaderValue::new("0"));
+    SipMessage::Response {
+        line: StatusLine::new(200, "OK"),
+        headers,
+        body: Vec::new(),
+    }
+}
+
+fn build_message_response(request: &SipMessage) -> SipMessage {
+    let mut headers = copy_common_headers(request);
+    if let Some(to) = request.headers().get(&HeaderName::To) {
+        headers.append(
+            HeaderName::To,
+            HeaderValue::new(add_or_replace_tag(to.as_str(), "gb0")),
+        );
+    }
     headers.append(HeaderName::ContentLength, HeaderValue::new("0"));
     SipMessage::Response {
         line: StatusLine::new(200, "OK"),

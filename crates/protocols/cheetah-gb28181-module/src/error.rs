@@ -22,6 +22,8 @@ pub enum AccessError {
     AuthenticationFailed,
     #[error("device is not registered or session has expired")]
     NotRegistered,
+    #[error("malformed or disallowed XML body: {0}")]
+    InvalidXml(String),
     #[error("internal module error: {0}")]
     Internal(String),
 }

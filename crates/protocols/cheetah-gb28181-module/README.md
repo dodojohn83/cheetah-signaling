@@ -14,13 +14,14 @@ its outputs are returned to a driver or application layer for execution.
 
 ## Allowed dependencies
 
-- `cheetah-gb28181-core` for Sans-I/O SIP/Digest/XML primitives.
+- `cheetah-gb28181-core` for Sans-I/O SIP/Digest primitives.
+- `quick-xml` for GB28181 XML (MANSCDP / MANSRTSP) parsing and encoding.
 - Standard Rust crates, `secrecy`, `thiserror`, `tracing`.
 
 ## Forbidden dependencies
 
-- Tokio, Axum, Tonic, SQLx, async-nats, quick-xml, or any concrete network,
-  database, media or message broker client.
+- Tokio, Axum, Tonic, SQLx, async-nats, or any concrete network, database, media
+  or message broker client.
 
 ## Features
 

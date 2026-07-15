@@ -30,7 +30,7 @@ pub enum Gb28181Event {
         /// Raw User-Agent header, if present.
         user_agent: Option<String>,
     },
-    /// A device explicitly unregistered.
+    /// A device explicitly unregistered or its registration expired.
     DeviceUnregistered {
         /// Logical domain the device belongs to.
         domain_id: DomainId,
@@ -38,6 +38,17 @@ pub enum Gb28181Event {
         device_id: DeviceId,
         /// Source address observed from the transport.
         source: SocketAddr,
+    },
+    /// Device presence changed due to keepalive timeout or recovery.
+    DevicePresenceChanged {
+        /// Logical domain the device belongs to.
+        domain_id: DomainId,
+        /// Device identifier.
+        device_id: DeviceId,
+        /// Source address.
+        source: SocketAddr,
+        /// New presence state.
+        presence: DevicePresence,
     },
     /// A keepalive was received.
     Keepalive {
