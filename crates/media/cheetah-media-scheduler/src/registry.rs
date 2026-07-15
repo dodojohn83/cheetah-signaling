@@ -197,6 +197,11 @@ impl MediaNodeRegistry for InMemoryMediaNodeRegistry {
         let entry = nodes
             .get_mut(&node_id)
             .ok_or_else(|| SchedulerError::NodeNotFound(node_id.to_string()))?;
+        if entry.node.status == NodeStatus::Left {
+            return Err(SchedulerError::NodeNotFound(format!(
+                "{node_id} has been deregistered"
+            )));
+        }
         let now = clock.now_wall();
         entry.node.load = load;
         entry.reported_session_count = session_count;
