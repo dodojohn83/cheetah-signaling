@@ -242,7 +242,14 @@ impl Dialog {
                 self.state = DialogState::Terminated;
                 vec![DialogOutput::Deliver(Box::new(req)), DialogOutput::Complete]
             }
-            Method::Invite | Method::Message | Method::Options | Method::Cancel | Method::Ack => {
+            Method::Ack => {
+                // ACK reuses the CSeq of the INVITE it acknowledges, so it
+                // bypasses the monotonic CSeq check and does not advance
+                // remote_cseq. The transaction layer passes 2xx ACKs directly
+                // to the dialog for TU delivery.
+                vec![DialogOutput::Deliver(Box::new(req))]
+            }
+            Method::Invite | Method::Message | Method::Options | Method::Cancel => {
                 if cseq <= self.remote_cseq {
                     // Out-of-order or retransmitted request inside the dialog.
                     // The transaction layer handles retransmissions; the dialog

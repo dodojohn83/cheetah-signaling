@@ -76,6 +76,18 @@ fn reinvite_request() -> cheetah_protocol_gb28181_core::SipMessage {
     )
 }
 
+fn ack_request(seq: u32) -> cheetah_protocol_gb28181_core::SipMessage {
+    parse(&format!(
+        "ACK sip:bob@192.168.1.3:5060 SIP/2.0\r\n\
+        Via: SIP/2.0/UDP 192.168.1.2:5060;branch=z9hG4bKack{seq}\r\n\
+        From: <sip:alice@example.com>;tag=local-abc\r\n\
+        To: <sip:bob@example.com>;tag=remote-xyz\r\n\
+        Call-ID: call-dialog@example.com\r\n\
+        CSeq: {seq} ACK\r\n\
+        Content-Length: 0\r\n\r\n"
+    ))
+}
+
 #[test]
 fn uac_dialog_extracts_id_route_set_and_remote_target() {
     let dialog = Dialog::new_uac(&invite_request(), &ok_response()).unwrap();
@@ -148,6 +160,35 @@ fn reinvite_updates_remote_target_and_cseq() {
     );
     assert_eq!(dialog.remote_cseq(), 4);
     assert_eq!(dialog.remote_target().host(), "10.0.0.1");
+}
+
+#[test]
+fn ack_for_2xx_invite_is_delivered_without_cseq_check() {
+    let mut dialog = Dialog::new_uas(&invite_request(), "uas-local").unwrap();
+    // remote_cseq is the INVITE's CSeq (2). The ACK for the 2xx reuses CSeq 2.
+    let outputs = dialog.process(DialogEvent::Request(ack_request(2)));
+    assert!(
+        outputs
+            .iter()
+            .any(|o| matches!(o, DialogOutput::Deliver(_)))
+    );
+    assert_eq!(dialog.remote_cseq(), 2);
+    assert!(!dialog.is_terminated());
+}
+
+#[test]
+fn ack_for_reinvite_is_delivered_without_cseq_check() {
+    let mut dialog = Dialog::new_uac(&invite_request(), &ok_response()).unwrap();
+    let _ = dialog.process(DialogEvent::Request(reinvite_request()));
+    assert_eq!(dialog.remote_cseq(), 4);
+
+    let outputs = dialog.process(DialogEvent::Request(ack_request(4)));
+    assert!(
+        outputs
+            .iter()
+            .any(|o| matches!(o, DialogOutput::Deliver(_)))
+    );
+    assert_eq!(dialog.remote_cseq(), 4);
 }
 
 #[test]
