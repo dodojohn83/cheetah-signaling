@@ -1,7 +1,7 @@
 //! Domain events emitted by the GB28181 access module.
 
 use crate::types::{DeviceId, DomainId};
-use crate::xml::CatalogItem;
+use crate::xml::{CatalogItem, RecordItem};
 use std::net::SocketAddr;
 
 /// Presence state reported by a device.
@@ -162,5 +162,24 @@ pub enum Gb28181Event {
         direction: Option<String>,
         /// Altitude.
         altitude: Option<String>,
+    },
+    /// A record info response fragment was received.
+    RecordInfoReceived {
+        /// Logical domain the device belongs to.
+        domain_id: DomainId,
+        /// Device identifier.
+        device_id: DeviceId,
+        /// Source address.
+        source: SocketAddr,
+        /// Sequence number.
+        sn: String,
+        /// Device name, if present.
+        name: Option<String>,
+        /// Declared total number of records across all fragments.
+        sum_num: u32,
+        /// Number of records in this fragment.
+        num: u32,
+        /// Records in this fragment.
+        items: Vec<RecordItem>,
     },
 }

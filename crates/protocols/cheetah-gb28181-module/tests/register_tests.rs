@@ -897,3 +897,60 @@ fn mobile_position_message_emits_mobile_position_received_event() {
     }
     assert!(seen);
 }
+
+#[test]
+fn record_info_message_emits_record_info_received_event() {
+    let (mut access, now) = make_registered_access();
+    let body = br#"<?xml version="1.0"?>
+<Response>
+    <CmdType>RecordInfo</CmdType>
+    <SN>7</SN>
+    <DeviceID>34020000001320000001</DeviceID>
+    <Name>Camera 1</Name>
+    <SumNum>1</SumNum>
+    <RecordList Num="1">
+        <Item>
+            <DeviceID>34020000001320000001</DeviceID>
+            <Name>Channel 1</Name>
+            <FilePath>/path/to/file</FilePath>
+            <StartTime>2026-07-13T00:00:00</StartTime>
+            <EndTime>2026-07-13T01:00:00</EndTime>
+            <Secrecy>0</Secrecy>
+            <Type>time</Type>
+            <FileSize>1024</FileSize>
+        </Item>
+    </RecordList>
+</Response>"#;
+    let request = make_message_request(body);
+    let outputs = access
+        .process(AccessInput {
+            source: "192.168.1.100:5060".parse().unwrap(),
+            now: now + 1,
+            message: request,
+        })
+        .unwrap();
+
+    let mut seen = false;
+    for output in outputs {
+        if let AccessOutput::EmitEvent(Gb28181Event::RecordInfoReceived {
+            sn,
+            name,
+            sum_num,
+            num,
+            items,
+            ..
+        }) = output
+        {
+            assert_eq!(sn, "7");
+            assert_eq!(name.as_deref(), Some("Camera 1"));
+            assert_eq!(sum_num, 1);
+            assert_eq!(num, 1);
+            assert_eq!(items.len(), 1);
+            assert_eq!(items[0].device_id, "34020000001320000001");
+            assert_eq!(items[0].file_path.as_deref(), Some("/path/to/file"));
+            assert_eq!(items[0].file_size.as_deref(), Some("1024"));
+            seen = true;
+        }
+    }
+    assert!(seen);
+}

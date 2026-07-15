@@ -9,6 +9,7 @@ pub mod keepalive;
 pub mod limits;
 pub mod mobile_position;
 pub mod reader;
+pub mod record_info;
 pub mod writer;
 
 pub use alarm::{AlarmInfo, parse_alarm};
@@ -20,6 +21,7 @@ pub use keepalive::{KeepaliveInfo, parse_keepalive};
 pub use limits::XmlLimits;
 pub use mobile_position::{MobilePositionInfo, parse_mobile_position};
 pub use reader::parse_xml;
+pub use record_info::{RecordInfoResponse, RecordItem, parse_record_info};
 pub use writer::encode_xml;
 
 #[cfg(test)]
