@@ -331,6 +331,20 @@ fn validate_registration_fields(
         }
     }
 
+    if let Some(capacity) = &registration.capacity {
+        if capacity.max_sessions == 0 {
+            return Err(Status::invalid_argument(
+                "capacity.max_sessions must be greater than 0".to_string(),
+            ));
+        }
+        if capacity.max_cpu_percent > config.max_reported_load_percent {
+            return Err(Status::invalid_argument(format!(
+                "capacity.max_cpu_percent exceeds {}%",
+                config.max_reported_load_percent
+            )));
+        }
+    }
+
     Ok(())
 }
 

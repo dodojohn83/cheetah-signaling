@@ -95,6 +95,7 @@ impl MediaNode {
     pub fn available_sessions(&self) -> u64 {
         self.capacity
             .max_sessions
+            .max(1)
             .saturating_sub(self.session_count)
     }
 
