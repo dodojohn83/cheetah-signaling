@@ -6,6 +6,7 @@ use cheetah_protocol_gb28181_core::{
     DigestAlgorithm, DigestContext, DigestError, DigestQop, DigestReplayCache, DigestResponse,
     Method,
 };
+use secrecy::SecretString;
 use sha2::{Digest, Sha256, Sha512};
 
 fn make_response(
@@ -177,7 +178,7 @@ fn no_qop_nonce_can_be_reused_within_ttl() -> Result<(), DigestError> {
         &resp,
         &Method::Register,
         "sip:registrar@example.com",
-        "secret",
+        &SecretString::from("secret"),
         &mut cache,
         1000,
     )?;
@@ -188,7 +189,7 @@ fn no_qop_nonce_can_be_reused_within_ttl() -> Result<(), DigestError> {
         &resp,
         &Method::Register,
         "sip:registrar@example.com",
-        "secret",
+        &SecretString::from("secret"),
         &mut cache,
         1001,
     )
@@ -217,7 +218,7 @@ fn md5_auth_with_qop_succeeds() -> Result<(), DigestError> {
         &resp,
         &Method::Register,
         "sip:registrar@example.com",
-        "secret",
+        &SecretString::from("secret"),
         &mut cache,
         1000,
     )
@@ -248,7 +249,7 @@ fn sha256_auth_with_qop_succeeds() -> Result<(), DigestError> {
         &resp,
         &Method::Register,
         "sip:registrar@example.com",
-        "secret",
+        &SecretString::from("secret"),
         &mut cache,
         1000,
     )
@@ -277,7 +278,7 @@ fn md5_without_qop_succeeds() -> Result<(), DigestError> {
         &resp,
         &Method::Register,
         "sip:registrar@example.com",
-        "secret",
+        &SecretString::from("secret"),
         &mut cache,
         1000,
     )
@@ -306,7 +307,7 @@ fn wrong_password_fails() -> Result<(), DigestError> {
         &resp,
         &Method::Register,
         "sip:registrar@example.com",
-        "secret",
+        &SecretString::from("secret"),
         &mut cache,
         1000,
     ) else {
@@ -339,7 +340,7 @@ fn expired_nonce_is_stale() -> Result<(), DigestError> {
         &resp,
         &Method::Register,
         "sip:registrar@example.com",
-        "secret",
+        &SecretString::from("secret"),
         &mut cache,
         2000,
     ) else {
@@ -378,7 +379,7 @@ fn tampered_nonce_fails_signature() -> Result<(), DigestError> {
         &resp,
         &Method::Register,
         "sip:registrar@example.com",
-        "secret",
+        &SecretString::from("secret"),
         &mut cache,
         1000,
     ) else {
@@ -411,7 +412,7 @@ fn replay_is_detected() -> Result<(), DigestError> {
         &resp,
         &Method::Register,
         "sip:registrar@example.com",
-        "secret",
+        &SecretString::from("secret"),
         &mut cache,
         1000,
     )?;
@@ -420,7 +421,7 @@ fn replay_is_detected() -> Result<(), DigestError> {
         &resp,
         &Method::Register,
         "sip:registrar@example.com",
-        "secret",
+        &SecretString::from("secret"),
         &mut cache,
         1000,
     ) else {
@@ -455,7 +456,7 @@ fn md5_disallowed_by_policy() -> Result<(), DigestError> {
         &resp,
         &Method::Register,
         "sip:registrar@example.com",
-        "secret",
+        &SecretString::from("secret"),
         &mut cache,
         1000,
     ) else {
@@ -488,7 +489,7 @@ fn auth_int_qop_is_rejected() -> Result<(), DigestError> {
         &resp,
         &Method::Register,
         "sip:registrar@example.com",
-        "secret",
+        &SecretString::from("secret"),
         &mut cache,
         1000,
     ) else {
@@ -522,7 +523,7 @@ fn missing_qop_fields_is_invalid() -> Result<(), DigestError> {
         &resp,
         &Method::Register,
         "sip:registrar@example.com",
-        "secret",
+        &SecretString::from("secret"),
         &mut cache,
         1000,
     ) else {
@@ -556,7 +557,7 @@ fn realm_mismatch_fails() -> Result<(), DigestError> {
         &resp,
         &Method::Register,
         "sip:registrar@example.com",
-        "secret",
+        &SecretString::from("secret"),
         &mut cache,
         1000,
     ) else {
@@ -590,12 +591,125 @@ fn uri_mismatch_fails() -> Result<(), DigestError> {
         &resp,
         &Method::Register,
         "sip:registrar@example.com",
-        "secret",
+        &SecretString::from("secret"),
         &mut cache,
         1000,
     ) else {
         panic!("expected uri mismatch");
     };
     assert!(matches!(err, DigestError::UriMismatch));
+    Ok(())
+}
+
+#[test]
+fn same_nc_with_different_cnonce_is_replay() -> Result<(), DigestError> {
+    let ctx = ctx_md5();
+    let challenge = ctx.generate_challenge(1000)?;
+
+    let resp1 = make_response(
+        "alice",
+        "secret",
+        "example.com",
+        &challenge.nonce,
+        "sip:registrar@example.com",
+        &Method::Register,
+        1,
+        "clientnonce",
+        Some(DigestQop::Auth),
+        DigestAlgorithm::Md5,
+    );
+
+    let mut cache = DigestReplayCache::new(64);
+    ctx.validate(
+        &resp1,
+        &Method::Register,
+        "sip:registrar@example.com",
+        &SecretString::from("secret"),
+        &mut cache,
+        1000,
+    )?;
+
+    let mut resp2 = resp1.clone();
+    resp2.cnonce = Some("othernonce".to_string());
+    resp2.response = make_response(
+        "alice",
+        "secret",
+        "example.com",
+        &challenge.nonce,
+        "sip:registrar@example.com",
+        &Method::Register,
+        1,
+        "othernonce",
+        Some(DigestQop::Auth),
+        DigestAlgorithm::Md5,
+    )
+    .response;
+
+    let Err(err) = ctx.validate(
+        &resp2,
+        &Method::Register,
+        "sip:registrar@example.com",
+        &SecretString::from("secret"),
+        &mut cache,
+        1000,
+    ) else {
+        panic!("expected replay detection for same nc with different cnonce");
+    };
+    assert!(matches!(err, DigestError::ReplayDetected));
+    Ok(())
+}
+
+#[test]
+fn out_of_order_nc_is_replay() -> Result<(), DigestError> {
+    let ctx = ctx_md5();
+    let challenge = ctx.generate_challenge(1000)?;
+
+    let resp_high = make_response(
+        "alice",
+        "secret",
+        "example.com",
+        &challenge.nonce,
+        "sip:registrar@example.com",
+        &Method::Register,
+        2,
+        "clientnonce",
+        Some(DigestQop::Auth),
+        DigestAlgorithm::Md5,
+    );
+
+    let mut cache = DigestReplayCache::new(64);
+    ctx.validate(
+        &resp_high,
+        &Method::Register,
+        "sip:registrar@example.com",
+        &SecretString::from("secret"),
+        &mut cache,
+        1000,
+    )?;
+
+    let resp_low = make_response(
+        "alice",
+        "secret",
+        "example.com",
+        &challenge.nonce,
+        "sip:registrar@example.com",
+        &Method::Register,
+        1,
+        "clientnonce",
+        Some(DigestQop::Auth),
+        DigestAlgorithm::Md5,
+    );
+
+    let Err(err) = ctx.validate(
+        &resp_low,
+        &Method::Register,
+        "sip:registrar@example.com",
+        &SecretString::from("secret"),
+        &mut cache,
+        1000,
+    ) else {
+        panic!("expected replay detection for out-of-order nc");
+    };
+    assert!(matches!(err, DigestError::ReplayDetected));
     Ok(())
 }

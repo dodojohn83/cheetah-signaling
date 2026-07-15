@@ -1,0 +1,212 @@
+//! Server-side digest authentication context.
+
+use super::nonce::{generate_nonce, validate_nonce};
+use super::replay_cache::DigestReplayCache;
+use super::response::{DigestAlgorithm, DigestChallenge, DigestError, DigestQop, DigestResponse};
+use crate::Method;
+use secrecy::zeroize::Zeroizing;
+use secrecy::{ExposeSecret, SecretBox, SecretString};
+use std::fmt;
+use subtle::ConstantTimeEq;
+
+/// Server-side digest authentication context.
+pub struct DigestContext {
+    realm: String,
+    secret: SecretBox<Vec<u8>>,
+    allow_md5: bool,
+    preferred_algorithm: DigestAlgorithm,
+    qop: Option<DigestQop>,
+    nonce_ttl_seconds: u64,
+    replay_cache_capacity: usize,
+}
+
+impl fmt::Debug for DigestContext {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DigestContext")
+            .field("realm", &self.realm)
+            .field("secret", &"[REDACTED]")
+            .field("allow_md5", &self.allow_md5)
+            .field("preferred_algorithm", &self.preferred_algorithm)
+            .field("qop", &self.qop)
+            .field("nonce_ttl_seconds", &self.nonce_ttl_seconds)
+            .field("replay_cache_capacity", &self.replay_cache_capacity)
+            .finish()
+    }
+}
+
+impl DigestContext {
+    /// Creates a new context with sensible defaults.
+    ///
+    /// MD5 is accepted for GB28181 compatibility, but the preferred challenge
+    /// algorithm defaults to SHA-256. Callers that require MD5 challenges must
+    /// explicitly set [`Self::preferred_algorithm`].
+    pub fn new(realm: impl Into<String>, secret: impl Into<Vec<u8>>) -> Self {
+        let secret = secret.into();
+        Self {
+            realm: realm.into(),
+            secret: SecretBox::new(Box::new(secret)),
+            allow_md5: true,
+            preferred_algorithm: DigestAlgorithm::Sha256,
+            qop: Some(DigestQop::Auth),
+            nonce_ttl_seconds: 300,
+            replay_cache_capacity: 1024,
+        }
+    }
+
+    /// Sets whether MD5 is allowed. Stronger algorithms use SHA-256/SHA-512.
+    pub fn allow_md5(mut self, allow: bool) -> Self {
+        self.allow_md5 = allow;
+        self
+    }
+
+    /// Sets the preferred algorithm advertised in challenges.
+    pub fn preferred_algorithm(mut self, alg: DigestAlgorithm) -> Self {
+        self.preferred_algorithm = alg;
+        self
+    }
+
+    /// Sets the offered QoP.
+    pub fn qop(mut self, qop: Option<DigestQop>) -> Self {
+        self.qop = qop;
+        self
+    }
+
+    /// Sets nonce time-to-live in seconds.
+    pub fn nonce_ttl_seconds(mut self, ttl: u64) -> Self {
+        self.nonce_ttl_seconds = ttl;
+        self
+    }
+
+    /// Sets the per-nonce replay cache capacity.
+    pub fn replay_cache_capacity(mut self, cap: usize) -> Self {
+        self.replay_cache_capacity = cap;
+        self
+    }
+
+    /// Returns the configured realm.
+    pub fn realm(&self) -> &str {
+        &self.realm
+    }
+
+    /// Generates a new challenge for the given timestamp.
+    pub fn generate_challenge(&self, now: u64) -> Result<DigestChallenge, DigestError> {
+        Ok(DigestChallenge {
+            realm: self.realm.clone(),
+            nonce: generate_nonce(self.secret.expose_secret().as_slice(), now)?,
+            opaque: None,
+            stale: false,
+            algorithm: self.preferred_algorithm,
+            qop: self.qop,
+        })
+    }
+
+    /// Generates a stale challenge, typically used in a 401 after an expired
+    /// nonce was supplied.
+    pub fn generate_stale_challenge(&self, now: u64) -> Result<DigestChallenge, DigestError> {
+        let mut c = self.generate_challenge(now)?;
+        c.stale = true;
+        Ok(c)
+    }
+
+    /// Validates a client response against a password and replay cache.
+    pub fn validate(
+        &self,
+        response: &DigestResponse,
+        method: &Method,
+        uri: &str,
+        password: &SecretString,
+        replay_cache: &mut DigestReplayCache,
+        now: u64,
+    ) -> Result<(), DigestError> {
+        let algorithm = response.algorithm.unwrap_or(DigestAlgorithm::Md5);
+        if algorithm == DigestAlgorithm::Md5 && !self.allow_md5 {
+            return Err(DigestError::AlgorithmNotAllowed);
+        }
+
+        if response.realm != self.realm {
+            return Err(DigestError::RealmMismatch);
+        }
+        if response.uri != uri {
+            return Err(DigestError::UriMismatch);
+        }
+
+        if response.qop == Some(DigestQop::AuthInt) {
+            return Err(DigestError::InvalidQop);
+        }
+        if response.qop == Some(DigestQop::Auth)
+            && (response.nc.is_none() || response.cnonce.is_none())
+        {
+            return Err(DigestError::InvalidQop);
+        }
+        if response.qop.is_none() && (response.nc.is_some() || response.cnonce.is_some()) {
+            return Err(DigestError::InvalidQop);
+        }
+
+        validate_nonce(
+            &response.nonce,
+            self.secret.expose_secret().as_slice(),
+            now,
+            self.nonce_ttl_seconds,
+        )?;
+
+        let nc = response.nc.unwrap_or(0);
+        if response.qop.is_some()
+            && !replay_cache.check(&response.nonce, nc, now, self.nonce_ttl_seconds)
+        {
+            return Err(DigestError::ReplayDetected);
+        }
+
+        let method = method.to_string();
+        let expected = compute_response(
+            algorithm,
+            &response.username,
+            &response.realm,
+            password.expose_secret(),
+            &response.nonce,
+            nc,
+            response.cnonce.as_deref(),
+            response.qop,
+            &method,
+            uri,
+        );
+
+        let expected_bytes = hex::decode(&expected).map_err(|_| DigestError::InvalidResponse)?;
+        let actual_bytes =
+            hex::decode(&response.response).map_err(|_| DigestError::InvalidResponse)?;
+        if actual_bytes.ct_eq(&expected_bytes).unwrap_u8() != 0 {
+            Ok(())
+        } else {
+            Err(DigestError::InvalidResponse)
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn compute_response(
+    algorithm: DigestAlgorithm,
+    username: &str,
+    realm: &str,
+    password: &str,
+    nonce: &str,
+    nc: u64,
+    cnonce: Option<&str>,
+    qop: Option<DigestQop>,
+    method: &str,
+    uri: &str,
+) -> String {
+    let a1 = Zeroizing::new(format!("{username}:{realm}:{password}"));
+    let ha1 = algorithm.hash_hex(a1.as_bytes());
+
+    let a2 = format!("{method}:{uri}");
+    let ha2 = algorithm.hash_hex(a2.as_bytes());
+
+    let a3 = match qop {
+        Some(DigestQop::Auth) => {
+            let cnonce = cnonce.unwrap_or("");
+            let nc = format!("{nc:08x}");
+            format!("{ha1}:{nonce}:{nc}:{cnonce}:auth:{ha2}")
+        }
+        _ => format!("{ha1}:{nonce}:{ha2}"),
+    };
+    algorithm.hash_hex(a3.as_bytes())
+}
