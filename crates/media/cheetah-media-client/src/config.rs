@@ -1,7 +1,7 @@
 //! Media client configuration.
 
 /// Configuration for the media control client.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct MediaClientConfig {
     /// Connect timeout for new gRPC connections.
     pub connect_timeout_ms: u64,
@@ -66,5 +66,42 @@ impl MediaClientConfig {
             endpoint_dns_lookup_timeout_ms: 100,
             ..Self::default()
         }
+    }
+}
+
+impl std::fmt::Debug for MediaClientConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MediaClientConfig")
+            .field("connect_timeout_ms", &self.connect_timeout_ms)
+            .field("request_timeout_ms", &self.request_timeout_ms)
+            .field("max_retry_attempts", &self.max_retry_attempts)
+            .field("retry_base_delay_ms", &self.retry_base_delay_ms)
+            .field("retry_max_delay_ms", &self.retry_max_delay_ms)
+            .field("per_node_concurrency", &self.per_node_concurrency)
+            .field("circuit_breaker_threshold", &self.circuit_breaker_threshold)
+            .field(
+                "circuit_breaker_cooldown_ms",
+                &self.circuit_breaker_cooldown_ms,
+            )
+            .field("max_connections", &self.max_connections)
+            .field("allow_insecure_http", &self.allow_insecure_http)
+            .field("allow_internal_endpoints", &self.allow_internal_endpoints)
+            .field(
+                "tls_ca_pem",
+                &self.tls_ca_pem.as_ref().map(|_| "[redacted]"),
+            )
+            .field(
+                "tls_client_cert_pem",
+                &self.tls_client_cert_pem.as_ref().map(|_| "[redacted]"),
+            )
+            .field(
+                "tls_client_key_pem",
+                &self.tls_client_key_pem.as_ref().map(|_| "[redacted]"),
+            )
+            .field(
+                "endpoint_dns_lookup_timeout_ms",
+                &self.endpoint_dns_lookup_timeout_ms,
+            )
+            .finish()
     }
 }
