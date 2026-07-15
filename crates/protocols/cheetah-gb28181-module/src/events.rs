@@ -182,4 +182,18 @@ pub enum Gb28181Event {
         /// Records in this fragment.
         items: Vec<RecordItem>,
     },
+    /// A `DeviceControl` response was received (ACK/result for a PTZ or
+    /// preset command sent earlier).
+    DeviceControlResponseReceived {
+        /// Logical domain the device belongs to.
+        domain_id: DomainId,
+        /// Device identifier.
+        device_id: DeviceId,
+        /// Source address.
+        source: SocketAddr,
+        /// Sequence number.
+        sn: String,
+        /// Result reported by the device, if any.
+        result: Option<String>,
+    },
 }

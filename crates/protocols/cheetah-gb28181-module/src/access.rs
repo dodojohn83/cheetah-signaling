@@ -7,8 +7,8 @@ use crate::ports::CredentialProvider;
 use crate::registration::RegistrationTable;
 use crate::types::DeviceId;
 use crate::xml::{
-    XmlLimits, parse_alarm, parse_catalog, parse_device_info, parse_device_status, parse_keepalive,
-    parse_mobile_position, parse_record_info, parse_xml,
+    XmlLimits, parse_alarm, parse_catalog, parse_device_control_response, parse_device_info,
+    parse_device_status, parse_keepalive, parse_mobile_position, parse_record_info, parse_xml,
 };
 use cheetah_gb28181_core::{
     DigestChallenge, DigestContext, DigestQop, DigestReplayCache, DigestResponse, HeaderName,
@@ -386,6 +386,18 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                     num: info.num,
                     items: info.items,
                 }));
+            }
+            "DeviceControl" => {
+                let resp = parse_device_control_response(body)?;
+                outputs.push(AccessOutput::EmitEvent(
+                    Gb28181Event::DeviceControlResponseReceived {
+                        domain_id: self.config.domain_id().clone(),
+                        device_id,
+                        source,
+                        sn: resp.sn,
+                        result: resp.result,
+                    },
+                ));
             }
             other => return Err(AccessError::UnsupportedCmdType(other.to_string())),
         }

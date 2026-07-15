@@ -2,6 +2,7 @@
 
 pub mod alarm;
 pub mod catalog;
+pub mod device_control;
 pub mod device_info;
 pub mod device_status;
 pub mod element;
@@ -14,6 +15,10 @@ pub mod writer;
 
 pub use alarm::{AlarmInfo, parse_alarm};
 pub use catalog::{CatalogItem, CatalogResponse, parse_catalog};
+pub use device_control::{
+    DeviceControlKind, DeviceControlRequest, DeviceControlResponse, PresetAction, PresetCommand,
+    PtzCommand, parse_device_control_response,
+};
 pub use device_info::{DeviceInfoResponse, parse_device_info};
 pub use device_status::{DeviceStatusResponse, parse_device_status};
 pub use element::XmlElement;

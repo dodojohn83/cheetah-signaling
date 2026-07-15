@@ -954,3 +954,38 @@ fn record_info_message_emits_record_info_received_event() {
     }
     assert!(seen);
 }
+
+#[test]
+fn device_control_response_emits_device_control_response_received_event() {
+    let (mut access, now) = make_registered_access();
+    let body = br#"<?xml version="1.0"?>
+<Response>
+    <CmdType>DeviceControl</CmdType>
+    <SN>42</SN>
+    <DeviceID>34020000001320000001</DeviceID>
+    <Result>OK</Result>
+</Response>"#;
+    let request = make_message_request(body);
+    let outputs = access
+        .process(AccessInput {
+            source: "192.168.1.100:5060".parse().unwrap(),
+            now: now + 1,
+            message: request,
+        })
+        .unwrap();
+
+    let mut seen = false;
+    for output in outputs {
+        if let AccessOutput::EmitEvent(Gb28181Event::DeviceControlResponseReceived {
+            sn,
+            result,
+            ..
+        }) = output
+        {
+            assert_eq!(sn, "42");
+            assert_eq!(result.as_deref(), Some("OK"));
+            seen = true;
+        }
+    }
+    assert!(seen);
+}
