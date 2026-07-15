@@ -61,8 +61,6 @@ pub struct CatalogItem {
     pub ip_address: Option<String>,
     /// Port.
     pub port: Option<String>,
-    /// Password.
-    pub password: Option<String>,
     /// Status (ON/OFF).
     pub status: Option<String>,
     /// Longitude.
@@ -130,7 +128,6 @@ fn parse_item(item: &XmlElement) -> CatalogItem {
         secrecy: item.child_text("Secrecy"),
         ip_address: item.child_text("IPAddress"),
         port: item.child_text("Port"),
-        password: item.child_text("Password"),
         status: item.child_text("Status"),
         longitude: item.child_text("Longitude"),
         latitude: item.child_text("Latitude"),
