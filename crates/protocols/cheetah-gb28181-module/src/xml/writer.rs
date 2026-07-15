@@ -14,7 +14,7 @@ pub fn encode_xml(element: &XmlElement, declaration: bool) -> Result<String, Acc
     if declaration {
         output.push_str(r#"<?xml version="1.0" encoding="UTF-8"?>"#);
     }
-    write_element(&mut output, element, &XmlLimits::default())?;
+    write_element(&mut output, element, &XmlLimits::default(), 0)?;
     Ok(output)
 }
 
@@ -22,7 +22,17 @@ fn write_element(
     out: &mut String,
     element: &XmlElement,
     limits: &XmlLimits,
+    depth: usize,
 ) -> Result<(), AccessError> {
+    if depth > limits.max_depth {
+        return Err(AccessError::InvalidXml("XML nesting too deep".to_string()));
+    }
+    if element.children.len() > limits.max_children_per_element {
+        return Err(AccessError::InvalidXml(
+            "too many children per element".to_string(),
+        ));
+    }
+
     validate_xml_name(&element.name)?;
     out.push('<');
     out.push_str(&element.name);
@@ -54,7 +64,7 @@ fn write_element(
     }
 
     for child in &element.children {
-        write_element(out, child, limits)?;
+        write_element(out, child, limits, depth + 1)?;
     }
 
     out.push_str("</");
