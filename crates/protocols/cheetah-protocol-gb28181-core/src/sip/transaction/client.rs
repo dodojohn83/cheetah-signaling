@@ -263,8 +263,16 @@ fn build_ack(invite: &SipMessage, response: &SipMessage) -> SipMessage {
     let (uri, mut headers) = match invite {
         SipMessage::Request { line, headers, .. } => {
             let mut h = SipHeaders::new();
+            let allowed = [
+                HeaderName::Via,
+                HeaderName::From,
+                HeaderName::CallId,
+                HeaderName::Route,
+                HeaderName::RecordRoute,
+                HeaderName::MaxForwards,
+            ];
             for (name, value) in headers.iter() {
-                if *name != HeaderName::To && *name != HeaderName::CSeq {
+                if allowed.contains(name) {
                     h.append(name.clone(), value.clone());
                 }
             }

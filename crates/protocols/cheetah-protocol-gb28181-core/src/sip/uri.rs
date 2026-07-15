@@ -78,10 +78,20 @@ impl SipUri {
             }
         });
 
-        let (user, password) = userinfo.map_or((None, None), |info| match info.split_once(':') {
-            Some((u, p)) if !u.is_empty() => (Some(u), Some(p)),
-            _ => (Some(info), None),
-        });
+        let (user, password) = match userinfo {
+            Some(info) => match info.split_once(':') {
+                Some(("", _)) => {
+                    return Err(SipError::new(
+                        SipErrorKind::InvalidUri,
+                        None,
+                        "empty user with password",
+                    ));
+                }
+                Some((u, p)) => (Some(u), Some(p)),
+                None => (Some(info), None),
+            },
+            None => (None, None),
+        };
 
         let (hostport, param_part) = hostport
             .split_once(';')
