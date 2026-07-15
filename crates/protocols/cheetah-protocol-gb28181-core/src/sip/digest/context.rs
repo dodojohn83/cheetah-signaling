@@ -19,7 +19,6 @@ pub struct DigestContext {
     preferred_algorithm: DigestAlgorithm,
     qop: Option<DigestQop>,
     nonce_ttl_seconds: u64,
-    replay_cache_capacity: usize,
 }
 
 impl fmt::Debug for DigestContext {
@@ -32,7 +31,6 @@ impl fmt::Debug for DigestContext {
             .field("preferred_algorithm", &self.preferred_algorithm)
             .field("qop", &self.qop)
             .field("nonce_ttl_seconds", &self.nonce_ttl_seconds)
-            .field("replay_cache_capacity", &self.replay_cache_capacity)
             .finish()
     }
 }
@@ -53,7 +51,6 @@ impl DigestContext {
             preferred_algorithm: DigestAlgorithm::Sha256,
             qop: Some(DigestQop::Auth),
             nonce_ttl_seconds: 300,
-            replay_cache_capacity: 1024,
         }
     }
 
@@ -78,12 +75,6 @@ impl DigestContext {
     /// Sets nonce time-to-live in seconds.
     pub fn nonce_ttl_seconds(mut self, ttl: u64) -> Self {
         self.nonce_ttl_seconds = ttl;
-        self
-    }
-
-    /// Sets the per-nonce replay cache capacity.
-    pub fn replay_cache_capacity(mut self, cap: usize) -> Self {
-        self.replay_cache_capacity = cap;
         self
     }
 

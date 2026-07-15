@@ -713,3 +713,33 @@ fn out_of_order_nc_is_replay() -> Result<(), DigestError> {
     assert!(matches!(err, DigestError::ReplayDetected));
     Ok(())
 }
+
+#[test]
+fn parse_unescapes_quotes_and_backslashes() -> Result<(), DigestError> {
+    let value = r##"username="alice\\smith", realm="foo\"bar", nonce="abc", uri="sip:b@e", response="resp""##;
+    let parsed = DigestResponse::parse(value)?;
+    assert_eq!(parsed.username, r"alice\smith");
+    assert_eq!(parsed.realm, r##"foo"bar"##);
+    Ok(())
+}
+
+#[test]
+fn challenge_header_round_trips_quoted_realm_and_strips_crlf() -> Result<(), DigestError> {
+    let ctx = DigestContext::new("foo\r\n\"bar", b"server-secret");
+    let challenge = ctx.generate_challenge(1000)?;
+    let header = challenge.to_header_value();
+
+    // CRLF is stripped from quoted values to prevent header injection.
+    assert!(!header.contains('\r'));
+    assert!(!header.contains('\n'));
+    // The embedded quote is escaped in the wire form and must round-trip.
+    assert!(header.contains(r##"realm="foo\"bar""##));
+
+    let response_value = format!(
+        r##"Digest username="alice", realm="foo\"bar", nonce="{}", uri="sip:b@e", response="resp", algorithm="SHA-256""##,
+        challenge.nonce
+    );
+    let parsed = DigestResponse::parse(&response_value)?;
+    assert_eq!(parsed.realm, r##"foo"bar"##);
+    Ok(())
+}

@@ -2,6 +2,7 @@
 
 use crate::sip::error::{SipError, SipErrorKind};
 use sha2::Digest;
+use std::borrow::Cow;
 use std::fmt;
 
 /// Digest algorithm selection.
@@ -211,28 +212,30 @@ impl DigestResponse {
             let value = unquote(raw);
 
             match key.as_str() {
-                "username" => username = Some(value.to_string()),
-                "realm" => realm = Some(value.to_string()),
-                "nonce" => nonce = Some(value.to_string()),
-                "uri" => uri = Some(value.to_string()),
-                "response" => response = Some(value.to_string()),
-                "cnonce" => cnonce = Some(value.to_string()),
+                "username" => username = Some(value.into_owned()),
+                "realm" => realm = Some(value.into_owned()),
+                "nonce" => nonce = Some(value.into_owned()),
+                "uri" => uri = Some(value.into_owned()),
+                "response" => response = Some(value.into_owned()),
+                "cnonce" => cnonce = Some(value.into_owned()),
                 "nc" => {
                     nc = Some(
-                        u64::from_str_radix(value, 16)
+                        u64::from_str_radix(value.as_ref(), 16)
                             .map_err(|_| DigestError::Malformed("bad nc value".to_string()))?,
                     );
                 }
                 "qop" => {
-                    qop = DigestQop::parse(value)
+                    qop = DigestQop::parse(value.as_ref())
                         .map(Some)
                         .ok_or(DigestError::InvalidQop)?;
                 }
                 "algorithm" => {
-                    algorithm =
-                        Some(DigestAlgorithm::parse(value).ok_or(DigestError::UnknownAlgorithm)?);
+                    algorithm = Some(
+                        DigestAlgorithm::parse(value.as_ref())
+                            .ok_or(DigestError::UnknownAlgorithm)?,
+                    );
                 }
-                "opaque" => opaque = Some(value.to_string()),
+                "opaque" => opaque = Some(value.into_owned()),
                 _ => {}
             }
         }
@@ -339,11 +342,22 @@ fn split_commas(value: &str) -> Vec<&str> {
     let mut parts = Vec::new();
     let mut start = 0;
     let mut in_quotes = false;
+    let mut escaping = false;
 
     for (i, c) in value.char_indices() {
+        if escaping {
+            escaping = false;
+            continue;
+        }
+        if c == '\\' {
+            escaping = true;
+            continue;
+        }
         if c == '"' {
             in_quotes = !in_quotes;
-        } else if c == ',' && !in_quotes {
+            continue;
+        }
+        if c == ',' && !in_quotes {
             parts.push(&value[start..i]);
             start = i + c.len_utf8();
         }
@@ -352,11 +366,37 @@ fn split_commas(value: &str) -> Vec<&str> {
     parts
 }
 
-fn unquote(value: &str) -> &str {
+fn unquote(value: &str) -> Cow<'_, str> {
     let value = value.trim();
     if value.len() >= 2 && value.starts_with('"') && value.ends_with('"') {
-        &value[1..value.len() - 1]
+        let inner = &value[1..value.len() - 1];
+        if inner.contains('\\') {
+            Cow::Owned(unescape(inner))
+        } else {
+            Cow::Borrowed(inner)
+        }
     } else {
-        value
+        Cow::Borrowed(value)
     }
+}
+
+fn unescape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.next() {
+                Some('\\') => out.push('\\'),
+                Some('"') => out.push('"'),
+                Some(other) => {
+                    out.push('\\');
+                    out.push(other);
+                }
+                None => out.push('\\'),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
