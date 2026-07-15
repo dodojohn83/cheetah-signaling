@@ -1,0 +1,19 @@
+[package]
+name = "cheetah-signaling"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+description = "Cheetah Signaling edge/cluster executable entry point."
+
+[[bin]]
+name = "cheetah-signaling"
+path = "src/main.rs"
+
+[dependencies]
+cheetah-signal-types = { workspace = true }
+
+[lints]
+workspace = true

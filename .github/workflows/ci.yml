@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main, wp/*]
+  push:
+    branches: [main, wp/*]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: short
+
+jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.96.1
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.96.1
+        with:
+          components: clippy
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.96.1
+      - name: Install cargo-nextest
+        run: cargo install cargo-nextest --locked
+      - run: cargo nextest run --workspace
+
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.96.1
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked
+      - run: cargo deny check
+
+  cross:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.96.1
+        with:
+          targets: aarch64-unknown-linux-gnu
+      - name: Install cross linker
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq gcc-aarch64-linux-gnu
+      - run: cargo check --target aarch64-unknown-linux-gnu
+
+  proto:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install buf
+        uses: bufbuild/buf-action@v1
+        with:
+          setup_only: true
+          version: 1.50.0
+      - name: Buf lint
+        run: buf lint --config proto/buf.yaml
+      - name: Buf breaking
+        run: |
+          if git ls-tree origin/main -- proto/ | grep -q '\.proto'; then
+            buf breaking --config proto/buf.yaml --against '.git#branch=main'
+          else
+            echo "No previous proto module; skipping breaking check."
+          fi

@@ -1,0 +1,11 @@
+/target
+.env
+.env.*
+!.env.example
+.DS_Store
+*.swp
+*.swo
+*.tmp
+/tmp
+/test-results
+/.cargo/deny/advisories

@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package cheetah.signaling.common.v1;
+
+option go_package = "github.com/dodojohn83/cheetah-signaling/proto/cheetah/signaling/common/v1";
+
+// Placeholder common types for the signaling control plane.
+// Will be expanded in WP-05 with Tenant, Device, Channel, Operation, MediaBinding, etc.
+message Empty {
+}

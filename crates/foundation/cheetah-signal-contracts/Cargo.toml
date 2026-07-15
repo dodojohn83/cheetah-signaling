@@ -1,0 +1,16 @@
+[package]
+name = "cheetah-signal-contracts"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+description = "Versioned internal contracts and capability constants shared across crates."
+
+[dependencies]
+
+[dev-dependencies]
+
+[lints]
+workspace = true

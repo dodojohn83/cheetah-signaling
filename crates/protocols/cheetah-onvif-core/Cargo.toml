@@ -1,0 +1,16 @@
+[package]
+name = "cheetah-onvif-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+description = "Sans-I/O ONVIF core state machine and XML codec."
+
+[dependencies]
+
+[dev-dependencies]
+
+[lints]
+workspace = true

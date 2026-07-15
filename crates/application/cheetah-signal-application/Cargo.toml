@@ -1,0 +1,16 @@
+[package]
+name = "cheetah-signal-application"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+description = "Application services: command handlers, Operation, Saga and reconciler."
+
+[dependencies]
+
+[dev-dependencies]
+
+[lints]
+workspace = true

@@ -23,13 +23,13 @@ Phase 0 固定以下初始版本并提交 `Cargo.lock`：Rust 1.96.1、Tokio 1.5
 
 ## 4. 执行体任务
 
-- [ ] 创建根 `AGENTS.md`，复制本章和 001 中不可违反的分层、Sans-I/O、媒体解耦、测试规则。
-- [ ] 创建 `SystemArchitecture.md`，只描述已经冻结的六层依赖、部署角色和数据流。
-- [ ] 创建 `rust-toolchain.toml` 固定 channel、rustfmt、clippy、targets。
-- [ ] 在 README 写明开发环境、外部 PostgreSQL/NATS/protoc/Buf 要求。
-- [ ] 建立 ADR 目录；只对真正改变冻结决策的新事项写 ADR。
-- [ ] 建立 `deny.toml`，允许许可证以 MIT/Apache-2.0/BSD/ISC 为主，未知许可证 fail CI。
-- [ ] 建立依赖升级策略：补丁按月、次版本每季度、工具链半年验证，均需完整 contract/perf 回归。
+- [x] 创建根 `AGENTS.md`，复制本章和 001 中不可违反的分层、Sans-I/O、媒体解耦、测试规则。现有 `AGENTS.md` 已覆盖上述约束。
+- [x] 创建 `SystemArchitecture.md`，只描述已经冻结的六层依赖、部署角色和数据流。见 `SystemArchitecture.md`。
+- [x] 创建 `rust-toolchain.toml` 固定 channel、rustfmt、clippy、targets。Rust 1.96.1， targets: x86_64 gnu/musl, aarch64 gnu。
+- [x] 在 README 写明开发环境、外部 PostgreSQL/NATS/protoc/Buf 要求。见 `README.md`。
+- [x] 建立 ADR 目录；只对真正改变冻结决策的新事项写 ADR。见 `docs/adr/README.md`。
+- [x] 建立 `deny.toml`，允许许可证以 MIT/Apache-2.0/BSD/ISC 为主，未知许可证 fail CI。`cargo deny check` 通过。
+- [x] 建立依赖升级策略：补丁按月、次版本每季度、工具链半年验证，均需完整 contract/perf 回归。见 `docs/dependency-policy.md`。
 
 ## 5. 完成条件
 

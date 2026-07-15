@@ -1,0 +1,16 @@
+[package]
+name = "cheetah-ownership"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+description = "Owner directory, epoch fencing and lease management."
+
+[dependencies]
+
+[dev-dependencies]
+
+[lints]
+workspace = true

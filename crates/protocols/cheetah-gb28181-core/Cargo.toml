@@ -1,0 +1,16 @@
+[package]
+name = "cheetah-gb28181-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+description = "Sans-I/O GB/T 28181 core state machine and codec."
+
+[dependencies]
+
+[dev-dependencies]
+
+[lints]
+workspace = true

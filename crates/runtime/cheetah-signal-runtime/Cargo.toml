@@ -1,0 +1,16 @@
+[package]
+name = "cheetah-signal-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+description = "Sharded worker, timer wheel and runtime scheduling."
+
+[dependencies]
+
+[dev-dependencies]
+
+[lints]
+workspace = true
