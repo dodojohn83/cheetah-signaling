@@ -62,6 +62,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
     ///
     /// Returns an error if the digest secret is too short (less than 32 bytes).
     pub fn new(config: Gb28181DomainConfig, credential_provider: P) -> Result<Self, AccessError> {
+        let max_registrations = config.max_registrations();
         let ctx = DigestContext::new(config.realm(), config.digest_secret().expose_secret())
             .map_err(|e| AccessError::Internal(e.to_string()))?
             .allow_md5(config.allow_md5())
@@ -74,7 +75,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
             replay_cache: DigestReplayCache::new(1024),
             credential_provider,
             tag_counter: AtomicU64::new(1),
-            registrations: RegistrationTable::new(),
+            registrations: RegistrationTable::new(max_registrations),
         })
     }
 
@@ -131,7 +132,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
             let user_agent = headers
                 .get(&HeaderName::UserAgent)
                 .map(|v| v.as_str().to_string());
-            Ok(self.register_accepted(
+            self.register_accepted(
                 &message,
                 &contact_uri,
                 expires,
@@ -139,12 +140,12 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                 source,
                 user_agent,
                 now,
-            ))
+            )
         } else if self.config.auth_policy() == AuthPolicy::ChallengeOptional {
             let user_agent = headers
                 .get(&HeaderName::UserAgent)
                 .map(|v| v.as_str().to_string());
-            Ok(self.register_accepted(
+            self.register_accepted(
                 &message,
                 &contact_uri,
                 expires,
@@ -152,7 +153,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                 source,
                 user_agent,
                 now,
-            ))
+            )
         } else {
             let challenge = self
                 .digest_context
@@ -173,18 +174,18 @@ impl<P: CredentialProvider> Gb28181Access<P> {
         source: SocketAddr,
         user_agent: Option<String>,
         now: u64,
-    ) -> Vec<AccessOutput> {
+    ) -> Result<Vec<AccessOutput>, AccessError> {
         let response = build_success_response(message, contact_uri, expires, self.next_tag());
         if expires == 0 {
             self.registrations.remove(&device_id);
-            vec![
+            Ok(vec![
                 AccessOutput::SendResponse(response),
                 AccessOutput::EmitEvent(Gb28181Event::DeviceUnregistered {
                     domain_id: self.config.domain_id().clone(),
                     device_id,
                     source,
                 }),
-            ]
+            ])
         } else {
             let contact = contact_uri.encode();
             self.registrations.upsert(
@@ -194,8 +195,8 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                 expires,
                 now,
                 user_agent.clone(),
-            );
-            vec![
+            )?;
+            Ok(vec![
                 AccessOutput::SendResponse(response),
                 AccessOutput::EmitEvent(Gb28181Event::DeviceRegistered {
                     domain_id: self.config.domain_id().clone(),
@@ -205,7 +206,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                     expires,
                     user_agent,
                 }),
-            ]
+            ])
         }
     }
 

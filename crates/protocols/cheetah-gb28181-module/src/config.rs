@@ -3,7 +3,7 @@
 use crate::error::AccessError;
 use crate::types::DomainId;
 use cheetah_gb28181_core::DigestAlgorithm;
-use secrecy::{ExposeSecret, SecretBox};
+use secrecy::{ExposeSecret, SecretSlice};
 use std::fmt;
 
 /// Character-set handling for GB28181 XML bodies.
@@ -32,7 +32,7 @@ pub enum AuthPolicy {
 pub struct Gb28181DomainConfig {
     domain_id: DomainId,
     realm: String,
-    digest_secret: SecretBox<Vec<u8>>,
+    digest_secret: SecretSlice<u8>,
     allow_md5: bool,
     preferred_algorithm: DigestAlgorithm,
     default_expires_seconds: u32,
@@ -40,22 +40,28 @@ pub struct Gb28181DomainConfig {
     charset_policy: CharsetPolicy,
     heartbeat_timeout_seconds: u64,
     catalog_page_limit: usize,
+    max_registrations: usize,
     auth_policy: AuthPolicy,
 }
 
 impl Gb28181DomainConfig {
     /// Creates a default config for tests and bootstrapping.
     ///
+    /// `digest_secret` must be a zeroizing secret type such as [`SecretSlice`].
+    /// Callers are responsible for zeroizing any intermediate buffers used to
+    /// construct the secret.
+    ///
     /// Returns an error if `domain_id` is not a valid [`DomainId`] or if the
     /// digest secret is shorter than 32 bytes.
     pub fn new(
         domain_id: impl AsRef<str>,
         realm: impl AsRef<str>,
-        digest_secret: Vec<u8>,
+        digest_secret: impl Into<SecretSlice<u8>>,
     ) -> Result<Self, AccessError> {
         const MIN_SECRET_LEN: usize = 32;
-        // Wrap the secret immediately so it is zeroized on any early-return path.
-        let digest_secret = SecretBox::new(Box::new(digest_secret));
+        const DEFAULT_MAX_REGISTRATIONS: usize = 100_000;
+        // Consumes the secret into a zeroizing SecretSlice immediately.
+        let digest_secret = digest_secret.into();
         let domain_id = DomainId::new(domain_id).ok_or(AccessError::InvalidDomainId)?;
         if digest_secret.expose_secret().len() < MIN_SECRET_LEN {
             return Err(AccessError::Internal("digest secret too short".to_string()));
@@ -71,6 +77,7 @@ impl Gb28181DomainConfig {
             charset_policy: CharsetPolicy::Utf8,
             heartbeat_timeout_seconds: 90,
             catalog_page_limit: 128,
+            max_registrations: DEFAULT_MAX_REGISTRATIONS,
             auth_policy: AuthPolicy::Required,
         })
     }
@@ -126,10 +133,15 @@ impl Gb28181DomainConfig {
         self.preferred_algorithm
     }
 
+    /// Maximum number of simultaneous device registrations per domain.
+    pub fn max_registrations(&self) -> usize {
+        self.max_registrations
+    }
+
     /// Returns the digest secret without exposing the underlying bytes.
     ///
     /// Callers must use `secrecy::ExposeSecret` to access the bytes.
-    pub(crate) fn digest_secret(&self) -> &SecretBox<Vec<u8>> {
+    pub(crate) fn digest_secret(&self) -> &SecretSlice<u8> {
         &self.digest_secret
     }
 
@@ -153,16 +165,25 @@ impl Gb28181DomainConfig {
 
     /// Returns a new config with a different digest secret.
     ///
+    /// `secret` must be a zeroizing secret type such as [`SecretSlice`].
     /// Returns `Err` if `secret` is shorter than 32 bytes.
-    pub fn with_digest_secret(mut self, secret: Vec<u8>) -> Result<Self, AccessError> {
+    pub fn with_digest_secret(
+        mut self,
+        secret: impl Into<SecretSlice<u8>>,
+    ) -> Result<Self, AccessError> {
         const MIN_SECRET_LEN: usize = 32;
-        // Wrap the secret immediately so it is zeroized on any early-return path.
-        let secret = SecretBox::new(Box::new(secret));
+        let secret = secret.into();
         if secret.expose_secret().len() < MIN_SECRET_LEN {
             return Err(AccessError::Internal("digest secret too short".to_string()));
         }
         self.digest_secret = secret;
         Ok(self)
+    }
+
+    /// Returns a new config with the supplied registration table capacity.
+    pub fn with_max_registrations(mut self, max_registrations: usize) -> Self {
+        self.max_registrations = max_registrations;
+        self
     }
 }
 
@@ -171,7 +192,7 @@ impl Clone for Gb28181DomainConfig {
         Self {
             domain_id: self.domain_id.clone(),
             realm: self.realm.clone(),
-            digest_secret: SecretBox::new(Box::new(self.digest_secret.expose_secret().clone())),
+            digest_secret: self.digest_secret.clone(),
             allow_md5: self.allow_md5,
             preferred_algorithm: self.preferred_algorithm,
             default_expires_seconds: self.default_expires_seconds,
@@ -179,6 +200,7 @@ impl Clone for Gb28181DomainConfig {
             charset_policy: self.charset_policy,
             heartbeat_timeout_seconds: self.heartbeat_timeout_seconds,
             catalog_page_limit: self.catalog_page_limit,
+            max_registrations: self.max_registrations,
             auth_policy: self.auth_policy,
         }
     }
@@ -197,6 +219,7 @@ impl fmt::Debug for Gb28181DomainConfig {
             .field("charset_policy", &self.charset_policy)
             .field("heartbeat_timeout_seconds", &self.heartbeat_timeout_seconds)
             .field("catalog_page_limit", &self.catalog_page_limit)
+            .field("max_registrations", &self.max_registrations)
             .field("auth_policy", &self.auth_policy)
             .finish()
     }

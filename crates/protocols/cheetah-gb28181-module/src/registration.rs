@@ -1,5 +1,6 @@
 //! In-memory registration table for one GB28181 domain.
 
+use crate::error::AccessError;
 use crate::types::DeviceId;
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -25,20 +26,26 @@ pub(crate) struct Registration {
 }
 
 /// Simple in-memory registration table keyed by device ID.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub(crate) struct RegistrationTable {
     table: HashMap<DeviceId, Registration>,
+    max_registrations: usize,
 }
 
 impl RegistrationTable {
-    pub fn new() -> Self {
+    pub fn new(max_registrations: usize) -> Self {
         Self {
             table: HashMap::new(),
+            max_registrations,
         }
     }
 
     /// Inserts or replaces a registration. Returns the previous registration,
     /// if any.
+    ///
+    /// Rejects the insertion if the table is already at capacity and the
+    /// device is not already registered. Capacity violations are reported as
+    /// `AccessError::RegistrationTableFull`.
     pub fn upsert(
         &mut self,
         device_id: DeviceId,
@@ -47,7 +54,12 @@ impl RegistrationTable {
         expires: u32,
         now: u64,
         user_agent: Option<String>,
-    ) -> Option<Registration> {
+    ) -> Result<Option<Registration>, AccessError> {
+        let is_new = !self.table.contains_key(&device_id);
+        if is_new && self.table.len() >= self.max_registrations {
+            return Err(AccessError::RegistrationTableFull);
+        }
+
         let registration = Registration {
             source,
             contact,
@@ -57,7 +69,7 @@ impl RegistrationTable {
             offline: false,
             user_agent,
         };
-        self.table.insert(device_id, registration)
+        Ok(self.table.insert(device_id, registration))
     }
 
     /// Marks a registered device as still alive. Returns `Some` with the

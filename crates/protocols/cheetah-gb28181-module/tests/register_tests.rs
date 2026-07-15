@@ -19,10 +19,19 @@ const PASSWORD: &str = "secret";
 const SERVER_SECRET: &[u8] = b"server-secret-must-be-32-bytes-long";
 
 fn make_request(cseq: u32, with_auth: bool) -> SipMessage {
-    make_register_request(cseq, with_auth, 3600)
+    make_register_request_for_id(DEVICE_ID, cseq, with_auth, 3600)
 }
 
 fn make_register_request(cseq: u32, with_auth: bool, expires: u32) -> SipMessage {
+    make_register_request_for_id(DEVICE_ID, cseq, with_auth, expires)
+}
+
+fn make_register_request_for_id(
+    device_id: &str,
+    cseq: u32,
+    with_auth: bool,
+    expires: u32,
+) -> SipMessage {
     let mut headers = SipHeaders::new();
     headers.append(
         HeaderName::Via,
@@ -30,11 +39,11 @@ fn make_register_request(cseq: u32, with_auth: bool, expires: u32) -> SipMessage
     );
     headers.append(
         HeaderName::From,
-        HeaderValue::new(format!("<sip:{DEVICE_ID}@{REALM}>;tag=fromtag")),
+        HeaderValue::new(format!("<sip:{device_id}@{REALM}>;tag=fromtag")),
     );
     headers.append(
         HeaderName::To,
-        HeaderValue::new(format!("<sip:{DEVICE_ID}@{REALM}>")),
+        HeaderValue::new(format!("<sip:{device_id}@{REALM}>")),
     );
     headers.append(HeaderName::CallId, HeaderValue::new("call-id-1"));
     headers.append(
@@ -44,7 +53,7 @@ fn make_register_request(cseq: u32, with_auth: bool, expires: u32) -> SipMessage
     headers.append(
         HeaderName::Contact,
         HeaderValue::new(format!(
-            "<sip:{DEVICE_ID}@192.168.1.100:5060>;expires={expires}"
+            "<sip:{device_id}@192.168.1.100:5060>;expires={expires}"
         )),
     );
     headers.append(HeaderName::UserAgent, HeaderValue::new("IPC"));
@@ -57,7 +66,7 @@ fn make_register_request(cseq: u32, with_auth: bool, expires: u32) -> SipMessage
     SipMessage::Request {
         line: RequestLine::new(
             Method::Register,
-            SipUri::parse(format!("sip:{DEVICE_ID}@{REALM}")).unwrap(),
+            SipUri::parse(format!("sip:{device_id}@{REALM}")).unwrap(),
         ),
         headers,
         body: Vec::new(),
@@ -534,5 +543,40 @@ fn registration_expiry_removes_registration() {
     assert!(matches!(
         result,
         Err(cheetah_gb28181_module::AccessError::NotRegistered)
+    ));
+}
+
+#[test]
+fn registration_table_respects_capacity_limit() {
+    let config =
+        Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec())
+            .unwrap()
+            .with_auth_policy(AuthPolicy::ChallengeOptional)
+            .with_max_registrations(1);
+    let provider = |_device: &DeviceId| None;
+    let mut access = Gb28181Access::new(config, provider).unwrap();
+
+    let request = make_request(1, false);
+    access
+        .process(AccessInput {
+            source: "192.168.1.100:5060".parse().unwrap(),
+            now: 1000,
+            message: request,
+        })
+        .unwrap();
+
+    // A second device with a different device ID should be rejected because the
+    // table is at capacity.
+    let other_request =
+        make_register_request_for_id("34020000001320000002", 1, false, 3600);
+
+    let result = access.process(AccessInput {
+        source: "192.168.1.101:5060".parse().unwrap(),
+        now: 1000,
+        message: other_request,
+    });
+    assert!(matches!(
+        result,
+        Err(cheetah_gb28181_module::AccessError::RegistrationTableFull)
     ));
 }
