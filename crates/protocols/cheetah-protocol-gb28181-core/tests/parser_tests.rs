@@ -88,13 +88,13 @@ fn tcp_stream_handles_partial_and_multiple_messages() {
 
     let data = REGISTER.as_bytes();
     // Feed first half
-    parser.feed(&data[..data.len() / 2]);
+    parser.feed(&data[..data.len() / 2]).unwrap();
     assert!(parser.pop_message().is_none());
 
     // Feed remaining plus a second full message
     let second = "SIP/2.0 100 Trying\r\nContent-Length: 0\r\n\r\n";
-    parser.feed(&data[data.len() / 2..]);
-    parser.feed(second.as_bytes());
+    parser.feed(&data[data.len() / 2..]).unwrap();
+    parser.feed(second.as_bytes()).unwrap();
 
     let first = parser.pop_message().unwrap().expect("first message");
     assert!(matches!(first, SipMessage::Request { .. }));
@@ -157,6 +157,50 @@ fn malformed_header_missing_colon_is_rejected() {
         err.kind,
         cheetah_protocol_gb28181_core::SipErrorKind::InvalidHeader
     ));
+}
+
+#[test]
+fn parser_buffer_size_is_limited() {
+    let config = SipParserConfig {
+        max_buffer_bytes: 32,
+        ..SipParserConfig::default()
+    };
+    let mut parser = SipParser::new(config);
+    let result = parser.feed(b"this is a very long stream of bytes without any crlf");
+    assert!(matches!(
+        result.unwrap_err().kind,
+        cheetah_protocol_gb28181_core::SipErrorKind::BufferTooLarge
+    ));
+}
+
+#[test]
+fn compact_header_forms_are_recognized() {
+    let data = "SIP/2.0 200 OK\r\n\
+        v: SIP/2.0/UDP 192.168.1.1:5060;branch=z9hG4bK123\r\n\
+        f: <sip:alice@example.com>\r\n\
+        t: <sip:bob@example.com>\r\n\
+        s: Presence\r\n\
+        i: call-123@example.com\r\n\
+        l: 0\r\n\r\n";
+    let msg = SipParser::parse_datagram(data.as_bytes(), SipParserConfig::default())
+        .expect("should parse compact headers");
+    assert!(msg.headers().get(&HeaderName::Via).is_some());
+    assert!(msg.headers().get(&HeaderName::From).is_some());
+    assert!(msg.headers().get(&HeaderName::To).is_some());
+    assert!(msg.headers().get(&HeaderName::Subject).is_some());
+    assert!(msg.headers().get(&HeaderName::CallId).is_some());
+    assert!(msg.headers().get(&HeaderName::ContentLength).is_some());
+    assert_eq!(msg.body().len(), 0);
+}
+
+#[test]
+fn header_values_are_trimmed() {
+    let data = "SIP/2.0 200 OK\r\nCall-ID: call-abc \r\nContent-Length: 0\r\n\r\n";
+    let msg = SipParser::parse_datagram(data.as_bytes(), SipParserConfig::default())
+        .expect("should parse");
+    let name = HeaderName::CallId;
+    let value = msg.headers().get(&name).expect("Call-ID present");
+    assert_eq!(value.as_str(), "call-abc");
 }
 
 #[test]

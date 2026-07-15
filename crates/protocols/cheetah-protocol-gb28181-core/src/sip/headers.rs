@@ -84,9 +84,9 @@ impl HeaderName {
     fn from_cow(name: Cow<'_, str>) -> Self {
         let lower = name.to_ascii_lowercase();
         match lower.as_str() {
-            "via" => HeaderName::Via,
-            "from" => HeaderName::From,
-            "to" => HeaderName::To,
+            "via" | "v" => HeaderName::Via,
+            "from" | "f" => HeaderName::From,
+            "to" | "t" => HeaderName::To,
             "call-id" | "i" => HeaderName::CallId,
             "cseq" => HeaderName::CSeq,
             "contact" | "m" => HeaderName::Contact,
@@ -101,7 +101,7 @@ impl HeaderName {
             "www-authenticate" => HeaderName::WwwAuthenticate,
             "proxy-authenticate" => HeaderName::ProxyAuthenticate,
             "proxy-authorization" => HeaderName::ProxyAuthorization,
-            "subject" => HeaderName::Subject,
+            "subject" | "s" => HeaderName::Subject,
             _ => HeaderName::Other(name.into_owned()),
         }
     }

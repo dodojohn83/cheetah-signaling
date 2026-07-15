@@ -15,6 +15,8 @@ pub enum SipErrorKind {
     HeadersTooLarge,
     /// Body exceeded the configured limit.
     BodyTooLarge,
+    /// Parser buffer exceeded the configured limit.
+    BufferTooLarge,
     /// Content-Length conflicted with actual body length.
     ContentLengthMismatch,
     /// Malformed start line.

@@ -18,6 +18,8 @@ pub struct SipParserConfig {
     pub max_header_line_bytes: usize,
     /// Maximum body size in bytes.
     pub max_body_bytes: usize,
+    /// Maximum total parser buffer size in bytes.
+    pub max_buffer_bytes: usize,
 }
 
 impl Default for SipParserConfig {
@@ -28,6 +30,7 @@ impl Default for SipParserConfig {
             max_header_block_bytes: 65536,
             max_header_line_bytes: 4096,
             max_body_bytes: 2_097_152,
+            max_buffer_bytes: 8_388_608,
         }
     }
 }
@@ -73,7 +76,7 @@ impl SipParser {
     /// Returns `SipError` for malformed or oversized messages.
     pub fn parse_datagram(data: &[u8], config: SipParserConfig) -> Result<SipMessage, SipError> {
         let mut parser = Self::new(config);
-        parser.feed(data);
+        parser.feed(data)?;
         match parser.pop_message() {
             Some(result) => result,
             None => {
@@ -99,8 +102,21 @@ impl SipParser {
     }
 
     /// Appends incoming bytes to the stream buffer.
-    pub fn feed(&mut self, data: &[u8]) {
+    ///
+    /// # Errors
+    ///
+    /// Returns `SipErrorKind::BufferTooLarge` if the buffer would exceed the
+    /// configured `max_buffer_bytes`.
+    pub fn feed(&mut self, data: &[u8]) -> Result<(), SipError> {
+        if self.buffer.len() + data.len() > self.config.max_buffer_bytes {
+            return Err(SipError::new(
+                SipErrorKind::BufferTooLarge,
+                None,
+                "parser buffer exceeds limit",
+            ));
+        }
         self.buffer.extend_from_slice(data);
+        Ok(())
     }
 
     /// Attempts to extract a complete message from the stream buffer.
@@ -286,7 +302,7 @@ impl SipParser {
                     }
                 };
                 let name = HeaderName::parse(name.trim());
-                let value = HeaderValue::new(value.trim_start());
+                let value = HeaderValue::new(value.trim());
                 headers.append(name, value);
 
                 header_count += 1;
