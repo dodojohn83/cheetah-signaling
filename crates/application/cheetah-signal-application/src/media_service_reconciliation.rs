@@ -212,8 +212,10 @@ impl MediaService {
         }
 
         if !binding.is_terminal() {
-            let ev = binding.release(self.clock.as_ref())?;
-            append_binding_event(self, context, uow, binding, ev).await?;
+            if binding.state() != MediaBindingState::Releasing {
+                let ev = binding.release(self.clock.as_ref())?;
+                append_binding_event(self, context, uow, binding, ev).await?;
+            }
             let ev = binding.released(self.clock.as_ref())?;
             append_binding_event(self, context, uow, binding, ev).await?;
         }
