@@ -2,7 +2,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use cheetah_protocol_gb28181_core::{
+use cheetah_gb28181_core::{
     DigestAlgorithm, DigestContext, DigestError, DigestQop, DigestReplayCache, DigestResponse,
     Method,
 };

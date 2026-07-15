@@ -2,7 +2,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use cheetah_protocol_gb28181_core::{
+use cheetah_gb28181_core::{
     HeaderName, Method, ResponseClass, SipMessage, SipParser, SipParserConfig, encode_message,
 };
 
@@ -113,7 +113,7 @@ fn content_length_must_match_body_bytes() {
         .expect_err("should reject short body");
     assert!(matches!(
         err.kind,
-        cheetah_protocol_gb28181_core::SipErrorKind::ContentLengthMismatch
+        cheetah_gb28181_core::SipErrorKind::ContentLengthMismatch
     ));
 }
 
@@ -144,7 +144,7 @@ fn oversized_start_line_is_rejected() {
         .expect_err("should reject long start line");
     assert!(matches!(
         err.kind,
-        cheetah_protocol_gb28181_core::SipErrorKind::StartLineTooLong
+        cheetah_gb28181_core::SipErrorKind::StartLineTooLong
     ));
 }
 
@@ -155,7 +155,7 @@ fn malformed_header_missing_colon_is_rejected() {
         .expect_err("should reject malformed header");
     assert!(matches!(
         err.kind,
-        cheetah_protocol_gb28181_core::SipErrorKind::InvalidHeader
+        cheetah_gb28181_core::SipErrorKind::InvalidHeader
     ));
 }
 
@@ -169,7 +169,7 @@ fn parser_buffer_size_is_limited() {
     let result = parser.feed(b"this is a very long stream of bytes without any crlf");
     assert!(matches!(
         result.unwrap_err().kind,
-        cheetah_protocol_gb28181_core::SipErrorKind::BufferTooLarge
+        cheetah_gb28181_core::SipErrorKind::BufferTooLarge
     ));
 }
 

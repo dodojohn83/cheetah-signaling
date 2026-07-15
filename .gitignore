@@ -25,3 +25,6 @@ coverage/
 # Fuzz artifacts
 fuzz/corpus/
 fuzz/artifacts/
+
+# cargo-deny advisory database cache
+.cargo/deny/

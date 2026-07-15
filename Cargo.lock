@@ -454,6 +454,17 @@ dependencies = [
 [[package]]
 name = "cheetah-gb28181-core"
 version = "0.1.0"
+dependencies = [
+ "bytes",
+ "hex",
+ "hmac",
+ "md5",
+ "secrecy",
+ "sha2",
+ "subtle",
+ "thiserror",
+ "tracing",
+]
 
 [[package]]
 name = "cheetah-gb28181-driver-tokio"
@@ -615,21 +626,6 @@ version = "0.1.0"
 [[package]]
 name = "cheetah-plugin-testkit"
 version = "0.1.0"
-
-[[package]]
-name = "cheetah-protocol-gb28181-core"
-version = "0.1.0"
-dependencies = [
- "bytes",
- "hex",
- "hmac",
- "md5",
- "secrecy",
- "sha2",
- "subtle",
- "thiserror",
- "tracing",
-]
 
 [[package]]
 name = "cheetah-runtime-api"
