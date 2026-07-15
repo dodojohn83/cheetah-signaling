@@ -3,7 +3,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use cheetah_gb28181_core::{
-    HeaderName, HeaderValue, Method, RequestLine, SipHeaders, SipMessage, SipUri,
+    DigestContext, DigestQop, HeaderName, HeaderValue, Method, RequestLine, SipHeaders, SipMessage,
+    SipUri,
 };
 use cheetah_gb28181_module::{
     AccessInput, AccessOutput, AuthPolicy, DeviceId, Gb28181Access, Gb28181DomainConfig,
@@ -192,8 +193,9 @@ fn authenticated_register_returns_200_and_emits_event() {
 
 #[test]
 fn challenge_optional_register_without_auth_succeeds() {
-    let mut config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec()).unwrap();
-    config.auth_policy = AuthPolicy::ChallengeOptional;
+    let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec())
+        .unwrap()
+        .with_auth_policy(AuthPolicy::ChallengeOptional);
     let provider = |_: &DeviceId| -> Option<SecretString> { None };
     let mut access = Gb28181Access::new(config, provider).unwrap();
 
@@ -274,4 +276,44 @@ fn multiple_via_headers_are_copied_to_response() {
     assert_eq!(via_values.len(), 2);
     assert!(via_values.iter().any(|v| v.contains("192.168.1.100")));
     assert!(via_values.iter().any(|v| v.contains("10.0.0.1")));
+}
+
+#[test]
+fn challenge_optional_accepts_valid_credentials() {
+    let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec())
+        .unwrap()
+        .with_auth_policy(AuthPolicy::ChallengeOptional);
+    let provider = |device: &DeviceId| {
+        if device.as_ref() == DEVICE_ID {
+            Some(SecretString::from(PASSWORD))
+        } else {
+            None
+        }
+    };
+    let mut access = Gb28181Access::new(config, provider).unwrap();
+
+    // ChallengeOptional mode accepts unauthenticated requests, so we build a
+    // request that already carries valid credentials to test the validation path.
+    let ctx = DigestContext::new(REALM, SERVER_SECRET)
+        .unwrap()
+        .qop(Some(DigestQop::Auth))
+        .unwrap();
+    let nonce = ctx.generate_challenge(1000).unwrap().nonce;
+
+    let mut request = make_request(1, false);
+    add_authorization(&mut request, &nonce);
+    let outputs = access
+        .process(AccessInput {
+            source: "192.168.1.100:5060".parse().unwrap(),
+            now: 1000,
+            message: request,
+        })
+        .unwrap();
+
+    assert_eq!(outputs.len(), 2);
+    let response = find_response(&outputs);
+    let SipMessage::Response { line, .. } = response else {
+        panic!("expected response");
+    };
+    assert_eq!(line.code, 200);
 }

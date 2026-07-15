@@ -59,16 +59,12 @@ impl<P: CredentialProvider> Gb28181Access<P> {
     ///
     /// Returns an error if the digest secret is too short (less than 32 bytes).
     pub fn new(config: Gb28181DomainConfig, credential_provider: P) -> Result<Self, AccessError> {
-        let ctx = DigestContext::new(&config.realm, config.digest_secret.expose_secret())
+        let ctx = DigestContext::new(config.realm(), config.digest_secret().expose_secret())
             .map_err(|e| AccessError::Internal(e.to_string()))?
-            .allow_md5(config.allow_md5)
-            .preferred_algorithm(config.preferred_algorithm);
-        let ctx = if config.auth_policy == AuthPolicy::ChallengeOptional {
-            ctx.qop(None)
-        } else {
-            ctx.qop(Some(DigestQop::Auth))
-        }
-        .map_err(|e| AccessError::Internal(e.to_string()))?;
+            .allow_md5(config.allow_md5())
+            .preferred_algorithm(config.preferred_algorithm())
+            .qop(Some(DigestQop::Auth))
+            .map_err(|e| AccessError::Internal(e.to_string()))?;
         Ok(Self {
             config,
             digest_context: ctx,
@@ -139,7 +135,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                 source,
                 user_agent,
             ))
-        } else if self.config.auth_policy == AuthPolicy::ChallengeOptional {
+        } else if self.config.auth_policy() == AuthPolicy::ChallengeOptional {
             let user_agent = headers
                 .get(&HeaderName::UserAgent)
                 .map(|v| v.as_str().to_string());
@@ -175,7 +171,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
             vec![
                 AccessOutput::SendResponse(response),
                 AccessOutput::EmitEvent(Gb28181Event::DeviceUnregistered {
-                    domain_id: self.config.domain_id.clone(),
+                    domain_id: self.config.domain_id().clone(),
                     device_id,
                     source,
                 }),
@@ -185,7 +181,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
             vec![
                 AccessOutput::SendResponse(response),
                 AccessOutput::EmitEvent(Gb28181Event::DeviceRegistered {
-                    domain_id: self.config.domain_id.clone(),
+                    domain_id: self.config.domain_id().clone(),
                     device_id,
                     source,
                     contact,
@@ -294,8 +290,8 @@ fn resolve_expires(
 ) -> u32 {
     let requested = contact_expires
         .or(header_expires)
-        .unwrap_or(config.default_expires_seconds);
-    requested.clamp(0, config.max_expires_seconds)
+        .unwrap_or(config.default_expires_seconds());
+    requested.clamp(0, config.max_expires_seconds())
 }
 
 fn parse_authorization(value: &str) -> Result<DigestResponse, cheetah_gb28181_core::DigestError> {
