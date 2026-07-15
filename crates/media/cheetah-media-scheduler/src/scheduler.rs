@@ -10,6 +10,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::hash::{DefaultHasher, Hasher};
 use std::sync::{Arc, Mutex};
 
+struct SchedulerState {
+    reservations: BTreeMap<(TenantId, MediaBindingId), NodeId>,
+    affinity: BTreeMap<(TenantId, String), NodeId>,
+    affinity_count: BTreeMap<(TenantId, String), usize>,
+    binding_session: BTreeMap<(TenantId, MediaBindingId), String>,
+}
+
 /// Schedules media bindings onto registered media nodes.
 #[async_trait::async_trait]
 pub trait MediaScheduler: Send + Sync {
@@ -48,10 +55,7 @@ pub trait MediaScheduler: Send + Sync {
 pub struct LeastLoadedScheduler {
     registry: Arc<dyn MediaNodeRegistry>,
     config: SchedulerConfig,
-    reservations: Mutex<BTreeMap<(TenantId, MediaBindingId), NodeId>>,
-    affinity: Mutex<BTreeMap<(TenantId, String), NodeId>>,
-    affinity_count: Mutex<BTreeMap<(TenantId, String), usize>>,
-    binding_session: Mutex<BTreeMap<(TenantId, MediaBindingId), String>>,
+    state: Mutex<SchedulerState>,
 }
 
 impl LeastLoadedScheduler {
@@ -60,10 +64,12 @@ impl LeastLoadedScheduler {
         Self {
             registry,
             config,
-            reservations: Mutex::new(BTreeMap::new()),
-            affinity: Mutex::new(BTreeMap::new()),
-            affinity_count: Mutex::new(BTreeMap::new()),
-            binding_session: Mutex::new(BTreeMap::new()),
+            state: Mutex::new(SchedulerState {
+                reservations: BTreeMap::new(),
+                affinity: BTreeMap::new(),
+                affinity_count: BTreeMap::new(),
+                binding_session: BTreeMap::new(),
+            }),
         }
     }
 }
@@ -98,9 +104,12 @@ impl MediaScheduler for LeastLoadedScheduler {
 
         if let Some(session_id) = requirements.media_session_id.as_ref() {
             let node_id = self
-                .affinity
+                .state
                 .lock()
-                .map_err(|_| SchedulerError::InvalidArgument("affinity lock poisoned".to_string()))?
+                .map_err(|_| {
+                    SchedulerError::InvalidArgument("scheduler state lock poisoned".to_string())
+                })?
+                .affinity
                 .get(&(tenant_id, session_id.clone()))
                 .copied();
             if let Some(node_id) = node_id
@@ -144,24 +153,25 @@ impl MediaScheduler for LeastLoadedScheduler {
         requirements: &MediaRequirements,
         clock: &dyn Clock,
     ) -> Result<MediaNode, SchedulerError> {
+        let session_id = requirements.media_session_id.as_ref().cloned();
         {
-            let mut reservations = self.reservations.lock().map_err(|_| {
-                SchedulerError::InvalidArgument("reservation lock poisoned".to_string())
+            let mut state = self.state.lock().map_err(|_| {
+                SchedulerError::InvalidArgument("scheduler state lock poisoned".to_string())
             })?;
-            if reservations.len() >= self.config.max_reservations {
+            if state.reservations.len() >= self.config.max_reservations {
                 return Err(SchedulerError::CapacityExhausted(
                     "scheduler reservation limit reached".to_string(),
                 ));
             }
-            reservations.insert((tenant_id, binding_id), node_id);
-        }
-
-        let session_id = requirements.media_session_id.as_ref().cloned();
-        if let Some(session_id) = &session_id
-            && let Err(e) = self.track_affinity(tenant_id, binding_id, node_id, session_id)
-        {
-            self.remove_local_reservation(tenant_id, binding_id, Some(session_id.as_str()));
-            return Err(e);
+            state.reservations.insert((tenant_id, binding_id), node_id);
+            if let Some(session_id) = session_id.as_ref() {
+                let key = (tenant_id, session_id.clone());
+                state.affinity.insert(key.clone(), node_id);
+                *state.affinity_count.entry(key).or_insert(0) += 1;
+                state
+                    .binding_session
+                    .insert((tenant_id, binding_id), session_id.clone());
+            }
         }
 
         let result = self
@@ -181,39 +191,22 @@ impl MediaScheduler for LeastLoadedScheduler {
         binding_id: MediaBindingId,
         clock: &dyn Clock,
     ) -> Result<(), SchedulerError> {
-        let session_id = self
-            .binding_session
-            .lock()
-            .map_err(|_| {
-                SchedulerError::InvalidArgument("binding session lock poisoned".to_string())
-            })?
-            .remove(&(tenant_id, binding_id));
-
-        if let Some(session_id) = session_id.clone() {
-            let key = (tenant_id, session_id);
-            let mut counts = self.affinity_count.lock().map_err(|_| {
-                SchedulerError::InvalidArgument("affinity count lock poisoned".to_string())
+        let node_id = {
+            let mut state = self.state.lock().map_err(|_| {
+                SchedulerError::InvalidArgument("scheduler state lock poisoned".to_string())
             })?;
-            if let Some(count) = counts.get_mut(&key) {
-                *count = count.saturating_sub(1);
-                if *count == 0 {
-                    counts.remove(&key);
-                    drop(counts);
-                    self.affinity
-                        .lock()
-                        .map_err(|_| {
-                            SchedulerError::InvalidArgument("affinity lock poisoned".to_string())
-                        })?
-                        .remove(&key);
+            let session_id = state.binding_session.remove(&(tenant_id, binding_id));
+            if let Some(session_id) = session_id {
+                let key = (tenant_id, session_id);
+                if let Some(count) = state.affinity_count.get_mut(&key) {
+                    *count = count.saturating_sub(1);
+                    if *count == 0 {
+                        state.affinity_count.remove(&key);
+                        state.affinity.remove(&key);
+                    }
                 }
             }
-        }
-
-        let node_id = {
-            let mut reservations = self.reservations.lock().map_err(|_| {
-                SchedulerError::InvalidArgument("reservation lock poisoned".to_string())
-            })?;
-            reservations.remove(&(tenant_id, binding_id))
+            state.reservations.remove(&(tenant_id, binding_id))
         };
         if let Some(node_id) = node_id {
             self.registry
@@ -225,59 +218,26 @@ impl MediaScheduler for LeastLoadedScheduler {
 }
 
 impl LeastLoadedScheduler {
-    fn track_affinity(
-        &self,
-        tenant_id: TenantId,
-        binding_id: MediaBindingId,
-        node_id: NodeId,
-        session_id: &str,
-    ) -> Result<(), SchedulerError> {
-        let key = (tenant_id, session_id.to_string());
-        self.affinity
-            .lock()
-            .map_err(|_| SchedulerError::InvalidArgument("affinity lock poisoned".to_string()))?
-            .insert(key.clone(), node_id);
-        let mut counts = self.affinity_count.lock().map_err(|_| {
-            SchedulerError::InvalidArgument("affinity count lock poisoned".to_string())
-        })?;
-        *counts.entry(key).or_insert(0) += 1;
-        drop(counts);
-        self.binding_session
-            .lock()
-            .map_err(|_| {
-                SchedulerError::InvalidArgument("binding session lock poisoned".to_string())
-            })?
-            .insert((tenant_id, binding_id), session_id.to_string());
-        Ok(())
-    }
-
     fn remove_local_reservation(
         &self,
         tenant_id: TenantId,
         binding_id: MediaBindingId,
         session_id: Option<&str>,
     ) {
-        let _ = self
-            .reservations
-            .lock()
-            .map(|mut r| r.remove(&(tenant_id, binding_id)));
-        if let Some(session_id) = session_id {
-            let key = (tenant_id, session_id.to_string());
-            let _ = self.affinity_count.lock().map(|mut c| {
-                if let Some(count) = c.get_mut(&key) {
+        let _ = self.state.lock().map(|mut state| {
+            state.reservations.remove(&(tenant_id, binding_id));
+            if let Some(session_id) = session_id {
+                let key = (tenant_id, session_id.to_string());
+                if let Some(count) = state.affinity_count.get_mut(&key) {
                     *count = count.saturating_sub(1);
                     if *count == 0 {
-                        c.remove(&key);
-                        drop(c);
-                        let _ = self.affinity.lock().map(|mut a| a.remove(&key));
+                        state.affinity_count.remove(&key);
+                        state.affinity.remove(&key);
                     }
                 }
-            });
-            let _ = self
-                .binding_session
-                .lock()
-                .map(|mut b| b.remove(&(tenant_id, binding_id)));
-        }
+                state.binding_session.remove(&(tenant_id, binding_id));
+            }
+        });
     }
 }
 

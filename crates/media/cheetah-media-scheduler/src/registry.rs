@@ -177,6 +177,19 @@ impl MediaNodeRegistry for InMemoryMediaNodeRegistry {
         session_count: u64,
         clock: &dyn Clock,
     ) -> Result<MediaNode, SchedulerError> {
+        if load > self.config.max_reported_load_percent {
+            return Err(SchedulerError::InvalidArgument(format!(
+                "load exceeds {}%",
+                self.config.max_reported_load_percent
+            )));
+        }
+        if session_count > self.config.max_reported_session_count {
+            return Err(SchedulerError::InvalidArgument(format!(
+                "session_count exceeds {}",
+                self.config.max_reported_session_count
+            )));
+        }
+
         let mut nodes = self
             .nodes
             .write()

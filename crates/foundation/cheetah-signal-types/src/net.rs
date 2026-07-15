@@ -7,16 +7,38 @@
 pub fn is_internal_ip(ip: std::net::IpAddr) -> bool {
     match ip {
         std::net::IpAddr::V4(v4) => is_internal_ipv4(v4),
-        std::net::IpAddr::V6(v6) => {
-            if let Some(v4) = v6.to_ipv4_mapped() {
-                return is_internal_ipv4(v4);
-            }
-            v6.is_unspecified()
-                || v6.is_loopback()
-                || v6.is_unicast_link_local()
-                || v6.is_unique_local()
-        }
+        std::net::IpAddr::V6(v6) => is_internal_ipv6(v6),
     }
+}
+
+fn is_internal_ipv6(v6: std::net::Ipv6Addr) -> bool {
+    if let Some(v4) = v6.to_ipv4_mapped() {
+        return is_internal_ipv4(v4);
+    }
+
+    if v6.is_unspecified() || v6.is_loopback() || v6.is_unicast_link_local() || v6.is_unique_local()
+    {
+        return true;
+    }
+
+    let o = v6.octets();
+
+    // 6to4 2002::/16
+    if o[0] == 0x20 && o[1] == 0x02 {
+        return true;
+    }
+
+    // Teredo 2001:0000::/32
+    if o[0] == 0x20 && o[1] == 0x01 && o[2] == 0x00 && o[3] == 0x00 {
+        return true;
+    }
+
+    // Documentation 2001:db8::/32
+    if o[0] == 0x20 && o[1] == 0x01 && o[2] == 0x0d && o[3] == 0xb8 {
+        return true;
+    }
+
+    false
 }
 
 fn is_internal_ipv4(v4: std::net::Ipv4Addr) -> bool {
@@ -104,5 +126,23 @@ mod tests {
         assert!(is_internal_ip("::ffff:127.0.0.1".parse().unwrap()));
         assert!(is_internal_ip("::ffff:192.168.1.1".parse().unwrap()));
         assert!(!is_internal_ip("::ffff:1.1.1.1".parse().unwrap()));
+    }
+
+    #[test]
+    fn ipv6_internal_and_transition_addresses() {
+        assert!(is_internal_ip("::1".parse().unwrap()));
+        assert!(is_internal_ip("fe80::1".parse().unwrap()));
+        assert!(is_internal_ip("fc00::1".parse().unwrap()));
+        assert!(is_internal_ip("2002::1".parse().unwrap()));
+        assert!(is_internal_ip(
+            "2001:0000:4136:e378:8000:63bf:3fff:fdd2".parse().unwrap()
+        ));
+        assert!(is_internal_ip("2001:db8::1".parse().unwrap()));
+    }
+
+    #[test]
+    fn public_ipv6_is_not_internal() {
+        assert!(!is_internal_ip("2606:4700:4700::1111".parse().unwrap()));
+        assert!(!is_internal_ip("2001:4860:4860::8888".parse().unwrap()));
     }
 }

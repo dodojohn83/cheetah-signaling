@@ -24,6 +24,10 @@ pub struct MediaRegistryConfig {
     pub allow_internal_endpoints: bool,
     /// Timeout for DNS resolution during endpoint validation.
     pub endpoint_dns_lookup_timeout_ms: u64,
+    /// Maximum CPU load percentage a heartbeat may report (0-100).
+    pub max_reported_load_percent: u64,
+    /// Maximum session count a heartbeat may report.
+    pub max_reported_session_count: u64,
 }
 
 impl Default for MediaRegistryConfig {
@@ -46,6 +50,8 @@ impl MediaRegistryConfig {
             max_capability_constraints: 64,
             allow_internal_endpoints: false,
             endpoint_dns_lookup_timeout_ms: 1_000,
+            max_reported_load_percent: 100,
+            max_reported_session_count: 100_000,
         }
     }
 
