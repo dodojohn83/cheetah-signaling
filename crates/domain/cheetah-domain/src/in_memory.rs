@@ -7,11 +7,11 @@
 use crate::{
     Channel, ChannelRepository, ChannelStatus, Command, CommandBus, CommandPayload, DeliveryStatus,
     Device, DeviceRepository, DomainError, DomainEvent, EventPublisher, MediaBinding,
-    MediaBindingRepository, MediaNodeCommand, MediaNodeCommandResult, MediaPurpose,
-    MediaReservation, MediaSession, MediaSessionRepository, MediaSessionState, Operation,
-    OperationRepository, OperationStatus, Outbox, OutboxEntry, OwnerInfo, ProcessedMessageRecord,
-    ProcessedMessageRepository, ProcessedMessageStatus, UnitOfWork, WebhookConfig,
-    WebhookConfigRepository, WebhookDelivery, WebhookDeliveryRepository,
+    MediaBindingRepository, MediaNodeCommand, MediaNodeCommandResult, MediaNodeSessionRef,
+    MediaPurpose, MediaReservation, MediaSession, MediaSessionRepository, MediaSessionState,
+    Operation, OperationRepository, OperationStatus, Outbox, OutboxEntry, OwnerInfo,
+    ProcessedMessageRecord, ProcessedMessageRepository, ProcessedMessageStatus, UnitOfWork,
+    WebhookConfig, WebhookConfigRepository, WebhookDelivery, WebhookDeliveryRepository,
 };
 use cheetah_signal_types::{
     ChannelId, Clock, DeliveryId, DeviceId, DurationMs, Event, IdGenerator, ListCursor,
@@ -1066,10 +1066,13 @@ impl crate::DeviceOwnerResolver for InMemoryDeviceOwnerResolver {
     }
 }
 
+type MediaNodeSessionMap = BTreeMap<(TenantId, NodeId), Vec<MediaNodeSessionRef>>;
+
 /// In-memory media port.
 #[derive(Clone)]
 pub struct InMemoryMediaPort {
     reservations: Arc<Mutex<BTreeMap<(TenantId, MediaBindingId), MediaReservation>>>,
+    node_sessions: Arc<Mutex<MediaNodeSessionMap>>,
     id_generator: Arc<dyn IdGenerator>,
 }
 
@@ -1077,6 +1080,7 @@ impl std::fmt::Debug for InMemoryMediaPort {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("InMemoryMediaPort")
             .field("reservations", &self.reservations)
+            .field("node_sessions", &self.node_sessions)
             .finish_non_exhaustive()
     }
 }
@@ -1086,8 +1090,19 @@ impl InMemoryMediaPort {
     pub fn new(id_generator: Arc<dyn IdGenerator>) -> Self {
         Self {
             reservations: Arc::new(Mutex::new(BTreeMap::new())),
+            node_sessions: Arc::new(Mutex::new(BTreeMap::new())),
             id_generator,
         }
+    }
+
+    /// Configures the sessions reported by a media node for reconciliation tests.
+    pub fn set_node_sessions(
+        &self,
+        tenant_id: TenantId,
+        node_id: NodeId,
+        sessions: Vec<MediaNodeSessionRef>,
+    ) {
+        lock_mutex(&self.node_sessions).insert((tenant_id, node_id), sessions);
     }
 
     fn reserve(
@@ -1181,6 +1196,51 @@ impl crate::MediaPort for InMemoryMediaPort {
                 "PTZ command not dispatched through media node port",
             )),
         }
+    }
+
+    async fn list_nodes(
+        &self,
+        tenant_id: TenantId,
+        _clock: &dyn Clock,
+    ) -> crate::Result<Vec<NodeId>> {
+        let node_sessions = lock_mutex(&self.node_sessions);
+        Ok(node_sessions
+            .keys()
+            .filter(|(t, _)| *t == tenant_id)
+            .map(|(_, node_id)| *node_id)
+            .collect())
+    }
+
+    async fn list_sessions(
+        &self,
+        tenant_id: TenantId,
+        media_node_id: NodeId,
+        page: PageRequest,
+        _clock: &dyn Clock,
+    ) -> crate::Result<Page<MediaNodeSessionRef>> {
+        let sessions = lock_mutex(&self.node_sessions);
+        let all_items = sessions
+            .get(&(tenant_id, media_node_id))
+            .cloned()
+            .unwrap_or_default();
+        let page_size = page.page_size as usize;
+        let start = match &page.cursor {
+            None => 0,
+            Some(value) => value.parse::<usize>().unwrap_or(0),
+        };
+        let start = start.min(all_items.len());
+        let end = (start + page_size).min(all_items.len());
+        let items = all_items[start..end].to_vec();
+        let next_cursor = if end < all_items.len() {
+            Some(end.to_string())
+        } else {
+            None
+        };
+        Ok(Page {
+            items,
+            next_cursor,
+            total: None,
+        })
     }
 }
 

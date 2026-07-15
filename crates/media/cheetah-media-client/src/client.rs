@@ -4,8 +4,9 @@ use crate::config::MediaClientConfig;
 use crate::error::MediaClientError;
 use cheetah_signal_contracts::cheetah::common::v1::command_envelope::Command;
 use cheetah_signal_contracts::cheetah::common::v1::{
-    CommandEnvelope, EnvelopeMeta, MediaControlExecuteRequest, ResourceKind, ResourceRef, Uuid,
-    media_control_client::MediaControlClient as TonicMediaControlClient,
+    CommandEnvelope, EnvelopeMeta, ListSessionsRequest, MediaControlExecuteRequest, ResourceKind,
+    ResourceRef, Uuid, media_control_client::MediaControlClient as TonicMediaControlClient,
+    media_query_client::MediaQueryClient as TonicMediaQueryClient,
 };
 use cheetah_signal_contracts::cheetah::media::v1::MediaCommand;
 use cheetah_signal_types::{
@@ -50,6 +51,19 @@ pub struct MediaControlRequest {
     pub contract_version: u32,
     /// The media command payload.
     pub command: MediaCommand,
+}
+
+/// A request to list active sessions on a media node.
+#[derive(Clone, Debug)]
+pub struct MediaListSessionsRequest {
+    /// Media node identifier.
+    pub media_node_id: NodeId,
+    /// Tenant identifier.
+    pub tenant_id: TenantId,
+    /// Maximum number of sessions to return.
+    pub page_size: u32,
+    /// Opaque page cursor.
+    pub page_token: Option<String>,
 }
 
 enum CircuitState {
@@ -232,6 +246,89 @@ impl MediaControlClient {
         entry.record_failure();
         Err(MediaClientError::Grpc(last_error.unwrap_or_else(|| {
             Status::unavailable("media command failed after retries")
+        })))
+    }
+
+    /// Lists active sessions on the media node at the given endpoint.
+    pub async fn list_sessions(
+        &self,
+        endpoint: &str,
+        request: MediaListSessionsRequest,
+    ) -> Result<cheetah_signal_contracts::cheetah::common::v1::ListSessionsResponse, MediaClientError>
+    {
+        let entry = self.get_or_create_entry(endpoint).await?;
+
+        entry.can_attempt()?;
+
+        let permit = self.acquire_permit(&entry, endpoint).await?;
+
+        let body = ListSessionsRequest {
+            media_node_id: request.media_node_id.to_string(),
+            tenant_id: request.tenant_id.to_string(),
+            page_size: request.page_size,
+            page_token: request.page_token.unwrap_or_default(),
+        };
+
+        let mut last_error: Option<Status> = None;
+        for attempt in 0..=self.config.max_retry_attempts {
+            let delay = if attempt == 0 {
+                0
+            } else {
+                backoff(
+                    self.config.retry_base_delay_ms,
+                    self.config.retry_max_delay_ms,
+                    attempt,
+                )
+            };
+
+            if delay > 0 {
+                sleep(Duration::from_millis(delay)).await;
+            }
+
+            let mut client = TonicMediaQueryClient::new(entry.channel.clone());
+            let grpc_request = Request::new(body.clone());
+            let result = timeout(
+                Duration::from_millis(self.config.request_timeout_ms),
+                client.list_sessions(grpc_request),
+            )
+            .await;
+
+            match result {
+                Ok(Ok(response)) => {
+                    drop(permit);
+                    entry.record_success();
+                    return Ok(response.into_inner());
+                }
+                Ok(Err(status)) => {
+                    if is_retryable(status.code()) && attempt < self.config.max_retry_attempts {
+                        last_error = Some(status);
+                        continue;
+                    }
+                    drop(permit);
+                    if is_retryable(status.code()) {
+                        entry.record_failure();
+                    }
+                    return Err(MediaClientError::Grpc(status));
+                }
+                Err(_) => {
+                    let status = Status::deadline_exceeded("media session list timed out");
+                    if is_retryable(status.code()) && attempt < self.config.max_retry_attempts {
+                        last_error = Some(status);
+                        continue;
+                    }
+                    drop(permit);
+                    if is_retryable(status.code()) {
+                        entry.record_failure();
+                    }
+                    return Err(MediaClientError::Grpc(status));
+                }
+            }
+        }
+
+        drop(permit);
+        entry.record_failure();
+        Err(MediaClientError::Grpc(last_error.unwrap_or_else(|| {
+            Status::unavailable("media session list failed after retries")
         })))
     }
 
