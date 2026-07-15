@@ -14,6 +14,8 @@ pub struct MediaRegistryConfig {
     pub allowed_endpoint_schemes: Vec<String>,
     /// Maximum length of a control endpoint URI in bytes.
     pub max_endpoint_uri_length: usize,
+    /// Maximum length of any free-form string field supplied by a media node.
+    pub max_string_field_length: usize,
     /// When false, loopback, link-local and private network endpoints are rejected.
     pub allow_internal_endpoints: bool,
     /// Timeout for DNS resolution during endpoint validation.
@@ -35,6 +37,7 @@ impl MediaRegistryConfig {
             heartbeat_timeout_ms: 60_000,
             allowed_endpoint_schemes: vec!["http".to_string(), "https".to_string()],
             max_endpoint_uri_length: 2048,
+            max_string_field_length: 256,
             allow_internal_endpoints: false,
             endpoint_dns_lookup_timeout_ms: 1_000,
         }

@@ -294,7 +294,12 @@ impl MediaControlClient {
             .map_err(MediaClientError::Transport)?
             .connect_timeout(Duration::from_millis(self.config.connect_timeout_ms));
 
-        let authority_uri = format!("{scheme}://{host}:{port}")
+        let authority = if host.contains(':') {
+            format!("{scheme}://[{host}]:{port}")
+        } else {
+            format!("{scheme}://{host}:{port}")
+        };
+        let authority_uri = authority
             .parse::<Uri>()
             .map_err(|_| MediaClientError::InvalidEndpoint(endpoint.to_string()))?;
         builder = builder.origin(authority_uri);

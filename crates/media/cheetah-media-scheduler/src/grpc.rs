@@ -66,6 +66,7 @@ impl MediaClusterRegistry for MediaClusterRegistryService {
             .ok_or_else(|| Status::invalid_argument("missing node registration"))?;
         check_identity(&identity, &self.config, &registration.node_id)?;
         validate_control_endpoint(&registration.listen_addr, &self.config).await?;
+        validate_registration_fields(&registration, &self.config)?;
 
         let node_id = parse_node_id(&registration.node_id)?;
         let instance_id = if registration.instance_id.is_empty() {
@@ -277,6 +278,48 @@ fn to_proto_status(status: NodeStatus) -> media_proto::MediaNodeStatus {
         NodeStatus::Draining => media_proto::MediaNodeStatus::Draining,
         NodeStatus::Left => media_proto::MediaNodeStatus::Left,
     }
+}
+
+fn validate_registration_fields(
+    registration: &media_proto::MediaNodeRegistration,
+    config: &MediaRegistryConfig,
+) -> Result<(), Status> {
+    let max = config.max_string_field_length;
+    for (name, value) in [
+        ("node_id", registration.node_id.as_str()),
+        ("instance_id", registration.instance_id.as_str()),
+        ("region", registration.region.as_str()),
+    ] {
+        if value.len() > max {
+            return Err(Status::invalid_argument(format!(
+                "field '{name}' exceeds {max} bytes"
+            )));
+        }
+    }
+
+    if let Some(cap) = &registration.capability {
+        if cap.protocol.len() > max {
+            return Err(Status::invalid_argument(format!(
+                "field 'capability.protocol' exceeds {max} bytes"
+            )));
+        }
+        for op in &cap.operations {
+            if op.len() > max {
+                return Err(Status::invalid_argument(format!(
+                    "field 'capability.operations' exceeds {max} bytes"
+                )));
+            }
+        }
+        for (k, v) in &cap.constraints {
+            if k.len() > max || v.len() > max {
+                return Err(Status::invalid_argument(format!(
+                    "field 'capability.constraints' exceeds {max} bytes"
+                )));
+            }
+        }
+    }
+
+    Ok(())
 }
 
 async fn validate_control_endpoint(
