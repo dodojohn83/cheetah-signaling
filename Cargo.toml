@@ -53,6 +53,7 @@ jsonwebtoken = { version = "9.3.1", default-features = false, features = ["use_p
 subtle = "2.6.1"
 hmac = "0.12.1"
 sha2 = "0.10.8"
+md5 = "0.8.0"
 hex = "0.4.3"
 url = "2.5.0"
 reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "http2", "json", "charset"] }
