@@ -99,7 +99,7 @@ fn uac_dialog_extracts_id_route_set_and_remote_target() {
     assert_eq!(dialog.role(), DialogRole::Uac);
     assert_eq!(dialog.state(), DialogState::Confirmed);
     assert_eq!(dialog.local_cseq(), 2);
-    assert_eq!(dialog.remote_cseq(), 0);
+    assert_eq!(dialog.remote_cseq(), None);
     assert_eq!(dialog.remote_target().host(), "192.168.1.3");
     assert_eq!(dialog.route_set().len(), 2);
     assert_eq!(dialog.route_set()[0].host(), "proxy2.example.com");
@@ -158,7 +158,7 @@ fn reinvite_updates_remote_target_and_cseq() {
             .iter()
             .any(|o| matches!(o, DialogOutput::Deliver(_)))
     );
-    assert_eq!(dialog.remote_cseq(), 4);
+    assert_eq!(dialog.remote_cseq(), Some(4));
     assert_eq!(dialog.remote_target().host(), "10.0.0.1");
 }
 
@@ -172,7 +172,7 @@ fn ack_for_2xx_invite_is_delivered_without_cseq_check() {
             .iter()
             .any(|o| matches!(o, DialogOutput::Deliver(_)))
     );
-    assert_eq!(dialog.remote_cseq(), 2);
+    assert_eq!(dialog.remote_cseq(), Some(2));
     assert!(!dialog.is_terminated());
 }
 
@@ -180,7 +180,7 @@ fn ack_for_2xx_invite_is_delivered_without_cseq_check() {
 fn ack_for_reinvite_is_delivered_without_cseq_check() {
     let mut dialog = Dialog::new_uac(&invite_request(), &ok_response()).unwrap();
     let _ = dialog.process(DialogEvent::Request(reinvite_request()));
-    assert_eq!(dialog.remote_cseq(), 4);
+    assert_eq!(dialog.remote_cseq(), Some(4));
 
     let outputs = dialog.process(DialogEvent::Request(ack_request(4)));
     assert!(
@@ -188,13 +188,13 @@ fn ack_for_reinvite_is_delivered_without_cseq_check() {
             .iter()
             .any(|o| matches!(o, DialogOutput::Deliver(_)))
     );
-    assert_eq!(dialog.remote_cseq(), 4);
+    assert_eq!(dialog.remote_cseq(), Some(4));
 }
 
 #[test]
 fn out_of_order_request_is_absorbed() {
     let mut dialog = Dialog::new_uac(&invite_request(), &ok_response()).unwrap();
-    // remote_cseq starts at 0; accept a valid request with CSeq 3.
+    // remote_cseq is initially unset; accept a valid request with CSeq 3.
     let first = parse(
         "MESSAGE sip:bob@192.168.1.3:5060 SIP/2.0\r\n\
         Via: SIP/2.0/UDP 192.168.1.2:5060;branch=z9hG4bKmsg\r\n\
@@ -210,7 +210,7 @@ fn out_of_order_request_is_absorbed() {
             .iter()
             .any(|o| matches!(o, DialogOutput::Deliver(_)))
     );
-    assert_eq!(dialog.remote_cseq(), 3);
+    assert_eq!(dialog.remote_cseq(), Some(3));
 
     // A later stale request with CSeq 2 must be absorbed.
     let stale = parse(
@@ -224,7 +224,29 @@ fn out_of_order_request_is_absorbed() {
     );
     let outputs = dialog.process(DialogEvent::Request(stale));
     assert!(outputs.is_empty());
-    assert_eq!(dialog.remote_cseq(), 3);
+    assert_eq!(dialog.remote_cseq(), Some(3));
+}
+
+#[test]
+fn first_in_dialog_request_with_cseq_zero_is_accepted() {
+    let mut dialog = Dialog::new_uac(&invite_request(), &ok_response()).unwrap();
+    assert_eq!(dialog.remote_cseq(), None);
+    let first = parse(
+        "MESSAGE sip:bob@192.168.1.3:5060 SIP/2.0\r\n\
+        Via: SIP/2.0/UDP 192.168.1.2:5060;branch=z9hG4bKmsg\r\n\
+        From: <sip:alice@example.com>;tag=local-abc\r\n\
+        To: <sip:bob@example.com>;tag=remote-xyz\r\n\
+        Call-ID: call-dialog@example.com\r\n\
+        CSeq: 0 MESSAGE\r\n\
+        Content-Length: 0\r\n\r\n",
+    );
+    assert!(
+        dialog
+            .process(DialogEvent::Request(first))
+            .iter()
+            .any(|o| matches!(o, DialogOutput::Deliver(_)))
+    );
+    assert_eq!(dialog.remote_cseq(), Some(0));
 }
 
 #[test]
@@ -246,7 +268,7 @@ fn out_of_order_bye_is_absorbed() {
             .iter()
             .any(|o| matches!(o, DialogOutput::Deliver(_)))
     );
-    assert_eq!(dialog.remote_cseq(), 3);
+    assert_eq!(dialog.remote_cseq(), Some(3));
 
     // A stale BYE with a lower CSeq must not terminate the dialog.
     let stale_bye = parse(
@@ -260,7 +282,7 @@ fn out_of_order_bye_is_absorbed() {
     );
     assert!(dialog.process(DialogEvent::Request(stale_bye)).is_empty());
     assert!(!dialog.is_terminated());
-    assert_eq!(dialog.remote_cseq(), 3);
+    assert_eq!(dialog.remote_cseq(), Some(3));
 }
 
 #[test]

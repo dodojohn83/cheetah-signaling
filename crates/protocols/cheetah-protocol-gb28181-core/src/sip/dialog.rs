@@ -70,7 +70,7 @@ pub struct Dialog {
     route_set: Vec<SipUri>,
     remote_target: SipUri,
     local_cseq: u32,
-    remote_cseq: u32,
+    remote_cseq: Option<u32>,
 }
 
 impl Dialog {
@@ -94,7 +94,7 @@ impl Dialog {
         let local_cseq = cseq_number(invite)?;
         // RFC 3261 §12.1.2: the UAC remote sequence number is empty until the
         // remote UA sends the first in-dialog request.
-        let remote_cseq = 0;
+        let remote_cseq = None;
 
         let remote_target =
             extract_first_uri(require_header(final_response, &HeaderName::Contact)?).ok_or_else(
@@ -137,7 +137,7 @@ impl Dialog {
         // RFC 3261 §12.1.1: the UAS local sequence number is empty until it
         // sends the first in-dialog request.
         let local_cseq = 0;
-        let remote_cseq = cseq_number(invite)?;
+        let remote_cseq = Some(cseq_number(invite)?);
 
         let remote_target = extract_first_uri(require_header(invite, &HeaderName::Contact)?)
             .ok_or_else(|| {
@@ -197,8 +197,8 @@ impl Dialog {
         self.local_cseq
     }
 
-    /// Returns the highest remote CSeq number used or seen.
-    pub fn remote_cseq(&self) -> u32 {
+    /// Returns the highest remote CSeq number used or seen, if any.
+    pub fn remote_cseq(&self) -> Option<u32> {
         self.remote_cseq
     }
 
@@ -233,12 +233,14 @@ impl Dialog {
             return vec![DialogOutput::Failure(SipErrorKind::MissingRequiredHeader)];
         };
 
+        let remote_cseq = self.remote_cseq.unwrap_or(0);
+
         match method {
             Method::Bye => {
-                if cseq <= self.remote_cseq && self.remote_cseq > 0 {
+                if self.remote_cseq.is_some() && cseq <= remote_cseq {
                     return Vec::new();
                 }
-                self.remote_cseq = cseq;
+                self.remote_cseq = Some(cseq);
                 self.state = DialogState::Terminated;
                 vec![DialogOutput::Deliver(Box::new(req)), DialogOutput::Complete]
             }
@@ -250,13 +252,13 @@ impl Dialog {
                 vec![DialogOutput::Deliver(Box::new(req))]
             }
             Method::Invite | Method::Message | Method::Options | Method::Cancel => {
-                if cseq <= self.remote_cseq {
+                if self.remote_cseq.is_some() && cseq <= remote_cseq {
                     // Out-of-order or retransmitted request inside the dialog.
                     // The transaction layer handles retransmissions; the dialog
                     // absorbs duplicates.
                     return Vec::new();
                 }
-                self.remote_cseq = cseq;
+                self.remote_cseq = Some(cseq);
 
                 if method == Method::Invite {
                     // Re-INVITE may update the remote target.
@@ -272,10 +274,10 @@ impl Dialog {
                 vec![DialogOutput::Deliver(Box::new(req))]
             }
             _ => {
-                if cseq <= self.remote_cseq {
+                if self.remote_cseq.is_some() && cseq <= remote_cseq {
                     return Vec::new();
                 }
-                self.remote_cseq = cseq;
+                self.remote_cseq = Some(cseq);
                 vec![DialogOutput::Deliver(Box::new(req))]
             }
         }
