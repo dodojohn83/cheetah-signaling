@@ -74,6 +74,8 @@ jobs:
         with:
           setup_only: true
           version: 1.50.0
+      - name: Buf format
+        run: buf format --diff --exit-code
       - name: Buf lint
         run: buf lint
       - name: Buf breaking
