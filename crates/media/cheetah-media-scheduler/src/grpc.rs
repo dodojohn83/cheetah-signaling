@@ -303,12 +303,24 @@ fn validate_registration_fields(
                 "field 'capability.protocol' exceeds {max} bytes"
             )));
         }
+        if cap.operations.len() > config.max_capability_operations {
+            return Err(Status::invalid_argument(format!(
+                "capability.operations exceeds {} entries",
+                config.max_capability_operations
+            )));
+        }
         for op in &cap.operations {
             if op.len() > max {
                 return Err(Status::invalid_argument(format!(
                     "field 'capability.operations' exceeds {max} bytes"
                 )));
             }
+        }
+        if cap.constraints.len() > config.max_capability_constraints {
+            return Err(Status::invalid_argument(format!(
+                "capability.constraints exceeds {} entries",
+                config.max_capability_constraints
+            )));
         }
         for (k, v) in &cap.constraints {
             if k.len() > max || v.len() > max {

@@ -194,7 +194,9 @@ impl MediaControlClient {
                         continue;
                     }
                     drop(permit);
-                    entry.record_failure();
+                    if is_retryable(status.code()) {
+                        entry.record_failure();
+                    }
                     return Err(MediaClientError::Grpc(status));
                 }
                 Err(_) => {
@@ -204,7 +206,9 @@ impl MediaControlClient {
                         continue;
                     }
                     drop(permit);
-                    entry.record_failure();
+                    if is_retryable(status.code()) {
+                        entry.record_failure();
+                    }
                     return Err(MediaClientError::Grpc(status));
                 }
             }
