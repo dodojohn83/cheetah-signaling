@@ -2,7 +2,7 @@
 
 #![allow(clippy::too_many_arguments, dead_code, unused_imports)]
 
-use cheetah_protocol_gb28181_core::{
+use cheetah_gb28181_core::{
     DigestAlgorithm, DigestContext, DigestError, DigestQop, DigestResponse, Method,
 };
 use sha2::{Digest, Sha256, Sha512};

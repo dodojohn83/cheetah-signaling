@@ -1,5 +1,5 @@
 [package]
-name = "cheetah-protocol-gb28181-module"
+name = "cheetah-gb28181-driver-tokio"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
@@ -8,14 +8,12 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-cheetah-protocol-gb28181-core = { path = "../cheetah-protocol-gb28181-core" }
-secrecy = { workspace = true }
-thiserror = { workspace = true }
+cheetah-gb28181-core = { path = "../cheetah-gb28181-core" }
+cheetah-gb28181-module = { path = "../cheetah-gb28181-module" }
+tokio = { workspace = true, features = ["net", "rt", "time", "sync", "macros"] }
 tracing = { workspace = true }
 
 [dev-dependencies]
-hex = { workspace = true }
-sha2 = { workspace = true }
 
 [lints]
 workspace = true

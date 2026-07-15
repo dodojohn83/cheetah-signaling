@@ -2,7 +2,7 @@
 
 use crate::error::AccessError;
 use crate::types::DomainId;
-use cheetah_protocol_gb28181_core::DigestAlgorithm;
+use cheetah_gb28181_core::DigestAlgorithm;
 use secrecy::{ExposeSecret, SecretBox};
 use std::fmt;
 
@@ -75,11 +75,6 @@ impl Gb28181DomainConfig {
             catalog_page_limit: 128,
             auth_policy: AuthPolicy::Required,
         })
-    }
-
-    /// Returns the digest secret bytes for constructing a `DigestContext`.
-    pub fn digest_secret_bytes(&self) -> Vec<u8> {
-        self.digest_secret.expose_secret().clone()
     }
 }
 

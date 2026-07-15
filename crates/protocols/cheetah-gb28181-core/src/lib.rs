@@ -2,7 +2,7 @@
 //!
 //! This crate provides message types, headers, URI handling and a streaming
 //! parser/encoder that does not perform any network I/O. Transport drivers
-//! are implemented in `cheetah-protocol-gb28181-driver-tokio`.
+//! are implemented in `cheetah-gb28181-driver-tokio`.
 
 #![warn(missing_docs)]
 

@@ -1,4 +1,4 @@
-# cheetah-protocol-gb28181-module
+# cheetah-gb28181-module
 
 GB28181 protocol module: maps SIP/GB XML wire messages to domain events and
 responses. This crate is Sans-I/O and does not perform network or database I/O;
@@ -14,7 +14,7 @@ its outputs are returned to a driver or application layer for execution.
 
 ## Allowed dependencies
 
-- `cheetah-protocol-gb28181-core` for Sans-I/O SIP/Digest/XML primitives.
+- `cheetah-gb28181-core` for Sans-I/O SIP/Digest/XML primitives.
 - Standard Rust crates, `secrecy`, `thiserror`, `tracing`.
 
 ## Forbidden dependencies

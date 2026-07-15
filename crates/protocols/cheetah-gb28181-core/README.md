@@ -1,4 +1,4 @@
-# cheetah-protocol-gb28181-core
+# cheetah-gb28181-core
 
 Sans-I/O GB28181 SIP message model, URI handling, parser and encoder.
 

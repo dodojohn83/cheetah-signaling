@@ -2,10 +2,10 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use cheetah_protocol_gb28181_core::{
+use cheetah_gb28181_core::{
     HeaderName, HeaderValue, Method, RequestLine, SipHeaders, SipMessage, SipUri,
 };
-use cheetah_protocol_gb28181_module::{
+use cheetah_gb28181_module::{
     AccessInput, AccessOutput, DeviceId, Gb28181Access, Gb28181DomainConfig,
 };
 use secrecy::SecretString;
@@ -186,6 +186,6 @@ fn authenticated_register_returns_200_and_emits_event() {
     });
     assert!(matches!(
         registered,
-        Some(cheetah_protocol_gb28181_module::Gb28181Event::DeviceRegistered { .. })
+        Some(cheetah_gb28181_module::Gb28181Event::DeviceRegistered { .. })
     ));
 }

@@ -49,10 +49,10 @@ impl DigestContext {
     /// Carriage-return and line-feed characters are removed from the realm so
     /// that the stored value matches the wire value produced by
     /// [`DigestChallenge::to_header_value`], preventing spurious realm mismatches.
-    pub fn new(realm: impl Into<String>, secret: impl Into<Vec<u8>>) -> Result<Self, DigestError> {
+    pub fn new(realm: impl Into<String>, secret: impl AsRef<[u8]>) -> Result<Self, DigestError> {
         const MIN_SECRET_LEN: usize = 32;
         let realm = strip_crlf(&realm.into());
-        let secret = secret.into();
+        let secret = secret.as_ref().to_vec();
         if secret.len() < MIN_SECRET_LEN {
             return Err(DigestError::WeakSecret);
         }

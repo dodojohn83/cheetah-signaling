@@ -5,10 +5,11 @@ use crate::error::AccessError;
 use crate::events::Gb28181Event;
 use crate::ports::CredentialProvider;
 use crate::types::DeviceId;
-use cheetah_protocol_gb28181_core::{
+use cheetah_gb28181_core::{
     DigestChallenge, DigestContext, DigestQop, DigestReplayCache, DigestResponse, HeaderName,
     HeaderValue, Method, SipHeaders, SipMessage, SipUri, StatusLine,
 };
+use secrecy::ExposeSecret;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -58,8 +59,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
     ///
     /// Returns an error if the digest secret is too short (less than 32 bytes).
     pub fn new(config: Gb28181DomainConfig, credential_provider: P) -> Result<Self, AccessError> {
-        let secret = config.digest_secret_bytes();
-        let ctx = DigestContext::new(&config.realm, secret)
+        let ctx = DigestContext::new(&config.realm, config.digest_secret.expose_secret())
             .map_err(|e| AccessError::Internal(e.to_string()))?
             .allow_md5(config.allow_md5)
             .preferred_algorithm(config.preferred_algorithm);
@@ -179,7 +179,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
 }
 
 fn device_id_from_request(
-    request: &cheetah_protocol_gb28181_core::RequestLine,
+    request: &cheetah_gb28181_core::RequestLine,
     headers: &SipHeaders,
 ) -> Result<DeviceId, AccessError> {
     if let Some(id) = request
@@ -270,9 +270,7 @@ fn resolve_expires(
     requested.clamp(0, config.max_expires_seconds)
 }
 
-fn parse_authorization(
-    value: &str,
-) -> Result<DigestResponse, cheetah_protocol_gb28181_core::DigestError> {
+fn parse_authorization(value: &str) -> Result<DigestResponse, cheetah_gb28181_core::DigestError> {
     DigestResponse::parse_with_limit(value, 4096)
 }
 
@@ -352,7 +350,7 @@ fn add_or_replace_tag(value: &str, tag: &str) -> String {
         .collect::<Vec<_>>()
         .join(";");
     if without_tag.is_empty() {
-        format!("{value};tag={tag}")
+        format!("tag={tag}")
     } else {
         format!("{without_tag};tag={tag}")
     }

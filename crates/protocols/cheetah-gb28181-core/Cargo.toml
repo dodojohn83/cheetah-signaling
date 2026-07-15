@@ -1,5 +1,5 @@
 [package]
-name = "cheetah-protocol-gb28181-core"
+name = "cheetah-gb28181-core"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true

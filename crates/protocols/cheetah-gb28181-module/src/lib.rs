@@ -5,10 +5,10 @@
 //!
 //! # Crate boundaries
 //!
-//! - `cheetah-protocol-gb28181-core` provides the SIP/Digest state machines.
+//! - `cheetah-gb28181-core` provides the SIP/Digest state machines.
 //! - This module adds GB28181 business logic: tenant/realm selection, device
 //!   identity validation, authentication and command/event mapping.
-//! - `cheetah-protocol-gb28181-driver-tokio` handles UDP/TCP sockets and timer
+//! - `cheetah-gb28181-driver-tokio` handles UDP/TCP sockets and timer
 //!   injection.
 
 #![warn(missing_docs)]
