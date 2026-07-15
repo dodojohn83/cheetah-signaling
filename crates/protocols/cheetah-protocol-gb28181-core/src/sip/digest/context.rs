@@ -70,10 +70,13 @@ impl DigestContext {
         self
     }
 
-    /// Sets the offered QoP.
-    pub fn qop(mut self, qop: Option<DigestQop>) -> Self {
+    /// Sets the offered QoP. `auth-int` is not supported and will be rejected.
+    pub fn qop(mut self, qop: Option<DigestQop>) -> Result<Self, DigestError> {
+        if qop == Some(DigestQop::AuthInt) {
+            return Err(DigestError::InvalidQop);
+        }
         self.qop = qop;
-        self
+        Ok(self)
     }
 
     /// Sets nonce time-to-live in seconds.

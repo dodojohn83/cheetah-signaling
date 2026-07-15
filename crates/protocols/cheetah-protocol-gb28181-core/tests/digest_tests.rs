@@ -159,7 +159,7 @@ fn parse_with_limit_allows_shorter_header() -> Result<(), DigestError> {
 
 #[test]
 fn no_qop_nonce_can_be_reused_within_ttl() -> Result<(), DigestError> {
-    let ctx = ctx_md5().qop(None);
+    let ctx = ctx_md5().qop(None)?;
     let challenge = ctx.generate_challenge(1000)?;
 
     let resp = make_response(
@@ -259,7 +259,7 @@ fn sha256_auth_with_qop_succeeds() -> Result<(), DigestError> {
 
 #[test]
 fn md5_without_qop_succeeds() -> Result<(), DigestError> {
-    let ctx = ctx_md5().qop(None);
+    let ctx = ctx_md5().qop(None)?;
     let challenge = ctx.generate_challenge(1000)?;
 
     let resp = make_response(
@@ -466,6 +466,15 @@ fn md5_disallowed_by_policy() -> Result<(), DigestError> {
     };
     assert!(matches!(err, DigestError::AlgorithmNotAllowed));
     Ok(())
+}
+
+#[test]
+fn auth_int_qop_cannot_be_configured() {
+    let ctx = DigestContext::new("example.com", b"server-secret");
+    let Err(err) = ctx.qop(Some(DigestQop::AuthInt)) else {
+        panic!("expected AuthInt qop to be rejected at configuration time");
+    };
+    assert!(matches!(err, DigestError::InvalidQop));
 }
 
 #[test]
