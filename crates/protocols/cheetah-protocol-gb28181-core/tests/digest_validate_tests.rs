@@ -1,164 +1,14 @@
-//! Integration tests for the Sans-I/O SIP Digest authentication module.
+//! Validation, replay, and policy tests for digest authentication.
 
-#![allow(clippy::too_many_arguments, clippy::unwrap_used, clippy::expect_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use cheetah_protocol_gb28181_core::{
-    DigestAlgorithm, DigestContext, DigestError, DigestQop, DigestReplayCache, DigestResponse,
-    Method,
+    DigestAlgorithm, DigestContext, DigestError, DigestQop, DigestReplayCache, Method,
 };
 use secrecy::SecretString;
-use sha2::{Digest, Sha256, Sha512};
 
-const SERVER_SECRET: &[u8] = b"server-secret-must-be-32-bytes-long";
-
-fn make_response(
-    username: &str,
-    password: &str,
-    realm: &str,
-    nonce: &str,
-    uri: &str,
-    method: &Method,
-    nc: u64,
-    cnonce: &str,
-    qop: Option<DigestQop>,
-    algorithm: DigestAlgorithm,
-) -> DigestResponse {
-    let response = compute_client_response(
-        algorithm, username, password, realm, nonce, uri, method, nc, cnonce, qop,
-    );
-    DigestResponse {
-        username: username.to_string(),
-        realm: realm.to_string(),
-        nonce: nonce.to_string(),
-        uri: uri.to_string(),
-        response,
-        cnonce: if qop.is_some() {
-            Some(cnonce.to_string())
-        } else {
-            None
-        },
-        nc: if qop.is_some() { Some(nc) } else { None },
-        qop,
-        algorithm: Some(algorithm),
-        opaque: None,
-    }
-}
-
-fn compute_client_response(
-    algorithm: DigestAlgorithm,
-    username: &str,
-    password: &str,
-    realm: &str,
-    nonce: &str,
-    uri: &str,
-    method: &Method,
-    nc: u64,
-    cnonce: &str,
-    qop: Option<DigestQop>,
-) -> String {
-    let a1 = format!("{username}:{realm}:{password}");
-    let ha1 = hash_hex(algorithm, a1.as_bytes());
-
-    let a2 = format!("{method}:{uri}");
-    let ha2 = hash_hex(algorithm, a2.as_bytes());
-
-    let a3 = match qop {
-        Some(DigestQop::Auth) => format!("{ha1}:{nonce}:{nc:08x}:{cnonce}:auth:{ha2}"),
-        _ => format!("{ha1}:{nonce}:{ha2}"),
-    };
-    hash_hex(algorithm, a3.as_bytes())
-}
-
-fn hash_hex(algorithm: DigestAlgorithm, data: &[u8]) -> String {
-    match algorithm {
-        DigestAlgorithm::Md5 => format!("{:x}", md5::compute(data)),
-        DigestAlgorithm::Sha256 => hex::encode(Sha256::digest(data)),
-        DigestAlgorithm::Sha512 => hex::encode(Sha512::digest(data)),
-    }
-}
-
-fn ctx_md5() -> DigestContext {
-    DigestContext::new("example.com", SERVER_SECRET)
-        .unwrap()
-        .allow_md5(true)
-        .preferred_algorithm(DigestAlgorithm::Md5)
-}
-
-#[test]
-fn challenge_defaults_to_sha256() -> Result<(), DigestError> {
-    let ctx = DigestContext::new("example.com", SERVER_SECRET)?;
-    let challenge = ctx.generate_challenge(1000)?;
-    let header = challenge.to_header_value();
-    assert!(header.starts_with("Digest "));
-    assert!(header.contains("realm=\"example.com\""));
-    assert!(header.contains("nonce=\""));
-    assert!(header.contains("algorithm=SHA-256"));
-    assert!(header.contains("qop=\"auth\""));
-    assert!(!header.contains("stale"));
-    Ok(())
-}
-
-#[test]
-fn md5_challenge_when_configured() -> Result<(), DigestError> {
-    let ctx = ctx_md5();
-    let challenge = ctx.generate_challenge(1000)?;
-    let header = challenge.to_header_value();
-    assert!(header.contains("algorithm=MD5"));
-    Ok(())
-}
-
-#[test]
-fn stale_challenge_includes_stale_true() -> Result<(), DigestError> {
-    let ctx = DigestContext::new("example.com", SERVER_SECRET)?;
-    let challenge = ctx.generate_stale_challenge(1000)?;
-    let header = challenge.to_header_value();
-    assert!(header.contains("stale=true"));
-    Ok(())
-}
-
-#[test]
-fn parse_digest_response_with_qop() -> Result<(), DigestError> {
-    let value = r#"Digest username="alice", realm="example.com", nonce="abc", uri="sip:bob@example.com", response="resp", cnonce="cn", nc="00000001", qop="auth", algorithm="MD5""#;
-    let parsed = DigestResponse::parse(value)?;
-    assert_eq!(parsed.username, "alice");
-    assert_eq!(parsed.realm, "example.com");
-    assert_eq!(parsed.nonce, "abc");
-    assert_eq!(parsed.uri, "sip:bob@example.com");
-    assert_eq!(parsed.response, "resp");
-    assert_eq!(parsed.cnonce, Some("cn".to_string()));
-    assert_eq!(parsed.nc, Some(1));
-    assert_eq!(parsed.qop, Some(DigestQop::Auth));
-    assert_eq!(parsed.algorithm, Some(DigestAlgorithm::Md5));
-    Ok(())
-}
-
-#[test]
-fn parse_digest_response_without_qop() -> Result<(), DigestError> {
-    let value = r#"username="alice", realm="example.com", nonce="abc", uri="sip:bob@example.com", response="resp", algorithm="MD5""#;
-    let parsed = DigestResponse::parse(value)?;
-    assert_eq!(parsed.cnonce, None);
-    assert_eq!(parsed.nc, None);
-    assert_eq!(parsed.qop, None);
-    Ok(())
-}
-
-#[test]
-fn parse_rejects_overly_long_header() {
-    let prefix = r#"Digest username="alice","#;
-    let padding = "x".repeat(4096);
-    let value = format!(
-        r#"{prefix} realm="example.com", nonce="{padding}", uri="sip:b@e", response="resp""#
-    );
-    let result = DigestResponse::parse(&value);
-    assert!(matches!(result, Err(DigestError::Malformed(_))));
-}
-
-#[test]
-fn parse_with_limit_allows_shorter_header() -> Result<(), DigestError> {
-    let value = r#"username="alice", realm="example.com", nonce="abc", uri="sip:bob@example.com", response="resp""#;
-    DigestResponse::parse_with_limit(value, 256)?;
-    Ok(())
-}
+mod digest_common;
+use digest_common::*;
 
 #[test]
 fn no_qop_nonce_can_be_reused_within_ttl() -> Result<(), DigestError> {
@@ -472,23 +322,6 @@ fn md5_disallowed_by_policy() -> Result<(), DigestError> {
 }
 
 #[test]
-fn short_server_secret_is_rejected() {
-    let Err(err) = DigestContext::new("example.com", b"short") else {
-        panic!("expected short server secret to be rejected");
-    };
-    assert!(matches!(err, DigestError::WeakSecret));
-}
-
-#[test]
-fn auth_int_qop_cannot_be_configured() {
-    let ctx = DigestContext::new("example.com", SERVER_SECRET).unwrap();
-    let Err(err) = ctx.qop(Some(DigestQop::AuthInt)) else {
-        panic!("expected AuthInt qop to be rejected at configuration time");
-    };
-    assert!(matches!(err, DigestError::InvalidQop));
-}
-
-#[test]
 fn auth_int_qop_is_rejected() -> Result<(), DigestError> {
     let ctx = ctx_md5();
     let challenge = ctx.generate_challenge(1000)?;
@@ -765,44 +598,5 @@ fn qop_downgrade_is_rejected() -> Result<(), DigestError> {
         panic!("expected qop mismatch");
     };
     assert!(matches!(err, DigestError::InvalidQop));
-    Ok(())
-}
-
-#[test]
-fn parse_does_not_panic_on_non_ascii_boundary() {
-    // "中" is 3 bytes, "ä" is 2 bytes. Byte index 7 falls inside the
-    // two-byte character, which used to trigger a panic when the parser
-    // sliced `value[..7]` without a char-boundary check.
-    let value = "中中ä";
-    assert!(DigestResponse::parse(value).is_err());
-}
-
-#[test]
-fn parse_unescapes_quotes_and_backslashes() -> Result<(), DigestError> {
-    let value = r##"username="alice\\smith", realm="foo\"bar", nonce="abc", uri="sip:b@e", response="resp""##;
-    let parsed = DigestResponse::parse(value)?;
-    assert_eq!(parsed.username, r"alice\smith");
-    assert_eq!(parsed.realm, r##"foo"bar"##);
-    Ok(())
-}
-
-#[test]
-fn challenge_header_round_trips_quoted_realm_and_strips_crlf() -> Result<(), DigestError> {
-    let ctx = DigestContext::new("foo\r\n\"bar", SERVER_SECRET)?;
-    let challenge = ctx.generate_challenge(1000)?;
-    let header = challenge.to_header_value();
-
-    // CRLF is stripped from quoted values to prevent header injection.
-    assert!(!header.contains('\r'));
-    assert!(!header.contains('\n'));
-    // The embedded quote is escaped in the wire form and must round-trip.
-    assert!(header.contains(r##"realm="foo\"bar""##));
-
-    let response_value = format!(
-        r##"Digest username="alice", realm="foo\"bar", nonce="{}", uri="sip:b@e", response="resp", algorithm="SHA-256""##,
-        challenge.nonce
-    );
-    let parsed = DigestResponse::parse(&response_value)?;
-    assert_eq!(parsed.realm, r##"foo"bar"##);
     Ok(())
 }
