@@ -21,14 +21,17 @@ impl std::fmt::Display for Scheme {
 }
 
 /// A SIP URI per RFC 3261 with parameter storage.
-#[derive(Clone, Debug, Eq, PartialEq)]
+///
+/// The `password` component is never exposed by `Debug`; wire encoding is
+/// available only through the explicit [`SipUri::encode`] method.
+#[derive(Clone, Eq, PartialEq)]
 pub struct SipUri {
     scheme: Scheme,
     user: Option<String>,
+    password: Option<String>,
     host: String,
     port: Option<u16>,
     parameters: Vec<(String, Option<String>)>,
-    raw: String,
 }
 
 impl SipUri {
@@ -73,6 +76,11 @@ impl SipUri {
             } else {
                 (Some(u), h)
             }
+        });
+
+        let (user, password) = userinfo.map_or((None, None), |info| match info.split_once(':') {
+            Some((u, p)) if !u.is_empty() => (Some(u), Some(p)),
+            _ => (Some(info), None),
         });
 
         let (hostport, param_part) = hostport
@@ -124,11 +132,11 @@ impl SipUri {
 
         Ok(Self {
             scheme,
-            user: userinfo.map(String::from),
+            user: user.map(String::from),
+            password: password.map(String::from),
             host: host.to_string(),
             port,
             parameters,
-            raw: raw.to_string(),
         })
     }
 
@@ -137,9 +145,14 @@ impl SipUri {
         self.scheme
     }
 
-    /// Optional user part.
+    /// Optional user part. Does not include the password.
     pub fn user(&self) -> Option<&str> {
         self.user.as_deref()
+    }
+
+    /// Returns true if the URI contained a password.
+    pub fn has_password(&self) -> bool {
+        self.password.is_some()
     }
 
     /// Host; may be an IPv4/IPv6 address or domain name.
@@ -157,16 +170,19 @@ impl SipUri {
         &self.parameters
     }
 
-    /// Returns the raw, originally-cased URI string.
-    pub fn as_str(&self) -> &str {
-        &self.raw
-    }
-
     /// Encodes the URI to wire form.
+    ///
+    /// # Warning
+    ///
+    /// This includes any password that was present in the original URI.
     pub fn encode(&self) -> String {
         let mut out = format!("{}:", self.scheme);
         if let Some(user) = &self.user {
             out.push_str(user);
+            if let Some(password) = &self.password {
+                out.push(':');
+                out.push_str(password);
+            }
             out.push('@');
         }
         out.push_str(&self.host);
@@ -186,9 +202,16 @@ impl SipUri {
     }
 }
 
-impl std::fmt::Display for SipUri {
+impl std::fmt::Debug for SipUri {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.encode())
+        f.debug_struct("SipUri")
+            .field("scheme", &self.scheme)
+            .field("user", &self.user)
+            .field("password", &self.password.as_ref().map(|_| "<redacted>"))
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("parameters", &self.parameters)
+            .finish()
     }
 }
 
@@ -202,10 +225,23 @@ mod tests {
         let uri = SipUri::parse("sip:alice@example.com:5060;transport=udp").unwrap();
         assert_eq!(uri.scheme(), Scheme::Sip);
         assert_eq!(uri.user(), Some("alice"));
+        assert!(!uri.has_password());
         assert_eq!(uri.host(), "example.com");
         assert_eq!(uri.port(), Some(5060));
         assert_eq!(uri.parameters().len(), 1);
         assert_eq!(uri.encode(), "sip:alice@example.com:5060;transport=udp");
+    }
+
+    #[test]
+    fn password_is_split_and_round_tripped_but_redacted_in_debug() {
+        let uri = SipUri::parse("sip:alice:secret@example.com:5060").unwrap();
+        assert_eq!(uri.user(), Some("alice"));
+        assert!(uri.has_password());
+        assert_eq!(uri.encode(), "sip:alice:secret@example.com:5060");
+
+        let debug = format!("{uri:?}");
+        assert!(!debug.contains("secret"));
+        assert!(debug.contains("<redacted>"));
     }
 
     #[test]

@@ -165,35 +165,36 @@ impl SipParser {
     }
 
     fn parse_start_line(&mut self) -> Option<Result<String, SipError>> {
-        if self.buffer.len() > self.config.max_start_line_bytes {
-            return Some(Err(SipError::new(
-                SipErrorKind::StartLineTooLong,
-                None,
-                "start line exceeds limit",
-            )));
-        }
-        for i in 0..self.buffer.len().saturating_sub(1) {
-            if self.buffer[i] == b'\r' && self.buffer[i + 1] == b'\n' {
-                let line = match std::str::from_utf8(&self.buffer[..i]) {
-                    Ok(s) => s.to_string(),
-                    Err(_) => {
-                        return Some(Err(SipError::new(
-                            SipErrorKind::InvalidStartLine,
-                            Some(i),
-                            "start line is not valid UTF-8",
-                        )));
-                    }
-                };
-                if line.is_empty() {
-                    // Skip empty leading line (common for CRLF keep-alive).
-                    self.buffer.drain(..i + 2);
-                    return self.parse_start_line();
-                }
-                self.buffer.drain(..i + 2);
-                return Some(Ok(line));
+        'outer: loop {
+            if self.buffer.len() > self.config.max_start_line_bytes {
+                return Some(Err(SipError::new(
+                    SipErrorKind::StartLineTooLong,
+                    None,
+                    "start line exceeds limit",
+                )));
             }
+            for i in 0..self.buffer.len().saturating_sub(1) {
+                if self.buffer[i] == b'\r' && self.buffer[i + 1] == b'\n' {
+                    let line = match std::str::from_utf8(&self.buffer[..i]) {
+                        Ok(s) => s.to_string(),
+                        Err(_) => {
+                            return Some(Err(SipError::new(
+                                SipErrorKind::InvalidStartLine,
+                                Some(i),
+                                "start line is not valid UTF-8",
+                            )));
+                        }
+                    };
+                    self.buffer.drain(..i + 2);
+                    if line.is_empty() {
+                        // Skip empty leading line (common for CRLF keep-alive).
+                        continue 'outer;
+                    }
+                    return Some(Ok(line));
+                }
+            }
+            return None;
         }
-        None
     }
 
     fn parse_headers(&mut self) -> Option<Result<(SipHeaders, usize, usize), SipError>> {
