@@ -48,7 +48,9 @@ pub enum AccessOutput {
 impl std::fmt::Debug for AccessOutput {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            AccessOutput::SendResponse(_) => f.debug_tuple("SendResponse").field(&"[REDACTED]").finish(),
+            AccessOutput::SendResponse(_) => {
+                f.debug_tuple("SendResponse").field(&"[REDACTED]").finish()
+            }
             AccessOutput::EmitEvent(event) => f.debug_tuple("EmitEvent").field(event).finish(),
         }
     }
@@ -127,43 +129,56 @@ impl<P: CredentialProvider> Gb28181Access<P> {
         let expires_header = parse_expires_header(headers);
         let expires = resolve_expires(contact_expires, expires_header, &self.config);
 
+        let user_agent = headers
+            .get(&HeaderName::UserAgent)
+            .map(|v| v.as_str().to_string());
+
+        // In ChallengeOptional mode we accept devices that do not present
+        // credentials. If credentials are present and the device is known,
+        // validate them; otherwise fall through to unauthenticated acceptance.
+        let mut authenticated = false;
         if let Some(auth_header) = headers.get(&HeaderName::Authorization) {
-            let password = self
-                .credential_provider
-                .password_for(&device_id)
-                .ok_or(AccessError::AuthenticationFailed)?;
+            if self.config.auth_policy() == AuthPolicy::Required {
+                let password = self
+                    .credential_provider
+                    .password_for(&device_id)
+                    .ok_or(AccessError::AuthenticationFailed)?;
+                let digest = parse_authorization(auth_header.as_str())
+                    .map_err(|_| AccessError::AuthenticationFailed)?;
+                let request_uri = line.uri.encode();
+                self.digest_context
+                    .validate(
+                        &digest,
+                        &Method::Register,
+                        &request_uri,
+                        &password,
+                        &mut self.replay_cache,
+                        now,
+                    )
+                    .map_err(|_| AccessError::AuthenticationFailed)?;
+                authenticated = true;
+            } else if let Some(password) = self.credential_provider.password_for(&device_id)
+                && let Ok(digest) = parse_authorization(auth_header.as_str())
+            {
+                let request_uri = line.uri.encode();
+                if self
+                    .digest_context
+                    .validate(
+                        &digest,
+                        &Method::Register,
+                        &request_uri,
+                        &password,
+                        &mut self.replay_cache,
+                        now,
+                    )
+                    .is_ok()
+                {
+                    authenticated = true;
+                }
+            }
+        }
 
-            let digest = parse_authorization(auth_header.as_str())
-                .map_err(|_| AccessError::AuthenticationFailed)?;
-
-            let request_uri = line.uri.encode();
-            self.digest_context
-                .validate(
-                    &digest,
-                    &Method::Register,
-                    &request_uri,
-                    &password,
-                    &mut self.replay_cache,
-                    now,
-                )
-                .map_err(|_| AccessError::AuthenticationFailed)?;
-
-            let user_agent = headers
-                .get(&HeaderName::UserAgent)
-                .map(|v| v.as_str().to_string());
-            self.register_accepted(
-                &message,
-                &contact_uri,
-                expires,
-                device_id,
-                source,
-                user_agent,
-                now,
-            )
-        } else if self.config.auth_policy() == AuthPolicy::ChallengeOptional {
-            let user_agent = headers
-                .get(&HeaderName::UserAgent)
-                .map(|v| v.as_str().to_string());
+        if authenticated || self.config.auth_policy() == AuthPolicy::ChallengeOptional {
             self.register_accepted(
                 &message,
                 &contact_uri,

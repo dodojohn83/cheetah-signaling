@@ -308,6 +308,38 @@ fn challenge_optional_register_without_auth_succeeds() {
 }
 
 #[test]
+fn challenge_optional_ignores_unknown_cached_credentials() {
+    // Devices may replay stale Authorization headers from a previous session.
+    // In ChallengeOptional mode, an unknown device presenting such a header
+    // must still be accepted rather than rejected with AuthenticationFailed.
+    let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec())
+        .unwrap()
+        .with_auth_policy(AuthPolicy::ChallengeOptional);
+    let provider = |_device: &DeviceId| -> Option<SecretString> { None };
+    let mut access = Gb28181Access::new(config, provider).unwrap();
+
+    let mut request = make_request(1, false);
+    request.headers_mut().append(
+        HeaderName::Authorization,
+        HeaderValue::new("Digest username=\"34020000001320000001\", realm=\"example.com\", nonce=\"deadbeef\", uri=\"sip:34020000001320000001@example.com\", response=\"fakemac\", algorithm=\"SHA-256\""),
+    );
+    let outputs = access
+        .process(AccessInput {
+            source: "192.168.1.100:5060".parse().unwrap(),
+            now: 1000,
+            message: request,
+        })
+        .unwrap();
+
+    assert_eq!(outputs.len(), 2);
+    let response = find_response(&outputs);
+    let SipMessage::Response { line, .. } = response else {
+        panic!("expected response");
+    };
+    assert_eq!(line.code, 200);
+}
+
+#[test]
 fn multiple_via_headers_are_copied_to_response() {
     let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec()).unwrap();
     let provider = |device: &DeviceId| {
@@ -548,11 +580,10 @@ fn registration_expiry_removes_registration() {
 
 #[test]
 fn registration_table_respects_capacity_limit() {
-    let config =
-        Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec())
-            .unwrap()
-            .with_auth_policy(AuthPolicy::ChallengeOptional)
-            .with_max_registrations(1);
+    let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec())
+        .unwrap()
+        .with_auth_policy(AuthPolicy::ChallengeOptional)
+        .with_max_registrations(1);
     let provider = |_device: &DeviceId| None;
     let mut access = Gb28181Access::new(config, provider).unwrap();
 
@@ -567,8 +598,7 @@ fn registration_table_respects_capacity_limit() {
 
     // A second device with a different device ID should be rejected because the
     // table is at capacity.
-    let other_request =
-        make_register_request_for_id("34020000001320000002", 1, false, 3600);
+    let other_request = make_register_request_for_id("34020000001320000002", 1, false, 3600);
 
     let result = access.process(AccessInput {
         source: "192.168.1.101:5060".parse().unwrap(),
