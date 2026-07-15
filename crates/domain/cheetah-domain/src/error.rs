@@ -72,6 +72,12 @@ pub enum DomainError {
         /// Human readable message.
         message: String,
     },
+    /// The requested capability is not supported.
+    #[error("not supported: {message}")]
+    Unsupported {
+        /// Human readable message.
+        message: String,
+    },
 }
 
 impl DomainError {
@@ -136,6 +142,13 @@ impl DomainError {
     pub fn stale_owner(expected: u64, found: u64) -> Self {
         Self::StaleOwner { expected, found }
     }
+
+    /// Creates an `Unsupported` error.
+    pub fn not_supported(message: impl Into<String>) -> Self {
+        Self::Unsupported {
+            message: message.into(),
+        }
+    }
 }
 
 impl From<DomainError> for SignalError {
@@ -168,6 +181,10 @@ impl From<DomainError> for SignalError {
                 format!("{entity} already terminal: {status}"),
             ),
             DomainError::Internal { message } => (SignalErrorKind::Internal, message),
+            DomainError::Unsupported { message } => (
+                SignalErrorKind::Unsupported,
+                format!("not supported: {message}"),
+            ),
         };
         Self::new(kind, message)
     }

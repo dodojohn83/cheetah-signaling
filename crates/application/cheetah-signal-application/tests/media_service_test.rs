@@ -4,7 +4,9 @@
 
 pub mod common;
 
-use cheetah_domain::{MediaPurpose, OwnerInfo, UnitOfWork};
+use cheetah_domain::{
+    MediaNodeCallback, MediaNodeCallbackKind, MediaPurpose, OwnerInfo, UnitOfWork,
+};
 use cheetah_signal_application::{
     ChannelDescriptor, ControlPlaybackRequest, MediaControlDto, RegisterDeviceRequest,
     ReplaceChannelCatalogRequest, StartLiveRequest, StartPlaybackRequest, StartTalkRequest,
@@ -321,4 +323,69 @@ async fn media_service_rejects_inactive_device() {
         )
         .await;
     assert!(result.is_err());
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn media_service_callback_transitions_to_active() {
+    let mut ctx = setup();
+    let context = request_context(&ctx);
+    let device = register_device_and_channel(&mut ctx).await;
+    let channel = find_channel(&mut ctx, device.device_id).await;
+
+    ctx.owner_resolver.set_owner(
+        ctx.tenant_id,
+        device.device_id,
+        OwnerInfo {
+            owner_node_id: ctx.id_generator.generate_node_id(),
+            owner_epoch: OwnerEpoch::default(),
+            lease_until: None,
+        },
+    );
+
+    let session = ctx
+        .media_service
+        .start_playback(
+            &context,
+            &mut ctx.uow,
+            StartPlaybackRequest {
+                device_id: device.device_id.to_string(),
+                channel_id: channel.channel_id().to_string(),
+                start_time: "2024-01-01T00:00:00Z".to_string(),
+                end_time: "2024-01-01T01:00:00Z".to_string(),
+                scale: 1.0,
+                idempotency_key: "playback-callback-1".to_string(),
+                deadline: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(session.state, cheetah_domain::MediaSessionState::Inviting);
+
+    let binding = ctx
+        .uow
+        .media_binding_repository()
+        .get_by_media_session(ctx.tenant_id, session.media_session_id)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let callback = MediaNodeCallback {
+        media_node_id: binding.media_node_id(),
+        media_node_instance_epoch: binding.media_node_instance_epoch(),
+        media_session_id: session.media_session_id,
+        media_binding_id: binding.media_binding_id(),
+        operation_id: session.operation_id,
+        owner_epoch: binding.owner_epoch(),
+        message_id: context.message_id.to_string(),
+        binding_revision: binding.revision(),
+        session_revision: session.revision,
+        kind: MediaNodeCallbackKind::Started,
+    };
+
+    let session = ctx
+        .media_service
+        .handle_media_event(&context, &mut ctx.uow, callback)
+        .await
+        .unwrap();
+    assert_eq!(session.state, cheetah_domain::MediaSessionState::Active);
 }
