@@ -12,8 +12,17 @@ description = "Sans-I/O GB28181 SIP core: message model, parser and encoder."
 thiserror = { workspace = true }
 tracing = { workspace = true }
 bytes = { workspace = true }
+md5 = { workspace = true }
+sha2 = { workspace = true }
+hmac = { workspace = true }
+hex = { workspace = true }
+subtle = { workspace = true }
+secrecy = { workspace = true }
 
 [dev-dependencies]
+md5 = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
 
 [lints]
 workspace = true

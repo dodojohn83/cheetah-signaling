@@ -1,6 +1,7 @@
 //! Sans-I/O GB28181 SIP core module.
 
 pub mod dialog;
+pub mod digest;
 pub mod encoder;
 pub mod error;
 pub mod headers;

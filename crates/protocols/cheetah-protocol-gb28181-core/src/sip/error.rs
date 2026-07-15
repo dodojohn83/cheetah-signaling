@@ -35,6 +35,8 @@ pub enum SipErrorKind {
     TransactionCancelled,
     /// Transport reported an unrecoverable failure.
     TransportFailure,
+    /// Digest authentication failed.
+    AuthenticationFailure,
 }
 
 /// Errors returned by the Sans-I/O SIP parser and encoder.
