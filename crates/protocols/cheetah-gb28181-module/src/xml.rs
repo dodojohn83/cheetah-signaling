@@ -130,8 +130,8 @@ pub fn parse_keepalive(body: &[u8]) -> Result<KeepaliveInfo, AccessError> {
     }
 
     if cmd_type.as_deref() != Some("Keepalive") {
-        return Err(AccessError::InvalidXml(
-            "not a Keepalive message".to_string(),
+        return Err(AccessError::UnsupportedCmdType(
+            cmd_type.unwrap_or_default(),
         ));
     }
 

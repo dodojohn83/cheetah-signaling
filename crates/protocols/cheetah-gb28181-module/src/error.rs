@@ -8,6 +8,8 @@ pub enum AccessError {
     UnknownDomain,
     #[error("request method is not supported for this endpoint")]
     UnsupportedMethod,
+    #[error("unsupported command type: {0}")]
+    UnsupportedCmdType(String),
     #[error("missing or invalid device identifier")]
     InvalidDeviceId,
     #[error("invalid domain identifier")]

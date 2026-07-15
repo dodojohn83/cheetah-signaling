@@ -16,7 +16,7 @@ use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// An input to the GB28181 access module.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct AccessInput {
     /// Source address of the message.
     pub source: SocketAddr,
@@ -26,13 +26,32 @@ pub struct AccessInput {
     pub message: SipMessage,
 }
 
+impl std::fmt::Debug for AccessInput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AccessInput")
+            .field("source", &self.source)
+            .field("now", &self.now)
+            .field("message", &"[REDACTED]")
+            .finish()
+    }
+}
+
 /// An output from the GB28181 access module.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub enum AccessOutput {
     /// Send a SIP response to the transport.
     SendResponse(SipMessage),
     /// Emit a domain event for downstream consumers.
     EmitEvent(Gb28181Event),
+}
+
+impl std::fmt::Debug for AccessOutput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AccessOutput::SendResponse(_) => f.debug_tuple("SendResponse").field(&"[REDACTED]").finish(),
+            AccessOutput::EmitEvent(event) => f.debug_tuple("EmitEvent").field(event).finish(),
+        }
+    }
 }
 
 /// Sans-I/O state machine for GB28181 device access.
@@ -254,7 +273,10 @@ impl<P: CredentialProvider> Gb28181Access<P> {
             source,
             status: keepalive.status,
         }));
-        outputs.push(AccessOutput::SendResponse(build_message_response(&message)));
+        outputs.push(AccessOutput::SendResponse(build_message_response(
+            &message,
+            self.next_tag(),
+        )));
         Ok(outputs)
     }
 
@@ -450,12 +472,12 @@ fn build_success_response(
     }
 }
 
-fn build_message_response(request: &SipMessage) -> SipMessage {
+fn build_message_response(request: &SipMessage, tag: String) -> SipMessage {
     let mut headers = copy_common_headers(request);
     if let Some(to) = request.headers().get(&HeaderName::To) {
         headers.append(
             HeaderName::To,
-            HeaderValue::new(add_or_replace_tag(to.as_str(), "gb0")),
+            HeaderValue::new(add_or_replace_tag(to.as_str(), &tag)),
         );
     }
     headers.append(HeaderName::ContentLength, HeaderValue::new("0"));
