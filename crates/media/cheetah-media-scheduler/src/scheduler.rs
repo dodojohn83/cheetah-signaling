@@ -247,6 +247,7 @@ fn is_eligible_for_affinity(node: &MediaNode, requirements: &MediaRequirements) 
         && node.health != MediaNodeHealth::Unhealthy
         && node.status == NodeStatus::Active
         && !node.draining
+        && node.has_capacity()
 }
 
 fn matches_capability(node: &MediaNode, requirements: &MediaRequirements) -> bool {

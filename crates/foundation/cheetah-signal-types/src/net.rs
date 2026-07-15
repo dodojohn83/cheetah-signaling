@@ -12,13 +12,13 @@ pub fn is_internal_ip(ip: std::net::IpAddr) -> bool {
 }
 
 fn is_internal_ipv6(v6: std::net::Ipv6Addr) -> bool {
-    if let Some(v4) = v6.to_ipv4_mapped() {
-        return is_internal_ipv4(v4);
-    }
-
     if v6.is_unspecified() || v6.is_loopback() || v6.is_unicast_link_local() || v6.is_unique_local()
     {
         return true;
+    }
+
+    if let Some(v4) = v6.to_ipv4() {
+        return is_internal_ipv4(v4);
     }
 
     let o = v6.octets();
@@ -122,10 +122,13 @@ mod tests {
     }
 
     #[test]
-    fn ipv4_mapped_ipv6_uses_internal_check() {
+    fn ipv4_mapped_and_compatible_ipv6_use_internal_check() {
         assert!(is_internal_ip("::ffff:127.0.0.1".parse().unwrap()));
         assert!(is_internal_ip("::ffff:192.168.1.1".parse().unwrap()));
         assert!(!is_internal_ip("::ffff:1.1.1.1".parse().unwrap()));
+        assert!(is_internal_ip("::127.0.0.1".parse().unwrap()));
+        assert!(is_internal_ip("::192.168.1.1".parse().unwrap()));
+        assert!(!is_internal_ip("::1.1.1.1".parse().unwrap()));
     }
 
     #[test]
