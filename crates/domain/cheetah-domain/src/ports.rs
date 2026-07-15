@@ -1,13 +1,13 @@
 //! Domain and application ports.
 
 use crate::{
-    Channel, Command, Device, DomainError, DomainEvent, MediaBinding, MediaSession, Operation,
-    WebhookConfig, WebhookDelivery,
+    Channel, Command, CommandPayload, Device, DomainError, DomainEvent, MediaBinding, MediaSession,
+    Operation, WebhookConfig, WebhookDelivery,
 };
 use cheetah_signal_types::{
-    ChannelId, DeliveryId, DeviceId, Event, EventId, MediaBindingId, MediaNodeInstanceEpoch,
-    MediaSessionId, MessageId, NodeId, OperationId, OwnerEpoch, Page, PageRequest,
-    ProtocolIdentity, TenantId, UtcTimestamp, WebhookId,
+    ChannelId, Deadline, DeliveryId, DeviceId, Event, EventId, MediaBindingId,
+    MediaNodeInstanceEpoch, MediaSessionId, MessageId, NodeId, OperationId, OwnerEpoch, Page,
+    PageRequest, ProtocolIdentity, TenantId, UtcTimestamp, WebhookId,
 };
 
 pub use cheetah_signal_types::{Clock, IdGenerator};
@@ -33,6 +33,55 @@ pub struct MediaReservation {
     pub media_node_id: NodeId,
     /// Instance epoch of the media node.
     pub media_node_instance_epoch: MediaNodeInstanceEpoch,
+    /// Contract version supported by the selected node.
+    pub contract_version: u32,
+}
+
+/// Result of executing a command on a media node.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MediaNodeCommandResult {
+    /// The media node has completed the command synchronously.
+    Completed,
+    /// The media node accepted the command and will callback when it completes.
+    Accepted,
+    /// The command failed on the media node.
+    Failed {
+        /// Stable error code.
+        code: String,
+        /// Human-readable error message.
+        message: String,
+    },
+}
+
+/// A command sent to a specific media node.
+#[derive(Clone, Debug)]
+pub struct MediaNodeCommand {
+    /// Request / correlation identifier.
+    pub request_id: String,
+    /// Tenant identifier.
+    pub tenant_id: TenantId,
+    /// Media session identifier.
+    pub media_session_id: MediaSessionId,
+    /// Media binding identifier.
+    pub media_binding_id: MediaBindingId,
+    /// Target media node identifier.
+    pub media_node_id: NodeId,
+    /// Target media node instance epoch for fencing.
+    pub media_node_instance_epoch: MediaNodeInstanceEpoch,
+    /// Operation identifier.
+    pub operation_id: OperationId,
+    /// Owner epoch of the device/session.
+    pub owner_epoch: OwnerEpoch,
+    /// Signaling node that owns this command.
+    pub source_node_id: NodeId,
+    /// Optional wall-clock deadline.
+    pub deadline: Option<Deadline>,
+    /// Idempotency key for the command.
+    pub idempotency_key: String,
+    /// Contract version to advertise to the media node.
+    pub contract_version: u32,
+    /// Typed command payload.
+    pub payload: CommandPayload,
 }
 
 /// Requirements used to select a media node for a session.
@@ -314,6 +363,13 @@ pub trait MediaPort: Send + Sync {
         media_binding_id: MediaBindingId,
         clock: &dyn Clock,
     ) -> Result<()>;
+
+    /// Executes a command on the media node hosting a binding.
+    async fn execute(
+        &self,
+        command: MediaNodeCommand,
+        clock: &dyn Clock,
+    ) -> Result<MediaNodeCommandResult>;
 }
 
 /// Status of an idempotent inbox record.

@@ -148,7 +148,6 @@ async fn media_service_start_playback_and_control() {
         .await
         .unwrap()
         .unwrap();
-    media_session.inviting(&*ctx.clock).unwrap();
     media_session.active(&*ctx.clock).unwrap();
     ctx.uow
         .media_session_repository()

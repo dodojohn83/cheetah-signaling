@@ -5,12 +5,13 @@
 //! an `.await` point.
 
 use crate::{
-    Channel, ChannelRepository, ChannelStatus, Command, CommandBus, DeliveryStatus, Device,
-    DeviceRepository, DomainError, DomainEvent, EventPublisher, MediaBinding,
-    MediaBindingRepository, MediaPurpose, MediaReservation, MediaSession, MediaSessionRepository,
-    MediaSessionState, Operation, OperationRepository, OperationStatus, Outbox, OutboxEntry,
-    OwnerInfo, ProcessedMessageRecord, ProcessedMessageRepository, ProcessedMessageStatus,
-    UnitOfWork, WebhookConfig, WebhookConfigRepository, WebhookDelivery, WebhookDeliveryRepository,
+    Channel, ChannelRepository, ChannelStatus, Command, CommandBus, CommandPayload, DeliveryStatus,
+    Device, DeviceRepository, DomainError, DomainEvent, EventPublisher, MediaBinding,
+    MediaBindingRepository, MediaNodeCommand, MediaNodeCommandResult, MediaPurpose,
+    MediaReservation, MediaSession, MediaSessionRepository, MediaSessionState, Operation,
+    OperationRepository, OperationStatus, Outbox, OutboxEntry, OwnerInfo, ProcessedMessageRecord,
+    ProcessedMessageRepository, ProcessedMessageStatus, UnitOfWork, WebhookConfig,
+    WebhookConfigRepository, WebhookDelivery, WebhookDeliveryRepository,
 };
 use cheetah_signal_types::{
     ChannelId, Clock, DeliveryId, DeviceId, DurationMs, Event, IdGenerator, ListCursor,
@@ -1102,6 +1103,7 @@ impl InMemoryMediaPort {
         let reservation = MediaReservation {
             media_node_id: self.id_generator.generate_node_id(),
             media_node_instance_epoch: self.id_generator.generate_media_node_instance_epoch(),
+            contract_version: 1,
         };
         reservations.insert(key, reservation.clone());
         Ok(reservation)
@@ -1161,6 +1163,24 @@ impl crate::MediaPort for InMemoryMediaPort {
     ) -> crate::Result<()> {
         lock_mutex(&self.reservations).remove(&(tenant_id, media_binding_id));
         Ok(())
+    }
+
+    async fn execute(
+        &self,
+        command: MediaNodeCommand,
+        _clock: &dyn Clock,
+    ) -> crate::Result<MediaNodeCommandResult> {
+        match command.payload {
+            CommandPayload::StartLive { .. }
+            | CommandPayload::StartPlayback { .. }
+            | CommandPayload::StartTalk { .. } => Ok(MediaNodeCommandResult::Accepted),
+            CommandPayload::StopMediaSession { .. } | CommandPayload::ControlPlayback { .. } => {
+                Ok(MediaNodeCommandResult::Completed)
+            }
+            CommandPayload::Ptz { .. } => Err(DomainError::invalid_argument(
+                "PTZ command not dispatched through media node port",
+            )),
+        }
     }
 }
 

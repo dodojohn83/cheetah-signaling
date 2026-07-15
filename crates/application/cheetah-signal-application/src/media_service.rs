@@ -8,7 +8,8 @@ use cheetah_domain::{
 };
 use cheetah_signal_types::{
     ChannelId, Clock, Deadline, DeviceId, Event, IdGenerator, MediaBindingId, MediaSessionId,
-    OperationId, RequestContext, ResourceId, ResourceKind, ResourceRef, TenantId, UtcTimestamp,
+    NodeId, OperationId, RequestContext, ResourceId, ResourceKind, ResourceRef, TenantId,
+    UtcTimestamp,
 };
 
 /// Application service for media lifecycle.
@@ -18,6 +19,7 @@ pub struct MediaService {
     pub(crate) id_generator: std::sync::Arc<dyn IdGenerator>,
     pub(crate) owner_resolver: std::sync::Arc<dyn DeviceOwnerResolver>,
     pub(crate) media_port: std::sync::Arc<dyn MediaPort>,
+    pub(crate) source_node_id: NodeId,
 }
 
 impl MediaService {
@@ -27,12 +29,14 @@ impl MediaService {
         id_generator: std::sync::Arc<dyn IdGenerator>,
         owner_resolver: std::sync::Arc<dyn DeviceOwnerResolver>,
         media_port: std::sync::Arc<dyn MediaPort>,
+        source_node_id: NodeId,
     ) -> Self {
         Self {
             clock,
             id_generator,
             owner_resolver,
             media_port,
+            source_node_id,
         }
     }
 
@@ -157,19 +161,20 @@ impl MediaService {
 
         uow.commit().await?;
 
-        if let Err(e) = self
-            .media_port
-            .release(tenant_id, binding.media_binding_id(), self.clock.as_ref())
-            .await
-        {
-            tracing::warn!(
-                "failed to release media binding {} after stop_live: {}",
-                binding.media_binding_id(),
-                e
-            );
-        }
-
-        Ok(MediaSessionDto::from(&session))
+        self.dispatch_stop_command(
+            context,
+            uow,
+            operation.operation_id(),
+            session.media_session_id(),
+            binding.media_binding_id(),
+            binding.media_node_id(),
+            binding.media_node_instance_epoch(),
+            0,
+            binding.owner_epoch(),
+            operation.deadline(),
+            operation.idempotency_scope().idempotency_key.clone(),
+        )
+        .await
     }
 
     /// Controls an active playback session.
@@ -218,6 +223,17 @@ impl MediaService {
             )));
         }
 
+        let binding = uow
+            .media_binding_repository()
+            .get_by_media_session(tenant_id, media_session_id)
+            .await?
+            .ok_or_else(|| {
+                crate::SignalError::from(DomainError::not_found(
+                    "media binding",
+                    media_session_id.to_string(),
+                ))
+            })?;
+
         let payload = CommandPayload::ControlPlayback {
             media_session_id,
             command: request.command.into(),
@@ -249,7 +265,22 @@ impl MediaService {
             .await?;
 
         uow.commit().await?;
-        Ok(OperationDto::from(&operation))
+
+        self.dispatch_control_command(
+            context,
+            uow,
+            operation.operation_id(),
+            session.media_session_id(),
+            binding.media_binding_id(),
+            binding.media_node_id(),
+            binding.media_node_instance_epoch(),
+            0,
+            binding.owner_epoch(),
+            operation.deadline(),
+            operation.idempotency_scope().idempotency_key.clone(),
+            operation.command().payload().clone(),
+        )
+        .await
     }
 
     pub(crate) async fn ensure_device_and_channel_ready(

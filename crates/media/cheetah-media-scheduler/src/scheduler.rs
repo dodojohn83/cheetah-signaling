@@ -49,6 +49,9 @@ pub trait MediaScheduler: Send + Sync {
         binding_id: MediaBindingId,
         clock: &dyn Clock,
     ) -> Result<(), SchedulerError>;
+
+    /// Returns the current runtime view of a node, if known.
+    async fn get_node(&self, node_id: NodeId, clock: &dyn Clock) -> Option<MediaNode>;
 }
 
 /// Least-loaded scheduler with stable scoring and per-session affinity.
@@ -214,6 +217,10 @@ impl MediaScheduler for LeastLoadedScheduler {
                 .await?;
         }
         Ok(())
+    }
+
+    async fn get_node(&self, node_id: NodeId, clock: &dyn Clock) -> Option<MediaNode> {
+        self.registry.get(node_id, clock).await
     }
 }
 
