@@ -119,4 +119,48 @@ pub enum Gb28181Event {
         /// Invalid equipment flag, if present.
         invalid_equip: Option<String>,
     },
+    /// An alarm notification was received.
+    AlarmReceived {
+        /// Logical domain the device belongs to.
+        domain_id: DomainId,
+        /// Device identifier.
+        device_id: DeviceId,
+        /// Source address.
+        source: SocketAddr,
+        /// Sequence number.
+        sn: String,
+        /// Alarm priority.
+        priority: Option<String>,
+        /// Alarm method.
+        method: Option<String>,
+        /// Alarm type.
+        alarm_type: Option<String>,
+        /// Alarm time.
+        time: Option<String>,
+        /// Extended alarm information.
+        info: Option<String>,
+    },
+    /// A mobile position report was received.
+    MobilePositionReceived {
+        /// Logical domain the device belongs to.
+        domain_id: DomainId,
+        /// Device identifier.
+        device_id: DeviceId,
+        /// Source address.
+        source: SocketAddr,
+        /// Sequence number.
+        sn: String,
+        /// Report time.
+        time: Option<String>,
+        /// Longitude.
+        longitude: Option<String>,
+        /// Latitude.
+        latitude: Option<String>,
+        /// Speed.
+        speed: Option<String>,
+        /// Direction.
+        direction: Option<String>,
+        /// Altitude.
+        altitude: Option<String>,
+    },
 }

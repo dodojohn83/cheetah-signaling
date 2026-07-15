@@ -800,3 +800,100 @@ fn mismatched_xml_device_id_is_rejected() {
         Err(cheetah_gb28181_module::AccessError::InvalidDeviceId)
     ));
 }
+
+#[test]
+fn alarm_message_emits_alarm_received_event() {
+    let (mut access, now) = make_registered_access();
+    let body = br#"<?xml version="1.0"?>
+<Notify>
+    <CmdType>Alarm</CmdType>
+    <SN>5</SN>
+    <DeviceID>34020000001320000001</DeviceID>
+    <AlarmPriority>1</AlarmPriority>
+    <AlarmMethod>2</AlarmMethod>
+    <AlarmType>1</AlarmType>
+    <AlarmTime>2026-07-13T14:31:00</AlarmTime>
+    <Info>motion</Info>
+</Notify>"#;
+    let request = make_message_request(body);
+    let outputs = access
+        .process(AccessInput {
+            source: "192.168.1.100:5060".parse().unwrap(),
+            now: now + 1,
+            message: request,
+        })
+        .unwrap();
+
+    let mut seen = false;
+    for output in outputs {
+        if let AccessOutput::EmitEvent(Gb28181Event::AlarmReceived {
+            sn,
+            priority,
+            method,
+            alarm_type,
+            time,
+            info,
+            ..
+        }) = output
+        {
+            assert_eq!(sn, "5");
+            assert_eq!(priority.as_deref(), Some("1"));
+            assert_eq!(method.as_deref(), Some("2"));
+            assert_eq!(alarm_type.as_deref(), Some("1"));
+            assert_eq!(time.as_deref(), Some("2026-07-13T14:31:00"));
+            assert_eq!(info.as_deref(), Some("motion"));
+            seen = true;
+        }
+    }
+    assert!(seen);
+}
+
+#[test]
+fn mobile_position_message_emits_mobile_position_received_event() {
+    let (mut access, now) = make_registered_access();
+    let body = br#"<?xml version="1.0"?>
+<Notify>
+    <CmdType>MobilePosition</CmdType>
+    <SN>6</SN>
+    <DeviceID>34020000001320000001</DeviceID>
+    <Time>2026-07-13T14:31:00</Time>
+    <Longitude>121.47</Longitude>
+    <Latitude>31.23</Latitude>
+    <Speed>60.5</Speed>
+    <Direction>180</Direction>
+    <Altitude>10</Altitude>
+</Notify>"#;
+    let request = make_message_request(body);
+    let outputs = access
+        .process(AccessInput {
+            source: "192.168.1.100:5060".parse().unwrap(),
+            now: now + 1,
+            message: request,
+        })
+        .unwrap();
+
+    let mut seen = false;
+    for output in outputs {
+        if let AccessOutput::EmitEvent(Gb28181Event::MobilePositionReceived {
+            sn,
+            time,
+            longitude,
+            latitude,
+            speed,
+            direction,
+            altitude,
+            ..
+        }) = output
+        {
+            assert_eq!(sn, "6");
+            assert_eq!(time.as_deref(), Some("2026-07-13T14:31:00"));
+            assert_eq!(longitude.as_deref(), Some("121.47"));
+            assert_eq!(latitude.as_deref(), Some("31.23"));
+            assert_eq!(speed.as_deref(), Some("60.5"));
+            assert_eq!(direction.as_deref(), Some("180"));
+            assert_eq!(altitude.as_deref(), Some("10"));
+            seen = true;
+        }
+    }
+    assert!(seen);
+}

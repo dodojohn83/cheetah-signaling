@@ -7,7 +7,8 @@ use crate::ports::CredentialProvider;
 use crate::registration::RegistrationTable;
 use crate::types::DeviceId;
 use crate::xml::{
-    XmlLimits, parse_catalog, parse_device_info, parse_device_status, parse_keepalive, parse_xml,
+    XmlLimits, parse_alarm, parse_catalog, parse_device_info, parse_device_status, parse_keepalive,
+    parse_mobile_position, parse_xml,
 };
 use cheetah_gb28181_core::{
     DigestChallenge, DigestContext, DigestQop, DigestReplayCache, DigestResponse, HeaderName,
@@ -339,6 +340,37 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                         status: status.status,
                         reason: status.reason,
                         invalid_equip: status.invalid_equip,
+                    },
+                ));
+            }
+            "Alarm" => {
+                let alarm = parse_alarm(body)?;
+                outputs.push(AccessOutput::EmitEvent(Gb28181Event::AlarmReceived {
+                    domain_id: self.config.domain_id().clone(),
+                    device_id,
+                    source,
+                    sn: alarm.sn,
+                    priority: alarm.priority,
+                    method: alarm.method,
+                    alarm_type: alarm.alarm_type,
+                    time: alarm.time,
+                    info: alarm.info,
+                }));
+            }
+            "MobilePosition" => {
+                let pos = parse_mobile_position(body)?;
+                outputs.push(AccessOutput::EmitEvent(
+                    Gb28181Event::MobilePositionReceived {
+                        domain_id: self.config.domain_id().clone(),
+                        device_id,
+                        source,
+                        sn: pos.sn,
+                        time: pos.time,
+                        longitude: pos.longitude,
+                        latitude: pos.latitude,
+                        speed: pos.speed,
+                        direction: pos.direction,
+                        altitude: pos.altitude,
                     },
                 ));
             }
