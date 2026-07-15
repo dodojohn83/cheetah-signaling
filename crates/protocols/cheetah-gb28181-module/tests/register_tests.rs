@@ -610,3 +610,193 @@ fn registration_table_respects_capacity_limit() {
         Err(cheetah_gb28181_module::AccessError::RegistrationTableFull)
     ));
 }
+
+#[test]
+fn catalog_message_emits_catalog_received_event() {
+    let (mut access, now) = make_registered_access();
+    let body = br#"<?xml version="1.0"?>
+<Response>
+    <CmdType>Catalog</CmdType>
+    <SN>2</SN>
+    <DeviceID>34020000001320000001</DeviceID>
+    <SumNum>1</SumNum>
+    <DeviceList Num="1">
+        <Item>
+            <DeviceID>34020000001320000001</DeviceID>
+            <Name>Camera 1</Name>
+            <Status>ON</Status>
+        </Item>
+    </DeviceList>
+</Response>"#;
+    let request = make_message_request(body);
+    let outputs = access
+        .process(AccessInput {
+            source: "192.168.1.100:5060".parse().unwrap(),
+            now: now + 1,
+            message: request,
+        })
+        .unwrap();
+
+    let mut catalog_seen = false;
+    let mut response_seen = false;
+    for output in outputs {
+        match output {
+            AccessOutput::EmitEvent(Gb28181Event::CatalogReceived {
+                sn,
+                sum_num,
+                num,
+                items,
+                ..
+            }) => {
+                assert_eq!(sn, "2");
+                assert_eq!(sum_num, 1);
+                assert_eq!(num, 1);
+                assert_eq!(items.len(), 1);
+                assert_eq!(items[0].device_id, "34020000001320000001");
+                assert_eq!(items[0].name.as_deref(), Some("Camera 1"));
+                catalog_seen = true;
+            }
+            AccessOutput::SendResponse(_) => response_seen = true,
+            _ => {}
+        }
+    }
+    assert!(catalog_seen);
+    assert!(response_seen);
+}
+
+#[test]
+fn device_info_message_emits_device_info_received_event() {
+    let (mut access, now) = make_registered_access();
+    let body = br#"<?xml version="1.0"?>
+<Response>
+    <CmdType>DeviceInfo</CmdType>
+    <SN>1</SN>
+    <DeviceID>34020000001320000001</DeviceID>
+    <Result>OK</Result>
+    <Manufacturer>Hikvision</Manufacturer>
+    <Model>DS-2CD</Model>
+    <Firmware>V5.5.0</Firmware>
+</Response>"#;
+    let request = make_message_request(body);
+    let outputs = access
+        .process(AccessInput {
+            source: "192.168.1.100:5060".parse().unwrap(),
+            now: now + 1,
+            message: request,
+        })
+        .unwrap();
+
+    let mut seen = false;
+    for output in outputs {
+        if let AccessOutput::EmitEvent(Gb28181Event::DeviceInfoReceived {
+            sn,
+            result,
+            manufacturer,
+            model,
+            firmware,
+            ..
+        }) = output
+        {
+            assert_eq!(sn, "1");
+            assert_eq!(result.as_deref(), Some("OK"));
+            assert_eq!(manufacturer.as_deref(), Some("Hikvision"));
+            assert_eq!(model.as_deref(), Some("DS-2CD"));
+            assert_eq!(firmware.as_deref(), Some("V5.5.0"));
+            seen = true;
+        }
+    }
+    assert!(seen);
+}
+
+#[test]
+fn device_status_message_emits_device_status_received_event() {
+    let (mut access, now) = make_registered_access();
+    let body = br#"<?xml version="1.0"?>
+<Response>
+    <CmdType>DeviceStatus</CmdType>
+    <SN>3</SN>
+    <DeviceID>34020000001320000001</DeviceID>
+    <Result>OK</Result>
+    <Online>ONLINE</Online>
+    <Status>OK</Status>
+    <InvalidEquip>False</InvalidEquip>
+</Response>"#;
+    let request = make_message_request(body);
+    let outputs = access
+        .process(AccessInput {
+            source: "192.168.1.100:5060".parse().unwrap(),
+            now: now + 1,
+            message: request,
+        })
+        .unwrap();
+
+    let mut seen = false;
+    for output in outputs {
+        if let AccessOutput::EmitEvent(Gb28181Event::DeviceStatusReceived {
+            sn,
+            result,
+            online,
+            status,
+            invalid_equip,
+            ..
+        }) = output
+        {
+            assert_eq!(sn, "3");
+            assert_eq!(result.as_deref(), Some("OK"));
+            assert_eq!(online.as_deref(), Some("ONLINE"));
+            assert_eq!(status.as_deref(), Some("OK"));
+            assert_eq!(invalid_equip.as_deref(), Some("False"));
+            seen = true;
+        }
+    }
+    assert!(seen);
+}
+
+#[test]
+fn unregistered_device_message_is_rejected() {
+    let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec())
+        .unwrap()
+        .with_auth_policy(AuthPolicy::ChallengeOptional);
+    let provider = |_device: &DeviceId| None;
+    let mut access = Gb28181Access::new(config, provider).unwrap();
+
+    let body = br#"<?xml version="1.0"?>
+<Notify>
+    <CmdType>Keepalive</CmdType>
+    <SN>1</SN>
+    <DeviceID>34020000001320000001</DeviceID>
+    <Status>OK</Status>
+</Notify>"#;
+    let request = make_message_request(body);
+    let result = access.process(AccessInput {
+        source: "192.168.1.100:5060".parse().unwrap(),
+        now: 1000,
+        message: request,
+    });
+    assert!(matches!(
+        result,
+        Err(cheetah_gb28181_module::AccessError::NotRegistered)
+    ));
+}
+
+#[test]
+fn mismatched_xml_device_id_is_rejected() {
+    let (mut access, now) = make_registered_access();
+    let body = br#"<?xml version="1.0"?>
+<Notify>
+    <CmdType>Keepalive</CmdType>
+    <SN>1</SN>
+    <DeviceID>34020000001320000002</DeviceID>
+    <Status>OK</Status>
+</Notify>"#;
+    let request = make_message_request(body);
+    let result = access.process(AccessInput {
+        source: "192.168.1.100:5060".parse().unwrap(),
+        now: now + 1,
+        message: request,
+    });
+    assert!(matches!(
+        result,
+        Err(cheetah_gb28181_module::AccessError::InvalidDeviceId)
+    ));
+}

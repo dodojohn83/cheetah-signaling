@@ -1,11 +1,17 @@
 //! GB28181 XML (MANSCDP / MANSRTSP) codec.
 
+pub mod catalog;
+pub mod device_info;
+pub mod device_status;
 pub mod element;
 pub mod keepalive;
 pub mod limits;
 pub mod reader;
 pub mod writer;
 
+pub use catalog::{CatalogItem, CatalogResponse, parse_catalog};
+pub use device_info::{DeviceInfoResponse, parse_device_info};
+pub use device_status::{DeviceStatusResponse, parse_device_status};
 pub use element::XmlElement;
 pub use keepalive::{KeepaliveInfo, parse_keepalive};
 pub use limits::XmlLimits;

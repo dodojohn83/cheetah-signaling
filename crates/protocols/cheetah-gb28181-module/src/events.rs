@@ -1,6 +1,7 @@
 //! Domain events emitted by the GB28181 access module.
 
 use crate::types::{DeviceId, DomainId};
+use crate::xml::CatalogItem;
 use std::net::SocketAddr;
 
 /// Presence state reported by a device.
@@ -60,5 +61,62 @@ pub enum Gb28181Event {
         source: SocketAddr,
         /// Parsed keepalive status.
         status: String,
+    },
+    /// A catalog response fragment was received.
+    CatalogReceived {
+        /// Logical domain the device belongs to.
+        domain_id: DomainId,
+        /// Device identifier.
+        device_id: DeviceId,
+        /// Source address.
+        source: SocketAddr,
+        /// Sequence number.
+        sn: String,
+        /// Declared total number of items across all fragments.
+        sum_num: u32,
+        /// Number of items in this fragment.
+        num: u32,
+        /// Items in this fragment.
+        items: Vec<CatalogItem>,
+    },
+    /// A device info response was received.
+    DeviceInfoReceived {
+        /// Logical domain the device belongs to.
+        domain_id: DomainId,
+        /// Device identifier.
+        device_id: DeviceId,
+        /// Source address.
+        source: SocketAddr,
+        /// Sequence number.
+        sn: String,
+        /// Result string, if present.
+        result: Option<String>,
+        /// Manufacturer, if present.
+        manufacturer: Option<String>,
+        /// Model, if present.
+        model: Option<String>,
+        /// Firmware version, if present.
+        firmware: Option<String>,
+    },
+    /// A device status response was received.
+    DeviceStatusReceived {
+        /// Logical domain the device belongs to.
+        domain_id: DomainId,
+        /// Device identifier.
+        device_id: DeviceId,
+        /// Source address.
+        source: SocketAddr,
+        /// Sequence number.
+        sn: String,
+        /// Result string, if present.
+        result: Option<String>,
+        /// Online state, if present.
+        online: Option<String>,
+        /// Status, if present.
+        status: Option<String>,
+        /// Reason, if present.
+        reason: Option<String>,
+        /// Invalid equipment flag, if present.
+        invalid_equip: Option<String>,
     },
 }

@@ -6,7 +6,9 @@ use crate::events::{DevicePresence, Gb28181Event};
 use crate::ports::CredentialProvider;
 use crate::registration::RegistrationTable;
 use crate::types::DeviceId;
-use crate::xml::parse_keepalive;
+use crate::xml::{
+    XmlLimits, parse_catalog, parse_device_info, parse_device_status, parse_keepalive, parse_xml,
+};
 use cheetah_gb28181_core::{
     DigestChallenge, DigestContext, DigestQop, DigestReplayCache, DigestResponse, HeaderName,
     HeaderValue, Method, SipHeaders, SipMessage, SipUri, StatusLine,
@@ -258,16 +260,22 @@ impl<P: CredentialProvider> Gb28181Access<P> {
             .get(&HeaderName::From)
             .map(|v| v.as_str())
             .ok_or(AccessError::InvalidDeviceId)?;
-        let device_id = device_from_address(from).ok_or(AccessError::InvalidDeviceId)?;
+        let from_device_id = device_from_address(from).ok_or(AccessError::InvalidDeviceId)?;
 
-        let keepalive = parse_keepalive(body)?;
-        if keepalive.device_id != device_id.as_ref() {
+        let root = parse_xml(body, &XmlLimits::default())?;
+        let cmd_type = root
+            .child_text("CmdType")
+            .ok_or_else(|| AccessError::InvalidXml("missing CmdType".to_string()))?;
+        let xml_device_id = root.child_text("DeviceID").unwrap_or_default();
+
+        if from_device_id.as_ref() != xml_device_id {
             return Err(AccessError::InvalidDeviceId);
         }
+        let device_id = DeviceId::new(&xml_device_id).ok_or(AccessError::InvalidDeviceId)?;
 
         let Some(was_offline) = self.registrations.touch(&device_id, source, now) else {
-            // Keepalive from a device that is not currently registered must not
-            // bypass the registration policy.
+            // Business messages from a device that is not currently registered
+            // must not bypass the registration policy.
             return Err(AccessError::NotRegistered);
         };
 
@@ -282,12 +290,61 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                 },
             ));
         }
-        outputs.push(AccessOutput::EmitEvent(Gb28181Event::Keepalive {
-            domain_id: self.config.domain_id().clone(),
-            device_id,
-            source,
-            status: keepalive.status,
-        }));
+
+        match cmd_type.as_str() {
+            "Keepalive" => {
+                let keepalive = parse_keepalive(body)?;
+                outputs.push(AccessOutput::EmitEvent(Gb28181Event::Keepalive {
+                    domain_id: self.config.domain_id().clone(),
+                    device_id,
+                    source,
+                    status: keepalive.status,
+                }));
+            }
+            "Catalog" => {
+                let catalog = parse_catalog(body)?;
+                outputs.push(AccessOutput::EmitEvent(Gb28181Event::CatalogReceived {
+                    domain_id: self.config.domain_id().clone(),
+                    device_id,
+                    source,
+                    sn: catalog.sn,
+                    sum_num: catalog.sum_num,
+                    num: catalog.num,
+                    items: catalog.items,
+                }));
+            }
+            "DeviceInfo" => {
+                let info = parse_device_info(body)?;
+                outputs.push(AccessOutput::EmitEvent(Gb28181Event::DeviceInfoReceived {
+                    domain_id: self.config.domain_id().clone(),
+                    device_id,
+                    source,
+                    sn: info.sn,
+                    result: info.result,
+                    manufacturer: info.manufacturer,
+                    model: info.model,
+                    firmware: info.firmware,
+                }));
+            }
+            "DeviceStatus" => {
+                let status = parse_device_status(body)?;
+                outputs.push(AccessOutput::EmitEvent(
+                    Gb28181Event::DeviceStatusReceived {
+                        domain_id: self.config.domain_id().clone(),
+                        device_id,
+                        source,
+                        sn: status.sn,
+                        result: status.result,
+                        online: status.online,
+                        status: status.status,
+                        reason: status.reason,
+                        invalid_equip: status.invalid_equip,
+                    },
+                ));
+            }
+            other => return Err(AccessError::UnsupportedCmdType(other.to_string())),
+        }
+
         outputs.push(AccessOutput::SendResponse(build_message_response(
             &message,
             self.next_tag(),
