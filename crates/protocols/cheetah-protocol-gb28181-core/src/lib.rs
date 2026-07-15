@@ -14,6 +14,8 @@ pub use sip::headers::{HeaderName, HeaderValue, SipHeaders};
 pub use sip::message::{Body, Method, RequestLine, ResponseClass, SipMessage, StatusLine};
 pub use sip::parser::{SipParser, SipParserConfig};
 pub use sip::transaction::{
-    BranchPolicy, TransactionHalf, TransactionKey, TransactionKind, TransactionRole,
+    BranchPolicy, TimerKind, TimerSet, Transaction, TransactionConfig, TransactionEvent,
+    TransactionHalf, TransactionKey, TransactionKind, TransactionOutput, TransactionRole,
+    TransportKind,
 };
 pub use sip::uri::{Scheme, SipUri};

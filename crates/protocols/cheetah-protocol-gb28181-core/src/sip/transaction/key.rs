@@ -6,8 +6,7 @@
 //! method so that `ACK` for non-2xx responses and `CANCEL` remain associated with
 //! the correct original INVITE transaction when required by later matching logic.
 
-use super::error::{SipError, SipErrorKind};
-use super::message::{Method, SipMessage};
+use crate::{Method, SipError, SipErrorKind, SipMessage};
 
 /// Local SIP role used to determine whether a message belongs to a client or a
 /// server transaction.

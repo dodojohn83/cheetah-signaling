@@ -1,4 +1,4 @@
-//! SIP parsing and encoding errors.
+//! SIP protocol errors.
 
 use std::fmt;
 
@@ -29,6 +29,12 @@ pub enum SipErrorKind {
     MissingRequiredHeader,
     /// Line termination or framing error.
     InvalidFraming,
+    /// Transaction layer timeout.
+    TransactionTimeout,
+    /// Transaction was cancelled by a matching CANCEL request.
+    TransactionCancelled,
+    /// Transport reported an unrecoverable failure.
+    TransportFailure,
 }
 
 /// Errors returned by the Sans-I/O SIP parser and encoder.
