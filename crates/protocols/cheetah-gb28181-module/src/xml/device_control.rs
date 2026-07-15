@@ -70,7 +70,8 @@ impl PtzCommand {
         let mut cmd: u8 = 0;
         let h_speed = clamp_speed_i8(self.pan, self.max_pan_tilt_speed);
         let v_speed = clamp_speed_i8(self.tilt, self.max_pan_tilt_speed);
-        let zoom_speed = clamp_speed_i8(self.zoom, self.max_zoom_speed);
+        // Zoom speed is a 4-bit nibble in the PTZ byte, so it must be capped at 15.
+        let zoom_speed = clamp_speed_i8(self.zoom, self.max_zoom_speed.min(15));
 
         if self.pan > 0 {
             cmd |= RIGHT;
@@ -294,6 +295,17 @@ mod tests {
         assert!(xml.contains("<CmdType>DeviceControl</CmdType>"));
         assert!(xml.contains("<SN>42</SN>"));
         assert!(xml.contains("<PTZCmd>A50F0101080000BE</PTZCmd>"));
+    }
+
+    #[test]
+    fn ptz_zoom_speed_is_capped_at_four_bits() {
+        let mut cmd = PtzCommand::new();
+        cmd.zoom = 100;
+        cmd.max_zoom_speed = 255;
+        // Should not panic or overflow; zoom nibble is capped at 15.
+        let encoded = cmd.encode();
+        // zoom byte = 0xF0, zoom direction bit set, checksum = 0xB5.
+        assert_eq!(encoded, "A50F01100000F0B5");
     }
 
     #[test]
