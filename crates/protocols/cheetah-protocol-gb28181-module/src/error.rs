@@ -10,6 +10,8 @@ pub enum AccessError {
     UnsupportedMethod,
     #[error("missing or invalid device identifier")]
     InvalidDeviceId,
+    #[error("invalid domain identifier")]
+    InvalidDomainId,
     #[error("missing or malformed Contact header")]
     InvalidContact,
     #[error("missing or malformed Expires value")]

@@ -4,6 +4,7 @@ use crate::config::{AuthPolicy, Gb28181DomainConfig};
 use crate::error::AccessError;
 use crate::events::Gb28181Event;
 use crate::ports::CredentialProvider;
+use crate::types::DeviceId;
 use cheetah_protocol_gb28181_core::{
     DigestChallenge, DigestContext, DigestQop, DigestReplayCache, DigestResponse, HeaderName,
     HeaderValue, Method, SipHeaders, SipMessage, SipUri, StatusLine,
@@ -57,7 +58,8 @@ impl<P: CredentialProvider> Gb28181Access<P> {
     ///
     /// Returns an error if the digest secret is too short (less than 32 bytes).
     pub fn new(config: Gb28181DomainConfig, credential_provider: P) -> Result<Self, AccessError> {
-        let ctx = DigestContext::new(&config.realm, config.digest_secret.clone())
+        let secret = config.digest_secret_bytes();
+        let ctx = DigestContext::new(&config.realm, secret)
             .map_err(|e| AccessError::Internal(e.to_string()))?
             .allow_md5(config.allow_md5)
             .preferred_algorithm(config.preferred_algorithm);
@@ -179,26 +181,31 @@ impl<P: CredentialProvider> Gb28181Access<P> {
 fn device_id_from_request(
     request: &cheetah_protocol_gb28181_core::RequestLine,
     headers: &SipHeaders,
-) -> Result<String, AccessError> {
-    if let Some(user) = request.uri.user().filter(|u| !u.is_empty()) {
-        return Ok(user.to_string());
+) -> Result<DeviceId, AccessError> {
+    if let Some(id) = request
+        .uri
+        .user()
+        .filter(|u| !u.is_empty())
+        .and_then(DeviceId::new)
+    {
+        return Ok(id);
     }
-    if let Some(user) = headers
+    if let Some(id) = headers
         .get(&HeaderName::To)
-        .and_then(|v| user_from_address(v.as_str()))
+        .and_then(|v| device_from_address(v.as_str()))
     {
-        return Ok(user);
+        return Ok(id);
     }
-    if let Some(user) = headers
+    if let Some(id) = headers
         .get(&HeaderName::From)
-        .and_then(|v| user_from_address(v.as_str()))
+        .and_then(|v| device_from_address(v.as_str()))
     {
-        return Ok(user);
+        return Ok(id);
     }
     Err(AccessError::InvalidDeviceId)
 }
 
-fn user_from_address(value: &str) -> Option<String> {
+fn device_from_address(value: &str) -> Option<DeviceId> {
     let value = value.trim();
     let uri_text = if let Some(start) = value.find('<') {
         let end = value.find('>')?;
@@ -206,9 +213,12 @@ fn user_from_address(value: &str) -> Option<String> {
     } else {
         value.split(';').next()?
     };
-    SipUri::parse(uri_text)
-        .ok()
-        .and_then(|u| u.user().filter(|u| !u.is_empty()).map(str::to_string))
+    SipUri::parse(uri_text).ok().and_then(|u| {
+        u.user()
+            .filter(|u| !u.is_empty())
+            .map(str::to_string)
+            .and_then(DeviceId::new)
+    })
 }
 
 fn parse_contact_header(headers: &SipHeaders) -> Result<(SipUri, Option<u32>), AccessError> {
@@ -257,7 +267,7 @@ fn resolve_expires(
     let requested = contact_expires
         .or(header_expires)
         .unwrap_or(config.default_expires_seconds);
-    requested.clamp(1, config.max_expires_seconds)
+    requested.clamp(0, config.max_expires_seconds)
 }
 
 fn parse_authorization(
@@ -321,7 +331,6 @@ fn copy_common_headers(request: &SipMessage) -> SipHeaders {
     for name in [
         HeaderName::Via,
         HeaderName::From,
-        HeaderName::To,
         HeaderName::CallId,
         HeaderName::CSeq,
     ] {
@@ -338,8 +347,8 @@ fn add_or_replace_tag(value: &str, tag: &str) -> String {
         return String::new();
     }
     let without_tag = value
-        .rsplit(';')
-        .skip_while(|part| part.trim().starts_with("tag="))
+        .split(';')
+        .filter(|part| !part.trim().starts_with("tag="))
         .collect::<Vec<_>>()
         .join(";");
     if without_tag.is_empty() {

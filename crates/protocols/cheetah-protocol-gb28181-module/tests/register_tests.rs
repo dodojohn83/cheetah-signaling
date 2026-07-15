@@ -6,7 +6,7 @@ use cheetah_protocol_gb28181_core::{
     HeaderName, HeaderValue, Method, RequestLine, SipHeaders, SipMessage, SipUri,
 };
 use cheetah_protocol_gb28181_module::{
-    AccessInput, AccessOutput, Gb28181Access, Gb28181DomainConfig,
+    AccessInput, AccessOutput, DeviceId, Gb28181Access, Gb28181DomainConfig,
 };
 use secrecy::SecretString;
 use sha2::{Digest, Sha256};
@@ -103,8 +103,14 @@ fn find_response(outputs: &[AccessOutput]) -> &SipMessage {
 
 #[test]
 fn unauthenticated_register_returns_401_challenge() {
-    let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec());
-    let provider = |_: &str| Some(SecretString::from(PASSWORD));
+    let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec()).unwrap();
+    let provider = |device: &DeviceId| {
+        if device.as_ref() == DEVICE_ID {
+            Some(SecretString::from(PASSWORD))
+        } else {
+            None
+        }
+    };
     let mut access = Gb28181Access::new(config, provider).unwrap();
 
     let request = make_request(1, false);
@@ -131,8 +137,14 @@ fn unauthenticated_register_returns_401_challenge() {
 
 #[test]
 fn authenticated_register_returns_200_and_emits_event() {
-    let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec());
-    let provider = |_: &str| Some(SecretString::from(PASSWORD));
+    let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec()).unwrap();
+    let provider = |device: &DeviceId| {
+        if device.as_ref() == DEVICE_ID {
+            Some(SecretString::from(PASSWORD))
+        } else {
+            None
+        }
+    };
     let mut access = Gb28181Access::new(config, provider).unwrap();
 
     let mut request = make_request(1, false);

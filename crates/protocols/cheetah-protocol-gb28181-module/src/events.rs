@@ -1,5 +1,6 @@
 //! Domain events emitted by the GB28181 access module.
 
+use crate::types::{DeviceId, DomainId};
 use std::net::SocketAddr;
 
 /// Presence state reported by a device.
@@ -17,9 +18,9 @@ pub enum Gb28181Event {
     /// A device registered or refreshed registration.
     DeviceRegistered {
         /// Logical domain the device belongs to.
-        domain_id: String,
+        domain_id: DomainId,
         /// Device identifier from the SIP URI user part.
-        device_id: String,
+        device_id: DeviceId,
         /// Source address observed from the transport.
         source: SocketAddr,
         /// Parsed Contact endpoint (host:port) for subsequent requests.
@@ -32,18 +33,18 @@ pub enum Gb28181Event {
     /// A device explicitly unregistered.
     DeviceUnregistered {
         /// Logical domain the device belongs to.
-        domain_id: String,
+        domain_id: DomainId,
         /// Device identifier from the SIP URI user part.
-        device_id: String,
+        device_id: DeviceId,
         /// Source address observed from the transport.
         source: SocketAddr,
     },
     /// A keepalive was received.
     Keepalive {
         /// Logical domain the device belongs to.
-        domain_id: String,
+        domain_id: DomainId,
         /// Device identifier.
-        device_id: String,
+        device_id: DeviceId,
         /// Source address.
         source: SocketAddr,
         /// Parsed keepalive status.
