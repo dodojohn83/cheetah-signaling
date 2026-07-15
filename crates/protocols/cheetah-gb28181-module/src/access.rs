@@ -128,36 +128,29 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                 )
                 .map_err(|_| AccessError::AuthenticationFailed)?;
 
-            if expires == 0 {
-                let response =
-                    build_success_response(&message, &contact_uri, expires, self.next_tag());
-                Ok(vec![
-                    AccessOutput::SendResponse(response),
-                    AccessOutput::EmitEvent(Gb28181Event::DeviceUnregistered {
-                        domain_id: self.config.domain_id.clone(),
-                        device_id,
-                        source,
-                    }),
-                ])
-            } else {
-                let user_agent = headers
-                    .get(&HeaderName::UserAgent)
-                    .map(|v| v.as_str().to_string());
-                let contact = contact_uri.encode();
-                let response =
-                    build_success_response(&message, &contact_uri, expires, self.next_tag());
-                Ok(vec![
-                    AccessOutput::SendResponse(response),
-                    AccessOutput::EmitEvent(Gb28181Event::DeviceRegistered {
-                        domain_id: self.config.domain_id.clone(),
-                        device_id,
-                        source,
-                        contact,
-                        expires,
-                        user_agent,
-                    }),
-                ])
-            }
+            let user_agent = headers
+                .get(&HeaderName::UserAgent)
+                .map(|v| v.as_str().to_string());
+            Ok(self.register_accepted(
+                &message,
+                &contact_uri,
+                expires,
+                device_id,
+                source,
+                user_agent,
+            ))
+        } else if self.config.auth_policy == AuthPolicy::ChallengeOptional {
+            let user_agent = headers
+                .get(&HeaderName::UserAgent)
+                .map(|v| v.as_str().to_string());
+            Ok(self.register_accepted(
+                &message,
+                &contact_uri,
+                expires,
+                device_id,
+                source,
+                user_agent,
+            ))
         } else {
             let challenge = self
                 .digest_context
@@ -165,6 +158,41 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                 .map_err(|e| AccessError::Internal(e.to_string()))?;
             let response = build_challenge_response(&message, &challenge, self.next_tag());
             Ok(vec![AccessOutput::SendResponse(response)])
+        }
+    }
+
+    fn register_accepted(
+        &mut self,
+        message: &SipMessage,
+        contact_uri: &SipUri,
+        expires: u32,
+        device_id: DeviceId,
+        source: SocketAddr,
+        user_agent: Option<String>,
+    ) -> Vec<AccessOutput> {
+        let response = build_success_response(message, contact_uri, expires, self.next_tag());
+        if expires == 0 {
+            vec![
+                AccessOutput::SendResponse(response),
+                AccessOutput::EmitEvent(Gb28181Event::DeviceUnregistered {
+                    domain_id: self.config.domain_id.clone(),
+                    device_id,
+                    source,
+                }),
+            ]
+        } else {
+            let contact = contact_uri.encode();
+            vec![
+                AccessOutput::SendResponse(response),
+                AccessOutput::EmitEvent(Gb28181Event::DeviceRegistered {
+                    domain_id: self.config.domain_id.clone(),
+                    device_id,
+                    source,
+                    contact,
+                    expires,
+                    user_agent,
+                }),
+            ]
         }
     }
 
@@ -326,12 +354,11 @@ fn build_success_response(
 
 fn copy_common_headers(request: &SipMessage) -> SipHeaders {
     let mut headers = SipHeaders::new();
-    for name in [
-        HeaderName::Via,
-        HeaderName::From,
-        HeaderName::CallId,
-        HeaderName::CSeq,
-    ] {
+    // Via may appear multiple times (one per proxy hop); copy all of them.
+    for value in request.headers().get_all(&HeaderName::Via) {
+        headers.append(HeaderName::Via.clone(), value.clone());
+    }
+    for name in [HeaderName::From, HeaderName::CallId, HeaderName::CSeq] {
         if let Some(value) = request.headers().get(&name) {
             headers.append(name, value.clone());
         }

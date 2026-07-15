@@ -6,7 +6,7 @@ use cheetah_gb28181_core::{
     HeaderName, HeaderValue, Method, RequestLine, SipHeaders, SipMessage, SipUri,
 };
 use cheetah_gb28181_module::{
-    AccessInput, AccessOutput, DeviceId, Gb28181Access, Gb28181DomainConfig,
+    AccessInput, AccessOutput, AuthPolicy, DeviceId, Gb28181Access, Gb28181DomainConfig,
 };
 use secrecy::SecretString;
 use sha2::{Digest, Sha256};
@@ -188,4 +188,90 @@ fn authenticated_register_returns_200_and_emits_event() {
         registered,
         Some(cheetah_gb28181_module::Gb28181Event::DeviceRegistered { .. })
     ));
+}
+
+#[test]
+fn challenge_optional_register_without_auth_succeeds() {
+    let mut config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec()).unwrap();
+    config.auth_policy = AuthPolicy::ChallengeOptional;
+    let provider = |_: &DeviceId| -> Option<SecretString> { None };
+    let mut access = Gb28181Access::new(config, provider).unwrap();
+
+    let request = make_request(1, false);
+    let outputs = access
+        .process(AccessInput {
+            source: "192.168.1.100:5060".parse().unwrap(),
+            now: 1000,
+            message: request,
+        })
+        .unwrap();
+
+    assert_eq!(outputs.len(), 2);
+    let response = find_response(&outputs);
+    let SipMessage::Response { line, .. } = response else {
+        panic!("expected response");
+    };
+    assert_eq!(line.code, 200);
+
+    let registered = outputs.iter().find_map(|o| match o {
+        AccessOutput::EmitEvent(e) => Some(e),
+        _ => None,
+    });
+    assert!(matches!(
+        registered,
+        Some(cheetah_gb28181_module::Gb28181Event::DeviceRegistered { .. })
+    ));
+}
+
+#[test]
+fn multiple_via_headers_are_copied_to_response() {
+    let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec()).unwrap();
+    let provider = |device: &DeviceId| {
+        if device.as_ref() == DEVICE_ID {
+            Some(SecretString::from(PASSWORD))
+        } else {
+            None
+        }
+    };
+    let mut access = Gb28181Access::new(config, provider).unwrap();
+
+    let mut request = make_request(1, false);
+    request.headers_mut().append(
+        HeaderName::Via,
+        HeaderValue::new("SIP/2.0/UDP 10.0.0.1:5060;branch=z9hG4bKproxy"),
+    );
+
+    let challenge_outputs = access
+        .process(AccessInput {
+            source: "192.168.1.100:5060".parse().unwrap(),
+            now: 1000,
+            message: request.clone(),
+        })
+        .unwrap();
+    let challenge_response = find_response(&challenge_outputs);
+    let www_auth = challenge_response
+        .headers()
+        .get(&HeaderName::WwwAuthenticate)
+        .expect("WWW-Authenticate")
+        .as_str();
+    let nonce = extract_nonce(www_auth);
+
+    add_authorization(&mut request, &nonce);
+    let outputs = access
+        .process(AccessInput {
+            source: "192.168.1.100:5060".parse().unwrap(),
+            now: 1000,
+            message: request,
+        })
+        .unwrap();
+
+    let response = find_response(&outputs);
+    let via_values: Vec<_> = response
+        .headers()
+        .get_all(&HeaderName::Via)
+        .map(|v| v.as_str().to_string())
+        .collect();
+    assert_eq!(via_values.len(), 2);
+    assert!(via_values.iter().any(|v| v.contains("192.168.1.100")));
+    assert!(via_values.iter().any(|v| v.contains("10.0.0.1")));
 }
