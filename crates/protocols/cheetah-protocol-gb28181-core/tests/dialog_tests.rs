@@ -250,6 +250,29 @@ fn first_in_dialog_request_with_cseq_zero_is_accepted() {
 }
 
 #[test]
+fn cancel_reusing_invite_cseq_is_delivered_without_cseq_check() {
+    let mut dialog = Dialog::new_uas(&invite_request(), "uas-local").unwrap();
+    // CANCEL reuses the CSeq of the INVITE it cancels (2).
+    let cancel = parse(
+        "CANCEL sip:bob@192.168.1.2:5060 SIP/2.0\r\n\
+        Via: SIP/2.0/UDP 192.168.1.2:5060;branch=z9hG4bKcancel\r\n\
+        From: <sip:alice@example.com>;tag=local-abc\r\n\
+        To: <sip:bob@example.com>;tag=uas-local\r\n\
+        Call-ID: call-dialog@example.com\r\n\
+        CSeq: 2 CANCEL\r\n\
+        Content-Length: 0\r\n\r\n",
+    );
+    let outputs = dialog.process(DialogEvent::Request(cancel));
+    assert!(
+        outputs
+            .iter()
+            .any(|o| matches!(o, DialogOutput::Deliver(_)))
+    );
+    assert_eq!(dialog.remote_cseq(), Some(2));
+    assert!(!dialog.is_terminated());
+}
+
+#[test]
 fn out_of_order_bye_is_absorbed() {
     let mut dialog = Dialog::new_uac(&invite_request(), &ok_response()).unwrap();
     // Accept a request with CSeq 3 first.
