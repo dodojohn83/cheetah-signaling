@@ -291,3 +291,23 @@ fn dialog_id_matches_call_id_and_tags() {
         }
     );
 }
+
+#[test]
+fn dialog_extracts_uri_from_multibyte_header_params() {
+    // The semicolon before a multi-byte character must not cause a panic,
+    // and the URI should be extracted from the token up to the first ';'.
+    let ok = parse(
+        "SIP/2.0 200 OK\r\n\
+        Via: SIP/2.0/UDP 192.168.1.1:5060;branch=z9hG4bKinvite\r\n\
+        From: <sip:alice@example.com>;tag=local-abc\r\n\
+        To: <sip:bob@example.com>;tag=remote-xyz\r\n\
+        Call-ID: call-dialog@example.com\r\n\
+        CSeq: 2 INVITE\r\n\
+        Contact: sip:bob@example.com;foo=\u{00f6}\r\n\
+        Record-Route: sip:proxy1@example.com;lr, sip:proxy2@example.com;lr=\u{00f6}\r\n\
+        Content-Length: 0\r\n\r\n",
+    );
+    let dialog = Dialog::new_uac(&invite_request(), &ok).unwrap();
+    assert_eq!(dialog.remote_target().host(), "example.com");
+    assert_eq!(dialog.route_set().len(), 2);
+}

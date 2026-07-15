@@ -374,7 +374,7 @@ fn extract_first_uri(value: &str) -> Option<SipUri> {
             // Stop at the first header parameter (after an unquoted ';').
             let mut depth = 0_i32;
             let mut end = token.len();
-            for (i, c) in token.chars().enumerate() {
+            for (i, c) in token.char_indices() {
                 match c {
                     '"' => depth = if depth == 0 { 1 } else { 0 },
                     ';' if depth == 0 => {
