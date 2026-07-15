@@ -9,8 +9,8 @@ use cheetah_signal_contracts::cheetah::common::v1::{
 };
 use cheetah_signal_contracts::cheetah::media::v1::MediaCommand;
 use cheetah_signal_types::{
-    MediaBindingId, MediaSessionId, OperationId, OwnerEpoch, SecretStore, TenantId, UtcTimestamp,
-    is_internal_ip,
+    MediaBindingId, MediaNodeInstanceEpoch, MediaSessionId, NodeId, OperationId, OwnerEpoch,
+    SecretStore, TenantId, UtcTimestamp, is_internal_ip,
 };
 use secrecy::ExposeSecret;
 use std::collections::BTreeMap;
@@ -38,6 +38,10 @@ pub struct MediaControlRequest {
     pub operation_id: OperationId,
     /// Owner epoch of the device/session for fencing.
     pub owner_epoch: OwnerEpoch,
+    /// Signaling node that owns this command.
+    pub source_node_id: NodeId,
+    /// Target media node instance epoch for fencing.
+    pub target_media_node_instance_epoch: MediaNodeInstanceEpoch,
     /// Optional wall-clock deadline.
     pub deadline: Option<UtcTimestamp>,
     /// Idempotency key for the command.
@@ -437,6 +441,8 @@ fn build_command_envelope(
             value: request.media_session_id.to_string(),
         }),
     };
+    let mut command = request.command.clone();
+    command.target_media_node_instance_epoch = request.target_media_node_instance_epoch.0;
     Ok(CommandEnvelope {
         meta: Some(EnvelopeMeta {
             message_id: Some(Uuid {
@@ -453,7 +459,9 @@ fn build_command_envelope(
             }),
             occurred_at: Some(to_timestamp(now)?),
             deadline: request.deadline.map(to_timestamp).transpose()?,
-            source_node_id: None,
+            source_node_id: Some(Uuid {
+                value: request.source_node_id.to_string(),
+            }),
             owner_epoch: request.owner_epoch.0,
             traceparent: String::new(),
             tracestate: String::new(),
@@ -463,7 +471,7 @@ fn build_command_envelope(
         idempotency_key: request.idempotency_key,
         operation_id: request.operation_id.to_string(),
         step_id: request.media_binding_id.to_string(),
-        command: Some(Command::MediaCommand(request.command)),
+        command: Some(Command::MediaCommand(command)),
     })
 }
 

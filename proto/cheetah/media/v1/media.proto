@@ -128,6 +128,9 @@ message MediaCommand {
     Query query = 9;
     MediaControlPayload control = 10;
   }
+
+  // Fencing: the media node instance epoch targeted by this command.
+  uint64 target_media_node_instance_epoch = 11;
 }
 
 // An event emitted by media processing.
