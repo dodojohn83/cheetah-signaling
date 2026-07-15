@@ -29,8 +29,9 @@ pub struct MediaClientConfig {
     pub tls_ca_pem: Option<String>,
     /// Optional PEM-encoded client certificate for mTLS.
     pub tls_client_cert_pem: Option<String>,
-    /// Optional PEM-encoded client private key for mTLS.
-    pub tls_client_key_pem: Option<String>,
+    /// Optional SecretStore key that references the client private key for mTLS.
+    /// The secret is loaded on demand and never stored as plaintext in config.
+    pub tls_client_key_secret_name: Option<String>,
     /// Timeout for DNS resolution during endpoint validation.
     pub endpoint_dns_lookup_timeout_ms: u64,
 }
@@ -51,7 +52,7 @@ impl Default for MediaClientConfig {
             allow_internal_endpoints: false,
             tls_ca_pem: None,
             tls_client_cert_pem: None,
-            tls_client_key_pem: None,
+            tls_client_key_secret_name: None,
             endpoint_dns_lookup_timeout_ms: 1_000,
         }
     }
@@ -95,8 +96,8 @@ impl std::fmt::Debug for MediaClientConfig {
                 &self.tls_client_cert_pem.as_ref().map(|_| "[redacted]"),
             )
             .field(
-                "tls_client_key_pem",
-                &self.tls_client_key_pem.as_ref().map(|_| "[redacted]"),
+                "tls_client_key_secret_name",
+                &self.tls_client_key_secret_name,
             )
             .field(
                 "endpoint_dns_lookup_timeout_ms",

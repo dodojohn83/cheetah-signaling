@@ -509,6 +509,7 @@ dependencies = [
  "cheetah-signal-types",
  "fastrand",
  "prost-types",
+ "secrecy",
  "thiserror",
  "time",
  "tokio",

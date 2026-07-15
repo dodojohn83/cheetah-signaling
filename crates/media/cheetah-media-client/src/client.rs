@@ -9,8 +9,10 @@ use cheetah_signal_contracts::cheetah::common::v1::{
 };
 use cheetah_signal_contracts::cheetah::media::v1::MediaCommand;
 use cheetah_signal_types::{
-    MediaBindingId, MediaSessionId, OperationId, OwnerEpoch, TenantId, UtcTimestamp, is_internal_ip,
+    MediaBindingId, MediaSessionId, OperationId, OwnerEpoch, SecretStore, TenantId, UtcTimestamp,
+    is_internal_ip,
 };
+use secrecy::ExposeSecret;
 use std::collections::BTreeMap;
 use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
@@ -114,6 +116,7 @@ impl ChannelEntry {
 #[derive(Clone)]
 pub struct MediaControlClient {
     config: MediaClientConfig,
+    secret_store: Option<Arc<dyn SecretStore>>,
     pool: Arc<Mutex<BTreeMap<String, Arc<ChannelEntry>>>>,
 }
 
@@ -122,8 +125,15 @@ impl MediaControlClient {
     pub fn new(config: MediaClientConfig) -> Self {
         Self {
             config,
+            secret_store: None,
             pool: Arc::new(Mutex::new(BTreeMap::new())),
         }
+    }
+
+    /// Attaches a secret store that resolves the TLS client key by reference.
+    pub fn with_secret_store(mut self, secret_store: Arc<dyn SecretStore>) -> Self {
+        self.secret_store = Some(secret_store);
+        self
     }
 
     /// Executes a media command against the given media node endpoint.
@@ -313,12 +323,32 @@ impl MediaControlClient {
             if let Some(ca) = &self.config.tls_ca_pem {
                 tls_config = tls_config.ca_certificate(Certificate::from_pem(ca.as_bytes()));
             }
-            if let (Some(cert), Some(key)) = (
-                &self.config.tls_client_cert_pem,
-                &self.config.tls_client_key_pem,
-            ) {
-                tls_config =
-                    tls_config.identity(Identity::from_pem(cert.as_bytes(), key.as_bytes()));
+            if let Some(cert_pem) = &self.config.tls_client_cert_pem {
+                let key_pem = match &self.config.tls_client_key_secret_name {
+                    Some(key_name) => {
+                        let store = self.secret_store.as_ref().ok_or_else(|| {
+                            MediaClientError::TlsConfig(
+                                "secret store not configured for mTLS client key".to_string(),
+                            )
+                        })?;
+                        store
+                            .get(key_name)
+                            .map_err(|e| {
+                                MediaClientError::TlsConfig(format!(
+                                    "failed to load client key secret: {e}"
+                                ))
+                            })?
+                            .expose_secret()
+                            .to_string()
+                    }
+                    None => {
+                        return Err(MediaClientError::TlsConfig(
+                            "mTLS client certificate provided without secret key name".to_string(),
+                        ));
+                    }
+                };
+                tls_config = tls_config
+                    .identity(Identity::from_pem(cert_pem.as_bytes(), key_pem.as_bytes()));
             }
             tls_config = tls_config.domain_name(host.to_string());
             builder = builder

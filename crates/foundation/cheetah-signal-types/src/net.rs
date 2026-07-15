@@ -48,6 +48,16 @@ fn is_internal_ipv4(v4: std::net::Ipv4Addr) -> bool {
         return true;
     }
 
+    // 0.0.0.0/8 "This network"
+    if a == 0 {
+        return true;
+    }
+
+    // 240.0.0.0/4 reserved and 255.255.255.255 broadcast
+    if v4.is_broadcast() || a >= 240 {
+        return true;
+    }
+
     // 100.64.0.0/10 carrier-grade NAT
     if a == 100 && (64..=127).contains(&b) {
         return true;
@@ -101,6 +111,8 @@ mod tests {
 
     #[test]
     fn reserved_and_documentation_ranges_are_internal() {
+        assert!(is_internal_ip(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))));
+        assert!(is_internal_ip(IpAddr::V4(Ipv4Addr::new(0, 255, 255, 255))));
         assert!(is_internal_ip(IpAddr::V4(Ipv4Addr::new(100, 64, 0, 1))));
         assert!(is_internal_ip(IpAddr::V4(Ipv4Addr::new(
             100, 127, 255, 254
@@ -111,6 +123,10 @@ mod tests {
         assert!(is_internal_ip(IpAddr::V4(Ipv4Addr::new(198, 18, 0, 1))));
         assert!(is_internal_ip(IpAddr::V4(Ipv4Addr::new(198, 51, 100, 1))));
         assert!(is_internal_ip(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 1))));
+        assert!(is_internal_ip(IpAddr::V4(Ipv4Addr::new(
+            255, 255, 255, 255
+        ))));
+        assert!(is_internal_ip(IpAddr::V4(Ipv4Addr::new(240, 0, 0, 1))));
     }
 
     #[test]

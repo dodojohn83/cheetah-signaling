@@ -18,6 +18,7 @@ time = { workspace = true }
 prost-types = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
+secrecy = { workspace = true }
 fastrand = "2.4.1"
 
 [dev-dependencies]
