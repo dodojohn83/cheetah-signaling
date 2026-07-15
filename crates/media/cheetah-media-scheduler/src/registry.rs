@@ -124,8 +124,8 @@ impl MediaNodeRegistry for InMemoryMediaNodeRegistry {
                 let mut updated = node;
                 updated.generation = existing.node.generation;
                 updated.instance_epoch = existing.node.instance_epoch;
-                updated.status = existing.node.status;
-                updated.draining = existing.node.draining;
+                updated.status = NodeStatus::Active;
+                updated.draining = false;
                 updated.load = existing.node.load;
                 updated.last_heartbeat_at = Some(now);
                 updated.lease_until = lease;
