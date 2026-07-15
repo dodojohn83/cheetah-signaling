@@ -452,18 +452,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cheetah-gb28181-core"
-version = "0.1.0"
-
-[[package]]
-name = "cheetah-gb28181-driver-tokio"
-version = "0.1.0"
-
-[[package]]
-name = "cheetah-gb28181-module"
-version = "0.1.0"
-
-[[package]]
 name = "cheetah-grpc-api"
 version = "0.1.0"
 
@@ -627,6 +615,28 @@ dependencies = [
  "secrecy",
  "sha2",
  "subtle",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
+name = "cheetah-protocol-gb28181-driver-tokio"
+version = "0.1.0"
+dependencies = [
+ "cheetah-protocol-gb28181-core",
+ "cheetah-protocol-gb28181-module",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "cheetah-protocol-gb28181-module"
+version = "0.1.0"
+dependencies = [
+ "cheetah-protocol-gb28181-core",
+ "hex",
+ "secrecy",
+ "sha2",
  "thiserror",
  "tracing",
 ]

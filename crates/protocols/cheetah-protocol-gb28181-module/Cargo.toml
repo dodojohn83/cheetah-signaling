@@ -1,0 +1,21 @@
+[package]
+name = "cheetah-protocol-gb28181-module"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+cheetah-protocol-gb28181-core = { path = "../cheetah-protocol-gb28181-core" }
+secrecy = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+hex = { workspace = true }
+sha2 = { workspace = true }
+
+[lints]
+workspace = true

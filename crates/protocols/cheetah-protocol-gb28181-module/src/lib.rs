@@ -1,0 +1,26 @@
+//! GB28181 protocol module: maps SIP/GB XML wire messages to domain events.
+//!
+//! This crate is Sans-I/O. It produces `AccessOutput` values that a driver or
+//! application layer must execute (send a SIP response, publish an event, etc.).
+//!
+//! # Crate boundaries
+//!
+//! - `cheetah-protocol-gb28181-core` provides the SIP/Digest state machines.
+//! - This module adds GB28181 business logic: tenant/realm selection, device
+//!   identity validation, authentication and command/event mapping.
+//! - `cheetah-protocol-gb28181-driver-tokio` handles UDP/TCP sockets and timer
+//!   injection.
+
+#![warn(missing_docs)]
+
+pub mod access;
+pub mod config;
+pub mod error;
+pub mod events;
+pub mod ports;
+
+pub use access::{AccessInput, AccessOutput, Gb28181Access};
+pub use config::{AuthPolicy, CharsetPolicy, Gb28181DomainConfig};
+pub use error::AccessError;
+pub use events::{DevicePresence, Gb28181Event};
+pub use ports::CredentialProvider;
