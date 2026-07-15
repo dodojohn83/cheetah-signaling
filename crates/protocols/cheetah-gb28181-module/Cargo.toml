@@ -10,6 +10,7 @@ repository.workspace = true
 [dependencies]
 cheetah-gb28181-core = { path = "../cheetah-gb28181-core" }
 quick-xml = { workspace = true }
+encoding_rs = { workspace = true }
 secrecy = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }

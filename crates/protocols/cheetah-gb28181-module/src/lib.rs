@@ -20,7 +20,7 @@ pub mod events;
 pub mod ports;
 mod registration;
 pub mod types;
-mod xml;
+pub mod xml;
 
 pub use access::{AccessInput, AccessOutput, Gb28181Access};
 pub use config::{AuthPolicy, CharsetPolicy, Gb28181DomainConfig};
@@ -28,4 +28,4 @@ pub use error::AccessError;
 pub use events::{DevicePresence, Gb28181Event};
 pub use ports::CredentialProvider;
 pub use types::{DeviceId, DomainId};
-pub use xml::KeepaliveInfo;
+pub use xml::{KeepaliveInfo, XmlElement, XmlLimits, encode_xml, parse_keepalive, parse_xml};
