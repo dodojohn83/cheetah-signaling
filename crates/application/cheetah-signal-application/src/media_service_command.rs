@@ -75,22 +75,12 @@ impl MediaService {
             payload,
         };
 
-        let result = self.media_port.execute(command, self.clock.as_ref()).await;
-        match result {
+        match self.media_port.execute(command, self.clock.as_ref()).await {
             Ok(r) => Ok(r),
-            Err(e) => {
-                if let Err(release_err) = self
-                    .media_port
-                    .release(context.tenant_id, media_binding_id, self.clock.as_ref())
-                    .await
-                {
-                    tracing::warn!(
-                        "failed to release media binding {} after command execution failure: {release_err}",
-                        media_binding_id
-                    );
-                }
-                Err(crate::SignalError::from(e))
-            }
+            // Transport-level failures are converted to a command failure so the
+            // dispatch methods can transition aggregates to terminal states and
+            // release the scheduler reservation.
+            Err(e) => Ok(domain_error_to_command_failure(e)),
         }
     }
 
@@ -688,5 +678,23 @@ impl MediaService {
         }
 
         Ok(MediaSessionDto::from(&session))
+    }
+}
+
+/// Maps a domain error from the media port into a `Failed` command result.
+/// This lets the dispatch methods apply the same terminal-state handling as
+/// a business-level failure from the media node.
+fn domain_error_to_command_failure(e: DomainError) -> MediaNodeCommandResult {
+    let code = match &e {
+        DomainError::Unavailable { .. } => "unavailable",
+        DomainError::InvalidArgument { .. } => "invalid_argument",
+        DomainError::NotFound { .. } => "not_found",
+        DomainError::ConcurrentModification { .. } => "concurrency_conflict",
+        DomainError::StaleOwner { .. } => "stale_owner",
+        _ => "media_command_failed",
+    };
+    MediaNodeCommandResult::Failed {
+        code: code.to_string(),
+        message: e.to_string(),
     }
 }
