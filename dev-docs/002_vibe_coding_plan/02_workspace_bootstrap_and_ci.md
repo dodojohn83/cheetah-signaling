@@ -50,7 +50,7 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo nextest run --workspace
 buf format --diff --exit-code
-buf lint && buf breaking --against '.git#branch=main'
+buf lint && buf breaking --against '.git#branch=origin/main'
 cargo deny check
 ```
 

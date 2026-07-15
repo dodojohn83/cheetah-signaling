@@ -25,7 +25,7 @@ cargo nextest run --workspace
 cargo deny check
 buf format --diff --exit-code
 buf lint
-buf breaking --against '.git#branch=main'
+buf breaking --against '.git#branch=origin/main'
 ```
 
 ## 部署角色

@@ -81,7 +81,7 @@ jobs:
       - name: Buf breaking
         run: |
           if git ls-tree origin/main -- proto/ | grep -q '\.proto'; then
-            buf breaking --against '.git#branch=main'
+            buf breaking --against '.git#branch=origin/main'
           else
             echo "No previous proto module; skipping breaking check."
           fi
