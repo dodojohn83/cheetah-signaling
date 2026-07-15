@@ -517,9 +517,16 @@ impl MediaService {
 
         match result {
             MediaNodeCommandResult::Completed => {
-                let session_event = session
+                // A synchronous start still goes through the intermediate inviting
+                // state before becoming active.
+                let session_inviting_event = session
+                    .inviting(self.clock.as_ref())
+                    .map_err(crate::SignalError::from)?;
+                let session_inviting_revision = session.revision().0;
+                let session_active_event = session
                     .active(self.clock.as_ref())
                     .map_err(crate::SignalError::from)?;
+                let session_active_revision = session.revision().0;
                 let binding_event = binding
                     .activate(self.clock.as_ref())
                     .map_err(crate::SignalError::from)?;
@@ -537,8 +544,19 @@ impl MediaService {
                         context,
                         context.tenant_id,
                         media_session_resource_ref(context.tenant_id, session.media_session_id()),
-                        session.revision().0,
-                        session_event,
+                        session_inviting_revision,
+                        session_inviting_event,
+                    ))
+                    .await?;
+                uow.outbox()
+                    .append(wrap_event(
+                        self.id_generator.as_ref(),
+                        self.clock.as_ref(),
+                        context,
+                        context.tenant_id,
+                        media_session_resource_ref(context.tenant_id, session.media_session_id()),
+                        session_active_revision,
+                        session_active_event,
                     ))
                     .await?;
                 uow.outbox()
