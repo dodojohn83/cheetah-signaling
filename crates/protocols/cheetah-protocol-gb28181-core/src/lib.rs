@@ -8,6 +8,7 @@
 
 pub mod sip;
 
+pub use sip::dialog::{Dialog, DialogEvent, DialogId, DialogOutput, DialogRole, DialogState};
 pub use sip::encoder::encode_message;
 pub use sip::error::{SipError, SipErrorKind};
 pub use sip::headers::{HeaderName, HeaderValue, SipHeaders};
