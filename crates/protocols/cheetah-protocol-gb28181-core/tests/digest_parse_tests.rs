@@ -3,8 +3,10 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use cheetah_protocol_gb28181_core::{
-    DigestAlgorithm, DigestContext, DigestError, DigestQop, DigestResponse,
+    DigestAlgorithm, DigestContext, DigestError, DigestQop, DigestReplayCache, DigestResponse,
+    Method,
 };
+use secrecy::SecretString;
 
 mod digest_common;
 use digest_common::*;
@@ -132,11 +134,35 @@ fn challenge_header_round_trips_quoted_realm_and_strips_crlf() -> Result<(), Dig
     // The embedded quote is escaped in the wire form and must round-trip.
     assert!(header.contains(r##"realm="foo\"bar""##));
 
+    // The sanitized stored realm must match the parsed realm so validation
+    // succeeds for clients that echo the challenge realm.
+    let resp = make_response(
+        "alice",
+        "secret",
+        r##"foo"bar"##,
+        &challenge.nonce,
+        "sip:b@e",
+        &Method::Register,
+        1,
+        "cn",
+        Some(DigestQop::Auth),
+        DigestAlgorithm::Sha256,
+    );
+
     let response_value = format!(
-        r##"Digest username="alice", realm="foo\"bar", nonce="{}", uri="sip:b@e", response="resp", algorithm="SHA-256""##,
-        challenge.nonce
+        r##"Digest username="alice", realm="foo\"bar", nonce="{}", uri="sip:b@e", response="{}", cnonce="cn", nc="00000001", qop="auth", algorithm="SHA-256""##,
+        challenge.nonce, resp.response
     );
     let parsed = DigestResponse::parse(&response_value)?;
     assert_eq!(parsed.realm, r##"foo"bar"##);
-    Ok(())
+
+    let mut cache = DigestReplayCache::new(64);
+    ctx.validate(
+        &parsed,
+        &Method::Register,
+        "sip:b@e",
+        &SecretString::from("secret"),
+        &mut cache,
+        1000,
+    )
 }

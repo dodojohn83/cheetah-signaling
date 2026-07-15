@@ -45,14 +45,19 @@ impl DigestContext {
     ///
     /// Returns an error if the supplied server secret is shorter than 32 bytes;
     /// short secrets make HMAC-SHA256 nonce signatures trivially brute-forceable.
+    ///
+    /// Carriage-return and line-feed characters are removed from the realm so
+    /// that the stored value matches the wire value produced by
+    /// [`DigestChallenge::to_header_value`], preventing spurious realm mismatches.
     pub fn new(realm: impl Into<String>, secret: impl Into<Vec<u8>>) -> Result<Self, DigestError> {
         const MIN_SECRET_LEN: usize = 32;
+        let realm = strip_crlf(&realm.into());
         let secret = secret.into();
         if secret.len() < MIN_SECRET_LEN {
             return Err(DigestError::WeakSecret);
         }
         Ok(Self {
-            realm: realm.into(),
+            realm,
             secret: SecretBox::new(Box::new(secret)),
             nonce_counter: AtomicU64::new(0),
             allow_md5: false,
@@ -223,4 +228,8 @@ fn compute_response(
         _ => Zeroizing::new(format!("{}:{nonce}:{ha2}", ha1.as_str())),
     };
     algorithm.hash_hex(a3.as_bytes())
+}
+
+fn strip_crlf(s: &str) -> String {
+    s.chars().filter(|c| !matches!(c, '\r' | '\n')).collect()
 }
