@@ -617,6 +617,15 @@ name = "cheetah-plugin-testkit"
 version = "0.1.0"
 
 [[package]]
+name = "cheetah-protocol-gb28181-core"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
 name = "cheetah-runtime-api"
 version = "0.1.0"
 dependencies = [
