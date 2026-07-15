@@ -88,10 +88,8 @@ impl TransactionConfig {
             return Duration::ZERO;
         }
         let factor = 1u64.saturating_mul(2u64.saturating_pow(n));
-        let capped = std::cmp::min(
-            factor,
-            self.t2.as_millis() as u64 / self.t1.as_millis() as u64,
-        );
+        let cap = self.t2.as_millis() as u64 / std::cmp::max(self.t1.as_millis() as u64, 1);
+        let capped = std::cmp::min(factor, cap);
         let capped = std::cmp::max(capped, 1);
         self.t1 * capped as u32
     }
@@ -233,5 +231,14 @@ mod tests {
         assert_eq!(cfg.timer_i(), Duration::ZERO);
         assert_eq!(cfg.timer_j(), Duration::ZERO);
         assert_eq!(cfg.timer_k(), Duration::ZERO);
+    }
+
+    #[test]
+    fn timer_a_does_not_panic_with_zero_t1() {
+        let cfg = TransactionConfig {
+            t1: Duration::ZERO,
+            ..TransactionConfig::default()
+        };
+        let _ = cfg.timer_a(0);
     }
 }
