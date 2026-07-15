@@ -32,8 +32,10 @@ impl std::fmt::Display for HeaderValue {
 
 /// Well-known SIP header names.
 ///
-/// Unknown headers are stored as `Other` preserving original casing.
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+/// Unknown headers are stored as `Other` preserving original casing. Equality,
+/// ordering, and hashing are case-insensitive for `Other` variants so that
+/// `BTreeMap` lookups respect RFC 3261's case-insensitive header-name rule.
+#[derive(Clone, Debug)]
 pub enum HeaderName {
     /// Via.
     Via,
@@ -128,6 +130,79 @@ impl HeaderName {
             HeaderName::ProxyAuthorization => "Proxy-Authorization",
             HeaderName::Subject => "Subject",
             HeaderName::Other(s) => s.as_str(),
+        }
+    }
+}
+
+impl HeaderName {
+    fn discriminant(&self) -> u8 {
+        match self {
+            HeaderName::Via => 0,
+            HeaderName::From => 1,
+            HeaderName::To => 2,
+            HeaderName::CallId => 3,
+            HeaderName::CSeq => 4,
+            HeaderName::Contact => 5,
+            HeaderName::MaxForwards => 6,
+            HeaderName::UserAgent => 7,
+            HeaderName::ContentType => 8,
+            HeaderName::ContentLength => 9,
+            HeaderName::Expires => 10,
+            HeaderName::Route => 11,
+            HeaderName::RecordRoute => 12,
+            HeaderName::Authorization => 13,
+            HeaderName::WwwAuthenticate => 14,
+            HeaderName::ProxyAuthenticate => 15,
+            HeaderName::ProxyAuthorization => 16,
+            HeaderName::Subject => 17,
+            HeaderName::Other(_) => 18,
+        }
+    }
+}
+
+fn case_insensitive_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    let a = a.as_bytes().iter().map(|b| b.to_ascii_lowercase());
+    let b = b.as_bytes().iter().map(|b| b.to_ascii_lowercase());
+    a.cmp(b)
+}
+
+impl PartialEq for HeaderName {
+    fn eq(&self, other: &Self) -> bool {
+        self.discriminant() == other.discriminant()
+            && match (self, other) {
+                (HeaderName::Other(a), HeaderName::Other(b)) => {
+                    case_insensitive_cmp(a, b) == std::cmp::Ordering::Equal
+                }
+                _ => true,
+            }
+    }
+}
+
+impl Eq for HeaderName {}
+
+impl std::hash::Hash for HeaderName {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.discriminant().hash(state);
+        if let HeaderName::Other(s) = self {
+            s.to_ascii_lowercase().hash(state);
+        }
+    }
+}
+
+impl PartialOrd for HeaderName {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for HeaderName {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match self.discriminant().cmp(&other.discriminant()) {
+            std::cmp::Ordering::Equal => match (self, other) {
+                (HeaderName::Other(a), HeaderName::Other(b)) => case_insensitive_cmp(a, b),
+                _ => std::cmp::Ordering::Equal,
+            },
+            other => other,
         }
     }
 }

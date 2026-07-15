@@ -218,11 +218,11 @@ impl SipMessage {
     }
 
     /// Returns the `CSeq` value as `(number, method)`, if parseable.
-    pub fn cseq(&self) -> Option<(u32, String)> {
+    pub fn cseq(&self) -> Option<(u32, Method)> {
         self.headers().get(&HeaderName::CSeq).and_then(|v| {
             let mut parts = v.as_str().splitn(2, char::is_whitespace);
             let num = parts.next()?.parse().ok()?;
-            let method = parts.next()?.to_string();
+            let method = Method::parse(parts.next()?).ok()?;
             Some((num, method))
         })
     }
