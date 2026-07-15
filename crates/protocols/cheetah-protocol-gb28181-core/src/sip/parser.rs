@@ -267,12 +267,16 @@ impl SipParser {
                     )));
                 }
 
-                let (name, value) = line
-                    .split_once(':')
-                    .ok_or_else(|| {
-                        SipError::new(SipErrorKind::InvalidHeader, Some(consumed), "missing colon")
-                    })
-                    .ok()?;
+                let (name, value) = match line.split_once(':') {
+                    Some(pair) => pair,
+                    None => {
+                        return Some(Err(SipError::new(
+                            SipErrorKind::InvalidHeader,
+                            Some(consumed),
+                            "missing colon",
+                        )));
+                    }
+                };
                 let name = HeaderName::parse(name.trim());
                 let value = HeaderValue::new(value.trim_start());
                 headers.append(name, value);

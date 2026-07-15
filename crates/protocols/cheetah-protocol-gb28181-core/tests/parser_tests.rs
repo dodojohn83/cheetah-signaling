@@ -118,6 +118,17 @@ fn content_length_must_match_body_bytes() {
 }
 
 #[test]
+fn malformed_header_missing_colon_is_rejected() {
+    let data = "SIP/2.0 200 OK\r\nNoColonValue\r\nContent-Length: 0\r\n\r\n";
+    let err = SipParser::parse_datagram(data.as_bytes(), SipParserConfig::default())
+        .expect_err("should reject malformed header");
+    assert!(matches!(
+        err.kind,
+        cheetah_protocol_gb28181_core::SipErrorKind::InvalidHeader
+    ));
+}
+
+#[test]
 fn unknown_header_is_preserved() {
     let data = "SIP/2.0 200 OK\r\nX-Custom: value\r\nContent-Length: 0\r\n\r\n";
     let msg = SipParser::parse_datagram(data.as_bytes(), SipParserConfig::default())
