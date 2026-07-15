@@ -129,6 +129,9 @@ impl DigestContext {
         if response.uri != uri {
             return Err(DigestError::UriMismatch);
         }
+        if response.qop != self.qop {
+            return Err(DigestError::InvalidQop);
+        }
 
         if response.qop == Some(DigestQop::AuthInt) {
             return Err(DigestError::InvalidQop);

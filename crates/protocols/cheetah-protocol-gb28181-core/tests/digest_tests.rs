@@ -717,6 +717,38 @@ fn out_of_order_nc_is_replay() -> Result<(), DigestError> {
 }
 
 #[test]
+fn qop_downgrade_is_rejected() -> Result<(), DigestError> {
+    let ctx = ctx_md5();
+    let challenge = ctx.generate_challenge(1000)?;
+    // Server offered auth qop, but client omits it.
+    let resp = make_response(
+        "alice",
+        "secret",
+        "example.com",
+        &challenge.nonce,
+        "sip:registrar@example.com",
+        &Method::Register,
+        1,
+        "clientnonce",
+        None,
+        DigestAlgorithm::Md5,
+    );
+    let mut cache = DigestReplayCache::new(16);
+    let Err(err) = ctx.validate(
+        &resp,
+        &Method::Register,
+        "sip:registrar@example.com",
+        &SecretString::from("secret"),
+        &mut cache,
+        1000,
+    ) else {
+        panic!("expected qop mismatch");
+    };
+    assert!(matches!(err, DigestError::InvalidQop));
+    Ok(())
+}
+
+#[test]
 fn parse_does_not_panic_on_non_ascii_boundary() {
     // "中" is 3 bytes, "ä" is 2 bytes. Byte index 7 falls inside the
     // two-byte character, which used to trigger a panic when the parser
