@@ -8,6 +8,7 @@
 use super::error::{SipError, SipErrorKind};
 use crate::Method;
 use hmac::{Hmac, Mac};
+use secrecy::{ExposeSecret, SecretBox};
 use sha2::{Digest, Sha256, Sha512};
 use std::collections::VecDeque;
 use std::fmt;
@@ -154,8 +155,22 @@ pub struct DigestResponse {
 }
 
 impl DigestResponse {
+    /// Default maximum length for a `Digest` `Authorization` header value.
+    pub const DEFAULT_MAX_HEADER_LEN: usize = 2048;
+
     /// Parses a `Digest ...` `Authorization` header value.
     pub fn parse(value: &str) -> Result<Self, DigestError> {
+        Self::parse_with_limit(value, Self::DEFAULT_MAX_HEADER_LEN)
+    }
+
+    /// Parses a `Digest ...` `Authorization` header value, rejecting inputs
+    /// longer than `max_len` bytes.
+    pub fn parse_with_limit(value: &str, max_len: usize) -> Result<Self, DigestError> {
+        if value.len() > max_len {
+            return Err(DigestError::Malformed(format!(
+                "digest header exceeds maximum length of {max_len}"
+            )));
+        }
         let value = value.trim();
         let value = if value.len() > 7 && value[..7].eq_ignore_ascii_case("digest ") {
             &value[7..]
@@ -273,7 +288,7 @@ impl DigestChallenge {
 /// Server-side digest authentication context.
 pub struct DigestContext {
     realm: String,
-    secret: Vec<u8>,
+    secret: SecretBox<Vec<u8>>,
     allow_md5: bool,
     preferred_algorithm: DigestAlgorithm,
     qop: Option<DigestQop>,
@@ -297,12 +312,17 @@ impl fmt::Debug for DigestContext {
 
 impl DigestContext {
     /// Creates a new context with sensible defaults.
+    ///
+    /// MD5 is accepted for GB28181 compatibility, but the preferred challenge
+    /// algorithm defaults to SHA-256. Callers that require MD5 challenges must
+    /// explicitly set [`Self::preferred_algorithm`].
     pub fn new(realm: impl Into<String>, secret: impl Into<Vec<u8>>) -> Self {
+        let secret = secret.into();
         Self {
             realm: realm.into(),
-            secret: secret.into(),
+            secret: SecretBox::new(Box::new(secret)),
             allow_md5: true,
-            preferred_algorithm: DigestAlgorithm::Md5,
+            preferred_algorithm: DigestAlgorithm::Sha256,
             qop: Some(DigestQop::Auth),
             nonce_ttl_seconds: 300,
             replay_cache_capacity: 1024,
@@ -348,7 +368,7 @@ impl DigestContext {
     pub fn generate_challenge(&self, now: u64) -> Result<DigestChallenge, DigestError> {
         Ok(DigestChallenge {
             realm: self.realm.clone(),
-            nonce: generate_nonce(&self.secret, now)?,
+            nonce: generate_nonce(self.secret.expose_secret().as_slice(), now)?,
             opaque: None,
             stale: false,
             algorithm: self.preferred_algorithm,
@@ -398,16 +418,23 @@ impl DigestContext {
             return Err(DigestError::InvalidQop);
         }
 
-        validate_nonce(&response.nonce, &self.secret, now, self.nonce_ttl_seconds)?;
-
-        let nc = response.nc.unwrap_or(0);
-        if !replay_cache.check(
+        validate_nonce(
             &response.nonce,
-            nc,
-            response.cnonce.as_deref(),
+            self.secret.expose_secret().as_slice(),
             now,
             self.nonce_ttl_seconds,
-        ) {
+        )?;
+
+        let nc = response.nc.unwrap_or(0);
+        if response.qop.is_some()
+            && !replay_cache.check(
+                &response.nonce,
+                nc,
+                response.cnonce.as_deref(),
+                now,
+                self.nonce_ttl_seconds,
+            )
+        {
             return Err(DigestError::ReplayDetected);
         }
 

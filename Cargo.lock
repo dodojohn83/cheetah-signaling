@@ -624,6 +624,7 @@ dependencies = [
  "hex",
  "hmac",
  "md5",
+ "secrecy",
  "sha2",
  "subtle",
  "thiserror",

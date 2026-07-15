@@ -74,17 +74,30 @@ fn hash_hex(algorithm: DigestAlgorithm, data: &[u8]) -> String {
     }
 }
 
+fn ctx_md5() -> DigestContext {
+    DigestContext::new("example.com", b"server-secret").preferred_algorithm(DigestAlgorithm::Md5)
+}
+
 #[test]
-fn challenge_can_be_serialized_to_www_authenticate_header() -> Result<(), DigestError> {
+fn challenge_defaults_to_sha256() -> Result<(), DigestError> {
     let ctx = DigestContext::new("example.com", b"server-secret");
     let challenge = ctx.generate_challenge(1000)?;
     let header = challenge.to_header_value();
     assert!(header.starts_with("Digest "));
     assert!(header.contains("realm=\"example.com\""));
     assert!(header.contains("nonce=\""));
-    assert!(header.contains("algorithm=MD5"));
+    assert!(header.contains("algorithm=SHA-256"));
     assert!(header.contains("qop=\"auth\""));
     assert!(!header.contains("stale"));
+    Ok(())
+}
+
+#[test]
+fn md5_challenge_when_configured() -> Result<(), DigestError> {
+    let ctx = ctx_md5();
+    let challenge = ctx.generate_challenge(1000)?;
+    let header = challenge.to_header_value();
+    assert!(header.contains("algorithm=MD5"));
     Ok(())
 }
 
@@ -124,8 +137,66 @@ fn parse_digest_response_without_qop() -> Result<(), DigestError> {
 }
 
 #[test]
+fn parse_rejects_overly_long_header() {
+    let prefix = r#"Digest username="alice","#;
+    let padding = "x".repeat(4096);
+    let value = format!(
+        r#"{prefix} realm="example.com", nonce="{padding}", uri="sip:b@e", response="resp""#
+    );
+    let result = DigestResponse::parse(&value);
+    assert!(matches!(result, Err(DigestError::Malformed(_))));
+}
+
+#[test]
+fn parse_with_limit_allows_shorter_header() -> Result<(), DigestError> {
+    let value = r#"username="alice", realm="example.com", nonce="abc", uri="sip:bob@example.com", response="resp""#;
+    DigestResponse::parse_with_limit(value, 256)?;
+    Ok(())
+}
+
+#[test]
+fn no_qop_nonce_can_be_reused_within_ttl() -> Result<(), DigestError> {
+    let ctx = ctx_md5().qop(None);
+    let challenge = ctx.generate_challenge(1000)?;
+
+    let resp = make_response(
+        "alice",
+        "secret",
+        "example.com",
+        &challenge.nonce,
+        "sip:registrar@example.com",
+        &Method::Register,
+        0,
+        "",
+        None,
+        DigestAlgorithm::Md5,
+    );
+
+    let mut cache = DigestReplayCache::new(64);
+    ctx.validate(
+        &resp,
+        &Method::Register,
+        "sip:registrar@example.com",
+        "secret",
+        &mut cache,
+        1000,
+    )?;
+
+    // A second request with the same nonce and no qop should succeed because
+    // replay tracking is only meaningful when nonce-count/cnonce are present.
+    ctx.validate(
+        &resp,
+        &Method::Register,
+        "sip:registrar@example.com",
+        "secret",
+        &mut cache,
+        1001,
+    )
+}
+
+#[test]
 fn md5_auth_with_qop_succeeds() -> Result<(), DigestError> {
-    let ctx = DigestContext::new("example.com", b"server-secret");
+    let ctx = ctx_md5();
     let challenge = ctx.generate_challenge(1000)?;
 
     let resp = make_response(
@@ -185,7 +256,7 @@ fn sha256_auth_with_qop_succeeds() -> Result<(), DigestError> {
 
 #[test]
 fn md5_without_qop_succeeds() -> Result<(), DigestError> {
-    let ctx = DigestContext::new("example.com", b"server-secret").qop(None);
+    let ctx = ctx_md5().qop(None);
     let challenge = ctx.generate_challenge(1000)?;
 
     let resp = make_response(
@@ -214,7 +285,7 @@ fn md5_without_qop_succeeds() -> Result<(), DigestError> {
 
 #[test]
 fn wrong_password_fails() -> Result<(), DigestError> {
-    let ctx = DigestContext::new("example.com", b"server-secret");
+    let ctx = ctx_md5();
     let challenge = ctx.generate_challenge(1000)?;
 
     let resp = make_response(
@@ -247,7 +318,7 @@ fn wrong_password_fails() -> Result<(), DigestError> {
 
 #[test]
 fn expired_nonce_is_stale() -> Result<(), DigestError> {
-    let ctx = DigestContext::new("example.com", b"server-secret").nonce_ttl_seconds(60);
+    let ctx = ctx_md5().nonce_ttl_seconds(60);
     let challenge = ctx.generate_challenge(1000)?;
 
     let resp = make_response(
@@ -280,7 +351,7 @@ fn expired_nonce_is_stale() -> Result<(), DigestError> {
 
 #[test]
 fn tampered_nonce_fails_signature() -> Result<(), DigestError> {
-    let ctx = DigestContext::new("example.com", b"server-secret");
+    let ctx = ctx_md5();
     let challenge = ctx.generate_challenge(1000)?;
 
     let mut nonce = challenge.nonce.clone();
@@ -319,7 +390,7 @@ fn tampered_nonce_fails_signature() -> Result<(), DigestError> {
 
 #[test]
 fn replay_is_detected() -> Result<(), DigestError> {
-    let ctx = DigestContext::new("example.com", b"server-secret");
+    let ctx = ctx_md5();
     let challenge = ctx.generate_challenge(1000)?;
 
     let resp = make_response(
@@ -396,7 +467,7 @@ fn md5_disallowed_by_policy() -> Result<(), DigestError> {
 
 #[test]
 fn auth_int_qop_is_rejected() -> Result<(), DigestError> {
-    let ctx = DigestContext::new("example.com", b"server-secret");
+    let ctx = ctx_md5();
     let challenge = ctx.generate_challenge(1000)?;
 
     let resp = make_response(
@@ -429,7 +500,7 @@ fn auth_int_qop_is_rejected() -> Result<(), DigestError> {
 
 #[test]
 fn missing_qop_fields_is_invalid() -> Result<(), DigestError> {
-    let ctx = DigestContext::new("example.com", b"server-secret");
+    let ctx = ctx_md5();
     let challenge = ctx.generate_challenge(1000)?;
 
     let mut resp = make_response(
@@ -463,7 +534,7 @@ fn missing_qop_fields_is_invalid() -> Result<(), DigestError> {
 
 #[test]
 fn realm_mismatch_fails() -> Result<(), DigestError> {
-    let ctx = DigestContext::new("example.com", b"server-secret");
+    let ctx = ctx_md5();
     let challenge = ctx.generate_challenge(1000)?;
 
     let mut resp = make_response(
@@ -497,7 +568,7 @@ fn realm_mismatch_fails() -> Result<(), DigestError> {
 
 #[test]
 fn uri_mismatch_fails() -> Result<(), DigestError> {
-    let ctx = DigestContext::new("example.com", b"server-secret");
+    let ctx = ctx_md5();
     let challenge = ctx.generate_challenge(1000)?;
 
     let mut resp = make_response(
