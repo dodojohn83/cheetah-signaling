@@ -118,6 +118,37 @@ fn content_length_must_match_body_bytes() {
 }
 
 #[test]
+fn large_body_with_short_start_line_parses() {
+    let body = "x".repeat(8192);
+    let data = format!(
+        "SIP/2.0 200 OK\r\nContent-Length: {}\r\n\r\n{}",
+        body.len(),
+        body
+    );
+    let msg = SipParser::parse_datagram(data.as_bytes(), SipParserConfig::default())
+        .expect("should parse large body");
+    assert_eq!(msg.body().len(), 8192);
+}
+
+#[test]
+fn oversized_start_line_is_rejected() {
+    let config = SipParserConfig {
+        max_start_line_bytes: 32,
+        ..SipParserConfig::default()
+    };
+    let data = format!(
+        "SIP/2.0 200 {}\r\nContent-Length: 0\r\n\r\n",
+        "x".repeat(64)
+    );
+    let err = SipParser::parse_datagram(data.as_bytes(), config)
+        .expect_err("should reject long start line");
+    assert!(matches!(
+        err.kind,
+        cheetah_protocol_gb28181_core::SipErrorKind::StartLineTooLong
+    ));
+}
+
+#[test]
 fn malformed_header_missing_colon_is_rejected() {
     let data = "SIP/2.0 200 OK\r\nNoColonValue\r\nContent-Length: 0\r\n\r\n";
     let err = SipParser::parse_datagram(data.as_bytes(), SipParserConfig::default())

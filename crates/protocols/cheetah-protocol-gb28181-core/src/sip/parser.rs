@@ -166,14 +166,14 @@ impl SipParser {
 
     fn parse_start_line(&mut self) -> Option<Result<String, SipError>> {
         'outer: loop {
-            if self.buffer.len() > self.config.max_start_line_bytes {
-                return Some(Err(SipError::new(
-                    SipErrorKind::StartLineTooLong,
-                    None,
-                    "start line exceeds limit",
-                )));
-            }
             for i in 0..self.buffer.len().saturating_sub(1) {
+                if i > self.config.max_start_line_bytes {
+                    return Some(Err(SipError::new(
+                        SipErrorKind::StartLineTooLong,
+                        Some(i),
+                        "start line exceeds limit",
+                    )));
+                }
                 if self.buffer[i] == b'\r' && self.buffer[i + 1] == b'\n' {
                     let line = match std::str::from_utf8(&self.buffer[..i]) {
                         Ok(s) => s.to_string(),
@@ -192,6 +192,13 @@ impl SipParser {
                     }
                     return Some(Ok(line));
                 }
+            }
+            if self.buffer.len() > self.config.max_start_line_bytes {
+                return Some(Err(SipError::new(
+                    SipErrorKind::StartLineTooLong,
+                    None,
+                    "start line exceeds limit",
+                )));
             }
             return None;
         }
