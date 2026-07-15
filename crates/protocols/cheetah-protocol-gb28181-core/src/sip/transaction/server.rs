@@ -72,9 +72,7 @@ impl ServerTransaction {
                 self.on_invite_request_completed(req, now)
             }
             (Confirmed, Request(req)) if self.is_invite => self.on_invite_request_confirmed(req),
-            (Proceeding | Completed, Response(resp)) if self.is_invite => {
-                self.on_invite_tu_response(resp, now)
-            }
+            (Proceeding, Response(resp)) if self.is_invite => self.on_invite_tu_response(resp, now),
             (Proceeding | Completed, Timer(TimerKind::G)) if self.is_invite => {
                 self.on_invite_timer_g(now)
             }

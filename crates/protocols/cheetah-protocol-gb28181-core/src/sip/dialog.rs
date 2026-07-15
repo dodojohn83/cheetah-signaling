@@ -235,6 +235,10 @@ impl Dialog {
 
         match method {
             Method::Bye => {
+                if cseq <= self.remote_cseq && self.remote_cseq > 0 {
+                    return Vec::new();
+                }
+                self.remote_cseq = cseq;
                 self.state = DialogState::Terminated;
                 vec![DialogOutput::Deliver(Box::new(req)), DialogOutput::Complete]
             }

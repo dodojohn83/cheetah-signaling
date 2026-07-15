@@ -187,6 +187,42 @@ fn out_of_order_request_is_absorbed() {
 }
 
 #[test]
+fn out_of_order_bye_is_absorbed() {
+    let mut dialog = Dialog::new_uac(&invite_request(), &ok_response()).unwrap();
+    // Accept a request with CSeq 3 first.
+    let first = parse(
+        "MESSAGE sip:bob@192.168.1.3:5060 SIP/2.0\r\n\
+        Via: SIP/2.0/UDP 192.168.1.2:5060;branch=z9hG4bKmsg\r\n\
+        From: <sip:alice@example.com>;tag=local-abc\r\n\
+        To: <sip:bob@example.com>;tag=remote-xyz\r\n\
+        Call-ID: call-dialog@example.com\r\n\
+        CSeq: 3 MESSAGE\r\n\
+        Content-Length: 0\r\n\r\n",
+    );
+    assert!(
+        dialog
+            .process(DialogEvent::Request(first))
+            .iter()
+            .any(|o| matches!(o, DialogOutput::Deliver(_)))
+    );
+    assert_eq!(dialog.remote_cseq(), 3);
+
+    // A stale BYE with a lower CSeq must not terminate the dialog.
+    let stale_bye = parse(
+        "BYE sip:bob@192.168.1.3:5060 SIP/2.0\r\n\
+        Via: SIP/2.0/UDP 192.168.1.2:5060;branch=z9hG4bKbye2\r\n\
+        From: <sip:alice@example.com>;tag=local-abc\r\n\
+        To: <sip:bob@example.com>;tag=remote-xyz\r\n\
+        Call-ID: call-dialog@example.com\r\n\
+        CSeq: 2 BYE\r\n\
+        Content-Length: 0\r\n\r\n",
+    );
+    assert!(dialog.process(DialogEvent::Request(stale_bye)).is_empty());
+    assert!(!dialog.is_terminated());
+    assert_eq!(dialog.remote_cseq(), 3);
+}
+
+#[test]
 fn timer_terminates_dialog() {
     let mut dialog = Dialog::new_uac(&invite_request(), &ok_response()).unwrap();
     let outputs = dialog.process(DialogEvent::Timer);
