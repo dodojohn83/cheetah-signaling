@@ -92,7 +92,9 @@ impl Dialog {
             })?;
 
         let local_cseq = cseq_number(invite)?;
-        let remote_cseq = cseq_number(final_response)?;
+        // RFC 3261 §12.1.2: the UAC remote sequence number is empty until the
+        // remote UA sends the first in-dialog request.
+        let remote_cseq = 0;
 
         let remote_target =
             extract_first_uri(require_header(final_response, &HeaderName::Contact)?).ok_or_else(
@@ -132,8 +134,10 @@ impl Dialog {
                 )
             })?;
 
-        let local_cseq = cseq_number(invite)?;
-        let remote_cseq = local_cseq;
+        // RFC 3261 §12.1.1: the UAS local sequence number is empty until it
+        // sends the first in-dialog request.
+        let local_cseq = 0;
+        let remote_cseq = cseq_number(invite)?;
 
         let remote_target = extract_first_uri(require_header(invite, &HeaderName::Contact)?)
             .ok_or_else(|| {

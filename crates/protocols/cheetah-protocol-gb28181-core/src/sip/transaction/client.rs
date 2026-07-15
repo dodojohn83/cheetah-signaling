@@ -259,16 +259,25 @@ impl ClientTransaction {
 }
 
 /// Builds an ACK request for a non-2xx final response to an INVITE.
+///
+/// Per RFC 3261 §17.1.1.3, the ACK contains the top Via of the original
+/// request plus From, Call-ID, Route, Max-Forwards, the To from the response,
+/// and a new CSeq with method ACK.
 fn build_ack(invite: &SipMessage, response: &SipMessage) -> SipMessage {
     let (uri, mut headers) = match invite {
         SipMessage::Request { line, headers, .. } => {
             let mut h = SipHeaders::new();
+
+            // The ACK MUST contain a single Via equal to the top Via of the
+            // original request.
+            if let Some(top_via) = headers.get_all(&HeaderName::Via).next() {
+                h.append(HeaderName::Via, top_via.clone());
+            }
+
             let allowed = [
-                HeaderName::Via,
                 HeaderName::From,
                 HeaderName::CallId,
                 HeaderName::Route,
-                HeaderName::RecordRoute,
                 HeaderName::MaxForwards,
             ];
             for (name, value) in headers.iter() {

@@ -87,7 +87,7 @@ fn uac_dialog_extracts_id_route_set_and_remote_target() {
     assert_eq!(dialog.role(), DialogRole::Uac);
     assert_eq!(dialog.state(), DialogState::Confirmed);
     assert_eq!(dialog.local_cseq(), 2);
-    assert_eq!(dialog.remote_cseq(), 2);
+    assert_eq!(dialog.remote_cseq(), 0);
     assert_eq!(dialog.remote_target().host(), "192.168.1.3");
     assert_eq!(dialog.route_set().len(), 2);
     assert_eq!(dialog.route_set()[0].host(), "proxy2.example.com");
@@ -153,19 +153,37 @@ fn reinvite_updates_remote_target_and_cseq() {
 #[test]
 fn out_of_order_request_is_absorbed() {
     let mut dialog = Dialog::new_uac(&invite_request(), &ok_response()).unwrap();
-    // remote_cseq is 2; send a request with CSeq 1.
-    let stale = parse(
+    // remote_cseq starts at 0; accept a valid request with CSeq 3.
+    let first = parse(
         "MESSAGE sip:bob@192.168.1.3:5060 SIP/2.0\r\n\
         Via: SIP/2.0/UDP 192.168.1.2:5060;branch=z9hG4bKmsg\r\n\
         From: <sip:alice@example.com>;tag=local-abc\r\n\
         To: <sip:bob@example.com>;tag=remote-xyz\r\n\
         Call-ID: call-dialog@example.com\r\n\
-        CSeq: 1 MESSAGE\r\n\
+        CSeq: 3 MESSAGE\r\n\
+        Content-Length: 0\r\n\r\n",
+    );
+    assert!(
+        dialog
+            .process(DialogEvent::Request(first))
+            .iter()
+            .any(|o| matches!(o, DialogOutput::Deliver(_)))
+    );
+    assert_eq!(dialog.remote_cseq(), 3);
+
+    // A later stale request with CSeq 2 must be absorbed.
+    let stale = parse(
+        "MESSAGE sip:bob@192.168.1.3:5060 SIP/2.0\r\n\
+        Via: SIP/2.0/UDP 192.168.1.2:5060;branch=z9hG4bKstale\r\n\
+        From: <sip:alice@example.com>;tag=local-abc\r\n\
+        To: <sip:bob@example.com>;tag=remote-xyz\r\n\
+        Call-ID: call-dialog@example.com\r\n\
+        CSeq: 2 MESSAGE\r\n\
         Content-Length: 0\r\n\r\n",
     );
     let outputs = dialog.process(DialogEvent::Request(stale));
     assert!(outputs.is_empty());
-    assert_eq!(dialog.remote_cseq(), 2);
+    assert_eq!(dialog.remote_cseq(), 3);
 }
 
 #[test]
