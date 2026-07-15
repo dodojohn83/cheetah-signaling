@@ -287,23 +287,52 @@ impl fmt::Debug for DigestChallenge {
 impl DigestChallenge {
     /// Encodes the challenge as the value of a `WWW-Authenticate` header.
     pub fn to_header_value(&self) -> String {
-        let mut out = format!(
-            "Digest realm=\"{}\", nonce=\"{}\", algorithm={}",
-            escape_quotes(&self.realm),
-            escape_quotes(&self.nonce),
-            self.algorithm.as_wire()
-        );
+        let mut out = String::from("Digest");
+        let mut first = true;
+        write_quoted_param(&mut out, &mut first, "realm", &self.realm);
+        write_quoted_param(&mut out, &mut first, "nonce", &self.nonce);
+        write_raw_param(&mut out, &mut first, "algorithm", self.algorithm.as_wire());
         if let Some(opaque) = &self.opaque {
-            out.push_str(&format!(", opaque=\"{}\"", escape_quotes(opaque)));
+            write_quoted_param(&mut out, &mut first, "opaque", opaque);
         }
         if self.stale {
-            out.push_str(", stale=true");
+            write_raw_param(&mut out, &mut first, "stale", "true");
         }
         if let Some(qop) = self.qop {
-            out.push_str(&format!(", qop=\"{}\"", qop.as_wire()));
+            write_quoted_param(&mut out, &mut first, "qop", qop.as_wire());
         }
         out
     }
+}
+
+fn write_quoted_param(out: &mut String, first: &mut bool, name: &str, value: &str) {
+    write_separator(out, first);
+    out.push_str(name);
+    out.push_str("=\"");
+    out.push_str(&sanitize_quoted_value(value));
+    out.push('"');
+}
+
+fn write_raw_param(out: &mut String, first: &mut bool, name: &str, value: &str) {
+    write_separator(out, first);
+    out.push_str(name);
+    out.push('=');
+    out.push_str(value);
+}
+
+fn write_separator(out: &mut String, first: &mut bool) {
+    if *first {
+        out.push(' ');
+        *first = false;
+    } else {
+        out.push_str(", ");
+    }
+}
+
+fn sanitize_quoted_value(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace(['\r', '\n'], "")
 }
 
 fn split_commas(value: &str) -> Vec<&str> {
@@ -330,8 +359,4 @@ fn unquote(value: &str) -> &str {
     } else {
         value
     }
-}
-
-fn escape_quotes(s: &str) -> String {
-    s.replace('"', "\\\"")
 }

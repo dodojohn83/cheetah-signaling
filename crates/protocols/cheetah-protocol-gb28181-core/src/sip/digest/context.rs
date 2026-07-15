@@ -7,12 +7,14 @@ use crate::Method;
 use secrecy::zeroize::Zeroizing;
 use secrecy::{ExposeSecret, SecretBox, SecretString};
 use std::fmt;
+use std::sync::atomic::{AtomicU64, Ordering};
 use subtle::ConstantTimeEq;
 
 /// Server-side digest authentication context.
 pub struct DigestContext {
     realm: String,
     secret: SecretBox<Vec<u8>>,
+    nonce_counter: AtomicU64,
     allow_md5: bool,
     preferred_algorithm: DigestAlgorithm,
     qop: Option<DigestQop>,
@@ -25,6 +27,7 @@ impl fmt::Debug for DigestContext {
         f.debug_struct("DigestContext")
             .field("realm", &self.realm)
             .field("secret", &"[REDACTED]")
+            .field("nonce_counter", &self.nonce_counter)
             .field("allow_md5", &self.allow_md5)
             .field("preferred_algorithm", &self.preferred_algorithm)
             .field("qop", &self.qop)
@@ -45,6 +48,7 @@ impl DigestContext {
         Self {
             realm: realm.into(),
             secret: SecretBox::new(Box::new(secret)),
+            nonce_counter: AtomicU64::new(0),
             allow_md5: true,
             preferred_algorithm: DigestAlgorithm::Sha256,
             qop: Some(DigestQop::Auth),
@@ -90,9 +94,10 @@ impl DigestContext {
 
     /// Generates a new challenge for the given timestamp.
     pub fn generate_challenge(&self, now: u64) -> Result<DigestChallenge, DigestError> {
+        let counter = self.nonce_counter.fetch_add(1, Ordering::SeqCst);
         Ok(DigestChallenge {
             realm: self.realm.clone(),
-            nonce: generate_nonce(self.secret.expose_secret().as_slice(), now)?,
+            nonce: generate_nonce(self.secret.expose_secret().as_slice(), now, counter)?,
             opaque: None,
             stale: false,
             algorithm: self.preferred_algorithm,
@@ -150,11 +155,6 @@ impl DigestContext {
         )?;
 
         let nc = response.nc.unwrap_or(0);
-        if response.qop.is_some()
-            && !replay_cache.check(&response.nonce, nc, now, self.nonce_ttl_seconds)
-        {
-            return Err(DigestError::ReplayDetected);
-        }
 
         let method = method.to_string();
         let expected = compute_response(
@@ -173,11 +173,17 @@ impl DigestContext {
         let expected_bytes = hex::decode(&expected).map_err(|_| DigestError::InvalidResponse)?;
         let actual_bytes =
             hex::decode(&response.response).map_err(|_| DigestError::InvalidResponse)?;
-        if actual_bytes.ct_eq(&expected_bytes).unwrap_u8() != 0 {
-            Ok(())
-        } else {
-            Err(DigestError::InvalidResponse)
+        if actual_bytes.ct_eq(&expected_bytes).unwrap_u8() == 0 {
+            return Err(DigestError::InvalidResponse);
         }
+
+        if response.qop.is_some()
+            && !replay_cache.check(&response.nonce, nc, now, self.nonce_ttl_seconds)
+        {
+            return Err(DigestError::ReplayDetected);
+        }
+
+        Ok(())
     }
 }
 
