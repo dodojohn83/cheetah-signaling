@@ -174,3 +174,22 @@ fn challenge_parse_defaults_to_md5_when_algorithm_missing() -> Result<(), Digest
     assert_eq!(challenge.algorithm, DigestAlgorithm::Md5);
     Ok(())
 }
+
+#[test]
+fn response_to_header_value_encodes_qop_unquoted() {
+    let response = DigestResponse {
+        username: "alice".into(),
+        realm: "example.com".into(),
+        nonce: "abc".into(),
+        uri: "sip:bob@example.com".into(),
+        response: "resp".into(),
+        cnonce: Some("cn".into()),
+        nc: Some(1),
+        qop: Some(DigestQop::Auth),
+        algorithm: Some(DigestAlgorithm::Md5),
+        opaque: None,
+    };
+    let header = response.to_header_value();
+    assert!(header.contains("qop=auth"));
+    assert!(!header.contains("qop=\"auth\""));
+}

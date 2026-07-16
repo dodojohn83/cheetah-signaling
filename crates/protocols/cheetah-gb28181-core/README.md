@@ -12,6 +12,7 @@ Sans-I/O GB28181 SIP message model, URI handling, parser and encoder.
 ## Allowed dependencies
 
 - `bytes`, `thiserror`, `tracing`.
+- `md5`, `sha2`, `hmac`, `hex`, `subtle`, `secrecy` for digest authentication.
 - Dev-only test helpers.
 
 ## Forbidden dependencies

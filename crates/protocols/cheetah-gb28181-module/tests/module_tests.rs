@@ -388,7 +388,7 @@ fn xml_limits_reject_oversized_catalog() -> Result<(), Box<dyn std::error::Error
 fn command_response_maps_to_pending_command() -> Result<(), Box<dyn std::error::Error>> {
     let mut module = register_module()?;
     let command_id = MessageId::generate();
-    module.add_pending_command(command_id, now());
+    let _ = module.add_pending_command(command_id, now());
 
     let body = "<?xml version=\"1.0\"?>\n<Response>\n  <CmdType>DeviceControl</CmdType>\n  <SN>1</SN>\n  <DeviceID>34020000001320000001</DeviceID>\n  <Result>OK</Result>\n</Response>";
     let request = message_request(1, body.as_bytes())?;
@@ -472,7 +472,7 @@ fn pending_command_times_out() -> Result<(), Box<dyn std::error::Error>> {
     let config = test_config_with_limits(100, 1024, 1, 1024);
     let mut module = register_module_with_config(config)?;
     let command_id = MessageId::generate();
-    module.add_pending_command(command_id, now());
+    let _ = module.add_pending_command(command_id, now());
 
     let later = UtcTimestamp::default()
         .checked_add(DurationMs::from_seconds(2))
@@ -495,10 +495,23 @@ fn pending_command_capacity_evicts_oldest() -> Result<(), Box<dyn std::error::Er
     let id1 = MessageId::generate();
     let id2 = MessageId::generate();
     let id3 = MessageId::generate();
-    module.add_pending_command(id1, now());
-    module.add_pending_command(id2, now());
-    module.add_pending_command(id3, now());
+    let (_, evicted1) = module.add_pending_command(id1, now());
+    let (_, evicted2) = module.add_pending_command(id2, now());
+    let (_, evicted3) = module.add_pending_command(id3, now());
 
+    // The third insert should evict the oldest pending command (id1 / SN 1).
+    assert!(evicted1.is_empty());
+    assert!(evicted2.is_empty());
+    assert!(evicted3.iter().any(|o| matches!(
+        o,
+        Gb28181Output::CommandResponse {
+            command_id,
+            sn: 1,
+            result: Gb28181CommandResult::Error(..),
+        } if *command_id == id1
+    )));
+
+    // A response for the evicted SN 1 should no longer correlate.
     let body = "<?xml version=\"1.0\"?>\n<Response>\n  <CmdType>DeviceControl</CmdType>\n  <SN>1</SN>\n  <DeviceID>34020000001320000001</DeviceID>\n  <Result>OK</Result>\n</Response>";
     let request = message_request(1, body.as_bytes())?;
     let outputs = module.handle(
@@ -508,7 +521,6 @@ fn pending_command_capacity_evicts_oldest() -> Result<(), Box<dyn std::error::Er
         },
         now(),
     )?;
-    // SN 1 was evicted by the third insert, so id2 (SN 2) should still be present.
     assert!(
         outputs
             .iter()
@@ -521,6 +533,25 @@ fn pending_command_capacity_evicts_oldest() -> Result<(), Box<dyn std::error::Er
             ))
             .is_none()
     );
+
+    // A response for the still-pending SN 2 should correlate to id2.
+    let body2 = "<?xml version=\"1.0\"?>\n<Response>\n  <CmdType>DeviceControl</CmdType>\n  <SN>2</SN>\n  <DeviceID>34020000001320000001</DeviceID>\n  <Result>OK</Result>\n</Response>";
+    let request2 = message_request(2, body2.as_bytes())?;
+    let outputs2 = module.handle(
+        Gb28181Input {
+            source: source_addr(),
+            message: request2,
+        },
+        now(),
+    )?;
+    assert!(outputs2.iter().any(|o| matches!(
+        o,
+        Gb28181Output::CommandResponse {
+            command_id,
+            result: Gb28181CommandResult::Ok,
+            ..
+        } if *command_id == id2
+    )));
     Ok(())
 }
 

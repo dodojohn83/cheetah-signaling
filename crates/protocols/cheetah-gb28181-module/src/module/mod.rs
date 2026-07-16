@@ -199,10 +199,17 @@ impl Gb28181Module {
     }
 
     /// Test seam to register a pending command for `DeviceControl` response handling.
-    pub fn add_pending_command(&mut self, command_id: MessageId, sent_at: UtcTimestamp) {
+    ///
+    /// Returns the allocated serial number and any outputs produced by evicting
+    /// commands that exceed the configured capacity.
+    pub fn add_pending_command(
+        &mut self,
+        command_id: MessageId,
+        sent_at: UtcTimestamp,
+    ) -> (u32, Vec<crate::output::Gb28181Output>) {
         let sn = self.next_sn;
         self.next_sn += 1;
-        self.enforce_pending_command_capacity();
+        let outputs = self.enforce_pending_command_capacity();
         self.pending_commands.insert(
             sn,
             PendingCommand {
@@ -210,6 +217,7 @@ impl Gb28181Module {
                 sent_at,
             },
         );
+        (sn, outputs)
     }
 
     fn prune_pending_commands(&mut self, now: UtcTimestamp) -> Vec<crate::output::Gb28181Output> {
@@ -236,15 +244,25 @@ impl Gb28181Module {
         outputs
     }
 
-    fn enforce_pending_command_capacity(&mut self) {
+    fn enforce_pending_command_capacity(&mut self) -> Vec<crate::output::Gb28181Output> {
         let limit = self.config.max_pending_commands.max(1);
+        let mut outputs = Vec::new();
         while self.pending_commands.len() >= limit {
             let oldest = self.pending_commands.keys().next().copied();
             if let Some(sn) = oldest {
-                self.pending_commands.remove(&sn);
+                if let Some(pending) = self.pending_commands.remove(&sn) {
+                    outputs.push(crate::output::Gb28181Output::CommandResponse {
+                        command_id: pending.command_id,
+                        sn,
+                        result: crate::output::Gb28181CommandResult::Error(
+                            "pending command capacity exceeded".into(),
+                        ),
+                    });
+                }
             } else {
                 break;
             }
         }
+        outputs
     }
 }
