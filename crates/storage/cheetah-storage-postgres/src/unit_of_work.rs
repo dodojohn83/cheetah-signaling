@@ -156,11 +156,7 @@ impl UnitOfWork for PostgresUnitOfWork {
                 owner_epoch: OwnerEpoch(r.owner_epoch as u64),
                 lease_until: r.expires_at.map(UtcTimestamp::from_offset),
             },
-            None => {
-                return Err(cheetah_domain::DomainError::internal(
-                    "owner row missing after acquire",
-                ));
-            }
+            None => return Ok(None),
         };
 
         if owner.owner_node_id == node_id {
