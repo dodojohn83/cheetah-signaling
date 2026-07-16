@@ -22,3 +22,29 @@ pub enum DeviceAssignmentError {
     #[error("{0}")]
     InvalidArgument(#[from] SignalError),
 }
+
+/// Errors returned by rolling-upgrade and drain operations.
+#[derive(Debug, thiserror::Error)]
+pub enum RollingUpgradeError {
+    /// The target node does not exist.
+    #[error("node {0} not found")]
+    NodeNotFound(String),
+    /// The target node is not draining, so devices cannot be migrated off it.
+    #[error("node {0} is not draining")]
+    NotDraining(String),
+    /// The target node has been fenced by a newer instance.
+    #[error("node {0} has been fenced by a new instance")]
+    Fenced(String),
+    /// Assignment service error.
+    #[error("assignment error: {0}")]
+    Assignment(#[from] DeviceAssignmentError),
+    /// Storage backend error.
+    #[error("storage error: {0}")]
+    Storage(#[from] StorageError),
+    /// Device lookup failed.
+    #[error("device lookup error: {0}")]
+    Lookup(String),
+    /// Invalid argument (e.g., bad pagination).
+    #[error("{0}")]
+    InvalidArgument(#[from] SignalError),
+}
