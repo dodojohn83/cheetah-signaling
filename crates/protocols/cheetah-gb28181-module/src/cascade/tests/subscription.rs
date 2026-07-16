@@ -18,10 +18,10 @@ fn test_config() -> CascadeConfig {
 }
 
 fn subscribe_request(event: &str, expires: u64) -> SipMessage {
-    subscribe_request_with_call_id(event, expires, "sub-call-id-1")
+    subscribe_request_with_call_id(event, Some(expires), "sub-call-id-1")
 }
 
-fn subscribe_request_with_call_id(event: &str, expires: u64, call_id: &str) -> SipMessage {
+fn subscribe_request_with_call_id(event: &str, expires: Option<u64>, call_id: &str) -> SipMessage {
     let mut headers = SipHeaders::new();
     headers.append(
         HeaderName::Via,
@@ -41,7 +41,9 @@ fn subscribe_request_with_call_id(event: &str, expires: u64, call_id: &str) -> S
         HeaderName::Other("Event".to_string()),
         HeaderValue::new(event.to_string()),
     );
-    headers.append(HeaderName::Expires, HeaderValue::new(expires.to_string()));
+    if let Some(expires) = expires {
+        headers.append(HeaderName::Expires, HeaderValue::new(expires.to_string()));
+    }
     headers.append(
         HeaderName::Contact,
         HeaderValue::new("<sip:34020000002000000001@upstream.example.com>"),
@@ -56,6 +58,10 @@ fn subscribe_request_with_call_id(event: &str, expires: u64, call_id: &str) -> S
         headers,
         body: Vec::new(),
     }
+}
+
+fn subscribe_request_without_expires(event: &str) -> SipMessage {
+    subscribe_request_with_call_id(event, None, "sub-call-id-1")
 }
 
 fn notify_response_ok(call_id: &str, cseq: u32) -> SipMessage {
@@ -193,7 +199,7 @@ fn subscribe_with_expires_zero_terminates_subscription() {
             now: 2005,
             event: CascadeEvent::Request(Box::new(subscribe_request_with_call_id(
                 "MobilePosition",
-                0,
+                Some(0),
                 "sub-call-id-1",
             ))),
         })
@@ -286,4 +292,29 @@ fn subscription_expires_and_sends_final_notify_on_tick() {
             .is_some_and(|v| v.as_str().starts_with("terminated"))
     );
     assert!(cascade.subscriptions.is_empty());
+}
+
+#[test]
+fn subscribe_without_expires_uses_configured_default() {
+    let mut cfg = test_config();
+    cfg.subscription_default_expiry_seconds = 1234;
+    let mut cascade = Gb28181Cascade::new(cfg, password_provider()).unwrap();
+    register_to_connected(&mut cascade);
+
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 2000,
+            event: CascadeEvent::Request(Box::new(subscribe_request_without_expires("Catalog"))),
+        })
+        .unwrap();
+
+    let response = first_response(&outputs).expect("200 OK response");
+    assert!(matches!(response, SipMessage::Response { line, .. } if line.code == 200));
+    assert_eq!(
+        response
+            .headers()
+            .get(&HeaderName::Expires)
+            .map(|v| v.as_str()),
+        Some("1234")
+    );
 }

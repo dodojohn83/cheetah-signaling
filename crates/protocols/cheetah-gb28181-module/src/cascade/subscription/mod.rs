@@ -15,10 +15,6 @@ use super::catalog::{
 };
 use super::{CascadeCredentialProvider, CascadeError, CascadeOutput, Gb28181Cascade, State};
 
-/// Default subscription lifetime in seconds when the upstream does not send an
-/// `Expires` header.
-const DEFAULT_SUBSCRIPTION_EXPIRY_SECONDS: u64 = 3600;
-
 /// How long a `NOTIFY` request may stay pending before it is retransmitted.
 const NOTIFY_TIMEOUT_SECONDS: u64 = 5;
 
@@ -145,7 +141,7 @@ pub(crate) fn handle_subscribe<P: CascadeCredentialProvider>(
     let requested_expiry = headers
         .get(&HeaderName::Expires)
         .and_then(|v| v.as_str().trim().parse::<u64>().ok())
-        .unwrap_or(DEFAULT_SUBSCRIPTION_EXPIRY_SECONDS);
+        .unwrap_or(cascade.config.subscription_default_expiry_seconds as u64);
 
     let local_tag = headers
         .get(&HeaderName::To)
