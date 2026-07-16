@@ -150,7 +150,8 @@ pub fn build_ack(
     remote_tag: Option<&str>,
     target: &SipUri,
     branch: &str,
-) -> SipMessage {
+) -> Result<SipMessage, AccessError> {
+    validate_sip_header_token(branch)?;
     let mut headers = SipHeaders::new();
     let local_host = local_uri.host();
     let local_port = local_uri.port().unwrap_or(5060);
@@ -189,11 +190,11 @@ pub fn build_ack(
     headers.append(HeaderName::MaxForwards, HeaderValue::new("70"));
     headers.append(HeaderName::ContentLength, HeaderValue::new("0"));
 
-    SipMessage::Request {
+    Ok(SipMessage::Request {
         line: RequestLine::new(Method::Ack, target.clone()),
         headers,
         body: Vec::new(),
-    }
+    })
 }
 
 /// Builds a BYE request for an established dialog.
@@ -204,6 +205,7 @@ pub fn build_bye(
     branch: &str,
     target: &SipUri,
 ) -> Result<SipMessage, AccessError> {
+    validate_sip_header_token(branch)?;
     let remote_tag = session
         .remote_tag
         .as_ref()
@@ -256,7 +258,8 @@ pub fn build_cancel(
     cseq: u32,
     branch: &str,
     target: &SipUri,
-) -> SipMessage {
+) -> Result<SipMessage, AccessError> {
+    validate_sip_header_token(branch)?;
     let mut headers = SipHeaders::new();
     let local_host = local_uri.host();
     let local_port = local_uri.port().unwrap_or(5060);
@@ -290,11 +293,11 @@ pub fn build_cancel(
     headers.append(HeaderName::MaxForwards, HeaderValue::new("70"));
     headers.append(HeaderName::ContentLength, HeaderValue::new("0"));
 
-    SipMessage::Request {
+    Ok(SipMessage::Request {
         line: RequestLine::new(Method::Cancel, target.clone()),
         headers,
         body: Vec::new(),
-    }
+    })
 }
 
 /// Builds a `200 OK` response to an in-dialog request.

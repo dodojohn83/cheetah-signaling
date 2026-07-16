@@ -188,6 +188,102 @@ fn stop_pending_invite_sends_cancel_and_does_not_corrupt_cseq() {
 }
 
 #[test]
+fn cancel_response_after_invite_failure_is_ignored() {
+    let mut media = Gb28181Media::new(config());
+    let sid = MediaSessionId::generate();
+    media.process(MediaInput::Command(start_live(sid))).unwrap();
+
+    // Stop while inviting sends CANCEL and leaves the session in Stopping.
+    media
+        .process(MediaInput::Command(MediaCommand::StopMediaSession {
+            media_session_id: sid,
+        }))
+        .unwrap();
+
+    // The INVITE is rejected first.
+    let mut headers = SipHeaders::new();
+    headers.append(
+        HeaderName::Via,
+        HeaderValue::new("SIP/2.0/UDP 192.168.1.10:5060;branch=z9hG4bK1234"),
+    );
+    headers.append(
+        HeaderName::From,
+        HeaderValue::new("<sip:34020000001320000001@192.168.1.20:5060>;tag=tag-remote"),
+    );
+    headers.append(
+        HeaderName::To,
+        HeaderValue::new("<sip:server@192.168.1.10:5060>;tag=tag-local"),
+    );
+    headers.append(HeaderName::CallId, HeaderValue::new("call-1"));
+    headers.append(HeaderName::CSeq, HeaderValue::new("1 INVITE"));
+    headers.append(HeaderName::ContentLength, HeaderValue::new("0"));
+    let terminated = SipMessage::Response {
+        line: StatusLine::new(487, "Request Terminated"),
+        headers,
+        body: Vec::new(),
+    };
+    let outputs = media.process(MediaInput::Message(terminated)).unwrap();
+    assert!(matches!(
+        &outputs[0],
+        MediaOutput::EmitEvent(Gb28181Event::MediaSessionFailed { .. })
+    ));
+
+    // A late 200 OK for the CANCEL must be silently ignored, not an error.
+    let mut headers = SipHeaders::new();
+    headers.append(
+        HeaderName::Via,
+        HeaderValue::new("SIP/2.0/UDP 192.168.1.10:5060;branch=z9hG4bK1234"),
+    );
+    headers.append(
+        HeaderName::From,
+        HeaderValue::new("<sip:34020000001320000001@192.168.1.20:5060>;tag=tag-remote"),
+    );
+    headers.append(
+        HeaderName::To,
+        HeaderValue::new("<sip:server@192.168.1.10:5060>;tag=tag-local"),
+    );
+    headers.append(HeaderName::CallId, HeaderValue::new("call-1"));
+    headers.append(HeaderName::CSeq, HeaderValue::new("1 CANCEL"));
+    headers.append(HeaderName::ContentLength, HeaderValue::new("0"));
+    let cancel_ok = SipMessage::Response {
+        line: StatusLine::new(200, "OK"),
+        headers,
+        body: Vec::new(),
+    };
+    let outputs = media.process(MediaInput::Message(cancel_ok)).unwrap();
+    assert!(outputs.is_empty());
+}
+
+#[test]
+fn sip_message_builders_reject_crlf_in_branch() {
+    use crate::media::invite::{build_ack, build_bye, build_cancel};
+    use crate::media::session::{Session, SessionState};
+
+    let local_uri = SipUri::parse("sip:server@192.168.1.10:5060").unwrap();
+    let target = SipUri::parse("sip:device@192.168.1.20:5060").unwrap();
+    let session = Session {
+        media_session_id: MediaSessionId::generate(),
+        channel_id: ChannelId::generate(),
+        device_id: DeviceId::new("34020000001320000001").unwrap(),
+        call_id: "call-1".to_string(),
+        local_tag: "tag-local".to_string(),
+        remote_tag: Some("tag-remote".to_string()),
+        cseq: 2,
+        invite_cseq: 1,
+        branch: "z9hG4bKok".to_string(),
+        target: target.clone(),
+        remote_target: Some(target.clone()),
+        state: SessionState::Active,
+        media_address: "192.168.1.100".to_string(),
+        media_port: 5000,
+    };
+
+    assert!(build_ack(&local_uri, &session, None, &target, "branch\r\n").is_err());
+    assert!(build_bye(&local_uri, &session, 2, "branch\r\n", &target).is_err());
+    assert!(build_cancel(&local_uri, &session, 1, "branch\r\n", &target).is_err());
+}
+
+#[test]
 fn ack_uses_aor_for_to_and_contact_for_request_uri() {
     let mut media = Gb28181Media::new(config());
     let sid = MediaSessionId::generate();

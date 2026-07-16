@@ -26,10 +26,11 @@ pub(super) fn on_message(
         .ok_or_else(|| MediaError::MalformedSip("missing Call-ID".to_string()))?
         .to_string();
     let Some(&sid) = media.call_index.get(&call_id) else {
-        // A BYE response may be a retransmission after the dialog was already torn down.
+        // Final responses to BYE or CANCEL may be retransmissions after the dialog
+        // was already torn down.
         if msg
             .cseq()
-            .map(|(_, method)| method == Method::Bye)
+            .map(|(_, method)| method == Method::Bye || method == Method::Cancel)
             .unwrap_or(false)
         {
             return Ok(Vec::new());
@@ -139,7 +140,8 @@ fn on_invite_success(
             remote_tag,
             target,
             &format!("{}-ack", session.branch),
-        );
+        )
+        .map_err(|e| MediaError::MalformedSip(e.to_string()))?;
         return Ok(vec![MediaOutput::SendMessage(ack)]);
     }
 
@@ -177,7 +179,8 @@ fn on_invite_success(
             },
             &contact,
             &ack_branch,
-        );
+        )
+        .map_err(|e| MediaError::MalformedSip(e.to_string()))?;
         outputs.push(MediaOutput::SendMessage(ack));
 
         if !remote_tag.is_empty() {
@@ -258,7 +261,8 @@ fn on_invite_success(
         Some(&remote_tag),
         &contact,
         &ack_branch,
-    );
+    )
+    .map_err(|e| MediaError::MalformedSip(e.to_string()))?;
 
     session.state = SessionState::Active;
 

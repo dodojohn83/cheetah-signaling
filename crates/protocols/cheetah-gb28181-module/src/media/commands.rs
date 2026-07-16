@@ -304,7 +304,8 @@ fn do_stop(
             session.cseq,
             &session.branch,
             &session.target,
-        );
+        )
+        .map_err(|e| MediaError::MalformedSip(e.to_string()))?;
         session.state = SessionState::Stopping;
         return Ok(vec![MediaOutput::SendMessage(cancel)]);
     }
