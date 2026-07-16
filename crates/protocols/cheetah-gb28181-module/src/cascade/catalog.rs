@@ -83,7 +83,7 @@ impl CatalogFilter {
 
 /// Extracts the bare URI from a header value that may contain a display name
 /// and parameters (e.g. `<sip:alice@example.com>;tag=abc`).
-fn parse_uri_from_header(value: &HeaderValue) -> Option<SipUri> {
+pub(crate) fn parse_uri_from_header(value: &HeaderValue) -> Option<SipUri> {
     let value_str = value.as_str().trim();
     let uri_str = if let Some(start) = value_str.find('<') {
         let end_rel = value_str[start + 1..].find('>')?;

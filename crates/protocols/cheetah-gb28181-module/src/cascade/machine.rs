@@ -37,9 +37,11 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
             provider,
             state: State::Idle,
             request_counter: 0,
+            bridge_counter: 0,
             auth: None,
             catalog_provider: None,
             inbound_auth,
+            bridges: std::collections::BTreeMap::new(),
         })
     }
 
@@ -56,6 +58,13 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
             CascadeEvent::Deregister => self.on_deregister(input.now),
             CascadeEvent::Request(msg) => Ok(self.on_request(input.now, *msg)),
             CascadeEvent::Response(msg) => self.on_response(input.now, *msg),
+            CascadeEvent::BridgeMediaReady {
+                bridge_id,
+                answer_sdp,
+            } => super::bridge::on_media_ready(self, input.now, bridge_id, answer_sdp),
+            CascadeEvent::BridgeMediaStop { bridge_id } => {
+                super::bridge::on_media_stop(self, input.now, bridge_id)
+            }
             CascadeEvent::Tick => self.on_tick(input.now),
         }
     }
@@ -263,7 +272,17 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
     }
 
     fn on_request(&mut self, now: u64, msg: SipMessage) -> Vec<CascadeOutput> {
-        super::request_handler::handle_request(self, now, msg)
+        use cheetah_gb28181_core::Method;
+        let method = match &msg {
+            SipMessage::Request { line, .. } => line.method.clone(),
+            _ => return Vec::new(),
+        };
+        match method {
+            Method::Invite | Method::Ack | Method::Bye | Method::Cancel => {
+                super::bridge::handle_request(self, now, msg)
+            }
+            _ => super::request_handler::handle_request(self, now, msg),
+        }
     }
 
     fn handle_register_response(
@@ -703,7 +722,12 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
         format!("{}-{now}-{}", self.platform_id(), self.request_counter)
     }
 
-    fn next_branch(&mut self, call_id: &str, cseq: u32) -> String {
+    pub(super) fn next_cseq(&mut self) -> u32 {
+        self.request_counter += 1;
+        self.request_counter as u32
+    }
+
+    pub(super) fn next_branch(&mut self, call_id: &str, cseq: u32) -> String {
         self.request_counter += 1;
         format!("z9hG4bK-{}-{cseq}-{}", call_id, self.request_counter)
     }

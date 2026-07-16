@@ -266,4 +266,35 @@ pub enum Gb28181Event {
         /// Stable failure reason.
         reason: String,
     },
+    /// An upstream cascade platform sent an INVITE to play a channel.
+    CascadePlayRequested {
+        /// Logical domain.
+        domain_id: DomainId,
+        /// Upstream platform identifier.
+        platform_id: String,
+        /// Stable bridge identifier chosen by the cascade state machine.
+        bridge_id: String,
+        /// Upstream Call-ID for the INVITE transaction.
+        upstream_call_id: String,
+        /// Upstream From URI with tag, as a string.
+        upstream_from: String,
+        /// Upstream To URI.
+        upstream_to: String,
+        /// Target user part from the upstream Request-URI (external device/channel ID).
+        target_user: String,
+        /// Parsed remote SDP offer.
+        remote_sdp: String,
+    },
+    /// An upstream cascade play bridge was torn down by BYE/CANCEL or the
+    /// downstream side stopped.
+    CascadePlayStopped {
+        /// Logical domain.
+        domain_id: DomainId,
+        /// Upstream platform identifier.
+        platform_id: String,
+        /// Stable bridge identifier.
+        bridge_id: String,
+        /// Stable reason for the stop.
+        reason: String,
+    },
 }
