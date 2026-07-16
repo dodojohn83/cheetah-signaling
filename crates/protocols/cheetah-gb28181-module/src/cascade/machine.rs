@@ -373,7 +373,10 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
         let auth = self.auth.as_mut().ok_or_else(|| {
             CascadeError::Internal("digest auth context missing after creation".to_string())
         })?;
-        let cnonce = format!("{}-{cseq}-{attempt}-{now}", platform_id);
+        let cnonce = DigestClient::derive_cnonce(
+            &password,
+            &format!("{platform_id}-{cseq}-{attempt}-{now}"),
+        )?;
         let username = self.config.local_uri.user().unwrap_or("");
         let uri = self.config.upstream.encode();
         Ok(auth

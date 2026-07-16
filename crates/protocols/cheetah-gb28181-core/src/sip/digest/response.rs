@@ -278,7 +278,7 @@ impl DigestResponse {
             write_raw_param(&mut out, &mut first, "nc", &format!("{nc:08x}"));
         }
         if let Some(qop) = self.qop {
-            write_quoted_param(&mut out, &mut first, "qop", qop.as_wire());
+            write_raw_param(&mut out, &mut first, "qop", qop.as_wire());
         }
         if let Some(algorithm) = self.algorithm {
             write_raw_param(&mut out, &mut first, "algorithm", algorithm.as_wire());

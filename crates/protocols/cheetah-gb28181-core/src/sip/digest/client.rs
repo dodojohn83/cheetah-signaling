@@ -2,7 +2,9 @@
 
 use super::context::compute_response;
 use super::response::{DigestAlgorithm, DigestChallenge, DigestError, DigestQop, DigestResponse};
+use hmac::{Hmac, Mac};
 use secrecy::{ExposeSecret, SecretString};
+use sha2::Sha256;
 
 /// Client-side helper for computing SIP `Authorization` Digest responses.
 #[derive(Clone, Debug)]
@@ -22,6 +24,22 @@ impl DigestClient {
             qop: None,
             nonce_count: 0,
         }
+    }
+
+    /// Derives an unpredictable client nonce (cnonce) from a secret password
+    /// and a public context string.
+    ///
+    /// The result is keyed by the password so that it cannot be predicted by an
+    /// attacker who does not know the password, satisfying RFC 2617's
+    /// unpredictability requirement for cnonce without requiring the caller to
+    /// supply an external random source.
+    pub fn derive_cnonce(password: &SecretString, context: &str) -> Result<String, DigestError> {
+        type HmacSha256 = Hmac<Sha256>;
+        let mut mac = HmacSha256::new_from_slice(password.expose_secret().as_bytes())
+            .map_err(|e| DigestError::Malformed(format!("invalid cnonce key: {e}")))?;
+        mac.update(context.as_bytes());
+        // 16 bytes (32 hex chars) is enough entropy and is a valid SIP token.
+        Ok(hex::encode(&mac.finalize().into_bytes()[..16]))
     }
 
     /// Allows the broken MD5 algorithm for legacy GB28181 interop.
@@ -198,6 +216,8 @@ mod tests {
         };
 
         let header = response.to_header_value();
+        assert!(header.contains("qop=auth"));
+        assert!(!header.contains("qop=\"auth\""));
         let parsed = DigestResponse::parse(&header).unwrap();
         assert_eq!(parsed.username, "alice");
         assert_eq!(parsed.realm, "example.com");
@@ -255,5 +275,17 @@ mod tests {
             "",
         );
         assert!(matches!(result, Err(DigestError::Malformed(_))));
+    }
+
+    #[test]
+    fn derive_cnonce_is_token_safe_and_context_sensitive() {
+        let password = SecretString::new("secret".into());
+        let a = DigestClient::derive_cnonce(&password, "ctx-1").unwrap();
+        let b = DigestClient::derive_cnonce(&password, "ctx-2").unwrap();
+        assert_ne!(a, b);
+        assert!(!a.contains('"'));
+        assert!(!a.contains('\r'));
+        assert!(!a.contains('\n'));
+        assert!(!a.contains(' '));
     }
 }
