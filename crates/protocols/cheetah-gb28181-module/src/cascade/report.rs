@@ -11,6 +11,7 @@
 use cheetah_gb28181_core::{
     Body, HeaderName, HeaderValue, Method, RequestLine, SipHeaders, SipMessage,
 };
+use sha2::{Digest, Sha256};
 
 use super::{CascadeError, Gb28181Cascade, State, validate_token};
 use crate::events::{DevicePresence, Gb28181Event};
@@ -92,12 +93,11 @@ pub(crate) fn enqueue<P: super::CascadeCredentialProvider>(
             ..
         } => {
             let device_id = device_id.to_string();
-            let idempotency_key = Some(format!(
-                "{}-{}-{}-{}",
-                device_id,
-                alarm_type.as_deref().unwrap_or(""),
-                time.as_deref().unwrap_or(""),
-                sn
+            let idempotency_key = Some(stable_alarm_idempotency_key(
+                &device_id,
+                alarm_type.as_deref(),
+                time.as_deref(),
+                &sn,
             ));
             let body = build_alarm_notify(
                 &sn,
@@ -273,6 +273,29 @@ fn enforce_bounds<P: super::CascadeCredentialProvider>(cascade: &mut Gb28181Casc
 
 fn prune_expired<P: super::CascadeCredentialProvider>(cascade: &mut Gb28181Cascade<P>, now: u64) {
     cascade.report_state.retain(|_, r| now < r.expires_at);
+    let state = &cascade.report_state;
+    cascade.report_state_order.retain(|k| state.contains_key(k));
+}
+
+/// Builds a stable, opaque idempotency key for an alarm report. The key is
+/// derived from device-supplied fields but rendered as a hex digest so that
+/// XML-decoded control characters (CR/LF) cannot be injected into the outgoing
+/// SIP `X-Idempotency-Key` header.
+fn stable_alarm_idempotency_key(
+    device_id: &str,
+    alarm_type: Option<&str>,
+    time: Option<&str>,
+    sn: &str,
+) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(device_id.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(alarm_type.unwrap_or("").as_bytes());
+    hasher.update(b"\0");
+    hasher.update(time.unwrap_or("").as_bytes());
+    hasher.update(b"\0");
+    hasher.update(sn.as_bytes());
+    format!("{}-{}", device_id, hex::encode(hasher.finalize()))
 }
 
 fn next_sn<P: super::CascadeCredentialProvider>(cascade: &mut Gb28181Cascade<P>) -> String {
