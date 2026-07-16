@@ -34,6 +34,7 @@ fn config() -> CascadeConfig {
         "upstream-cred".to_string(),
         3600,
         true,
+        false,
     )
     .unwrap()
 }
@@ -258,8 +259,25 @@ fn config_rejects_internal_upstream_ip() {
         "cred".to_string(),
         3600,
         true,
+        false,
     );
     assert!(result.is_err());
+}
+
+#[test]
+fn config_allows_internal_upstream_ip_when_enabled() {
+    let upstream = SipUri::parse("sip:registrar@127.0.0.1").unwrap();
+    let result = CascadeConfig::with_options(
+        domain_id(),
+        local_uri(),
+        upstream,
+        "example.com".to_string(),
+        "cred".to_string(),
+        3600,
+        true,
+        true,
+    );
+    assert!(result.is_ok());
 }
 
 #[test]

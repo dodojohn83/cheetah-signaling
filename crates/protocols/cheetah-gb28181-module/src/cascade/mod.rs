@@ -86,10 +86,12 @@ impl CascadeConfig {
             credential_ref,
             register_interval_seconds,
             false,
+            false,
         )
     }
 
     /// Creates a validated cascade configuration with legacy options.
+    #[allow(clippy::too_many_arguments)]
     pub fn with_options(
         domain_id: DomainId,
         local_uri: SipUri,
@@ -98,6 +100,7 @@ impl CascadeConfig {
         credential_ref: String,
         register_interval_seconds: u32,
         allow_md5: bool,
+        allow_internal_upstreams: bool,
     ) -> Result<Self, CascadeError> {
         if register_interval_seconds == 0 {
             return Err(CascadeError::Internal(
@@ -111,6 +114,7 @@ impl CascadeConfig {
 
         if let Ok(ip) = IpAddr::from_str(upstream.host())
             && is_internal_ip(ip)
+            && !allow_internal_upstreams
         {
             return Err(CascadeError::Internal(
                 "upstream host is an internal IP".to_string(),
@@ -130,7 +134,7 @@ impl CascadeConfig {
             jitter_ms: 1_000,
             transaction_timeout_seconds: 32,
             allow_md5,
-            allow_internal_upstreams: false,
+            allow_internal_upstreams,
             user_agent: None,
         })
     }
@@ -224,6 +228,13 @@ enum State {
     Deregistering(Registering),
 }
 
+/// Reusable digest authentication context for a single nonce.
+#[derive(Clone, Debug)]
+struct AuthorizationContext {
+    challenge: DigestChallenge,
+    client: DigestClient,
+}
+
 /// Sans-I/O state machine for an upstream GB28181 cascade platform.
 #[derive(Clone, Debug)]
 pub struct Gb28181Cascade<P: CascadeCredentialProvider> {
@@ -231,6 +242,7 @@ pub struct Gb28181Cascade<P: CascadeCredentialProvider> {
     provider: P,
     state: State,
     request_counter: u64,
+    auth: Option<AuthorizationContext>,
 }
 
 impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
@@ -241,6 +253,7 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
             provider,
             state: State::Idle,
             request_counter: 0,
+            auth: None,
         }
     }
 
@@ -558,7 +571,7 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
     }
 
     fn build_authorization(
-        &self,
+        &mut self,
         challenge: &DigestChallenge,
         cseq: u32,
         attempt: u32,
@@ -569,18 +582,35 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
                 "auth-int qop is not supported".to_string(),
             ));
         }
+
+        let needs_new = self
+            .auth
+            .as_ref()
+            .is_none_or(|auth| auth.challenge != *challenge);
+        if needs_new {
+            let client = DigestClient::new()
+                .allow_md5(self.config.allow_md5)
+                .qop(challenge.qop)?;
+            self.auth = Some(AuthorizationContext {
+                challenge: challenge.clone(),
+                client,
+            });
+        }
+
+        let platform_id = self.platform_id().to_string();
         let password = self
             .provider
             .password_for(&self.config.credential_ref)
             .ok_or(CascadeError::NoCredentials)?;
-        let cnonce = format!("{}-{cseq}-{attempt}-{now}", self.platform_id());
-        let method = "REGISTER";
-        let uri = self.config.upstream.encode();
-        let mut client = DigestClient::new()
-            .allow_md5(self.config.allow_md5)
-            .qop(challenge.qop)?;
+        let auth = self.auth.as_mut().ok_or_else(|| {
+            CascadeError::Internal("digest auth context missing after creation".to_string())
+        })?;
+        let cnonce = format!("{}-{cseq}-{attempt}-{now}", platform_id);
         let username = self.config.local_uri.user().unwrap_or("");
-        Ok(client.authorize(username, &password, method, &uri, challenge, &cnonce)?)
+        let uri = self.config.upstream.encode();
+        Ok(auth
+            .client
+            .authorize(username, &password, "REGISTER", &uri, challenge, &cnonce)?)
     }
 
     fn start_registering(
