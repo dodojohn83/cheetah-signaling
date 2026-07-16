@@ -202,7 +202,7 @@ impl DigestContext {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn compute_response(
+pub(crate) fn compute_response(
     algorithm: DigestAlgorithm,
     username: &str,
     realm: &str,

@@ -261,6 +261,33 @@ impl DigestResponse {
             opaque,
         })
     }
+
+    /// Encodes the response as the value of an `Authorization` header.
+    pub fn to_header_value(&self) -> String {
+        let mut out = String::from("Digest");
+        let mut first = true;
+        write_quoted_param(&mut out, &mut first, "username", &self.username);
+        write_quoted_param(&mut out, &mut first, "realm", &self.realm);
+        write_quoted_param(&mut out, &mut first, "nonce", &self.nonce);
+        write_quoted_param(&mut out, &mut first, "uri", &self.uri);
+        write_quoted_param(&mut out, &mut first, "response", &self.response);
+        if let Some(cnonce) = &self.cnonce {
+            write_quoted_param(&mut out, &mut first, "cnonce", cnonce);
+        }
+        if let Some(nc) = self.nc {
+            write_raw_param(&mut out, &mut first, "nc", &format!("{nc:08x}"));
+        }
+        if let Some(qop) = self.qop {
+            write_quoted_param(&mut out, &mut first, "qop", qop.as_wire());
+        }
+        if let Some(algorithm) = self.algorithm {
+            write_raw_param(&mut out, &mut first, "algorithm", algorithm.as_wire());
+        }
+        if let Some(opaque) = &self.opaque {
+            write_quoted_param(&mut out, &mut first, "opaque", opaque);
+        }
+        out
+    }
 }
 
 /// A server-generated `WWW-Authenticate` challenge.
