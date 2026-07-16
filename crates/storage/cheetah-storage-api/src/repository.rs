@@ -1,8 +1,10 @@
 //! Extension repository ports that do not belong to the domain UnitOfWork.
 
 use crate::StorageError;
-use cheetah_domain::OwnerInfo;
-use cheetah_signal_types::{DeviceId, NodeId, OperationId, TenantId};
+use cheetah_domain::{ClusterNode, NodeLoad, OwnerInfo};
+use cheetah_signal_types::{
+    DeviceId, NodeId, NodeInstanceId, OperationId, Page, PageRequest, TenantId, UtcTimestamp,
+};
 
 /// Repository for device owner leases.
 #[async_trait::async_trait]
@@ -110,4 +112,42 @@ pub trait OperationStepRepository: Send + Sync {
         tenant_id: TenantId,
         operation_id: OperationId,
     ) -> Result<Vec<OperationStep>, StorageError>;
+}
+
+/// Repository for cluster node registrations and leases.
+#[async_trait::async_trait]
+pub trait NodeRepository: Send + Sync {
+    /// Registers or re-registers a node. A re-registration with a new
+    /// `instance_id` overwrites the previous incarnation, fencing it.
+    async fn register(&mut self, node: ClusterNode) -> Result<(), StorageError>;
+
+    /// Extends the lease and updates load for `node_id`, but only if the
+    /// current `instance_id` matches. Returns the updated node, or `None` if
+    /// the node is unknown or has been fenced by another instance.
+    async fn heartbeat(
+        &mut self,
+        node_id: NodeId,
+        instance_id: NodeInstanceId,
+        lease_until: UtcTimestamp,
+        updated_at: UtcTimestamp,
+        load: NodeLoad,
+    ) -> Result<Option<ClusterNode>, StorageError>;
+
+    /// Returns the registered node, if any.
+    async fn get(&self, node_id: NodeId) -> Result<Option<ClusterNode>, StorageError>;
+
+    /// Lists nodes whose lease is still valid at `now`, paginated by cursor.
+    async fn list_alive(
+        &self,
+        now: UtcTimestamp,
+        page: PageRequest,
+    ) -> Result<Page<ClusterNode>, StorageError>;
+
+    /// Marks the node as draining if `instance_id` matches.
+    async fn mark_draining(
+        &mut self,
+        node_id: NodeId,
+        instance_id: NodeInstanceId,
+        updated_at: UtcTimestamp,
+    ) -> Result<(), StorageError>;
 }

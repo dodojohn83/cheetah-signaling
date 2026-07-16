@@ -1,6 +1,6 @@
 //! Storage factory port.
 
-use crate::{Migration, OperationStepRepository, OwnerRepository, StorageError};
+use crate::{Migration, NodeRepository, OperationStepRepository, OwnerRepository, StorageError};
 use cheetah_domain::UnitOfWork;
 
 /// Storage abstraction.
@@ -20,6 +20,9 @@ pub trait Storage: Send + Sync {
 
     /// Returns the operation step repository backed by the storage pools.
     fn operation_step_repository(&self) -> Box<dyn OperationStepRepository>;
+
+    /// Returns the cluster node repository backed by the storage pools.
+    fn node_repository(&self) -> Box<dyn NodeRepository>;
 
     /// Gracefully closes the storage.
     async fn close(self) -> Result<(), StorageError>;

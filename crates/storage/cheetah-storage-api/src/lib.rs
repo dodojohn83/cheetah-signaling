@@ -9,5 +9,5 @@ pub mod storage;
 
 pub use error::StorageError;
 pub use migration::{Migration, MigrationInfo, MigrationStatus};
-pub use repository::{OperationStep, OperationStepRepository, OwnerRepository};
+pub use repository::{NodeRepository, OperationStep, OperationStepRepository, OwnerRepository};
 pub use storage::Storage;

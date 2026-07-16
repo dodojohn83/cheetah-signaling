@@ -364,8 +364,8 @@ mod tests {
     use crate::types::DeviceInformation;
     use cheetah_signal_types::{
         ChannelId, CorrelationId, DeliveryId, EndpointId, EventId, MediaBindingId,
-        MediaNodeInstanceEpoch, MediaSessionId, MessageId, NodeId, OperationId, PluginId,
-        ProtocolSessionId, TenantId, WebhookId,
+        MediaNodeInstanceEpoch, MediaSessionId, MessageId, NodeId, NodeInstanceId, OperationId,
+        PluginId, ProtocolSessionId, TenantId, WebhookId,
     };
     use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -418,6 +418,9 @@ mod tests {
         }
         fn generate_node_id(&self) -> NodeId {
             NodeId::from_uuid(self.next_uuid())
+        }
+        fn generate_node_instance_id(&self) -> NodeInstanceId {
+            NodeInstanceId::from_uuid(self.next_uuid())
         }
         fn generate_plugin_id(&self) -> PluginId {
             PluginId::from_uuid(self.next_uuid())
