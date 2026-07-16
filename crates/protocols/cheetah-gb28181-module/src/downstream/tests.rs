@@ -1,6 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use super::*;
+use crate::events::Gb28181Event;
 use cheetah_gb28181_core::{
     HeaderName, HeaderValue, Method, RequestLine, SipHeaders, SipMessage, SipUri,
 };
@@ -294,4 +295,84 @@ fn query_catalog_destination_not_overwritten_by_spoofed_message() {
     };
     assert_eq!(destination, &registered_source);
     assert!(matches!(request, SipMessage::Request { line, .. } if line.method == Method::Message));
+}
+
+#[test]
+fn keepalive_with_mismatched_platform_id_returns_400() {
+    let mut downstream = Gb28181Downstream::new(make_config(), credential_provider).unwrap();
+    let registered_source = "192.168.1.100:5060".parse().unwrap();
+    downstream
+        .process(DownstreamInput::Sip {
+            source: registered_source,
+            now: 0,
+            message: make_register(3600),
+        })
+        .unwrap();
+
+    let body = br#"<?xml version="1.0"?>
+<Notify>
+    <CmdType>Keepalive</CmdType>
+    <SN>1</SN>
+    <DeviceID>34020000002000000002</DeviceID>
+    <Status>OK</Status>
+</Notify>"#;
+    let outputs = downstream
+        .process(DownstreamInput::Sip {
+            source: registered_source,
+            now: 1,
+            message: make_message(body),
+        })
+        .unwrap();
+
+    assert_eq!(outputs.len(), 1);
+    match &outputs[0] {
+        DownstreamOutput::SendResponse(SipMessage::Response { line, .. }) => {
+            assert_eq!(line.code, 400);
+        }
+        _ => panic!("expected 400 response"),
+    };
+}
+
+#[test]
+fn alarm_from_sub_device_uses_sub_device_id() {
+    let mut downstream = Gb28181Downstream::new(make_config(), credential_provider).unwrap();
+    let source = "192.168.1.100:5060".parse().unwrap();
+    downstream
+        .process(DownstreamInput::Sip {
+            source,
+            now: 0,
+            message: make_register(3600),
+        })
+        .unwrap();
+
+    let sub_id = "34020000001320000001";
+    let body = format!(
+        r#"<?xml version="1.0"?>
+<Notify>
+    <CmdType>Alarm</CmdType>
+    <SN>1</SN>
+    <DeviceID>{sub_id}</DeviceID>
+    <AlarmPriority>1</AlarmPriority>
+    <AlarmMethod>2</AlarmMethod>
+    <AlarmType>1</AlarmType>
+    <AlarmTime>2026-07-13T14:31:00</AlarmTime>
+    <Info>motion</Info>
+</Notify>"#
+    );
+    let outputs = downstream
+        .process(DownstreamInput::Sip {
+            source,
+            now: 1,
+            message: make_message(body.as_bytes()),
+        })
+        .unwrap();
+
+    assert_eq!(outputs.len(), 2);
+    match &outputs[0] {
+        DownstreamOutput::EmitEvent(Gb28181Event::AlarmReceived { device_id, .. }) => {
+            assert_eq!(device_id.as_ref(), sub_id);
+        }
+        _ => panic!("expected AlarmReceived event"),
+    }
+    assert!(matches!(outputs[1], DownstreamOutput::SendResponse(_)));
 }
