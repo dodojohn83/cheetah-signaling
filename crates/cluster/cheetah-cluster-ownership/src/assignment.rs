@@ -443,7 +443,10 @@ mod tests {
     use super::*;
     use cheetah_domain::in_memory::{InMemoryClock, InMemoryIdGenerator};
     use cheetah_domain::{NodeCapacity, NodeLoad, OwnerInfo};
-    use cheetah_signal_types::{IdGenerator, NodeInstanceId, OwnerEpoch, Page};
+    use cheetah_signal_types::{
+        IdGenerator, ListCursor, NodeInstanceId, OwnerEpoch, Page, PageRequest,
+    };
+    use cheetah_storage_api::OwnedDevice;
     use std::collections::HashMap;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Arc, Mutex as StdMutex};
@@ -633,6 +636,74 @@ mod tests {
             _epoch: OwnerEpoch,
         ) -> Result<(), StorageError> {
             unimplemented!("not used in tests")
+        }
+
+        async fn list_by_node(
+            &self,
+            node_id: NodeId,
+            page: PageRequest,
+        ) -> Result<Page<OwnedDevice>, StorageError> {
+            let owners = self.owners();
+            let mut matches: Vec<((TenantId, DeviceId), OwnerInfo)> = owners
+                .iter()
+                .filter(|(_, o)| o.owner_node_id == node_id)
+                .map(|(k, o)| (*k, o.clone()))
+                .collect();
+            matches.sort_by_key(|a| a.0.1.as_uuid());
+
+            let page_size = page.page_size.max(1) as usize;
+            let start = match &page.cursor {
+                None => 0,
+                Some(value) => {
+                    let cursor = ListCursor::decode(value).map_err(|e| {
+                        StorageError::invalid_argument(format!("invalid cursor: {e}"))
+                    })?;
+                    let (_, id) = cursor.parse().map_err(|e| {
+                        StorageError::invalid_argument(format!("invalid cursor: {e}"))
+                    })?;
+                    matches
+                        .iter()
+                        .position(|((_, device_id), _)| device_id.as_uuid() > id)
+                        .unwrap_or(matches.len())
+                }
+            };
+
+            let end = (start + page_size + 1).min(matches.len());
+            let has_more = end - start > page_size;
+            let selected = &matches[start..end.min(start + page_size)];
+            let next_cursor = if has_more {
+                if let Some(last) = selected.last() {
+                    Some(
+                        ListCursor::new(UtcTimestamp::default(), last.0.1.as_uuid())
+                            .map_err(|e| {
+                                StorageError::internal(format!("failed to encode cursor: {e}"))
+                            })?
+                            .encode()
+                            .map_err(|e| {
+                                StorageError::internal(format!("failed to encode cursor: {e}"))
+                            })?,
+                    )
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            let items: Vec<OwnedDevice> = selected
+                .iter()
+                .map(|((tenant_id, device_id), owner)| OwnedDevice {
+                    tenant_id: *tenant_id,
+                    device_id: *device_id,
+                    owner: owner.clone(),
+                })
+                .collect();
+
+            let mut result = Page::new(items);
+            if let Some(cursor) = next_cursor {
+                result = result.with_next_cursor(cursor);
+            }
+            Ok(result)
         }
     }
 

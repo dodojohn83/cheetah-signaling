@@ -2,8 +2,8 @@
 
 use crate::error::sqlx_to_domain;
 use cheetah_domain::ports::{DeviceOwnerResolver, OwnerInfo};
-use cheetah_signal_types::UtcTimestamp;
-use cheetah_storage_api::{OwnerRepository, StorageError};
+use cheetah_signal_types::{ListCursor, Page, PageRequest, UtcTimestamp};
+use cheetah_storage_api::{OwnedDevice, OwnerRepository, StorageError};
 use sqlx::FromRow;
 use sqlx::PgPool;
 use time::OffsetDateTime;
@@ -13,6 +13,16 @@ struct OwnerRow {
     owner_node_id: uuid::Uuid,
     owner_epoch: i64,
     expires_at: Option<OffsetDateTime>,
+}
+
+#[derive(FromRow)]
+struct OwnedDeviceRow {
+    tenant_id: uuid::Uuid,
+    device_id: uuid::Uuid,
+    owner_node_id: uuid::Uuid,
+    owner_epoch: i64,
+    expires_at: Option<OffsetDateTime>,
+    updated_at: OffsetDateTime,
 }
 
 /// PostgreSQL owner repository.
@@ -217,6 +227,88 @@ impl OwnerRepository for PostgresOwnerRepository {
         .await
         .map_err(|e| StorageError::backend(e.to_string()))?;
         Ok(())
+    }
+
+    async fn list_by_node(
+        &self,
+        node_id: cheetah_signal_types::NodeId,
+        page: PageRequest,
+    ) -> Result<Page<OwnedDevice>, StorageError> {
+        let page_size = page.page_size.max(1) as i64;
+        let cursor = match &page.cursor {
+            None => None,
+            Some(value) => {
+                let cursor = ListCursor::decode(value)
+                    .map_err(|e| StorageError::invalid_argument(format!("invalid cursor: {e}")))?;
+                Some(
+                    cursor.parse().map_err(|e| {
+                        StorageError::invalid_argument(format!("invalid cursor: {e}"))
+                    })?,
+                )
+            }
+        };
+
+        let rows: Vec<OwnedDeviceRow> = match cursor {
+            None => sqlx::query_as::<sqlx::Postgres, OwnedDeviceRow>(
+                "SELECT tenant_id, device_id, owner_node_id, owner_epoch, expires_at, updated_at
+                     FROM device_owners
+                     WHERE owner_node_id = $1
+                     ORDER BY updated_at, device_id
+                     LIMIT $2",
+            )
+            .bind(node_id.as_uuid())
+            .bind(page_size + 1)
+            .fetch_all(&self.read_pool)
+            .await,
+            Some((updated_at, device_id)) => sqlx::query_as::<sqlx::Postgres, OwnedDeviceRow>(
+                "SELECT tenant_id, device_id, owner_node_id, owner_epoch, expires_at, updated_at
+                     FROM device_owners
+                     WHERE owner_node_id = $1
+                       AND (updated_at > $2 OR (updated_at = $2 AND device_id > $3))
+                     ORDER BY updated_at, device_id
+                     LIMIT $4",
+            )
+            .bind(node_id.as_uuid())
+            .bind(updated_at.as_offset())
+            .bind(device_id)
+            .bind(page_size + 1)
+            .fetch_all(&self.read_pool)
+            .await,
+        }
+        .map_err(|e| StorageError::backend(e.to_string()))?;
+
+        let has_more = rows.len() > page_size as usize;
+        let next_cursor = if has_more {
+            let last = &rows[page_size as usize - 1];
+            Some(
+                ListCursor::new(UtcTimestamp::from_offset(last.updated_at), last.device_id)
+                    .map_err(|e| StorageError::internal(format!("failed to encode cursor: {e}")))?
+                    .encode()
+                    .map_err(|e| StorageError::internal(format!("failed to encode cursor: {e}")))?,
+            )
+        } else {
+            None
+        };
+
+        let items: Vec<OwnedDevice> = rows
+            .into_iter()
+            .take(page_size as usize)
+            .map(|r| OwnedDevice {
+                tenant_id: r.tenant_id.into(),
+                device_id: r.device_id.into(),
+                owner: OwnerInfo {
+                    owner_node_id: r.owner_node_id.into(),
+                    owner_epoch: cheetah_signal_types::OwnerEpoch(r.owner_epoch as u64),
+                    lease_until: r.expires_at.map(UtcTimestamp::from_offset),
+                },
+            })
+            .collect();
+
+        let mut result = Page::new(items);
+        if let Some(cursor) = next_cursor {
+            result = result.with_next_cursor(cursor);
+        }
+        Ok(result)
     }
 }
 
