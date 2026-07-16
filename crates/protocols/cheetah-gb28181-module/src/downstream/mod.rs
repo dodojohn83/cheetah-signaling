@@ -176,14 +176,14 @@ impl<P: CredentialProvider> Gb28181Downstream<P> {
                         now,
                         message,
                     ),
-                    Some(Method::Message) => message::process_message(
+                    Some(Method::Message) => Ok(message::process_message(
                         &self.config,
                         &mut self.links,
                         &self.tag_counter,
                         source,
                         now,
                         message,
-                    ),
+                    )),
                     Some(_) => Ok(vec![DownstreamOutput::SendResponse(
                         build_method_not_allowed(&message, self.next_tag()),
                     )]),
