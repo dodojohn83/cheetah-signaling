@@ -181,11 +181,28 @@ pub(crate) fn build_catalog_pages(
 ) -> Result<Vec<SipMessage>, CascadeError> {
     let mut messages = Vec::new();
     let mut offset = 0;
+    let mut pages_emitted = 0;
+
+    // Independent upper bound so a misbehaving or concurrently-growing provider
+    // cannot make this loop run unbounded.
+    let max_per_packet = max_per_packet.max(1);
+    let max_pages = (config.catalog_max_query_pages as usize).max(1);
+    let max_total_items = max_per_packet.saturating_mul(max_pages);
 
     loop {
+        if pages_emitted >= max_pages {
+            break;
+        }
+
         let page = provider
             .query_page(query, offset, max_per_packet)
             .map_err(|e| CascadeError::Internal(e.to_string()))?;
+        pages_emitted += 1;
+
+        // Clamp the advertised total to the configured cap. This also protects
+        // against a provider that reports a total smaller than what it returns,
+        // because `offset >= total` will eventually become true.
+        let total = page.total.min(max_total_items);
 
         if page.items.is_empty() {
             if offset == 0 {
@@ -205,7 +222,6 @@ pub(crate) fn build_catalog_pages(
             break;
         }
 
-        let total = page.total;
         let sum_num = total.try_into().unwrap_or(u32::MAX);
         let chunk_len = page.items.len();
 
@@ -220,8 +236,8 @@ pub(crate) fn build_catalog_pages(
             config, &call_id, cseq, &local_tag, &branch, &xml,
         )?);
 
-        offset += chunk_len;
-        if offset >= total {
+        offset = offset.saturating_add(chunk_len);
+        if offset >= total || pages_emitted >= max_pages {
             break;
         }
     }

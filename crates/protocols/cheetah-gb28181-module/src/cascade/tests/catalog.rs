@@ -451,3 +451,83 @@ fn message_without_manscdp_content_type_returns_ok_and_no_catalog() {
     assert_eq!(outputs.len(), 1);
     assert!(matches!(outputs[0], CascadeOutput::SendResponse(_)));
 }
+
+#[test]
+fn catalog_query_respects_max_pages_cap() {
+    let provider = setup_provider();
+    let mut cfg = config();
+    cfg.catalog_max_items_per_packet = 2;
+    cfg.catalog_max_query_pages = 2;
+    let mut cascade = Gb28181Cascade::new(cfg, password_provider()).with_catalog_provider(provider);
+
+    let msg = catalog_query_message("1", "34020000001320000001");
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 100,
+            event: CascadeEvent::Request(Box::new(msg)),
+        })
+        .unwrap();
+
+    let bodies = catalog_response_bodies(&outputs);
+    assert_eq!(bodies.len(), 2);
+    for body in &bodies {
+        let parsed = parse_catalog(body.as_bytes()).unwrap();
+        assert_eq!(parsed.sum_num, 4);
+        assert_eq!(parsed.items.len(), 2);
+    }
+}
+
+struct StuckCatalogProvider;
+
+impl CatalogProvider for StuckCatalogProvider {
+    fn query_page(
+        &self,
+        _query: &CatalogQuery,
+        _offset: usize,
+        _limit: usize,
+    ) -> Result<CatalogPage, CatalogError> {
+        // Always returns the same two items and claims there are 100 total.
+        Ok(CatalogPage {
+            items: vec![
+                CatalogItem {
+                    device_id: "34020000001320000001".to_string(),
+                    name: Some("Camera 1".to_string()),
+                    status: Some("ON".to_string()),
+                    ..Default::default()
+                },
+                CatalogItem {
+                    device_id: "34020000001320000002".to_string(),
+                    name: Some("Camera 2".to_string()),
+                    status: Some("ON".to_string()),
+                    ..Default::default()
+                },
+            ],
+            total: 100,
+        })
+    }
+}
+
+#[test]
+fn catalog_query_does_not_loop_forever_on_inconsistent_provider() {
+    let provider = Arc::new(StuckCatalogProvider);
+    let mut cfg = config();
+    cfg.catalog_max_items_per_packet = 2;
+    cfg.catalog_max_query_pages = 3;
+    let mut cascade = Gb28181Cascade::new(cfg, password_provider()).with_catalog_provider(provider);
+
+    let msg = catalog_query_message("1", "34020000001320000001");
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 100,
+            event: CascadeEvent::Request(Box::new(msg)),
+        })
+        .unwrap();
+
+    let bodies = catalog_response_bodies(&outputs);
+    assert_eq!(bodies.len(), 3);
+    for body in &bodies {
+        let parsed = parse_catalog(body.as_bytes()).unwrap();
+        assert_eq!(parsed.sum_num, 6);
+        assert_eq!(parsed.items.len(), 2);
+    }
+}

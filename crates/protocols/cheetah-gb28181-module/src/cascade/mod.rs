@@ -87,6 +87,9 @@ pub struct CascadeConfig {
     pub keepalive_max_failures: u32,
     /// Maximum number of catalog items per SIP packet.
     pub catalog_max_items_per_packet: u32,
+    /// Maximum number of catalog response packets emitted for one upstream
+    /// query. This bounds both memory and transaction state for large catalogs.
+    pub catalog_max_query_pages: u32,
     /// Filter controlling which resources may be shared with the upstream
     /// platform.
     pub catalog_filter: CatalogFilter,
@@ -173,6 +176,7 @@ impl CascadeConfig {
             keepalive_timeout_seconds: 10,
             keepalive_max_failures: 3,
             catalog_max_items_per_packet: 100,
+            catalog_max_query_pages: 1000,
             catalog_filter: CatalogFilter::default(),
             user_agent: None,
         })
