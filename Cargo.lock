@@ -611,6 +611,18 @@ version = "0.1.0"
 [[package]]
 name = "cheetah-plugin-sdk"
 version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "cheetah-signal-types",
+ "hex",
+ "hmac",
+ "secrecy",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+]
 
 [[package]]
 name = "cheetah-plugin-testkit"
