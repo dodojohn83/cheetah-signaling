@@ -52,7 +52,11 @@ impl OperationReconciler {
         let now = self.clock.now_wall();
         let mut report = OperationReconciliationReport::default();
 
-        for status in [OperationStatus::Pending, OperationStatus::Running] {
+        let status_pairs = [
+            (OperationStatus::Pending, "pending"),
+            (OperationStatus::Running, "running"),
+        ];
+        for (status, status_filter) in status_pairs {
             if report.timed_out >= self.max_timeouts_per_run {
                 break;
             }
@@ -69,7 +73,13 @@ impl OperationReconciler {
                 };
                 let page = uow
                     .operation_repository()
-                    .list(tenant_id, None, Some(status.to_string()), None, request)
+                    .list(
+                        tenant_id,
+                        None,
+                        Some(status_filter.to_string()),
+                        None,
+                        request,
+                    )
                     .await?;
 
                 for mut operation in page.items {
