@@ -13,19 +13,19 @@ use cheetah_gb28181_core::{
 };
 use secrecy::SecretString;
 
-fn domain_id() -> DomainId {
+pub(crate) fn domain_id() -> DomainId {
     DomainId::new("3402000000").unwrap()
 }
 
-fn local_uri() -> SipUri {
+pub(crate) fn local_uri() -> SipUri {
     SipUri::parse("sip:34020000001320000001@example.com").unwrap()
 }
 
-fn upstream_uri() -> SipUri {
+pub(crate) fn upstream_uri() -> SipUri {
     SipUri::parse("sip:34020000002000000001@upstream.example.com").unwrap()
 }
 
-fn config() -> CascadeConfig {
+pub(crate) fn config() -> CascadeConfig {
     CascadeConfig::with_options(
         domain_id(),
         local_uri(),
@@ -40,7 +40,7 @@ fn config() -> CascadeConfig {
     .unwrap()
 }
 
-fn password_provider() -> impl CascadeCredentialProvider {
+pub(crate) fn password_provider() -> impl CascadeCredentialProvider {
     |_: &str| -> Option<SecretString> { Some(SecretString::new("secret".into())) }
 }
 
@@ -110,6 +110,8 @@ fn challenge_ctx() -> DigestContext {
     )
     .unwrap()
 }
+
+mod subscription;
 
 pub(crate) fn register_to_connected(
     cascade: &mut Gb28181Cascade<impl CascadeCredentialProvider>,

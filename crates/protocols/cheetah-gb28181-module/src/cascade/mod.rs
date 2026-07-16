@@ -7,6 +7,7 @@ mod machine;
 mod registration;
 mod report;
 mod request_handler;
+mod subscription;
 
 pub use catalog::{CatalogError, CatalogFilter, CatalogPage, CatalogProvider, CatalogQuery};
 
@@ -122,6 +123,14 @@ pub struct CascadeConfig {
     /// Maximum number of pending upstream event reports to queue while not
     /// registered or while the upstream is slow.
     pub report_max_queue_size: u32,
+    /// Maximum number of concurrent upstream subscriptions.
+    pub subscription_max_subscriptions: u32,
+    /// Default subscription lifetime in seconds when the upstream omits Expires.
+    pub subscription_default_expiry_seconds: u32,
+    /// Minimum subscription lifetime the cascade is willing to grant.
+    pub subscription_min_expiry_seconds: u32,
+    /// Maximum subscription lifetime the cascade is willing to grant.
+    pub subscription_max_expiry_seconds: u32,
 }
 
 impl CascadeConfig {
@@ -215,6 +224,10 @@ impl CascadeConfig {
             catalog_inbound_digest_credential_ref: None,
             catalog_inbound_digest_server_secret: None,
             report_max_queue_size: 1000,
+            subscription_max_subscriptions: 1000,
+            subscription_default_expiry_seconds: 3600,
+            subscription_min_expiry_seconds: 60,
+            subscription_max_expiry_seconds: 86400,
         })
     }
 
@@ -432,6 +445,7 @@ pub struct Gb28181Cascade<P: CascadeCredentialProvider> {
     report_queue: std::collections::VecDeque<report::PendingReport>,
     report_state: std::collections::HashMap<String, report::PendingReport>,
     report_state_order: std::collections::VecDeque<String>,
+    subscriptions: BTreeMap<String, subscription::Subscription>,
 }
 
 impl<P: CascadeCredentialProvider> std::fmt::Debug for Gb28181Cascade<P> {
@@ -445,6 +459,7 @@ impl<P: CascadeCredentialProvider> std::fmt::Debug for Gb28181Cascade<P> {
             .field("auth", &self.auth.is_some())
             .field("catalog_provider", &self.catalog_provider.is_some())
             .field("inbound_auth", &self.inbound_auth.is_some())
+            .field("subscriptions", &self.subscriptions.len())
             .finish()
     }
 }
