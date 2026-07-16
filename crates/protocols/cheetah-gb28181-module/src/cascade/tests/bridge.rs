@@ -137,7 +137,7 @@ fn bridge_invite_while_unregistered_returns_403() {
     let body = sample_sdp().as_bytes();
     let msg = build_invite(
         "call-1",
-        "34020000001320000001",
+        "34020000001320000002",
         &upstream_uri(),
         "from-tag",
         body,
@@ -166,7 +166,7 @@ fn bridge_invite_emits_100_and_requested_event() {
     let body = sample_sdp().as_bytes();
     let msg = build_invite(
         "call-1",
-        "34020000001320000001",
+        "34020000001320000002",
         &upstream_uri(),
         "from-tag",
         body,
@@ -199,7 +199,7 @@ fn bridge_media_ready_sends_200_ok_with_answer_sdp() {
     let body = sample_sdp().as_bytes();
     let msg = build_invite(
         "call-1",
-        "34020000001320000001",
+        "34020000001320000002",
         &upstream_uri(),
         "from-tag",
         body,
@@ -253,7 +253,7 @@ fn bridge_ack_then_media_stop_sends_bye() {
     let body = sample_sdp().as_bytes();
     let msg = build_invite(
         "call-1",
-        "34020000001320000001",
+        "34020000001320000002",
         &upstream_uri(),
         "from-tag",
         body,
@@ -327,7 +327,7 @@ fn bridge_bye_from_upstream_tears_down() {
     let body = sample_sdp().as_bytes();
     let msg = build_invite(
         "call-1",
-        "34020000001320000001",
+        "34020000001320000002",
         &upstream_uri(),
         "from-tag",
         body,
@@ -393,7 +393,7 @@ fn bridge_cancel_while_invited_sends_487() {
     let body = sample_sdp().as_bytes();
     let msg = build_invite(
         "call-1",
-        "34020000001320000001",
+        "34020000001320000002",
         &upstream_uri(),
         "from-tag",
         body,
@@ -434,7 +434,7 @@ fn bridge_invite_malformed_sdp_returns_400() {
     register_to_connected(&mut cascade);
     let msg = build_invite(
         "call-1",
-        "34020000001320000001",
+        "34020000001320000002",
         &upstream_uri(),
         "from-tag",
         b"not sdp",
@@ -462,7 +462,7 @@ fn bridge_invite_from_unknown_returns_403() {
     register_to_connected(&mut cascade);
     let body = sample_sdp().as_bytes();
     let other = SipUri::parse("sip:other@other.example.com").unwrap();
-    let msg = build_invite("call-1", "34020000001320000001", &other, "other-tag", body);
+    let msg = build_invite("call-1", "34020000001320000002", &other, "other-tag", body);
     let outputs = cascade
         .process(CascadeInput {
             now: 100,
@@ -490,7 +490,7 @@ fn bridge_max_sessions_returns_486() {
     let body = sample_sdp().as_bytes();
     let msg = build_invite(
         "call-1",
-        "34020000001320000001",
+        "34020000001320000002",
         &upstream_uri(),
         "from-tag",
         body,
@@ -519,7 +519,7 @@ fn bridge_bye_from_unknown_upstream_is_ignored() {
     let body = sample_sdp().as_bytes();
     let msg = build_invite(
         "call-1",
-        "34020000001320000001",
+        "34020000001320000002",
         &upstream_uri(),
         "from-tag",
         body,
@@ -552,7 +552,7 @@ fn bridge_invited_timeout_sends_487_and_stops() {
     let body = sample_sdp().as_bytes();
     let msg = build_invite(
         "call-1",
-        "34020000001320000001",
+        "34020000001320000002",
         &upstream_uri(),
         "from-tag",
         body,
@@ -589,6 +589,31 @@ fn bridge_invited_timeout_sends_487_and_stops() {
         .process(CascadeInput {
             now: 103,
             event: CascadeEvent::Tick,
+        })
+        .unwrap();
+    assert!(outputs.is_empty());
+}
+
+#[test]
+fn bridge_invite_to_wrong_host_is_ignored() {
+    let mut cascade = Gb28181Cascade::new(config(), password_provider()).unwrap();
+    register_to_connected(&mut cascade);
+    let body = sample_sdp().as_bytes();
+    let mut msg = build_invite(
+        "call-1",
+        "34020000001320000002",
+        &upstream_uri(),
+        "from-tag",
+        body,
+    );
+    // Point the request at a different host.
+    if let SipMessage::Request { line, .. } = &mut msg {
+        line.uri = SipUri::parse("sip:34020000001320000002@other.example.com").unwrap();
+    }
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 100,
+            event: CascadeEvent::Request(Box::new(msg)),
         })
         .unwrap();
     assert!(outputs.is_empty());

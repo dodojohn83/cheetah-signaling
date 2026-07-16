@@ -102,11 +102,13 @@ fn handle_invite<P: super::CascadeCredentialProvider>(
         ))];
     }
 
-    // Basic request semantic validation (From upstream, To/Request-URI local).
-    if !super::catalog::request_target_matches_local(&msg, &cascade.config.local_uri)
-        || !super::catalog::request_to_uri_matches_local(&msg, &cascade.config.local_uri)
-        || !super::catalog::request_from_matches_upstream(&msg, &cascade.config.upstream)
-    {
+    // Basic request semantic validation: the request must come from the
+    // configured upstream and be addressed to this platform's host/domain. The
+    // user part of the Request-URI/`To` is the upstream's chosen channel/device
+    // ID and is intentionally not constrained here; the application layer
+    // resolves it through `CascadeResourceMap`. A request that is not for this
+    // platform is dropped silently rather than confirmed with an error.
+    if !super::catalog::request_from_matches_upstream(&msg, &cascade.config.upstream) {
         return vec![CascadeOutput::SendResponse(build_response(
             &msg,
             403,
@@ -114,6 +116,9 @@ fn handle_invite<P: super::CascadeCredentialProvider>(
             &cascade.next_local_tag(now),
             Vec::new(),
         ))];
+    }
+    if !request_targeted_at_local(&msg, &cascade.config.local_uri) {
+        return Vec::new();
     }
 
     let Some(call_id) = headers.get(&HeaderName::CallId).map(|v| v.as_str()) else {
@@ -262,9 +267,24 @@ fn is_upstream_request<P: super::CascadeCredentialProvider>(
     cascade: &Gb28181Cascade<P>,
     msg: &SipMessage,
 ) -> bool {
-    super::catalog::request_target_matches_local(msg, &cascade.config.local_uri)
-        && super::catalog::request_to_uri_matches_local(msg, &cascade.config.local_uri)
+    request_targeted_at_local(msg, &cascade.config.local_uri)
         && super::catalog::request_from_matches_upstream(msg, &cascade.config.upstream)
+}
+
+fn request_targeted_at_local(request: &SipMessage, local: &SipUri) -> bool {
+    let SipMessage::Request { line, headers, .. } = request else {
+        return false;
+    };
+    if !line.uri.host().eq_ignore_ascii_case(local.host()) {
+        return false;
+    }
+    let Some(to) = headers.get(&HeaderName::To) else {
+        return false;
+    };
+    let Some(uri) = super::catalog::parse_uri_from_header(to) else {
+        return false;
+    };
+    uri.host().eq_ignore_ascii_case(local.host())
 }
 
 fn handle_ack<P: super::CascadeCredentialProvider>(
@@ -300,14 +320,9 @@ fn handle_bye<P: super::CascadeCredentialProvider>(
         return Vec::new();
     };
     let Some(bridge) = cascade.bridges.remove(&call_id) else {
-        // Unknown dialog: respond 481 and let the transaction layer clean up.
-        return vec![CascadeOutput::SendResponse(build_response(
-            &msg,
-            481,
-            "Call/Transaction Does Not Exist",
-            "",
-            Vec::new(),
-        ))];
+        // Unknown Call-ID: do not respond, avoiding any confirmation of which
+        // dialogs are active.
+        return Vec::new();
     };
 
     let response = build_response(&msg, 200, "OK", "", Vec::new());
@@ -332,13 +347,9 @@ fn handle_cancel<P: super::CascadeCredentialProvider>(
         return Vec::new();
     };
     let Entry::Occupied(entry) = cascade.bridges.entry(call_id.clone()) else {
-        return vec![CascadeOutput::SendResponse(build_response(
-            &msg,
-            481,
-            "Call/Transaction Does Not Exist",
-            "",
-            Vec::new(),
-        ))];
+        // Unknown Call-ID: do not respond, avoiding any confirmation of which
+        // dialogs are active.
+        return Vec::new();
     };
 
     let bridge = entry.get();
@@ -573,7 +584,12 @@ fn build_bye_from_bridge(
     let mut headers = SipHeaders::new();
     headers.append(
         HeaderName::Via,
-        HeaderValue::via("UDP", local_uri.host(), 5060, branch)?,
+        HeaderValue::via(
+            "UDP",
+            local_uri.host(),
+            local_uri.port().unwrap_or(5060),
+            branch,
+        )?,
     );
     headers.append(
         HeaderName::From,
