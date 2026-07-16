@@ -321,6 +321,75 @@ fn bridge_ack_then_media_stop_sends_bye() {
 }
 
 #[test]
+fn bridge_stop_before_ack_sends_bye_after_ack() {
+    let mut cascade = Gb28181Cascade::new(config(), password_provider()).unwrap();
+    register_to_connected(&mut cascade);
+    let body = sample_sdp().as_bytes();
+    let msg = build_invite(
+        "call-1",
+        "34020000001320000002",
+        &upstream_uri(),
+        "from-tag",
+        body,
+    );
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 100,
+            event: CascadeEvent::Request(Box::new(msg)),
+        })
+        .unwrap();
+
+    let CascadeOutput::EmitEvent(Gb28181Event::CascadePlayRequested { bridge_id, .. }) =
+        &outputs[1]
+    else {
+        panic!("expected CascadePlayRequested");
+    };
+    let bridge_id = bridge_id.clone();
+
+    let answer = sample_answer_sdp().to_string();
+    cascade
+        .process(CascadeInput {
+            now: 101,
+            event: CascadeEvent::BridgeMediaReady {
+                bridge_id: bridge_id.clone(),
+                answer_sdp: answer,
+            },
+        })
+        .unwrap();
+
+    // Application asks to stop before the upstream ACK arrives.
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 102,
+            event: CascadeEvent::BridgeMediaStop {
+                bridge_id: bridge_id.clone(),
+            },
+        })
+        .unwrap();
+    assert!(outputs.is_empty());
+
+    // Once the upstream ACKs the 200 OK, the cascade immediately sends BYE.
+    let ack = build_ack("call-1", "from-tag");
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 103,
+            event: CascadeEvent::Request(Box::new(ack)),
+        })
+        .unwrap();
+
+    assert!(
+        outputs
+            .iter()
+            .any(|o| matches!(o, CascadeOutput::SendRequest(_))),
+        "expected BYE after ACK"
+    );
+    assert!(outputs.iter().any(|o| matches!(
+        o,
+        CascadeOutput::EmitEvent(Gb28181Event::CascadePlayStopped { .. })
+    )));
+}
+
+#[test]
 fn bridge_bye_from_upstream_tears_down() {
     let mut cascade = Gb28181Cascade::new(config(), password_provider()).unwrap();
     register_to_connected(&mut cascade);

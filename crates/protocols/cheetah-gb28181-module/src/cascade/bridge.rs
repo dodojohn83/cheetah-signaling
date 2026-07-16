@@ -296,19 +296,51 @@ fn handle_ack<P: super::CascadeCredentialProvider>(
     let Some(call_id) = call_id else {
         return Vec::new();
     };
-    let Some(bridge) = cascade.bridges.get_mut(&call_id) else {
+    let Some(mut bridge) = cascade.bridges.remove(&call_id) else {
         return Vec::new();
     };
-    if bridge.state == BridgeState::Accepted {
-        bridge.state = BridgeState::Active;
-        let active = cascade.config.media_bridge_active_timeout_seconds as u64;
-        bridge.expires_at = if active == 0 {
-            u64::MAX
-        } else {
-            now.saturating_add(active)
-        };
+
+    match bridge.state {
+        BridgeState::Accepted => {
+            bridge.state = BridgeState::Active;
+            let active = cascade.config.media_bridge_active_timeout_seconds as u64;
+            bridge.expires_at = if active == 0 {
+                u64::MAX
+            } else {
+                now.saturating_add(active)
+            };
+            cascade.bridges.insert(call_id, bridge);
+            Vec::new()
+        }
+        BridgeState::Closing => {
+            // The application asked to stop while we were waiting for this ACK.
+            // The dialog is now established; send BYE immediately and clean up.
+            let cseq = cascade.next_cseq();
+            let branch = cascade.next_branch(&bridge.upstream_call_id, cseq);
+            let request =
+                match build_bye_from_bridge(&cascade.config.local_uri, &bridge, cseq, &branch) {
+                    Ok(r) => r,
+                    Err(_) => {
+                        cascade.bridges.insert(call_id, bridge);
+                        return Vec::new();
+                    }
+                };
+            let event = Gb28181Event::CascadePlayStopped {
+                domain_id: cascade.config.domain_id.clone(),
+                platform_id: cascade.platform_id().to_string(),
+                bridge_id: bridge.bridge_id,
+                reason: "downstream media stop".to_string(),
+            };
+            vec![
+                CascadeOutput::SendRequest(request),
+                CascadeOutput::EmitEvent(event),
+            ]
+        }
+        _ => {
+            cascade.bridges.insert(call_id, bridge);
+            Vec::new()
+        }
     }
-    Vec::new()
 }
 
 fn handle_bye<P: super::CascadeCredentialProvider>(
@@ -436,7 +468,7 @@ pub(crate) fn on_media_ready<P: super::CascadeCredentialProvider>(
 /// Application callback: the downstream side failed or hung up.
 pub(crate) fn on_media_stop<P: super::CascadeCredentialProvider>(
     cascade: &mut Gb28181Cascade<P>,
-    _now: u64,
+    now: u64,
     bridge_id: String,
 ) -> Result<Vec<CascadeOutput>, CascadeError> {
     validate_token(&bridge_id)?;
@@ -448,14 +480,28 @@ pub(crate) fn on_media_stop<P: super::CascadeCredentialProvider>(
     else {
         return Ok(Vec::new());
     };
-    let Some(mut bridge) = cascade.bridges.remove(&call_id) else {
+
+    // If the bridge is in `Accepted` state, a 200 OK has been sent but we are
+    // still waiting for the upstream ACK before the dialog is established.
+    // Keep the bridge in the map and transition to `Closing` so that `handle_ack`
+    // sends BYE as soon as the ACK arrives; if no ACK arrives, `on_tick` will
+    // clean it up after the transaction timeout.
+    if let Some(bridge) = cascade.bridges.get_mut(&call_id)
+        && bridge.state == BridgeState::Accepted
+    {
+        bridge.state = BridgeState::Closing;
+        let timeout = cascade.config.media_bridge_transaction_timeout_seconds as u64;
+        bridge.expires_at = now.saturating_add(timeout);
+        return Ok(Vec::new());
+    }
+
+    let Some(bridge) = cascade.bridges.remove(&call_id) else {
         return Ok(Vec::new());
     };
 
     let outputs = match bridge.state {
         BridgeState::Invited => {
             // The application has not yet answered the INVITE; reject it.
-            bridge.state = BridgeState::Closing;
             let response = build_invite_response_from_bridge(
                 &cascade.config.local_uri,
                 &bridge,
@@ -475,7 +521,6 @@ pub(crate) fn on_media_stop<P: super::CascadeCredentialProvider>(
         }
         BridgeState::Active => {
             // The dialog is established; send BYE to the upstream platform.
-            bridge.state = BridgeState::Closing;
             let cseq = cascade.next_cseq();
             let branch = cascade.next_branch(&bridge.upstream_call_id, cseq);
             let request = build_bye_from_bridge(&cascade.config.local_uri, &bridge, cseq, &branch)?;
@@ -490,9 +535,7 @@ pub(crate) fn on_media_stop<P: super::CascadeCredentialProvider>(
             ]
         }
         BridgeState::Accepted | BridgeState::Closing => {
-            // 200 OK already sent but ACK not seen, or already closing: just
-            // clean up and notify the application.
-            bridge.state = BridgeState::Closing;
+            // Should have been handled above; defensive cleanup.
             vec![CascadeOutput::EmitEvent(Gb28181Event::CascadePlayStopped {
                 domain_id: cascade.config.domain_id.clone(),
                 platform_id: cascade.platform_id().to_string(),
@@ -707,7 +750,7 @@ pub(crate) fn on_tick<P: super::CascadeCredentialProvider>(
                     domain_id: cascade.config.domain_id.clone(),
                     platform_id: cascade.platform_id().to_string(),
                     bridge_id: bridge.bridge_id.clone(),
-                    reason: "cleanup".to_string(),
+                    reason: "downstream media stop".to_string(),
                 }));
                 cascade.bridges.remove(&call_id);
             }
