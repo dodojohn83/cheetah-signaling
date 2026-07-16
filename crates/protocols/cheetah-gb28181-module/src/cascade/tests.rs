@@ -469,3 +469,5 @@ fn redirect_response_is_treated_as_failure() {
         CascadeOutput::EmitEvent(crate::events::Gb28181Event::CascadePlatformConnected { .. })
     )));
 }
+
+mod tests_keepalive;

@@ -16,9 +16,9 @@ pub(crate) fn build_register_request(
     expires_seconds: u32,
     auth: Option<&DigestResponse>,
 ) -> Result<SipMessage, CascadeError> {
-    validate_token(call_id)?;
-    validate_token(local_tag)?;
-    validate_token(branch)?;
+    super::validate_token(call_id)?;
+    super::validate_token(local_tag)?;
+    super::validate_token(branch)?;
 
     let mut headers = SipHeaders::new();
     let local_host = config.local_uri.host();
@@ -59,14 +59,4 @@ pub(crate) fn build_register_request(
         headers,
         body: Vec::new(),
     })
-}
-
-/// Rejects values that would inject extra SIP header lines.
-pub(crate) fn validate_token(value: &str) -> Result<(), CascadeError> {
-    if value.contains('\r') || value.contains('\n') {
-        return Err(CascadeError::Internal(
-            "SIP header token contains forbidden line break".to_string(),
-        ));
-    }
-    Ok(())
 }
