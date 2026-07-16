@@ -129,9 +129,18 @@ pub trait ProtocolDriver: Send + Sync {
         command: DriverCommand,
     ) -> Result<(), PluginError>;
     /// Probes a target (e.g. a device address) and returns its capabilities.
-    async fn probe(&self, target: &str) -> Result<CapabilityDescriptor, PluginError>;
+    async fn probe(
+        &self,
+        ctx: &dyn DriverContext,
+        target: &str,
+        timeout: DurationMs,
+    ) -> Result<CapabilityDescriptor, PluginError>;
     /// Returns a health report.
-    async fn health(&self) -> HealthReport;
+    async fn health(
+        &self,
+        ctx: &dyn DriverContext,
+        timeout: DurationMs,
+    ) -> Result<HealthReport, PluginError>;
 }
 
 /// Factory for creating protocol driver instances.
