@@ -39,7 +39,7 @@ pub fn verify_manifest_checksum(
         }
     };
 
-    if constant_time_eq(&computed, expected_digest_hex) {
+    if constant_time_eq(&computed, &expected_digest_hex.to_ascii_lowercase()) {
         Ok(())
     } else {
         Err(PluginError::InvalidChecksum)

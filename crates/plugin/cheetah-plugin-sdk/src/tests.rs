@@ -108,6 +108,14 @@ mod checksum_tests {
     }
 
     #[test]
+    fn sha256_accepts_uppercase_digest() -> Result<(), PluginError> {
+        let payload = b"hello manifest";
+        let digest = hex::encode(Sha256::digest(payload)).to_ascii_uppercase();
+        verify_manifest_checksum(payload, "sha256", &digest, &[])?;
+        Ok(())
+    }
+
+    #[test]
     fn sha256_rejects_incorrect_digest() {
         assert!(verify_manifest_checksum(b"hello", "sha256", "deadbeef", &[]).is_err());
     }
