@@ -17,12 +17,13 @@ impl CatalogProvider for DummyProvider {
     fn query_page(
         &self,
         _query: &CatalogQuery,
-        _offset: usize,
+        _cursor: Option<&str>,
         _limit: usize,
     ) -> Result<CatalogPage, CatalogError> {
         Ok(CatalogPage {
             items: vec![],
             total: 0,
+            next_cursor: None,
         })
     }
 }

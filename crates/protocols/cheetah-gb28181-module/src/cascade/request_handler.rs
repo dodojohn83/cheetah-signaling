@@ -4,7 +4,8 @@ use cheetah_gb28181_core::{HeaderName, Method, SipMessage};
 
 use super::catalog::{
     CatalogQuery, build_bad_request_response, build_catalog_pages, build_ok_response,
-    build_response, request_from_matches_upstream,
+    build_response, request_from_matches_upstream, request_target_matches_local,
+    request_to_uri_matches_local,
 };
 use super::{CascadeCredentialProvider, CascadeOutput, Gb28181Cascade, State};
 use crate::xml::catalog::parse_catalog_query;
@@ -51,6 +52,8 @@ pub(super) fn handle_request<P: CascadeCredentialProvider>(
     };
 
     if !matches!(cascade.state, State::Registered(_))
+        || !request_target_matches_local(&msg, &cascade.config.local_uri)
+        || !request_to_uri_matches_local(&msg, &cascade.config.local_uri)
         || !request_from_matches_upstream(&msg, &cascade.config.upstream)
     {
         return vec![CascadeOutput::SendResponse(build_response(

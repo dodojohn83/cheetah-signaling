@@ -45,6 +45,9 @@ pub struct CatalogPage {
     pub items: Vec<CatalogItem>,
     /// Total number of items matching the query.
     pub total: usize,
+    /// Opaque token for the next page, if any. Passing this back to the
+    /// provider yields the following page without numeric offsets.
+    pub next_cursor: Option<String>,
 }
 
 /// Errors returned by a catalog provider.
@@ -58,11 +61,12 @@ pub enum CatalogError {
 /// Port trait for retrieving a filtered, paged view of the catalog that may be
 /// shared with an upstream platform.
 pub trait CatalogProvider: Send + Sync {
-    /// Returns one page of shared catalog items.
+    /// Returns one page of shared catalog items and an optional opaque cursor for
+    /// the next page. The cursor is passed back verbatim on the next call.
     fn query_page(
         &self,
         query: &CatalogQuery,
-        offset: usize,
+        cursor: Option<&str>,
         limit: usize,
     ) -> Result<CatalogPage, CatalogError>;
 }
@@ -77,6 +81,33 @@ impl CatalogFilter {
     }
 }
 
+/// Extracts the bare URI from a header value that may contain a display name
+/// and parameters (e.g. `<sip:alice@example.com>;tag=abc`).
+fn parse_uri_from_header(value: &HeaderValue) -> Option<SipUri> {
+    let value_str = value.as_str().trim();
+    let uri_str = if let Some(start) = value_str.find('<') {
+        let end_rel = value_str[start + 1..].find('>')?;
+        let end = start + 1 + end_rel;
+        &value_str[start + 1..end]
+    } else if let Some(semi) = value_str.find(';') {
+        &value_str[..semi]
+    } else {
+        value_str
+    };
+    SipUri::parse(uri_str.trim()).ok()
+}
+
+fn uri_matches(a: &SipUri, b: &SipUri) -> bool {
+    if !a.host().eq_ignore_ascii_case(b.host()) {
+        return false;
+    }
+    if let Some(expected_user) = b.user() {
+        a.user() == Some(expected_user)
+    } else {
+        a.user().is_none()
+    }
+}
+
 /// Returns true when the `From` header of the request identifies the
 /// configured upstream platform.
 pub(crate) fn request_from_matches_upstream(request: &SipMessage, upstream: &SipUri) -> bool {
@@ -86,29 +117,33 @@ pub(crate) fn request_from_matches_upstream(request: &SipMessage, upstream: &Sip
     let Some(from) = headers.get(&HeaderName::From) else {
         return false;
     };
-    let from_str = from.as_str().trim();
-    let uri_str = if let Some(start) = from_str.find('<') {
-        let Some(end_rel) = from_str[start + 1..].find('>') else {
-            return false;
-        };
-        let end = start + 1 + end_rel;
-        &from_str[start + 1..end]
-    } else if let Some(semi) = from_str.find(';') {
-        &from_str[..semi]
-    } else {
-        from_str
-    };
-    let Ok(uri) = SipUri::parse(uri_str.trim()) else {
+    let Some(uri) = parse_uri_from_header(from) else {
         return false;
     };
+    uri_matches(&uri, upstream)
+}
 
-    if !uri.host().eq_ignore_ascii_case(upstream.host()) {
+/// Returns true when the `To` header (ignoring any tag) identifies the local
+/// platform AOR.
+pub(crate) fn request_to_uri_matches_local(request: &SipMessage, local: &SipUri) -> bool {
+    let SipMessage::Request { headers, .. } = request else {
         return false;
-    }
-    if let Some(expected_user) = upstream.user() {
-        return uri.user() == Some(expected_user);
-    }
-    true
+    };
+    let Some(to) = headers.get(&HeaderName::To) else {
+        return false;
+    };
+    let Some(uri) = parse_uri_from_header(to) else {
+        return false;
+    };
+    uri_matches(&uri, local)
+}
+
+/// Returns true when the request-line target URI identifies the local platform.
+pub(crate) fn request_target_matches_local(request: &SipMessage, local: &SipUri) -> bool {
+    let SipMessage::Request { line, .. } = request else {
+        return false;
+    };
+    uri_matches(&line.uri, local)
 }
 
 /// Builds a `200 OK` response for an incoming SIP request.
@@ -235,7 +270,7 @@ pub(crate) fn build_catalog_pages(
     platform_id: &str,
 ) -> Result<Vec<SipMessage>, CascadeError> {
     let mut messages = Vec::new();
-    let mut offset = 0;
+    let mut cursor: Option<String> = None;
     let mut pages_emitted = 0;
 
     // Independent upper bound so a misbehaving or concurrently-growing provider
@@ -250,17 +285,17 @@ pub(crate) fn build_catalog_pages(
         }
 
         let page = provider
-            .query_page(query, offset, max_per_packet)
+            .query_page(query, cursor.as_deref(), max_per_packet)
             .map_err(|e| CascadeError::Internal(e.to_string()))?;
         pages_emitted += 1;
 
         // Clamp the advertised total to the configured cap. This also protects
         // against a provider that reports a total smaller than what it returns,
-        // because `offset >= total` will eventually become true.
+        // because the cursor is exhausted when the provider returns no page.
         let total = page.total.min(max_total_items);
 
         if page.items.is_empty() {
-            if offset == 0 {
+            if cursor.is_none() {
                 // No items at all; still emit one empty response so the
                 // upstream receives a valid `SumNum=0`.
                 *request_counter += 1;
@@ -278,7 +313,6 @@ pub(crate) fn build_catalog_pages(
         }
 
         let sum_num = total.try_into().unwrap_or(u32::MAX);
-        let chunk_len = page.items.len();
 
         *request_counter += 1;
         let call_id = format!("{platform_id}-{now}-{request_counter}");
@@ -291,10 +325,10 @@ pub(crate) fn build_catalog_pages(
             config, &call_id, cseq, &local_tag, &branch, &xml,
         )?);
 
-        offset = offset.saturating_add(chunk_len);
-        if offset >= total || pages_emitted >= max_pages {
+        if page.next_cursor.is_none() || pages_emitted >= max_pages {
             break;
         }
+        cursor = page.next_cursor;
     }
 
     Ok(messages)

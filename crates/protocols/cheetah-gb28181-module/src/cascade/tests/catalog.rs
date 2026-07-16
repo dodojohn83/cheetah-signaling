@@ -68,7 +68,7 @@ impl CatalogProvider for TestCatalogProvider {
     fn query_page(
         &self,
         query: &CatalogQuery,
-        offset: usize,
+        cursor: Option<&str>,
         limit: usize,
     ) -> Result<CatalogPage, CatalogError> {
         let filtered: Vec<CatalogItem> = self
@@ -102,9 +102,19 @@ impl CatalogProvider for TestCatalogProvider {
             })
             .map(|i| i.item.clone())
             .collect();
+        let offset = cursor.and_then(|c| c.parse::<usize>().ok()).unwrap_or(0);
         let total = filtered.len();
-        let items = filtered.into_iter().skip(offset).take(limit).collect();
-        Ok(CatalogPage { items, total })
+        let items: Vec<CatalogItem> = filtered.into_iter().skip(offset).take(limit).collect();
+        let next_cursor = if offset.saturating_add(items.len()) < total {
+            Some(offset.saturating_add(limit).to_string())
+        } else {
+            None
+        };
+        Ok(CatalogPage {
+            items,
+            total,
+            next_cursor,
+        })
     }
 }
 
@@ -494,7 +504,7 @@ impl CatalogProvider for StuckCatalogProvider {
     fn query_page(
         &self,
         _query: &CatalogQuery,
-        _offset: usize,
+        _cursor: Option<&str>,
         _limit: usize,
     ) -> Result<CatalogPage, CatalogError> {
         // Always returns the same two items and claims there are 100 total.
@@ -514,6 +524,7 @@ impl CatalogProvider for StuckCatalogProvider {
                 },
             ],
             total: 100,
+            next_cursor: Some("stuck".to_string()),
         })
     }
 }
@@ -524,7 +535,7 @@ impl CatalogProvider for FailingCatalogProvider {
     fn query_page(
         &self,
         _query: &CatalogQuery,
-        _offset: usize,
+        _cursor: Option<&str>,
         _limit: usize,
     ) -> Result<CatalogPage, CatalogError> {
         Err(CatalogError::Internal("database unavailable".to_string()))
