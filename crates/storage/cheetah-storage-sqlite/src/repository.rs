@@ -690,11 +690,11 @@ impl Outbox for SqliteUnitOfWork {
         failed: bool,
         error: Option<String>,
         next_attempt_at: Option<cheetah_signal_types::UtcTimestamp>,
-    ) -> cheetah_domain::Result<()> {
-        sqlx::query(
+    ) -> cheetah_domain::Result<bool> {
+        let result = sqlx::query(
             "UPDATE outbox_events
              SET attempts = ?, failed = ?, error = ?, next_attempt_at = ?
-             WHERE event_id = ?",
+             WHERE event_id = ? AND failed = 0",
         )
         .bind(attempts as i64)
         .bind(failed as i32)
@@ -704,7 +704,7 @@ impl Outbox for SqliteUnitOfWork {
         .execute(self.tx()?.as_mut())
         .await
         .map_err(sqlx_to_domain)?;
-        Ok(())
+        Ok(result.rows_affected() > 0)
     }
 }
 

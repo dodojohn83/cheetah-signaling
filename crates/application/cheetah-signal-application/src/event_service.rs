@@ -9,6 +9,41 @@ use tracing::warn;
 const MAX_ATTEMPTS: u32 = 10;
 const BASE_BACKOFF_MS: i64 = 100;
 
+const fn max_retry_backoff_ms() -> i64 {
+    // `record_results` caps `attempts` at 20 in the shift, and the last
+    // retry before permanent failure uses `attempts == MAX_ATTEMPTS - 1`.
+    let mut attempts = MAX_ATTEMPTS.saturating_sub(1);
+    if attempts > 20 {
+        attempts = 20;
+    }
+    let backoff = BASE_BACKOFF_MS * (1i64 << attempts);
+    // Jitter range is `backoff / 4` (integer division) per `record_results`.
+    backoff + backoff / 4
+}
+
+const fn total_retry_window_ms() -> i64 {
+    let mut total = 0i64;
+    let mut attempts = 1u32;
+    while attempts < MAX_ATTEMPTS {
+        let mut shift = attempts;
+        if shift > 20 {
+            shift = 20;
+        }
+        let backoff = BASE_BACKOFF_MS * (1i64 << shift);
+        total += backoff + backoff / 4;
+        attempts += 1;
+    }
+    total
+}
+
+/// Maximum single-step backoff duration the outbox relay may schedule for a
+/// retry, including the jitter range derived from `EventService` constants.
+pub(crate) const MAX_RETRY_BACKOFF: DurationMs = DurationMs::from_millis(max_retry_backoff_ms());
+
+/// Total cumulative time an outbox event may spend retrying before it is either
+/// published or permanently dead-lettered by the relay.
+pub(crate) const TOTAL_RETRY_WINDOW: DurationMs = DurationMs::from_millis(total_retry_window_ms());
+
 /// Publishes pending outbox events, retrying transient failures.
 #[derive(Clone, Debug, Default)]
 pub struct EventService;
