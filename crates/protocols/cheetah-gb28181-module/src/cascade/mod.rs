@@ -98,6 +98,12 @@ pub struct CascadeConfig {
     pub catalog_max_query_pages: u32,
     /// Maximum number of concurrent upstream play bridge sessions.
     pub media_bridge_max_sessions: u32,
+    /// How long an upstream INVITE transaction may stay in `Invited` or
+    /// `Accepted` state before the bridge is abandoned and cleaned up.
+    pub media_bridge_transaction_timeout_seconds: u32,
+    /// How long an active bridge may stay without a `BYE` before the cascade
+    /// sends its own `BYE`. A value of `0` disables the active timeout.
+    pub media_bridge_active_timeout_seconds: u32,
     /// Filter controlling which resources may be shared with the upstream
     /// platform.
     pub catalog_filter: CatalogFilter,
@@ -195,6 +201,8 @@ impl CascadeConfig {
             catalog_max_items_per_packet: 100,
             catalog_max_query_pages: 1000,
             media_bridge_max_sessions: 1000,
+            media_bridge_transaction_timeout_seconds: 60,
+            media_bridge_active_timeout_seconds: 0,
             catalog_filter: CatalogFilter::default(),
             user_agent: None,
             catalog_inbound_digest_credential_ref: None,

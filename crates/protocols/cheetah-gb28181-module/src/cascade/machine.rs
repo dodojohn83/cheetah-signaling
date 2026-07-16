@@ -145,7 +145,9 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
     }
 
     fn on_tick(&mut self, now: u64) -> Result<Vec<CascadeOutput>, CascadeError> {
-        match self.state.clone() {
+        let mut outputs = super::bridge::on_tick(self, now)?;
+
+        let more = match self.state.clone() {
             State::Registered(reg) if now >= reg.refresh_at => {
                 // Trigger a refresh.
                 self.on_register(now)
@@ -168,7 +170,10 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
                 Ok(self.fail_or_retry(now, attempt, is_deregister, reason))
             }
             _ => Ok(Vec::new()),
-        }
+        }?;
+
+        outputs.extend(more);
+        Ok(outputs)
     }
 
     fn on_keepalive_tick(

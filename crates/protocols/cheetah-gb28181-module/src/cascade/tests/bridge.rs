@@ -87,7 +87,7 @@ fn build_ack(call_id: &str, from_tag: &str) -> SipMessage {
     }
 }
 
-fn build_bye(call_id: &str, from_tag: &str) -> SipMessage {
+fn build_bye(call_id: &str, from_uri: &SipUri, from_tag: &str) -> SipMessage {
     let mut headers = SipHeaders::new();
     headers.append(
         HeaderName::Via,
@@ -95,7 +95,7 @@ fn build_bye(call_id: &str, from_tag: &str) -> SipMessage {
     );
     headers.append(
         HeaderName::From,
-        HeaderValue::from_uri(&upstream_uri(), from_tag).unwrap(),
+        HeaderValue::from_uri(from_uri, from_tag).unwrap(),
     );
     headers.append(HeaderName::To, HeaderValue::to_uri(&local_uri()));
     headers.append(HeaderName::CallId, HeaderValue::new(call_id));
@@ -364,7 +364,7 @@ fn bridge_bye_from_upstream_tears_down() {
         })
         .unwrap();
 
-    let bye = build_bye("call-1", "from-tag");
+    let bye = build_bye("call-1", &upstream_uri(), "from-tag");
     let outputs = cascade
         .process(CascadeInput {
             now: 103,
@@ -510,4 +510,86 @@ fn bridge_max_sessions_returns_486() {
         SipMessage::Response { line, .. } => assert_eq!(line.code, 486),
         _ => panic!("expected response"),
     };
+}
+
+#[test]
+fn bridge_bye_from_unknown_upstream_is_ignored() {
+    let mut cascade = Gb28181Cascade::new(config(), password_provider()).unwrap();
+    register_to_connected(&mut cascade);
+    let body = sample_sdp().as_bytes();
+    let msg = build_invite(
+        "call-1",
+        "34020000001320000001",
+        &upstream_uri(),
+        "from-tag",
+        body,
+    );
+    cascade
+        .process(CascadeInput {
+            now: 100,
+            event: CascadeEvent::Request(Box::new(msg)),
+        })
+        .unwrap();
+
+    // BYE from a different upstream must be ignored.
+    let other = SipUri::parse("sip:other@other.example.com").unwrap();
+    let bye = build_bye("call-1", &other, "other-tag");
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 101,
+            event: CascadeEvent::Request(Box::new(bye)),
+        })
+        .unwrap();
+    assert!(outputs.is_empty());
+}
+
+#[test]
+fn bridge_invited_timeout_sends_487_and_stops() {
+    let mut cfg = config();
+    cfg.media_bridge_transaction_timeout_seconds = 1;
+    let mut cascade = Gb28181Cascade::new(cfg, password_provider()).unwrap();
+    register_to_connected(&mut cascade);
+    let body = sample_sdp().as_bytes();
+    let msg = build_invite(
+        "call-1",
+        "34020000001320000001",
+        &upstream_uri(),
+        "from-tag",
+        body,
+    );
+    cascade
+        .process(CascadeInput {
+            now: 100,
+            event: CascadeEvent::Request(Box::new(msg)),
+        })
+        .unwrap();
+
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 102,
+            event: CascadeEvent::Tick,
+        })
+        .unwrap();
+
+    assert_eq!(outputs.len(), 2);
+    let CascadeOutput::SendResponse(resp) = &outputs[0] else {
+        panic!("expected SendResponse");
+    };
+    match resp {
+        SipMessage::Response { line, .. } => assert_eq!(line.code, 487),
+        _ => panic!("expected response"),
+    };
+    assert!(matches!(
+        outputs[1],
+        CascadeOutput::EmitEvent(Gb28181Event::CascadePlayStopped { .. })
+    ));
+
+    // The bridge is removed and a second tick is clean.
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 103,
+            event: CascadeEvent::Tick,
+        })
+        .unwrap();
+    assert!(outputs.is_empty());
 }

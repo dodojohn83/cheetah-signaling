@@ -48,6 +48,7 @@ pub(crate) struct Bridge {
     upstream_via: Vec<String>,
     upstream_cseq: u32,
     state: BridgeState,
+    expires_at: u64,
 }
 
 pub(crate) fn handle_request<P: super::CascadeCredentialProvider>(
@@ -65,9 +66,16 @@ pub(crate) fn handle_request<P: super::CascadeCredentialProvider>(
         return Vec::new();
     };
 
+    // In-dialog requests must still come from the configured upstream
+    // platform and target the local platform; the transaction layer will
+    // handle matched/unmatched Call-IDs after that.
+    if line.method != Method::Invite && !is_upstream_request(cascade, &msg) {
+        return Vec::new();
+    }
+
     match line.method {
         Method::Invite => handle_invite(cascade, now, msg.clone(), line, headers, body),
-        Method::Ack => handle_ack(cascade, msg.clone()),
+        Method::Ack => handle_ack(cascade, now, msg.clone()),
         Method::Bye => handle_bye(cascade, msg.clone()),
         Method::Cancel => handle_cancel(cascade, msg.clone()),
         _ => Vec::new(),
@@ -203,6 +211,7 @@ fn handle_invite<P: super::CascadeCredentialProvider>(
         .get_all(&HeaderName::Via)
         .map(|v| v.as_str().to_string())
         .collect();
+    let timeout = cascade.config.media_bridge_transaction_timeout_seconds as u64;
     let bridge = Bridge {
         bridge_id: bridge_id.clone(),
         upstream_call_id: call_id.to_string(),
@@ -217,6 +226,7 @@ fn handle_invite<P: super::CascadeCredentialProvider>(
         upstream_via,
         upstream_cseq: cseq,
         state: BridgeState::Invited,
+        expires_at: now.saturating_add(timeout),
     };
     cascade.bridges.insert(call_id.to_string(), bridge);
 
@@ -248,8 +258,18 @@ fn handle_invite<P: super::CascadeCredentialProvider>(
     ]
 }
 
+fn is_upstream_request<P: super::CascadeCredentialProvider>(
+    cascade: &Gb28181Cascade<P>,
+    msg: &SipMessage,
+) -> bool {
+    super::catalog::request_target_matches_local(msg, &cascade.config.local_uri)
+        && super::catalog::request_to_uri_matches_local(msg, &cascade.config.local_uri)
+        && super::catalog::request_from_matches_upstream(msg, &cascade.config.upstream)
+}
+
 fn handle_ack<P: super::CascadeCredentialProvider>(
     cascade: &mut Gb28181Cascade<P>,
+    now: u64,
     msg: SipMessage,
 ) -> Vec<CascadeOutput> {
     let call_id = msg.call_id().map(|s| s.to_string());
@@ -261,6 +281,12 @@ fn handle_ack<P: super::CascadeCredentialProvider>(
     };
     if bridge.state == BridgeState::Accepted {
         bridge.state = BridgeState::Active;
+        let active = cascade.config.media_bridge_active_timeout_seconds as u64;
+        bridge.expires_at = if active == 0 {
+            u64::MAX
+        } else {
+            now.saturating_add(active)
+        };
     }
     Vec::new()
 }
@@ -589,4 +615,84 @@ fn extract_tag(value: &str) -> Option<String> {
     } else {
         Some(tag.to_string())
     }
+}
+
+/// Removes abandoned bridges whose deadlines have expired and emits the
+/// appropriate cleanup responses.
+pub(crate) fn on_tick<P: super::CascadeCredentialProvider>(
+    cascade: &mut Gb28181Cascade<P>,
+    now: u64,
+) -> Result<Vec<CascadeOutput>, CascadeError> {
+    let mut outputs = Vec::new();
+
+    // Snapshot expired bridges so we can call cascade helpers while building
+    // outputs without keeping a borrow on the bridge map.
+    let expired: Vec<(String, Bridge)> = cascade
+        .bridges
+        .iter()
+        .filter(|(_, b)| now >= b.expires_at)
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+
+    for (call_id, bridge) in expired {
+        match bridge.state {
+            BridgeState::Invited => {
+                let response = build_invite_response_from_bridge(
+                    &cascade.config.local_uri,
+                    &bridge,
+                    487,
+                    "Request Terminated",
+                    Vec::new(),
+                );
+                outputs.push(CascadeOutput::SendResponse(response));
+                outputs.push(CascadeOutput::EmitEvent(Gb28181Event::CascadePlayStopped {
+                    domain_id: cascade.config.domain_id.clone(),
+                    platform_id: cascade.platform_id().to_string(),
+                    bridge_id: bridge.bridge_id.clone(),
+                    reason: "transaction timeout".to_string(),
+                }));
+                cascade.bridges.remove(&call_id);
+            }
+            BridgeState::Accepted => {
+                // 200 OK was sent but no ACK arrived. The upstream will time
+                // out its transaction on its own; just clean up locally and
+                // notify the application.
+                outputs.push(CascadeOutput::EmitEvent(Gb28181Event::CascadePlayStopped {
+                    domain_id: cascade.config.domain_id.clone(),
+                    platform_id: cascade.platform_id().to_string(),
+                    bridge_id: bridge.bridge_id.clone(),
+                    reason: "transaction timeout".to_string(),
+                }));
+                cascade.bridges.remove(&call_id);
+            }
+            BridgeState::Active => {
+                let active = cascade.config.media_bridge_active_timeout_seconds as u64;
+                if active > 0 && now >= bridge.expires_at {
+                    let cseq = cascade.next_cseq();
+                    let branch = cascade.next_branch(&bridge.upstream_call_id, cseq);
+                    let request =
+                        build_bye_from_bridge(&cascade.config.local_uri, &bridge, cseq, &branch)?;
+                    outputs.push(CascadeOutput::SendRequest(request));
+                    outputs.push(CascadeOutput::EmitEvent(Gb28181Event::CascadePlayStopped {
+                        domain_id: cascade.config.domain_id.clone(),
+                        platform_id: cascade.platform_id().to_string(),
+                        bridge_id: bridge.bridge_id.clone(),
+                        reason: "active timeout".to_string(),
+                    }));
+                    cascade.bridges.remove(&call_id);
+                }
+            }
+            BridgeState::Closing => {
+                outputs.push(CascadeOutput::EmitEvent(Gb28181Event::CascadePlayStopped {
+                    domain_id: cascade.config.domain_id.clone(),
+                    platform_id: cascade.platform_id().to_string(),
+                    bridge_id: bridge.bridge_id.clone(),
+                    reason: "cleanup".to_string(),
+                }));
+                cascade.bridges.remove(&call_id);
+            }
+        }
+    }
+
+    Ok(outputs)
 }
