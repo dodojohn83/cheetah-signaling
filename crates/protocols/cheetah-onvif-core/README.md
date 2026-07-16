@@ -7,9 +7,11 @@ Sans-I/O ONVIF core crate for the Cheetah signaling server.
 This crate contains protocol-agnostic ONVIF wire types, serializers and parsers:
 
 - WS-Discovery `Probe`/`ProbeMatches`/`Hello`/`Bye`/`Resolve` message builders and parsers.
-- SOAP 1.2 envelope builder and `Fault` parser.
+- Discovery limits: datagram size, XML depth/node/match limits and per-source rate limiting.
+- SSRF-aware XAddr filtering with scheme, port, IP segment, path and redirect validation.
+- SOAP 1.2 envelope builder (including `wsse:Security` header injection) and `Fault` parser.
 - WS-Security `UsernameToken` with `PasswordDigest` and `PasswordText` support.
-- XAddr SSRF filtering (scheme, IP segment, loopback/link-local/private checks).
+- `GetSystemDateAndTime` request builder and response parser for device clock-offset discovery.
 
 It intentionally contains no UDP sockets, HTTP clients, clocks or random sources.
 Those belong to `cheetah-onvif-driver-tokio` (or a future driver adapter), which

@@ -14,6 +14,7 @@ pub struct Envelope {
     action: String,
     body: String,
     message_id: Option<String>,
+    security_header: Option<String>,
 }
 
 impl Envelope {
@@ -23,12 +24,23 @@ impl Envelope {
             action: action.into(),
             body: body.into(),
             message_id: None,
+            security_header: None,
         }
     }
 
     /// Sets the WS-Addressing MessageID.
     pub fn with_message_id(mut self, id: impl Into<String>) -> Self {
         self.message_id = Some(id.into());
+        self
+    }
+
+    /// Sets a raw `wsse:Security` header fragment to include in the SOAP header.
+    ///
+    /// The supplied string must be a complete XML element (including its own
+    /// namespace declaration); it is written verbatim into the header so that
+    /// callers can inject `UsernameToken`s built by `cheetah-onvif-core`.
+    pub fn with_security_header(mut self, xml: impl Into<String>) -> Self {
+        self.security_header = Some(xml.into());
         self
     }
 
@@ -52,6 +64,9 @@ impl Envelope {
             writer.write_event(Event::Start(BytesStart::new("a:MessageID")))?;
             writer.write_event(Event::Text(BytesText::new(id)))?;
             writer.write_event(Event::End(BytesEnd::new("a:MessageID")))?;
+        }
+        if let Some(ref security) = self.security_header {
+            writer.get_mut().write_all(security.as_bytes())?;
         }
         writer.write_event(Event::End(BytesEnd::new("s:Header")))?;
 
@@ -146,6 +161,8 @@ fn local_name(name: &quick_xml::name::QName<'_>) -> String {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
     use super::*;
 
     #[test]

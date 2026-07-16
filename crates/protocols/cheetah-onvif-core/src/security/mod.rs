@@ -183,6 +183,8 @@ fn format_created(seconds: i64) -> String {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
     use super::*;
 
     const NONCE: [u8; NONCE_SIZE] = [

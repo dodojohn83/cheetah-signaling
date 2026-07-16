@@ -9,13 +9,19 @@ use quick_xml::Writer;
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
 use std::io::Cursor;
 
+mod limits;
 mod parser;
 mod types;
+mod xaddr;
 
+pub use limits::{
+    DiscoveryLimits, DiscoveryRateLimiter, LimitTracker, RateLimitConfig, check_datagram_size,
+};
 pub use types::{
     Bye, EndpointReference, Hello, Probe, ProbeMatch, ProbeMatches, Resolve, ResolveMatch,
     ResolveMatches, Scopes, XAddrs,
 };
+pub use xaddr::{XAddrPolicy, filter_xaddrs};
 
 const SOAP_ENVELOPE: &str = "http://www.w3.org/2003/05/soap-envelope";
 const WSA: &str = "http://schemas.xmlsoap.org/ws/2004/08/addressing";
@@ -88,6 +94,49 @@ pub fn build_probe(
     String::from_utf8(cursor.into_inner()).map_err(|e| OnvifError::Xml(e.to_string()))
 }
 
+/// Builds a WS-Discovery `Resolve` request for a known endpoint reference.
+pub fn build_resolve(
+    app_id: &AppId,
+    endpoint_reference: &EndpointReference,
+) -> OnvifResult<String> {
+    let mut cursor = Cursor::new(Vec::new());
+    let mut writer = Writer::new(&mut cursor);
+
+    writer.write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)))?;
+    let mut envelope = BytesStart::new("s:Envelope");
+    envelope.push_attribute(("xmlns:s", SOAP_ENVELOPE));
+    envelope.push_attribute(("xmlns:a", WSA));
+    envelope.push_attribute(("xmlns:d", WSD));
+    writer.write_event(Event::Start(envelope))?;
+
+    writer.write_event(Event::Start(BytesStart::new("s:Header")))?;
+    write_header_element(&mut writer, "a:MessageID", &app_id.0)?;
+    write_header_element(
+        &mut writer,
+        "a:To",
+        "urn:docs-oasis-open:ws-dd:ns:discovery:2009:01",
+    )?;
+    write_header_element(
+        &mut writer,
+        "a:Action",
+        "http://schemas.xmlsoap.org/ws/2005/04/discovery/Resolve",
+    )?;
+    writer.write_event(Event::End(BytesEnd::new("s:Header")))?;
+
+    writer.write_event(Event::Start(BytesStart::new("s:Body")))?;
+    let mut resolve = BytesStart::new("d:Resolve");
+    resolve.push_attribute(("xmlns:d", WSD));
+    writer.write_event(Event::Start(resolve))?;
+
+    write_header_element(&mut writer, "a:EndpointReference", &endpoint_reference.0)?;
+
+    writer.write_event(Event::End(BytesEnd::new("d:Resolve")))?;
+    writer.write_event(Event::End(BytesEnd::new("s:Body")))?;
+    writer.write_event(Event::End(BytesEnd::new("s:Envelope")))?;
+
+    String::from_utf8(cursor.into_inner()).map_err(|e| OnvifError::Xml(e.to_string()))
+}
+
 fn write_header_element<W: std::io::Write>(
     writer: &mut Writer<W>,
     name: &str,
@@ -102,14 +151,46 @@ fn write_header_element<W: std::io::Write>(
 /// Parses a WS-Discovery `ProbeMatches` response.
 ///
 /// `discovered_at` is a monotonic or wall-clock second timestamp supplied by
-/// the driver.
+/// the driver. Uses default discovery limits.
 pub fn parse_probe_matches(xml: &str, discovered_at: u64) -> OnvifResult<ProbeMatches> {
-    parser::parse_probe_matches(xml, discovered_at)
+    parser::parse_probe_matches(xml, discovered_at, &DiscoveryLimits::default())
+}
+
+/// Parses a WS-Discovery `ProbeMatches` response with explicit limits.
+pub fn parse_probe_matches_with_limits(
+    xml: &str,
+    discovered_at: u64,
+    limits: &DiscoveryLimits,
+) -> OnvifResult<ProbeMatches> {
+    parser::parse_probe_matches(xml, discovered_at, limits)
 }
 
 /// Parses a WS-Discovery `Hello` or `Bye` announcement.
 pub fn parse_hello_bye(xml: &str, discovered_at: u64) -> OnvifResult<EitherHelloBye> {
-    parser::parse_hello_bye(xml, discovered_at)
+    parser::parse_hello_bye(xml, discovered_at, &DiscoveryLimits::default())
+}
+
+/// Parses a WS-Discovery `Hello` or `Bye` announcement with explicit limits.
+pub fn parse_hello_bye_with_limits(
+    xml: &str,
+    discovered_at: u64,
+    limits: &DiscoveryLimits,
+) -> OnvifResult<EitherHelloBye> {
+    parser::parse_hello_bye(xml, discovered_at, limits)
+}
+
+/// Parses a WS-Discovery `ResolveMatches` response.
+pub fn parse_resolve_matches(xml: &str, discovered_at: u64) -> OnvifResult<ResolveMatches> {
+    parser::parse_resolve_matches(xml, discovered_at, &DiscoveryLimits::default())
+}
+
+/// Parses a WS-Discovery `ResolveMatches` response with explicit limits.
+pub fn parse_resolve_matches_with_limits(
+    xml: &str,
+    discovered_at: u64,
+    limits: &DiscoveryLimits,
+) -> OnvifResult<ResolveMatches> {
+    parser::parse_resolve_matches(xml, discovered_at, limits)
 }
 
 /// Either a `Hello` or `Bye` announcement.
@@ -121,51 +202,10 @@ pub enum EitherHelloBye {
     Bye(Bye),
 }
 
-/// Validates that `xaddrs` do not point to loopback, link-local or otherwise
-/// unsafe destinations unless `allow_private` is set.
-pub fn filter_xaddrs(xaddrs: &[String], allow_private: bool) -> OnvifResult<Vec<String>> {
-    let mut out = Vec::with_capacity(xaddrs.len());
-    for addr in xaddrs {
-        let url = url::Url::parse(addr).map_err(OnvifError::from)?;
-        let host = url
-            .host_str()
-            .ok_or_else(|| OnvifError::InvalidXAddr(addr.clone()))?;
-        if !matches!(url.scheme(), "http" | "https") {
-            return Err(OnvifError::SsrfRejected(format!(
-                "scheme {} not allowed",
-                url.scheme()
-            )));
-        }
-        if !allow_private && is_loopback_or_private(host) {
-            return Err(OnvifError::SsrfRejected(addr.clone()));
-        }
-        out.push(addr.clone());
-    }
-    Ok(out)
-}
-
-fn is_loopback_or_private(host: &str) -> bool {
-    if host == "localhost" {
-        return true;
-    }
-    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
-        match ip {
-            std::net::IpAddr::V4(v4) => {
-                return v4.is_loopback()
-                    || v4.is_private()
-                    || v4.is_link_local()
-                    || v4.is_unspecified();
-            }
-            std::net::IpAddr::V6(v6) => {
-                return v6.is_loopback() || v6.is_unicast_link_local() || v6.is_unspecified();
-            }
-        }
-    }
-    false
-}
-
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
     use super::*;
 
     #[test]

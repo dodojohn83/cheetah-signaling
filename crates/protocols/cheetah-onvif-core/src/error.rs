@@ -46,3 +46,9 @@ impl From<url::ParseError> for OnvifError {
         Self::InvalidXAddr(value.to_string())
     }
 }
+
+impl From<std::string::FromUtf8Error> for OnvifError {
+    fn from(value: std::string::FromUtf8Error) -> Self {
+        Self::Xml(value.to_string())
+    }
+}

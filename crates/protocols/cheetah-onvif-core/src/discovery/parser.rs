@@ -1,14 +1,16 @@
-//! WS-Discovery XML parser.
+//! WS-Discovery XML parser with configurable limits.
 
-use super::EitherHelloBye;
 use super::types::{
-    Bye, Hello, MetadataVersion, ProbeMatch, ProbeMatches, Scopes, XAddrs, validate_epr,
+    Bye, Hello, MetadataVersion, ProbeMatch, ProbeMatches, ResolveMatch, ResolveMatches, Scopes,
+    XAddrs, validate_epr,
 };
+use super::{DiscoveryLimits, LimitTracker, check_datagram_size};
 use crate::error::{OnvifError, OnvifResult};
 use quick_xml::Reader;
 use quick_xml::events::Event;
 
 const WSD_PROBE_MATCH: &str = "ProbeMatch";
+const WSD_RESOLVE_MATCH: &str = "ResolveMatch";
 const WSA_ENDPOINT_REFERENCE: &str = "EndpointReference";
 const WSD_TYPES: &str = "Types";
 const WSD_SCOPES: &str = "Scopes";
@@ -18,10 +20,17 @@ const WSA_RELATES_TO: &str = "RelatesTo";
 const WSD_HELLO: &str = "Hello";
 const WSD_BYE: &str = "Bye";
 
-pub fn parse_probe_matches(xml: &str, discovered_at: u64) -> OnvifResult<ProbeMatches> {
+pub fn parse_probe_matches(
+    xml: &str,
+    discovered_at: u64,
+    limits: &DiscoveryLimits,
+) -> OnvifResult<ProbeMatches> {
+    check_datagram_size(xml, limits)?;
+
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(true);
 
+    let mut tracker = LimitTracker::new(*limits);
     let mut relates_to: Option<String> = None;
     let mut matches: Vec<ProbeMatch> = Vec::new();
 
@@ -31,20 +40,34 @@ pub fn parse_probe_matches(xml: &str, discovered_at: u64) -> OnvifResult<ProbeMa
 
     loop {
         match reader.read_event() {
-            Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
+            Ok(Event::Start(e)) => {
+                tracker.start()?;
                 current_tag = local_name(&e.name());
                 if current_tag == WSD_PROBE_MATCH {
                     current = Some(ProbeMatchBuilder::default());
                 }
                 text.clear();
             }
+            Ok(Event::Empty(e)) => {
+                tracker.empty()?;
+                let name = local_name(&e.name());
+                if name == WSD_PROBE_MATCH {
+                    current = Some(ProbeMatchBuilder::default());
+                }
+                current_tag = name;
+                text.clear();
+            }
             Ok(Event::Text(e)) => {
                 text.push_str(&e.xml10_content().unwrap_or_default());
             }
             Ok(Event::End(e)) => {
+                tracker.end();
                 let name = local_name(&e.name());
                 if name == WSD_PROBE_MATCH {
                     if let Some(builder) = current.take() {
+                        if matches.len() >= limits.max_matches {
+                            return Err(OnvifError::LimitExceeded("max probe matches".to_string()));
+                        }
                         matches.push(builder.build(discovered_at)?);
                     }
                 } else if name == WSA_RELATES_TO {
@@ -67,36 +90,49 @@ pub fn parse_probe_matches(xml: &str, discovered_at: u64) -> OnvifResult<ProbeMa
     })
 }
 
-pub fn parse_hello_bye(xml: &str, discovered_at: u64) -> OnvifResult<EitherHelloBye> {
+pub fn parse_hello_bye(
+    xml: &str,
+    discovered_at: u64,
+    limits: &DiscoveryLimits,
+) -> OnvifResult<super::EitherHelloBye> {
+    check_datagram_size(xml, limits)?;
+
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(true);
 
+    let mut tracker = LimitTracker::new(*limits);
     let mut kind: Option<&'static str> = None;
     let mut builder = HelloByeBuilder::default();
-    let mut current_tag = String::new();
     let mut text = String::new();
 
     loop {
         match reader.read_event() {
-            Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
+            Ok(Event::Start(e)) => {
+                tracker.start()?;
                 let name = local_name(&e.name());
                 if kind.is_none() && (name == WSD_HELLO || name == WSD_BYE) {
                     kind = Some(if name == WSD_HELLO { "hello" } else { "bye" });
                 }
-                current_tag = name;
                 text.clear();
+            }
+            Ok(Event::Empty(e)) => {
+                tracker.empty()?;
+                let name = local_name(&e.name());
+                if kind.is_none() && (name == WSD_HELLO || name == WSD_BYE) {
+                    kind = Some(if name == WSD_HELLO { "hello" } else { "bye" });
+                }
             }
             Ok(Event::Text(e)) => {
                 text.push_str(&e.xml10_content().unwrap_or_default());
             }
             Ok(Event::End(e)) => {
+                tracker.end();
                 let name = local_name(&e.name());
                 if name == WSD_HELLO || name == WSD_BYE {
                     break;
                 }
                 builder.apply(&name, &text)?;
                 text.clear();
-                current_tag.clear();
             }
             Ok(Event::Eof) => break,
             Err(e) => return Err(OnvifError::Xml(e.to_string())),
@@ -105,10 +141,83 @@ pub fn parse_hello_bye(xml: &str, discovered_at: u64) -> OnvifResult<EitherHello
     }
 
     match kind {
-        Some("hello") => Ok(EitherHelloBye::Hello(builder.build_hello(discovered_at)?)),
-        Some("bye") => Ok(EitherHelloBye::Bye(builder.build_bye(discovered_at)?)),
+        Some("hello") => Ok(super::EitherHelloBye::Hello(
+            builder.build_hello(discovered_at)?,
+        )),
+        Some("bye") => Ok(super::EitherHelloBye::Bye(
+            builder.build_bye(discovered_at)?,
+        )),
         _ => Err(OnvifError::MissingField("Hello or Bye".to_string())),
     }
+}
+
+pub fn parse_resolve_matches(
+    xml: &str,
+    discovered_at: u64,
+    limits: &DiscoveryLimits,
+) -> OnvifResult<ResolveMatches> {
+    check_datagram_size(xml, limits)?;
+
+    let mut reader = Reader::from_str(xml);
+    reader.config_mut().trim_text(true);
+
+    let mut tracker = LimitTracker::new(*limits);
+    let mut relates_to: Option<String> = None;
+    let mut matches: Vec<ResolveMatch> = Vec::new();
+
+    let mut current: Option<ResolveMatchBuilder> = None;
+    let mut text = String::new();
+
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(e)) => {
+                tracker.start()?;
+                let name = local_name(&e.name());
+                if name == WSD_RESOLVE_MATCH {
+                    current = Some(ResolveMatchBuilder::default());
+                }
+                text.clear();
+            }
+            Ok(Event::Empty(e)) => {
+                tracker.empty()?;
+                let name = local_name(&e.name());
+                if name == WSD_RESOLVE_MATCH {
+                    current = Some(ResolveMatchBuilder::default());
+                }
+                text.clear();
+            }
+            Ok(Event::Text(e)) => {
+                text.push_str(&e.xml10_content().unwrap_or_default());
+            }
+            Ok(Event::End(e)) => {
+                tracker.end();
+                let name = local_name(&e.name());
+                if name == WSD_RESOLVE_MATCH {
+                    if let Some(builder) = current.take() {
+                        if matches.len() >= limits.max_matches {
+                            return Err(OnvifError::LimitExceeded(
+                                "max resolve matches".to_string(),
+                            ));
+                        }
+                        matches.push(builder.build(discovered_at)?);
+                    }
+                } else if name == WSA_RELATES_TO {
+                    relates_to = Some(text.trim().to_string());
+                } else if let Some(ref mut b) = current {
+                    b.apply(&name, &text)?;
+                }
+                text.clear();
+            }
+            Ok(Event::Eof) => break,
+            Err(e) => return Err(OnvifError::Xml(e.to_string())),
+            _ => {}
+        }
+    }
+
+    Ok(ResolveMatches {
+        relates_to: relates_to.unwrap_or_default(),
+        matches,
+    })
 }
 
 fn local_name(name: &quick_xml::name::QName<'_>) -> String {
@@ -198,6 +307,37 @@ impl HelloByeBuilder {
         let epr = validate_epr(&self.endpoint_reference.unwrap_or_default())?;
         Ok(Bye {
             endpoint_reference: super::types::EndpointReference(epr),
+            discovered_at,
+        })
+    }
+}
+
+#[derive(Default)]
+struct ResolveMatchBuilder {
+    endpoint_reference: Option<String>,
+    x_addrs: Option<String>,
+    metadata_version: Option<MetadataVersion>,
+}
+
+impl ResolveMatchBuilder {
+    fn apply(&mut self, name: &str, text: &str) -> OnvifResult<()> {
+        match name {
+            WSA_ENDPOINT_REFERENCE => self.endpoint_reference = Some(validate_epr(text)?),
+            WSD_X_ADDRS => self.x_addrs = Some(text.to_string()),
+            WSD_METADATA_VERSION => {
+                self.metadata_version = text.trim().parse().ok();
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn build(self, discovered_at: u64) -> OnvifResult<ResolveMatch> {
+        let epr = validate_epr(&self.endpoint_reference.unwrap_or_default())?;
+        Ok(ResolveMatch {
+            endpoint_reference: super::types::EndpointReference(epr),
+            x_addrs: XAddrs::parse(&self.x_addrs.unwrap_or_default())?,
+            metadata_version: self.metadata_version.unwrap_or(0),
             discovered_at,
         })
     }

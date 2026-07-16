@@ -7,6 +7,7 @@
 pub mod discovery;
 pub mod error;
 pub mod security;
+pub mod services;
 pub mod soap;
 
 pub use error::{OnvifError, OnvifResult};
