@@ -6,6 +6,17 @@ use cheetah_signal_types::{
     DeviceId, NodeId, NodeInstanceId, OperationId, Page, PageRequest, TenantId, UtcTimestamp,
 };
 
+/// A device owned by a specific node, returned by paginated owner scans.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OwnedDevice {
+    /// Tenant identifier.
+    pub tenant_id: TenantId,
+    /// Device identifier.
+    pub device_id: DeviceId,
+    /// Current owner information.
+    pub owner: OwnerInfo,
+}
+
 /// Repository for device owner leases.
 #[async_trait::async_trait]
 pub trait OwnerRepository: Send + Sync {
@@ -61,6 +72,16 @@ pub trait OwnerRepository: Send + Sync {
         node_id: NodeId,
         epoch: cheetah_signal_types::OwnerEpoch,
     ) -> Result<(), StorageError>;
+
+    /// Lists devices owned by `node_id` with stable cursor pagination.
+    ///
+    /// The returned page is ordered by `updated_at` and then `device_id`. The
+    /// cursor is opaque and must be passed back unmodified.
+    async fn list_by_node(
+        &self,
+        node_id: NodeId,
+        page: PageRequest,
+    ) -> Result<Page<OwnedDevice>, StorageError>;
 }
 
 /// A single dispatch attempt for an operation.

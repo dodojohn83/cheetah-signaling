@@ -13,6 +13,7 @@ pub(crate) mod media_service_start;
 pub mod operation_reconciler;
 pub mod operation_service;
 pub mod outbox_relay;
+pub mod owner_reconciler;
 pub mod takeover_service;
 pub mod webhook_service;
 
@@ -25,6 +26,9 @@ pub use media_service::MediaService;
 pub use operation_reconciler::OperationReconciler;
 pub use operation_service::OperationService;
 pub use outbox_relay::OutboxRelay;
+pub use owner_reconciler::{
+    LocalDeviceSession, OwnerMissingReport, OwnerReconciler, OwnerReconciliationReport,
+};
 pub use takeover_service::{OwnerValidation, TakeoverResult, TakeoverService};
 pub use webhook_service::{
     WebhookDeliveryConfig, WebhookHttpClient, WebhookHttpRequest, WebhookHttpResponse,
