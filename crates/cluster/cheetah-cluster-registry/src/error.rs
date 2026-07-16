@@ -17,4 +17,8 @@ pub enum NodeLeaseError {
     /// The node's lease has been taken over by a newer instance.
     #[error("node {0} has been fenced by a new instance")]
     Fenced(String),
+    /// The node's version or contract versions are incompatible with the
+    /// cluster's rolling-upgrade matrix.
+    #[error("node is incompatible: {0}")]
+    Incompatible(#[from] crate::compatibility::CompatibilityError),
 }

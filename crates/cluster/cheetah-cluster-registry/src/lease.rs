@@ -1,5 +1,6 @@
 //! Cluster node lease and heartbeat service.
 
+use crate::compatibility::CompatibilityMatrix;
 use crate::error::NodeLeaseError;
 use cheetah_domain::{Clock, ClusterNode, NodeCapacity, NodeLoad};
 use cheetah_signal_types::{DurationMs, IdGenerator, NodeId, NodeInstanceId};
@@ -18,6 +19,7 @@ pub struct NodeLeaseService {
     zone: String,
     version: String,
     lease_duration: DurationMs,
+    compatibility: Arc<CompatibilityMatrix>,
     instance_id: Option<NodeInstanceId>,
 }
 
@@ -32,6 +34,30 @@ impl NodeLeaseService {
         version: impl Into<String>,
         lease_duration: DurationMs,
     ) -> Self {
+        Self::with_compatibility(
+            repository,
+            clock,
+            id_generator,
+            this_node,
+            zone,
+            version,
+            lease_duration,
+            Arc::new(CompatibilityMatrix::default()),
+        )
+    }
+
+    /// Creates a new lease service with a custom compatibility matrix.
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_compatibility(
+        repository: Arc<Mutex<dyn NodeRepository>>,
+        clock: Arc<dyn Clock>,
+        id_generator: Arc<dyn IdGenerator>,
+        this_node: NodeId,
+        zone: impl Into<String>,
+        version: impl Into<String>,
+        lease_duration: DurationMs,
+        compatibility: Arc<CompatibilityMatrix>,
+    ) -> Self {
         Self {
             repository,
             clock,
@@ -40,6 +66,7 @@ impl NodeLeaseService {
             zone: zone.into(),
             version: version.into(),
             lease_duration,
+            compatibility,
             instance_id: None,
         }
     }
@@ -52,6 +79,9 @@ impl NodeLeaseService {
         capacity: NodeCapacity,
         contract_versions: HashMap<String, String>,
     ) -> Result<ClusterNode, NodeLeaseError> {
+        self.compatibility
+            .check(&self.version, &contract_versions)?;
+
         let instance_id = self.id_generator.generate_node_instance_id();
         let now = self.clock.now_wall();
         let lease_until = now.checked_add(self.lease_duration).ok_or_else(|| {
@@ -388,6 +418,70 @@ mod tests {
 
         let result = service.mark_draining().await;
         assert!(matches!(result, Err(NodeLeaseError::Fenced(_))));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn register_rejects_incompatible_version() -> TestResult<()> {
+        let clock = Arc::new(InMemoryClock::new());
+        let id_gen = Arc::new(InMemoryIdGenerator::new());
+        let repo = Arc::new(tokio::sync::Mutex::new(InMemoryNodeRepository::new()));
+        let node_id = id_gen.generate_node_id();
+
+        let matrix = crate::compatibility::CompatibilityMatrix::new(
+            ">=1.0.0, <2.0.0",
+            std::collections::HashMap::new(),
+        )?;
+        let compatibility = Arc::new(matrix);
+        let mut service = NodeLeaseService::with_compatibility(
+            repo.clone(),
+            clock.clone(),
+            id_gen.clone(),
+            node_id,
+            "zone-a",
+            "0.5.0",
+            DurationMs::from_millis(10_000),
+            compatibility,
+        );
+
+        let result = service
+            .register(NodeCapacity { max_devices: 100 }, HashMap::new())
+            .await;
+        assert!(matches!(result, Err(NodeLeaseError::Incompatible(_))));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn register_accepts_compatible_version() -> TestResult<()> {
+        let clock = Arc::new(InMemoryClock::new());
+        let id_gen = Arc::new(InMemoryIdGenerator::new());
+        let repo = Arc::new(tokio::sync::Mutex::new(InMemoryNodeRepository::new()));
+        let node_id = id_gen.generate_node_id();
+
+        let mut contracts = HashMap::new();
+        contracts.insert(
+            "cheetah.media.v1".to_string(),
+            ">=1.0.0, <2.0.0".to_string(),
+        );
+        let matrix = crate::compatibility::CompatibilityMatrix::new(">=1.0.0, <2.0.0", contracts)?;
+        let compatibility = Arc::new(matrix);
+        let mut service = NodeLeaseService::with_compatibility(
+            repo.clone(),
+            clock.clone(),
+            id_gen.clone(),
+            node_id,
+            "zone-a",
+            "1.2.0",
+            DurationMs::from_millis(10_000),
+            compatibility,
+        );
+
+        let mut node_contracts = HashMap::new();
+        node_contracts.insert("cheetah.media.v1".to_string(), "1.5.0".to_string());
+        let node = service
+            .register(NodeCapacity { max_devices: 100 }, node_contracts)
+            .await?;
+        assert_eq!(node.version, "1.2.0");
         Ok(())
     }
 }
