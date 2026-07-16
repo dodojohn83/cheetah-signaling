@@ -278,7 +278,7 @@ impl SlidingWindow {
 
     fn is_active(&mut self, now: DurationMs) -> bool {
         self.prune(now);
-        !self.events.is_empty()
+        !self.events.is_empty() || self.pending > 0
     }
 }
 
