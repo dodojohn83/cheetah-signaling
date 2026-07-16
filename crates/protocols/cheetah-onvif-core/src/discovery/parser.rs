@@ -1,0 +1,204 @@
+//! WS-Discovery XML parser.
+
+use super::EitherHelloBye;
+use super::types::{
+    Bye, Hello, MetadataVersion, ProbeMatch, ProbeMatches, Scopes, XAddrs, validate_epr,
+};
+use crate::error::{OnvifError, OnvifResult};
+use quick_xml::Reader;
+use quick_xml::events::Event;
+
+const WSD_PROBE_MATCH: &str = "ProbeMatch";
+const WSA_ENDPOINT_REFERENCE: &str = "EndpointReference";
+const WSD_TYPES: &str = "Types";
+const WSD_SCOPES: &str = "Scopes";
+const WSD_X_ADDRS: &str = "XAddrs";
+const WSD_METADATA_VERSION: &str = "MetadataVersion";
+const WSA_RELATES_TO: &str = "RelatesTo";
+const WSD_HELLO: &str = "Hello";
+const WSD_BYE: &str = "Bye";
+
+pub fn parse_probe_matches(xml: &str, discovered_at: u64) -> OnvifResult<ProbeMatches> {
+    let mut reader = Reader::from_str(xml);
+    reader.config_mut().trim_text(true);
+
+    let mut relates_to: Option<String> = None;
+    let mut matches: Vec<ProbeMatch> = Vec::new();
+
+    let mut current: Option<ProbeMatchBuilder> = None;
+    let mut current_tag = String::new();
+    let mut text = String::new();
+
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
+                current_tag = local_name(&e.name());
+                if current_tag == WSD_PROBE_MATCH {
+                    current = Some(ProbeMatchBuilder::default());
+                }
+                text.clear();
+            }
+            Ok(Event::Text(e)) => {
+                text.push_str(&e.xml10_content().unwrap_or_default());
+            }
+            Ok(Event::End(e)) => {
+                let name = local_name(&e.name());
+                if name == WSD_PROBE_MATCH {
+                    if let Some(builder) = current.take() {
+                        matches.push(builder.build(discovered_at)?);
+                    }
+                } else if name == WSA_RELATES_TO {
+                    relates_to = Some(text.trim().to_string());
+                } else if let Some(ref mut b) = current {
+                    b.apply(&name, &text)?;
+                }
+                text.clear();
+                current_tag.clear();
+            }
+            Ok(Event::Eof) => break,
+            Err(e) => return Err(OnvifError::Xml(e.to_string())),
+            _ => {}
+        }
+    }
+
+    Ok(ProbeMatches {
+        relates_to: relates_to.unwrap_or_default(),
+        matches,
+    })
+}
+
+pub fn parse_hello_bye(xml: &str, discovered_at: u64) -> OnvifResult<EitherHelloBye> {
+    let mut reader = Reader::from_str(xml);
+    reader.config_mut().trim_text(true);
+
+    let mut kind: Option<&'static str> = None;
+    let mut builder = HelloByeBuilder::default();
+    let mut current_tag = String::new();
+    let mut text = String::new();
+
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
+                let name = local_name(&e.name());
+                if kind.is_none() && (name == WSD_HELLO || name == WSD_BYE) {
+                    kind = Some(if name == WSD_HELLO { "hello" } else { "bye" });
+                }
+                current_tag = name;
+                text.clear();
+            }
+            Ok(Event::Text(e)) => {
+                text.push_str(&e.xml10_content().unwrap_or_default());
+            }
+            Ok(Event::End(e)) => {
+                let name = local_name(&e.name());
+                if name == WSD_HELLO || name == WSD_BYE {
+                    break;
+                }
+                builder.apply(&name, &text)?;
+                text.clear();
+                current_tag.clear();
+            }
+            Ok(Event::Eof) => break,
+            Err(e) => return Err(OnvifError::Xml(e.to_string())),
+            _ => {}
+        }
+    }
+
+    match kind {
+        Some("hello") => Ok(EitherHelloBye::Hello(builder.build_hello(discovered_at)?)),
+        Some("bye") => Ok(EitherHelloBye::Bye(builder.build_bye(discovered_at)?)),
+        _ => Err(OnvifError::MissingField("Hello or Bye".to_string())),
+    }
+}
+
+fn local_name(name: &quick_xml::name::QName<'_>) -> String {
+    String::from_utf8_lossy(name.local_name().as_ref()).to_string()
+}
+
+#[derive(Default)]
+struct ProbeMatchBuilder {
+    endpoint_reference: Option<String>,
+    types: Vec<String>,
+    scopes: Option<String>,
+    x_addrs: Option<String>,
+    metadata_version: Option<MetadataVersion>,
+}
+
+impl ProbeMatchBuilder {
+    fn apply(&mut self, name: &str, text: &str) -> OnvifResult<()> {
+        match name {
+            WSA_ENDPOINT_REFERENCE => self.endpoint_reference = Some(validate_epr(text)?),
+            WSD_TYPES => self.types = text.split_whitespace().map(|s| s.to_string()).collect(),
+            WSD_SCOPES => self.scopes = Some(text.to_string()),
+            WSD_X_ADDRS => self.x_addrs = Some(text.to_string()),
+            WSD_METADATA_VERSION => {
+                self.metadata_version = text.trim().parse().ok();
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn build(self, discovered_at: u64) -> OnvifResult<ProbeMatch> {
+        let epr = validate_epr(&self.endpoint_reference.unwrap_or_default())?;
+        Ok(ProbeMatch {
+            endpoint_reference: super::types::EndpointReference(epr),
+            types: self.types,
+            scopes: self
+                .scopes
+                .as_ref()
+                .map(|s| Scopes(s.split_whitespace().map(|x| x.to_string()).collect())),
+            x_addrs: XAddrs::parse(&self.x_addrs.unwrap_or_default())?,
+            metadata_version: self.metadata_version.unwrap_or(0),
+            discovered_at,
+        })
+    }
+}
+
+#[derive(Default)]
+struct HelloByeBuilder {
+    endpoint_reference: Option<String>,
+    types: Vec<String>,
+    scopes: Option<String>,
+    x_addrs: Option<String>,
+    metadata_version: Option<MetadataVersion>,
+}
+
+impl HelloByeBuilder {
+    fn apply(&mut self, name: &str, text: &str) -> OnvifResult<()> {
+        match name {
+            WSA_ENDPOINT_REFERENCE => self.endpoint_reference = Some(validate_epr(text)?),
+            WSD_TYPES => self.types = text.split_whitespace().map(|s| s.to_string()).collect(),
+            WSD_SCOPES => self.scopes = Some(text.to_string()),
+            WSD_X_ADDRS => self.x_addrs = Some(text.to_string()),
+            WSD_METADATA_VERSION => {
+                self.metadata_version = text.trim().parse().ok();
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn build_hello(self, discovered_at: u64) -> OnvifResult<Hello> {
+        let epr = validate_epr(&self.endpoint_reference.unwrap_or_default())?;
+        Ok(Hello {
+            endpoint_reference: super::types::EndpointReference(epr),
+            types: self.types,
+            scopes: self
+                .scopes
+                .as_ref()
+                .map(|s| Scopes(s.split_whitespace().map(|x| x.to_string()).collect())),
+            x_addrs: XAddrs::parse(&self.x_addrs.unwrap_or_default())?,
+            metadata_version: self.metadata_version.unwrap_or(0),
+            discovered_at,
+        })
+    }
+
+    fn build_bye(self, discovered_at: u64) -> OnvifResult<Bye> {
+        let epr = validate_epr(&self.endpoint_reference.unwrap_or_default())?;
+        Ok(Bye {
+            endpoint_reference: super::types::EndpointReference(epr),
+            discovered_at,
+        })
+    }
+}

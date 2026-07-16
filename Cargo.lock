@@ -622,6 +622,19 @@ dependencies = [
 [[package]]
 name = "cheetah-onvif-core"
 version = "0.1.0"
+dependencies = [
+ "base64",
+ "hex",
+ "hmac",
+ "md5",
+ "quick-xml",
+ "secrecy",
+ "sha2",
+ "thiserror",
+ "time",
+ "tracing",
+ "url",
+]
 
 [[package]]
 name = "cheetah-onvif-driver-tokio"
