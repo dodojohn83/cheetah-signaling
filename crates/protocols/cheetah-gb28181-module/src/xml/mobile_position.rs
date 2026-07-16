@@ -1,8 +1,11 @@
-//! GB28181 MobilePosition notification parsing.
+//! GB28181 MobilePosition notification parsing and upstream notify encoding.
+
+use std::collections::HashMap;
 
 use super::element::XmlElement;
 use super::limits::XmlLimits;
 use super::reader::parse_xml;
+use super::writer::encode_xml;
 use crate::error::AccessError;
 
 /// Parsed content of a GB28181 `MobilePosition` notification.
@@ -30,6 +33,53 @@ pub struct MobilePositionInfo {
 pub fn parse_mobile_position(body: &[u8]) -> Result<MobilePositionInfo, AccessError> {
     let root = parse_xml(body, &XmlLimits::default())?;
     extract_mobile_position(&root)
+}
+
+fn child_element(name: &str, text: &str) -> XmlElement {
+    XmlElement {
+        name: name.to_string(),
+        attributes: HashMap::new(),
+        text: text.to_string(),
+        children: Vec::new(),
+    }
+}
+
+/// Encodes a `MobilePosition` NOTIFY payload for an upstream platform.
+#[allow(clippy::too_many_arguments)]
+pub fn build_mobile_position_notify(
+    sn: &str,
+    device_id: &str,
+    time: Option<&str>,
+    longitude: Option<&str>,
+    latitude: Option<&str>,
+    speed: Option<&str>,
+    direction: Option<&str>,
+    altitude: Option<&str>,
+) -> Result<String, AccessError> {
+    let mut root = child_element("Notify", "");
+    root.children
+        .push(child_element("CmdType", "MobilePosition"));
+    root.children.push(child_element("SN", sn));
+    root.children.push(child_element("DeviceID", device_id));
+    if let Some(t) = time {
+        root.children.push(child_element("Time", t));
+    }
+    if let Some(v) = longitude {
+        root.children.push(child_element("Longitude", v));
+    }
+    if let Some(v) = latitude {
+        root.children.push(child_element("Latitude", v));
+    }
+    if let Some(v) = speed {
+        root.children.push(child_element("Speed", v));
+    }
+    if let Some(v) = direction {
+        root.children.push(child_element("Direction", v));
+    }
+    if let Some(v) = altitude {
+        root.children.push(child_element("Altitude", v));
+    }
+    encode_xml(&root, true)
 }
 
 fn extract_mobile_position(root: &XmlElement) -> Result<MobilePositionInfo, AccessError> {

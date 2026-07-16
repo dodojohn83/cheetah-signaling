@@ -38,10 +38,13 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
             state: State::Idle,
             request_counter: 0,
             bridge_counter: 0,
+            report_counter: 0,
             auth: None,
             catalog_provider: None,
             inbound_auth,
             bridges: std::collections::BTreeMap::new(),
+            report_queue: std::collections::VecDeque::new(),
+            report_state: std::collections::HashMap::new(),
         })
     }
 
@@ -65,6 +68,7 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
             CascadeEvent::BridgeMediaStop { bridge_id } => {
                 super::bridge::on_media_stop(self, input.now, bridge_id)
             }
+            CascadeEvent::Report { event } => super::report::enqueue(self, input.now, *event),
             CascadeEvent::Tick => self.on_tick(input.now),
         }
     }
@@ -173,6 +177,8 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
         }?;
 
         outputs.extend(more);
+        let report_outputs = super::report::flush(self, now)?;
+        outputs.extend(report_outputs);
         Ok(outputs)
     }
 

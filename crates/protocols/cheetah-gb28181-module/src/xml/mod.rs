@@ -13,7 +13,7 @@ pub mod reader;
 pub mod record_info;
 pub mod writer;
 
-pub use alarm::{AlarmInfo, parse_alarm};
+pub use alarm::{AlarmInfo, build_alarm_notify, parse_alarm};
 pub use catalog::{
     CatalogItem, CatalogQuery, CatalogResponse, build_catalog_response, parse_catalog,
     parse_catalog_query,
@@ -23,13 +23,15 @@ pub use device_control::{
     PtzCommand, parse_device_control_response,
 };
 pub use device_info::{DeviceInfoResponse, parse_device_info};
-pub use device_status::{DeviceStatusResponse, parse_device_status};
+pub use device_status::{DeviceStatusResponse, build_device_status_notify, parse_device_status};
 pub use element::XmlElement;
 pub use keepalive::{
     KeepaliveInfo, KeepaliveResponse, build_keepalive, parse_keepalive, parse_keepalive_response,
 };
 pub use limits::XmlLimits;
-pub use mobile_position::{MobilePositionInfo, parse_mobile_position};
+pub use mobile_position::{
+    MobilePositionInfo, build_mobile_position_notify, parse_mobile_position,
+};
 pub use reader::parse_xml;
 pub use record_info::{RecordInfoResponse, RecordItem, parse_record_info};
 pub use writer::encode_xml;

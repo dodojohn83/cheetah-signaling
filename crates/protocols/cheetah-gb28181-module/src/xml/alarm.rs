@@ -1,8 +1,11 @@
-//! GB28181 Alarm notification parsing.
+//! GB28181 Alarm notification parsing and upstream notify encoding.
+
+use std::collections::HashMap;
 
 use super::element::XmlElement;
 use super::limits::XmlLimits;
 use super::reader::parse_xml;
+use super::writer::encode_xml;
 use crate::error::AccessError;
 
 /// Parsed content of a GB28181 `Alarm` notification.
@@ -28,6 +31,47 @@ pub struct AlarmInfo {
 pub fn parse_alarm(body: &[u8]) -> Result<AlarmInfo, AccessError> {
     let root = parse_xml(body, &XmlLimits::default())?;
     extract_alarm(&root)
+}
+
+fn child_element(name: &str, text: &str) -> XmlElement {
+    XmlElement {
+        name: name.to_string(),
+        attributes: HashMap::new(),
+        text: text.to_string(),
+        children: Vec::new(),
+    }
+}
+
+/// Encodes an `Alarm` NOTIFY payload for an upstream platform.
+pub fn build_alarm_notify(
+    sn: &str,
+    device_id: &str,
+    priority: Option<&str>,
+    method: Option<&str>,
+    alarm_type: Option<&str>,
+    time: Option<&str>,
+    info: Option<&str>,
+) -> Result<String, AccessError> {
+    let mut root = child_element("Notify", "");
+    root.children.push(child_element("CmdType", "Alarm"));
+    root.children.push(child_element("SN", sn));
+    root.children.push(child_element("DeviceID", device_id));
+    if let Some(p) = priority {
+        root.children.push(child_element("AlarmPriority", p));
+    }
+    if let Some(m) = method {
+        root.children.push(child_element("AlarmMethod", m));
+    }
+    if let Some(t) = alarm_type {
+        root.children.push(child_element("AlarmType", t));
+    }
+    if let Some(t) = time {
+        root.children.push(child_element("AlarmTime", t));
+    }
+    if let Some(i) = info {
+        root.children.push(child_element("Info", i));
+    }
+    encode_xml(&root, true)
 }
 
 fn extract_alarm(root: &XmlElement) -> Result<AlarmInfo, AccessError> {
