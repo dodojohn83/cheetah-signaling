@@ -55,15 +55,20 @@ impl DeviceAssignmentService {
             .checked_add(self.lease_duration)
             .ok_or_else(|| cheetah_domain::DomainError::internal("owner lease overflow"))?;
 
-        // Fast path: keep the current owner if it is still alive and eligible.
-        let owner_repo = self.owner_repository.lock().await;
-        if let Some(owner) = owner_repo.get(tenant_id, device_id).await?
+        // Fast path: keep the current owner if its lease is still valid and the
+        // node is alive and eligible. Drop the owner lock before looking up the
+        // node to avoid holding two async mutex guards across an await.
+        let maybe_owner = {
+            let owner_repo = self.owner_repository.lock().await;
+            owner_repo.get(tenant_id, device_id).await?
+        };
+        if let Some(owner) = maybe_owner
+            && owner.lease_until.is_none_or(|lease| lease > now)
             && let Some(node) = self.get_node(owner.owner_node_id).await?
             && is_eligible(&node, protocol, now)
         {
             return Ok(owner);
         }
-        drop(owner_repo);
 
         // Select the best candidate from the live cluster view.
         let candidate = self
