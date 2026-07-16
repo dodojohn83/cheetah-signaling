@@ -29,10 +29,8 @@ fn message_response(
     }
 }
 
-fn register_to_connected_local(
-    cascade: &mut Gb28181Cascade<impl CascadeCredentialProvider>,
-) -> String {
-    super::register_to_connected(cascade)
+fn register_to_connected_local(cascade: &mut Gb28181Cascade<impl CascadeCredentialProvider>) {
+    let _ = super::register_to_connected(cascade);
 }
 
 #[test]

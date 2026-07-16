@@ -4,6 +4,7 @@ mod catalog;
 mod keepalive;
 mod machine;
 mod registration;
+mod request_handler;
 
 pub use catalog::{CatalogError, CatalogFilter, CatalogPage, CatalogProvider, CatalogQuery};
 

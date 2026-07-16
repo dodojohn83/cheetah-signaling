@@ -8,18 +8,14 @@ use cheetah_gb28181_core::{
     DigestChallenge, DigestClient, DigestResponse, HeaderName, Method, SipMessage,
 };
 
-use super::catalog::{
-    CatalogProvider, CatalogQuery, build_bad_request_response, build_catalog_pages,
-    build_ok_response, build_response, request_from_matches_upstream,
-};
 use super::keepalive::build_keepalive_message;
 use super::registration::build_register_request;
 use super::{
     AuthorizationContext, CascadeConfig, CascadeCredentialProvider, CascadeError, CascadeEvent,
-    CascadeInput, CascadeOutput, Gb28181Cascade, Keepalive, Registered, Registering, State,
+    CascadeInput, CascadeOutput, CatalogProvider, Gb28181Cascade, Keepalive, Registered,
+    Registering, State,
 };
 use crate::events::Gb28181Event;
-use crate::xml::catalog::parse_catalog_query;
 
 impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
     /// Creates a new cascade state machine.
@@ -254,103 +250,7 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
     }
 
     fn on_request(&mut self, now: u64, msg: SipMessage) -> Vec<CascadeOutput> {
-        let Some(provider) = self.catalog_provider.clone() else {
-            return Vec::new();
-        };
-
-        let SipMessage::Request {
-            line,
-            headers,
-            body,
-            ..
-        } = &msg
-        else {
-            return Vec::new();
-        };
-
-        if line.method != Method::Message {
-            return Vec::new();
-        }
-
-        // All final responses below need a local To-tag.
-        let response_tag = self.next_local_tag(now);
-
-        // Only answer catalog queries from the configured upstream platform and
-        // only while registered. Requests from other sources are rejected with a
-        // 403 so the transaction terminates without disclosing catalog data.
-        if !matches!(self.state, State::Registered(_))
-            || !request_from_matches_upstream(&msg, &self.config.upstream)
-        {
-            return vec![CascadeOutput::SendResponse(build_response(
-                &msg,
-                403,
-                "Forbidden",
-                &response_tag,
-                Vec::new(),
-            ))];
-        }
-
-        let Some(content_type) = headers.get(&HeaderName::ContentType) else {
-            return vec![CascadeOutput::SendResponse(build_ok_response(
-                &msg,
-                &response_tag,
-            ))];
-        };
-
-        if !content_type.as_str().contains("MANSCDP") && !content_type.as_str().contains("xml") {
-            return vec![CascadeOutput::SendResponse(build_ok_response(
-                &msg,
-                &response_tag,
-            ))];
-        }
-
-        let query = match parse_catalog_query(body) {
-            Ok(q) => q,
-            Err(_) => {
-                return vec![CascadeOutput::SendResponse(build_bad_request_response(
-                    &msg,
-                    "Bad Request",
-                    &response_tag,
-                ))];
-            }
-        };
-
-        let catalog_query = CatalogQuery {
-            sn: query.sn,
-            device_id: query.device_id,
-            filter: self.config.catalog_filter.clone(),
-        };
-
-        let max_per_packet = self.config.catalog_max_items_per_packet as usize;
-        let platform_id = self.platform_id().to_string();
-        match build_catalog_pages(
-            &self.config,
-            &provider,
-            &catalog_query,
-            max_per_packet,
-            now,
-            &mut self.request_counter,
-            &platform_id,
-        ) {
-            Ok(messages) => {
-                let mut outputs = Vec::with_capacity(messages.len() + 1);
-                outputs.push(CascadeOutput::SendResponse(build_ok_response(
-                    &msg,
-                    &response_tag,
-                )));
-                for message in messages {
-                    outputs.push(CascadeOutput::SendRequest(message));
-                }
-                outputs
-            }
-            Err(_) => vec![CascadeOutput::SendResponse(build_response(
-                &msg,
-                500,
-                "Server Internal Error",
-                &response_tag,
-                Vec::new(),
-            ))],
-        }
+        super::request_handler::handle_request(self, now, msg)
     }
 
     fn handle_register_response(
@@ -785,7 +685,7 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
         format!("{}-{now}-{}", self.platform_id(), self.request_counter)
     }
 
-    fn next_local_tag(&mut self, now: u64) -> String {
+    pub(super) fn next_local_tag(&mut self, now: u64) -> String {
         self.request_counter += 1;
         format!("{}-{now}-{}", self.platform_id(), self.request_counter)
     }
@@ -795,7 +695,7 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
         format!("z9hG4bK-{}-{cseq}-{}", call_id, self.request_counter)
     }
 
-    fn platform_id(&self) -> &str {
+    pub(super) fn platform_id(&self) -> &str {
         self.config
             .local_uri
             .user()

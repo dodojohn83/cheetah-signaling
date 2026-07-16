@@ -57,6 +57,21 @@ fn request_call_id_cseq(outputs: &[CascadeOutput]) -> (String, String) {
     extract_call_id_cseq(msg)
 }
 
+fn extract_from_tag(msg: &SipMessage) -> String {
+    let headers = msg.headers();
+    let Some(from) = headers.get(&HeaderName::From) else {
+        panic!("From header");
+    };
+    let Some(tag) = from
+        .as_str()
+        .split(';')
+        .find_map(|param| param.trim().strip_prefix("tag="))
+    else {
+        panic!("From tag");
+    };
+    tag.trim().to_string()
+}
+
 fn build_401(challenge: &str, call_id: &str, cseq: &str) -> SipMessage {
     let mut headers = SipHeaders::new();
     headers.append(HeaderName::CallId, HeaderValue::new(call_id.to_string()));
@@ -98,7 +113,7 @@ fn challenge_ctx() -> DigestContext {
 
 pub(crate) fn register_to_connected(
     cascade: &mut Gb28181Cascade<impl CascadeCredentialProvider>,
-) -> String {
+) -> (String, String) {
     let outputs = cascade
         .process(CascadeInput {
             now: 1000,
@@ -106,6 +121,13 @@ pub(crate) fn register_to_connected(
         })
         .unwrap();
     let (call_id, cseq) = request_call_id_cseq(&outputs);
+    let Some(register_request) = outputs.iter().find_map(|o| match o {
+        CascadeOutput::SendRequest(msg) => Some(msg),
+        _ => None,
+    }) else {
+        panic!("register request");
+    };
+    let local_tag = extract_from_tag(register_request);
 
     let outputs = cascade
         .process(CascadeInput {
@@ -117,7 +139,7 @@ pub(crate) fn register_to_connected(
         outputs[0],
         CascadeOutput::EmitEvent(crate::events::Gb28181Event::CascadePlatformConnected { .. })
     ));
-    call_id
+    (call_id, local_tag)
 }
 
 #[test]
