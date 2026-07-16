@@ -97,7 +97,7 @@ impl TakeoverService {
             .checked_add(self.lease_duration)
             .ok_or_else(|| cheetah_domain::DomainError::internal("owner lease overflow"))?;
 
-        let mut owner_repo = self.storage.owner_repository();
+        let owner_repo = self.storage.owner_repository();
         let current = owner_repo
             .get(tenant_id, device_id)
             .await
@@ -118,16 +118,27 @@ impl TakeoverService {
             return Ok(TakeoverResult::NotEligible);
         }
 
-        let owner = owner_repo
-            .acquire(tenant_id, device_id, self.this_node, now, lease_until)
-            .await
-            .map_err(storage_to_signal)?;
-
-        if owner.owner_node_id != self.this_node {
-            return Ok(TakeoverResult::RemoteOwner { owner });
-        }
-
         let mut uow = self.storage.begin().await.map_err(storage_to_signal)?;
+        let (owner, previous) = match uow
+            .acquire_ownership(tenant_id, device_id, self.this_node, now, lease_until)
+            .await?
+        {
+            Some(result) => result,
+            None => {
+                uow.rollback().await?;
+                let owner = owner_repo
+                    .get(tenant_id, device_id)
+                    .await
+                    .map_err(storage_to_signal)?
+                    .ok_or_else(|| {
+                        cheetah_domain::DomainError::internal(
+                            "owner disappeared after lost takeover race",
+                        )
+                    })?;
+                return Ok(TakeoverResult::RemoteOwner { owner });
+            }
+        };
+
         let recovered = self
             .recover_operations(context, uow.as_mut(), tenant_id, device_id, &owner)
             .await?;
@@ -144,11 +155,10 @@ impl TakeoverService {
                 device_id,
                 node_id: owner.owner_node_id,
                 owner_epoch: owner.owner_epoch,
-                previous_node_id: current.as_ref().map(|o| o.owner_node_id),
-                previous_epoch: current.as_ref().map(|o| o.owner_epoch),
-                takeover: current.is_none_or(|previous| {
-                    previous.owner_node_id != owner.owner_node_id
-                        || previous.owner_epoch < owner.owner_epoch
+                previous_node_id: previous.as_ref().map(|o| o.owner_node_id),
+                previous_epoch: previous.as_ref().map(|o| o.owner_epoch),
+                takeover: previous.is_none_or(|p| {
+                    p.owner_node_id != owner.owner_node_id || p.owner_epoch < owner.owner_epoch
                 }),
             },
         );
