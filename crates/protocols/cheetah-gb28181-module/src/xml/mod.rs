@@ -22,7 +22,7 @@ pub use device_control::{
 pub use device_info::{DeviceInfoResponse, parse_device_info};
 pub use device_status::{DeviceStatusResponse, parse_device_status};
 pub use element::XmlElement;
-pub use keepalive::{KeepaliveInfo, parse_keepalive};
+pub use keepalive::{KeepaliveInfo, build_keepalive, parse_keepalive};
 pub use limits::XmlLimits;
 pub use mobile_position::{MobilePositionInfo, parse_mobile_position};
 pub use reader::parse_xml;

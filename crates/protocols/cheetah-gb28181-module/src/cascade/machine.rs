@@ -6,10 +6,11 @@ use cheetah_gb28181_core::{
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
+use super::keepalive::build_keepalive_message;
 use super::registration::build_register_request;
 use super::{
     AuthorizationContext, CascadeConfig, CascadeCredentialProvider, CascadeError, CascadeEvent,
-    CascadeInput, CascadeOutput, Gb28181Cascade, Registered, Registering, State,
+    CascadeInput, CascadeOutput, Gb28181Cascade, Keepalive, Registered, Registering, State,
 };
 use crate::events::Gb28181Event;
 
@@ -111,12 +112,13 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
     }
 
     fn on_tick(&mut self, now: u64) -> Result<Vec<CascadeOutput>, CascadeError> {
-        match &self.state {
+        match self.state.clone() {
             State::Registered(reg) if now >= reg.refresh_at => {
                 // Trigger a refresh.
                 self.on_register(now)
             }
-            State::Failed { retry_at, .. } if now >= *retry_at => {
+            State::Registered(reg) => self.on_keepalive_tick(now, reg),
+            State::Failed { retry_at, .. } if now >= retry_at => {
                 // Retry after backoff.
                 self.on_register(now)
             }
@@ -134,6 +136,63 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
             }
             _ => Ok(Vec::new()),
         }
+    }
+
+    fn on_keepalive_tick(
+        &mut self,
+        now: u64,
+        mut reg: Registered,
+    ) -> Result<Vec<CascadeOutput>, CascadeError> {
+        if let Some(pending_until) = reg.keepalive.pending_until {
+            if now < pending_until {
+                return Ok(Vec::new());
+            }
+            reg.keepalive.failures += 1;
+            reg.keepalive.pending_until = None;
+            if reg.keepalive.failures >= self.config.keepalive_max_failures {
+                self.state = State::Idle;
+                return Ok(vec![CascadeOutput::EmitEvent(
+                    Gb28181Event::CascadePlatformDisconnected {
+                        domain_id: self.config.domain_id.clone(),
+                        platform_id: self.platform_id().to_string(),
+                        reason: "keepalive timed out".to_string(),
+                    },
+                )]);
+            }
+            self.state = State::Registered(reg);
+            return Ok(Vec::new());
+        }
+
+        if now < reg.keepalive.next_at {
+            return Ok(Vec::new());
+        }
+
+        reg.keepalive.sn = reg
+            .keepalive
+            .sn
+            .checked_add(1)
+            .ok_or_else(|| CascadeError::Internal("keepalive SN overflow".to_string()))?;
+        reg.keepalive.cseq = reg
+            .keepalive
+            .cseq
+            .checked_add(1)
+            .ok_or_else(|| CascadeError::Internal("keepalive CSeq overflow".to_string()))?;
+        let branch = self.next_branch(&reg.keepalive.call_id, reg.keepalive.cseq);
+        let msg = build_keepalive_message(
+            &self.config,
+            &reg.keepalive.call_id,
+            reg.keepalive.cseq,
+            &reg.local_tag,
+            &branch,
+            reg.keepalive.sn,
+            self.platform_id(),
+        )?;
+        reg.keepalive.pending_until =
+            Some(now.saturating_add(self.config.keepalive_timeout_seconds.into()));
+        reg.keepalive.next_at = now.saturating_add(self.config.keepalive_interval_seconds.into());
+
+        self.state = State::Registered(reg);
+        Ok(vec![CascadeOutput::SendRequest(msg)])
     }
 
     fn on_response(
@@ -154,19 +213,25 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
             SipMessage::Request { .. } => return Ok(Vec::new()),
         };
 
-        if cseq_method != Method::Register {
-            return Ok(Vec::new());
-        }
-
-        match &self.state {
-            State::Registering(reg) if reg.call_id == call_id => {
-                let reg = reg.clone();
-                self.handle_register_response(now, msg, reg)
-            }
-            State::Deregistering(reg) if reg.call_id == call_id => {
-                let reg = reg.clone();
-                self.handle_deregister_response(now, msg, reg)
-            }
+        match cseq_method {
+            Method::Register => match &self.state {
+                State::Registering(reg) if reg.call_id == call_id => {
+                    let reg = reg.clone();
+                    self.handle_register_response(now, msg, reg)
+                }
+                State::Deregistering(reg) if reg.call_id == call_id => {
+                    let reg = reg.clone();
+                    self.handle_deregister_response(now, msg, reg)
+                }
+                _ => Ok(Vec::new()),
+            },
+            Method::Message => match &self.state {
+                State::Registered(reg) if reg.keepalive.call_id == call_id => {
+                    let reg = reg.clone();
+                    Ok(self.handle_keepalive_response(now, msg, reg))
+                }
+                _ => Ok(Vec::new()),
+            },
             _ => Ok(Vec::new()),
         }
     }
@@ -235,12 +300,20 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
             let refresh_after = expires_u64.saturating_sub(margin).max(1);
             let refresh_at = now.saturating_add(refresh_after);
 
+            let keepalive_call_id = self.next_call_id(now);
+            let keepalive = Keepalive::new(
+                now.saturating_add(self.config.keepalive_interval_seconds.into()),
+                keepalive_call_id,
+                0,
+            );
+
             let registered = Registered {
                 cseq: reg.cseq,
                 call_id: reg.call_id.clone(),
                 local_tag: reg.local_tag.clone(),
                 refresh_at,
                 challenge,
+                keepalive,
             };
 
             self.state = State::Registered(registered);
@@ -323,6 +396,48 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
         }
 
         Ok(Vec::new())
+    }
+
+    fn handle_keepalive_response(
+        &mut self,
+        now: u64,
+        msg: SipMessage,
+        mut reg: Registered,
+    ) -> Vec<CascadeOutput> {
+        let status = match &msg {
+            SipMessage::Response { line, .. } => line.clone(),
+            _ => unreachable!("caller ensures a response"),
+        };
+
+        reg.keepalive.pending_until = None;
+
+        if status.code >= 400 {
+            reg.keepalive.failures += 1;
+            if reg.keepalive.failures >= self.config.keepalive_max_failures {
+                self.state = State::Idle;
+                return vec![CascadeOutput::EmitEvent(
+                    Gb28181Event::CascadePlatformDisconnected {
+                        domain_id: self.config.domain_id.clone(),
+                        platform_id: self.platform_id().to_string(),
+                        reason: format!("keepalive failed with {} {}", status.code, status.reason),
+                    },
+                )];
+            }
+            self.state = State::Registered(reg);
+            return Vec::new();
+        }
+
+        if status.code >= 200 {
+            reg.keepalive.failures = 0;
+            reg.keepalive.next_at =
+                now.saturating_add(self.config.keepalive_interval_seconds.into());
+            self.state = State::Registered(reg);
+            return Vec::new();
+        }
+
+        // Provisional response; wait for final.
+        self.state = State::Registered(reg);
+        Vec::new()
     }
 
     fn challenge_and_resend(

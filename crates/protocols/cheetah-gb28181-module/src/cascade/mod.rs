@@ -1,5 +1,6 @@
 //! Sans-I/O GB28181 cascade upstream registration state machine.
 
+mod keepalive;
 mod machine;
 mod registration;
 
@@ -64,6 +65,13 @@ pub struct CascadeConfig {
     pub allow_md5: bool,
     /// Whether internal IP literals are accepted as upstream targets.
     pub allow_internal_upstreams: bool,
+    /// Interval in seconds between periodic keepalive MESSAGE requests.
+    pub keepalive_interval_seconds: u32,
+    /// How long a keepalive MESSAGE transaction may stay pending.
+    pub keepalive_timeout_seconds: u32,
+    /// Maximum consecutive keepalive failures before marking the platform
+    /// disconnected.
+    pub keepalive_max_failures: u32,
     /// Optional `User-Agent` header value.
     pub user_agent: Option<String>,
 }
@@ -143,6 +151,9 @@ impl CascadeConfig {
             transaction_timeout_seconds: 32,
             allow_md5,
             allow_internal_upstreams,
+            keepalive_interval_seconds: 30,
+            keepalive_timeout_seconds: 10,
+            keepalive_max_failures: 3,
             user_agent: None,
         })
     }
@@ -218,6 +229,7 @@ struct Registered {
     local_tag: String,
     refresh_at: u64,
     challenge: Option<DigestChallenge>,
+    keepalive: Keepalive,
 }
 
 #[derive(Clone, Debug)]
@@ -234,6 +246,30 @@ struct Registering {
     /// Cached challenge from the last 401 response; used to pre-authenticate
     /// refresh REGISTERs when the 200 OK does not repeat `WWW-Authenticate`.
     challenge: Option<DigestChallenge>,
+}
+
+/// Keepalive state tracked while the platform is registered.
+#[derive(Clone, Debug)]
+struct Keepalive {
+    next_at: u64,
+    pending_until: Option<u64>,
+    failures: u32,
+    sn: u32,
+    call_id: String,
+    cseq: u32,
+}
+
+impl Keepalive {
+    fn new(next_at: u64, call_id: String, cseq: u32) -> Self {
+        Self {
+            next_at,
+            pending_until: None,
+            failures: 0,
+            sn: 0,
+            call_id,
+            cseq,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
