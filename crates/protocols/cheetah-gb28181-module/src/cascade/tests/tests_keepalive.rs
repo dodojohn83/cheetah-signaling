@@ -39,7 +39,7 @@ fn keepalive_sends_periodic_message_and_resets_on_success() {
     cfg.keepalive_interval_seconds = 30;
     cfg.keepalive_timeout_seconds = 10;
     cfg.keepalive_max_failures = 3;
-    let mut cascade = Gb28181Cascade::new(cfg, password_provider());
+    let mut cascade = Gb28181Cascade::new(cfg, password_provider()).unwrap();
     register_to_connected_local(&mut cascade);
 
     // First keepalive is scheduled at the registration success time + interval.
@@ -97,7 +97,7 @@ fn keepalive_timeout_counts_failures_and_disconnects() {
     cfg.keepalive_timeout_seconds = keepalive_timeout;
     cfg.keepalive_max_failures = 2;
     let max_failures = cfg.keepalive_max_failures;
-    let mut cascade = Gb28181Cascade::new(cfg, password_provider());
+    let mut cascade = Gb28181Cascade::new(cfg, password_provider()).unwrap();
     register_to_connected_local(&mut cascade);
 
     let mut now = 1031;
@@ -150,7 +150,7 @@ fn keepalive_business_response_error_counts_failure() {
     cfg.keepalive_interval_seconds = 30;
     cfg.keepalive_timeout_seconds = 10;
     cfg.keepalive_max_failures = 3;
-    let mut cascade = Gb28181Cascade::new(cfg, password_provider());
+    let mut cascade = Gb28181Cascade::new(cfg, password_provider()).unwrap();
     register_to_connected_local(&mut cascade);
 
     let outputs = cascade
@@ -212,7 +212,7 @@ fn keepalive_redirect_treated_as_failure() {
     // With max_failures set to 1, a single redirect response must immediately
     // mark the platform disconnected.
     cfg.keepalive_max_failures = 1;
-    let mut cascade = Gb28181Cascade::new(cfg, password_provider());
+    let mut cascade = Gb28181Cascade::new(cfg, password_provider()).unwrap();
     register_to_connected_local(&mut cascade);
 
     let outputs = cascade
@@ -248,7 +248,7 @@ fn keepalive_provisional_response_preserves_timeout() {
     cfg.keepalive_interval_seconds = 30;
     cfg.keepalive_timeout_seconds = 10;
     cfg.keepalive_max_failures = 1;
-    let mut cascade = Gb28181Cascade::new(cfg, password_provider());
+    let mut cascade = Gb28181Cascade::new(cfg, password_provider()).unwrap();
     register_to_connected_local(&mut cascade);
 
     let outputs = cascade
@@ -294,7 +294,7 @@ fn stale_keepalive_response_is_ignored() {
     cfg.keepalive_interval_seconds = 30;
     cfg.keepalive_timeout_seconds = 10;
     cfg.keepalive_max_failures = 2;
-    let mut cascade = Gb28181Cascade::new(cfg, password_provider());
+    let mut cascade = Gb28181Cascade::new(cfg, password_provider()).unwrap();
     register_to_connected_local(&mut cascade);
 
     let outputs = cascade

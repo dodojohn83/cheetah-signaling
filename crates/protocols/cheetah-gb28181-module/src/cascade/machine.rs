@@ -2,32 +2,45 @@
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+
+use secrecy::ExposeSecret;
 
 use cheetah_gb28181_core::{
-    DigestChallenge, DigestClient, DigestResponse, HeaderName, Method, SipMessage,
+    DigestChallenge, DigestClient, DigestContext, DigestReplayCache, DigestResponse, HeaderName,
+    Method, SipMessage,
 };
 
 use super::keepalive::build_keepalive_message;
 use super::registration::build_register_request;
 use super::{
     AuthorizationContext, CascadeConfig, CascadeCredentialProvider, CascadeError, CascadeEvent,
-    CascadeInput, CascadeOutput, CatalogProvider, Gb28181Cascade, Keepalive, Registered,
-    Registering, State,
+    CascadeInput, CascadeOutput, CatalogProvider, Gb28181Cascade, InboundAuthContext, Keepalive,
+    Registered, Registering, State,
 };
 use crate::events::Gb28181Event;
 
 impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
     /// Creates a new cascade state machine.
-    pub fn new(config: CascadeConfig, provider: P) -> Self {
-        Self {
+    pub fn new(config: CascadeConfig, provider: P) -> Result<Self, CascadeError> {
+        let inbound_auth = if let Some(secret) = &config.catalog_inbound_digest_server_secret {
+            let digest = DigestContext::new(config.realm.clone(), secret.expose_secret())?;
+            Some(Arc::new(InboundAuthContext {
+                digest,
+                replay: Mutex::new(DigestReplayCache::new(1024)),
+            }))
+        } else {
+            None
+        };
+        Ok(Self {
             config,
             provider,
             state: State::Idle,
             request_counter: 0,
             auth: None,
             catalog_provider: None,
-        }
+            inbound_auth,
+        })
     }
 
     /// Attaches a catalog provider for handling upstream `Catalog` queries.

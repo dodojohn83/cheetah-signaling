@@ -1,6 +1,9 @@
 //! Incoming SIP request handling for the upstream cascade state machine.
 
-use cheetah_gb28181_core::{HeaderName, Method, SipMessage};
+use cheetah_gb28181_core::{
+    DigestError, DigestResponse, HeaderName, HeaderValue, Method, RequestLine, SipHeaders,
+    SipMessage, StatusLine,
+};
 
 use super::catalog::{
     CatalogQuery, build_bad_request_response, build_catalog_pages, build_ok_response,
@@ -63,6 +66,12 @@ pub(super) fn handle_request<P: CascadeCredentialProvider>(
             &response_tag,
             Vec::new(),
         ))];
+    }
+
+    if let Some(response) =
+        check_catalog_authorization(cascade, &msg, line, headers, now, &response_tag)
+    {
+        return vec![CascadeOutput::SendResponse(response)];
     }
 
     let Some(content_type) = headers.get(&HeaderName::ContentType) else {
@@ -134,4 +143,111 @@ pub(super) fn handle_request<P: CascadeCredentialProvider>(
             Vec::new(),
         ))],
     }
+}
+
+/// Returns `Some(response)` when the incoming `Catalog` `MESSAGE` must be
+/// challenged or rejected based on SIP Digest authentication. Returns `None` when
+/// authentication is disabled or the request carries a valid `Authorization`
+/// header.
+fn check_catalog_authorization<P: CascadeCredentialProvider>(
+    cascade: &mut Gb28181Cascade<P>,
+    msg: &SipMessage,
+    line: &RequestLine,
+    headers: &SipHeaders,
+    now: u64,
+    response_tag: &str,
+) -> Option<SipMessage> {
+    let auth = cascade.inbound_auth.as_ref()?;
+
+    let credential_ref = cascade
+        .config
+        .catalog_inbound_digest_credential_ref
+        .as_deref()
+        .unwrap_or(&cascade.config.credential_ref);
+    let Some(password) = cascade.provider.password_for(credential_ref) else {
+        return Some(build_response(
+            msg,
+            403,
+            "Forbidden",
+            response_tag,
+            Vec::new(),
+        ));
+    };
+
+    let mut replay = auth.replay.lock().unwrap_or_else(|e| e.into_inner());
+    let uri = line.uri.encode();
+
+    if let Some(auth_header) = headers.get(&HeaderName::Authorization) {
+        match DigestResponse::parse(auth_header.as_str()) {
+            Ok(response) => {
+                if auth
+                    .digest
+                    .validate(&response, &line.method, &uri, &password, &mut replay, now)
+                    .is_ok()
+                {
+                    return None;
+                }
+            }
+            Err(DigestError::Malformed(_)) | Err(DigestError::InvalidQop) => {
+                // Fall through to challenge.
+            }
+            Err(_) => {
+                // Transient/internal digest errors: challenge again.
+            }
+        }
+    }
+
+    let challenge = auth.digest.generate_challenge(now).ok()?;
+    build_unauthorized_response(msg, response_tag, &challenge).ok()
+}
+
+fn build_unauthorized_response(
+    request: &SipMessage,
+    response_tag: &str,
+    challenge: &cheetah_gb28181_core::DigestChallenge,
+) -> Result<SipMessage, crate::cascade::CascadeError> {
+    let SipMessage::Request { headers, .. } = request else {
+        return Err(crate::cascade::CascadeError::Internal(
+            "caller ensured a request".to_string(),
+        ));
+    };
+
+    let mut response_headers = SipHeaders::new();
+    for via in headers.get_all(&HeaderName::Via) {
+        response_headers.append(HeaderName::Via, via.clone());
+    }
+    if let Some(from) = headers.get(&HeaderName::From) {
+        response_headers.append(HeaderName::From, from.clone());
+    }
+    if let Some(to) = headers.get(&HeaderName::To) {
+        let to_str = to.as_str();
+        let has_tag = to_str
+            .split(';')
+            .any(|param| param.trim().starts_with("tag="));
+        if has_tag {
+            response_headers.append(HeaderName::To, to.clone());
+        } else {
+            response_headers.append(
+                HeaderName::To,
+                HeaderValue::new(format!("{};tag={}", to_str.trim(), response_tag)),
+            );
+        }
+    }
+    if let Some(call_id) = headers.get(&HeaderName::CallId) {
+        response_headers.append(HeaderName::CallId, call_id.clone());
+    }
+    if let Some(cseq) = headers.get(&HeaderName::CSeq) {
+        response_headers.append(HeaderName::CSeq, cseq.clone());
+    }
+    response_headers.append(
+        HeaderName::WwwAuthenticate,
+        HeaderValue::new(challenge.to_header_value()),
+    );
+    response_headers.append(HeaderName::ContentLength, HeaderValue::new("0"));
+
+    Ok(SipMessage::Response {
+        line: StatusLine::new(401, "Unauthorized"),
+        headers: response_headers,
+        body: Vec::new(),
+    })
 }

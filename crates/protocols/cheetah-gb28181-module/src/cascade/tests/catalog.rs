@@ -13,7 +13,7 @@ use cheetah_gb28181_core::{
 
 use super::{config, local_uri, password_provider, register_to_connected, upstream_uri};
 
-fn catalog_query_message(sn: &str, device_id: &str, call_id: &str) -> SipMessage {
+pub(crate) fn catalog_query_message(sn: &str, device_id: &str, call_id: &str) -> SipMessage {
     let body = format!(
         r#"<?xml version="1.0"?>
 <Query>
@@ -157,7 +157,7 @@ fn catalog_response_bodies(outputs: &[CascadeOutput]) -> Vec<String> {
 
 #[test]
 fn catalog_query_without_provider_is_ignored() {
-    let mut cascade = Gb28181Cascade::new(config(), password_provider());
+    let mut cascade = Gb28181Cascade::new(config(), password_provider()).unwrap();
     let (call_id, _) = register_to_connected(&mut cascade);
     let msg = catalog_query_message("1", "34020000001320000001", &call_id);
     let outputs = cascade
@@ -174,7 +174,9 @@ fn non_message_request_is_ignored() {
     let provider = setup_provider();
     let mut cfg = config();
     cfg.catalog_max_items_per_packet = 2;
-    let mut cascade = Gb28181Cascade::new(cfg, password_provider()).with_catalog_provider(provider);
+    let mut cascade = Gb28181Cascade::new(cfg, password_provider())
+        .unwrap()
+        .with_catalog_provider(provider);
     let _ = register_to_connected(&mut cascade);
 
     let mut headers = SipHeaders::new();
@@ -203,7 +205,9 @@ fn catalog_query_returns_ok_and_paginated_messages() {
     let provider = setup_provider();
     let mut cfg = config();
     cfg.catalog_max_items_per_packet = 2;
-    let mut cascade = Gb28181Cascade::new(cfg, password_provider()).with_catalog_provider(provider);
+    let mut cascade = Gb28181Cascade::new(cfg, password_provider())
+        .unwrap()
+        .with_catalog_provider(provider);
     let (call_id, _) = register_to_connected(&mut cascade);
 
     let msg = catalog_query_message("7", "34020000001320000001", &call_id);
@@ -257,7 +261,9 @@ fn catalog_filter_respects_tenant_and_whitelist() {
         ],
         ..Default::default()
     };
-    let mut cascade = Gb28181Cascade::new(cfg, password_provider()).with_catalog_provider(provider);
+    let mut cascade = Gb28181Cascade::new(cfg, password_provider())
+        .unwrap()
+        .with_catalog_provider(provider);
     let (call_id, _) = register_to_connected(&mut cascade);
 
     let msg = catalog_query_message("1", "34020000001320000001", &call_id);
@@ -291,7 +297,9 @@ fn catalog_filter_respects_tags_and_org_prefix() {
         org_path_prefix: Some("/t1".to_string()),
         ..Default::default()
     };
-    let mut cascade = Gb28181Cascade::new(cfg, password_provider()).with_catalog_provider(provider);
+    let mut cascade = Gb28181Cascade::new(cfg, password_provider())
+        .unwrap()
+        .with_catalog_provider(provider);
     let (call_id, _) = register_to_connected(&mut cascade);
 
     let msg = catalog_query_message("1", "34020000001320000001", &call_id);
@@ -322,7 +330,9 @@ fn catalog_empty_result_emits_single_message_with_sum_zero() {
     let provider = Arc::new(TestCatalogProvider { all: vec![] });
     let mut cfg = config();
     cfg.catalog_max_items_per_packet = 100;
-    let mut cascade = Gb28181Cascade::new(cfg, password_provider()).with_catalog_provider(provider);
+    let mut cascade = Gb28181Cascade::new(cfg, password_provider())
+        .unwrap()
+        .with_catalog_provider(provider);
     let (call_id, _) = register_to_connected(&mut cascade);
 
     let msg = catalog_query_message("1", "34020000001320000001", &call_id);
@@ -346,7 +356,9 @@ fn malformed_catalog_body_returns_bad_request() {
     let provider = setup_provider();
     let mut cfg = config();
     cfg.catalog_max_items_per_packet = 100;
-    let mut cascade = Gb28181Cascade::new(cfg, password_provider()).with_catalog_provider(provider);
+    let mut cascade = Gb28181Cascade::new(cfg, password_provider())
+        .unwrap()
+        .with_catalog_provider(provider);
     let (call_id, _) = register_to_connected(&mut cascade);
 
     let mut msg = catalog_query_message("1", "34020000001320000001", &call_id);
@@ -372,7 +384,9 @@ fn non_catalog_query_returns_bad_request() {
     let provider = setup_provider();
     let mut cfg = config();
     cfg.catalog_max_items_per_packet = 100;
-    let mut cascade = Gb28181Cascade::new(cfg, password_provider()).with_catalog_provider(provider);
+    let mut cascade = Gb28181Cascade::new(cfg, password_provider())
+        .unwrap()
+        .with_catalog_provider(provider);
     let (call_id, _) = register_to_connected(&mut cascade);
 
     let body = br#"<?xml version="1.0"?>
@@ -404,7 +418,9 @@ fn catalog_message_preserves_response_headers() {
     let provider = setup_provider();
     let mut cfg = config();
     cfg.catalog_max_items_per_packet = 2;
-    let mut cascade = Gb28181Cascade::new(cfg, password_provider()).with_catalog_provider(provider);
+    let mut cascade = Gb28181Cascade::new(cfg, password_provider())
+        .unwrap()
+        .with_catalog_provider(provider);
     let (call_id, _) = register_to_connected(&mut cascade);
 
     let msg = catalog_query_message("1", "34020000001320000001", &call_id);
@@ -457,7 +473,9 @@ fn message_without_manscdp_content_type_returns_ok_and_no_catalog() {
     let provider = setup_provider();
     let mut cfg = config();
     cfg.catalog_max_items_per_packet = 100;
-    let mut cascade = Gb28181Cascade::new(cfg, password_provider()).with_catalog_provider(provider);
+    let mut cascade = Gb28181Cascade::new(cfg, password_provider())
+        .unwrap()
+        .with_catalog_provider(provider);
     let (call_id, _) = register_to_connected(&mut cascade);
 
     let msg = plain_message_request(&call_id);
@@ -478,7 +496,9 @@ fn catalog_query_respects_max_pages_cap() {
     let mut cfg = config();
     cfg.catalog_max_items_per_packet = 2;
     cfg.catalog_max_query_pages = 2;
-    let mut cascade = Gb28181Cascade::new(cfg, password_provider()).with_catalog_provider(provider);
+    let mut cascade = Gb28181Cascade::new(cfg, password_provider())
+        .unwrap()
+        .with_catalog_provider(provider);
     let (call_id, _) = register_to_connected(&mut cascade);
 
     let msg = catalog_query_message("1", "34020000001320000001", &call_id);
@@ -547,7 +567,9 @@ fn catalog_provider_error_returns_500() {
     let provider = Arc::new(FailingCatalogProvider);
     let mut cfg = config();
     cfg.catalog_max_items_per_packet = 100;
-    let mut cascade = Gb28181Cascade::new(cfg, password_provider()).with_catalog_provider(provider);
+    let mut cascade = Gb28181Cascade::new(cfg, password_provider())
+        .unwrap()
+        .with_catalog_provider(provider);
     let (call_id, _) = register_to_connected(&mut cascade);
 
     let msg = catalog_query_message("1", "34020000001320000001", &call_id);
@@ -578,7 +600,9 @@ fn catalog_query_does_not_loop_forever_on_inconsistent_provider() {
     let mut cfg = config();
     cfg.catalog_max_items_per_packet = 2;
     cfg.catalog_max_query_pages = 3;
-    let mut cascade = Gb28181Cascade::new(cfg, password_provider()).with_catalog_provider(provider);
+    let mut cascade = Gb28181Cascade::new(cfg, password_provider())
+        .unwrap()
+        .with_catalog_provider(provider);
     let (call_id, _) = register_to_connected(&mut cascade);
 
     let msg = catalog_query_message("1", "34020000001320000001", &call_id);
@@ -603,7 +627,9 @@ fn catalog_query_when_unregistered_returns_403() {
     let provider = setup_provider();
     let mut cfg = config();
     cfg.catalog_max_items_per_packet = 100;
-    let mut cascade = Gb28181Cascade::new(cfg, password_provider()).with_catalog_provider(provider);
+    let mut cascade = Gb28181Cascade::new(cfg, password_provider())
+        .unwrap()
+        .with_catalog_provider(provider);
 
     let msg = catalog_query_message("1", "34020000001320000001", "ignored");
     let outputs = cascade
@@ -670,7 +696,9 @@ fn catalog_query_from_unknown_upstream_returns_403() {
     let provider = setup_provider();
     let mut cfg = config();
     cfg.catalog_max_items_per_packet = 100;
-    let mut cascade = Gb28181Cascade::new(cfg, password_provider()).with_catalog_provider(provider);
+    let mut cascade = Gb28181Cascade::new(cfg, password_provider())
+        .unwrap()
+        .with_catalog_provider(provider);
     let (call_id, _) = register_to_connected(&mut cascade);
 
     let foreign = SipUri::parse("sip:attacker@evil.example.com").unwrap();
@@ -698,7 +726,9 @@ fn catalog_response_includes_local_to_tag() {
     let provider = setup_provider();
     let mut cfg = config();
     cfg.catalog_max_items_per_packet = 100;
-    let mut cascade = Gb28181Cascade::new(cfg, password_provider()).with_catalog_provider(provider);
+    let mut cascade = Gb28181Cascade::new(cfg, password_provider())
+        .unwrap()
+        .with_catalog_provider(provider);
     let (call_id, _) = register_to_connected(&mut cascade);
 
     let msg = catalog_query_message("1", "34020000001320000001", &call_id);
@@ -726,7 +756,9 @@ fn catalog_query_with_new_call_id_succeeds() {
     let provider = setup_provider();
     let mut cfg = config();
     cfg.catalog_max_items_per_packet = 100;
-    let mut cascade = Gb28181Cascade::new(cfg, password_provider()).with_catalog_provider(provider);
+    let mut cascade = Gb28181Cascade::new(cfg, password_provider())
+        .unwrap()
+        .with_catalog_provider(provider);
     let _ = register_to_connected(&mut cascade);
 
     // A real upstream platform uses a fresh Call-ID for each MESSAGE query.
@@ -753,7 +785,9 @@ fn catalog_query_wrong_device_id_returns_bad_request() {
     let provider = setup_provider();
     let mut cfg = config();
     cfg.catalog_max_items_per_packet = 100;
-    let mut cascade = Gb28181Cascade::new(cfg, password_provider()).with_catalog_provider(provider);
+    let mut cascade = Gb28181Cascade::new(cfg, password_provider())
+        .unwrap()
+        .with_catalog_provider(provider);
     let _ = register_to_connected(&mut cascade);
 
     // The queried DeviceID must equal the local platform ID.
