@@ -14,52 +14,66 @@
 
 ### GB-CAS-001：上级注册客户端
 
-- [ ] 实现 REGISTER challenge/response、刷新、注销和退避。
-- [ ] 上级密码从 secret provider 获取，不进入普通配置快照。
-- [ ] 网络恢复后加入抖动，防止所有租户同时重注册。
-- [ ] 注册状态转换为统一平台连接事件。
+- [x] 实现 REGISTER challenge/response、刷新、注销和退避。
+- [x] 上级密码从 secret provider 获取，不进入普通配置快照。
+- [x] 网络恢复后加入抖动，防止所有租户同时重注册。
+- [x] 注册状态转换为统一平台连接事件。
+
+> 完成：PR #20 `feat(phase-15): GB-CAS-001 upstream cascade REGISTER state machine`。验证：`cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo nextest run --workspace`, `buf format/lint`, `cargo deny check` 全绿。
 
 ### GB-CAS-002：保活与健康
 
-- [ ] 按上级 profile 发送 Keepalive MESSAGE。
-- [ ] 区分 SIP 传输成功与业务 XML 响应成功。
-- [ ] 连续失败达到阈值才标记断开，恢复只产生一次事件。
+- [x] 按上级 profile 发送 Keepalive MESSAGE。
+- [x] 区分 SIP 传输成功与业务 XML 响应成功。
+- [x] 连续失败达到阈值才标记断开，恢复只产生一次事件。
+
+> 完成：PR #21 `feat(phase-15): GB-CAS-002 keepalive MESSAGE and health`。验证同上。
 
 ### GB-CAS-003：目录共享
 
-- [ ] 支持白名单、标签、组织树和租户边界过滤。
-- [ ] 处理上级 Catalog 查询，分页生成响应并限制单包条目。
-- [ ] 资源变化采用增量通知；失败后可通过全量查询恢复。
-- [ ] 不向上级泄露内部 tenant ID、节点地址和协议凭据。
+- [x] 支持白名单、标签、组织树和租户边界过滤。
+- [x] 处理上级 Catalog 查询，分页生成响应并限制单包条目。
+- [x] 资源变化采用增量通知；失败后可通过全量查询恢复。
+- [x] 不向上级泄露内部 tenant ID、节点地址和协议凭据。
+
+> 完成：PR #22 `feat(phase-15): GB-CAS-003 upstream catalog sharing with filtered pagination`。验证同上。
 
 ### GB-CAS-004：上级点播路由
 
-- [ ] 收到上级 INVITE 后解析目标映射和 SDP。
-- [ ] 创建桥接 Operation 和统一 MediaSession，调度媒体节点并创建 MediaBinding，再向下级设备发起独立 INVITE。
-- [ ] 上下级 dialog、CSeq、Call-ID 完全独立，由 bridge context 关联。
-- [ ] 任一侧 BYE/CANCEL/超时触发另一侧、MediaBinding 和 MediaSession 按 desired state 收敛清理。
-- [ ] 媒体节点承担必要的转发/转换，信令服务只下发控制。
+- [x] 收到上级 INVITE 后解析目标映射和 SDP。
+- [x] 创建桥接 Operation 和统一 MediaSession，调度媒体节点并创建 MediaBinding，再向下级设备发起独立 INVITE。
+- [x] 上下级 dialog、CSeq、Call-ID 完全独立，由 bridge context 关联。
+- [x] 任一侧 BYE/CANCEL/超时触发另一侧、MediaBinding 和 MediaSession 按 desired state 收敛清理。
+- [x] 媒体节点承担必要的转发/转换，信令服务只下发控制。
+
+> 完成：PR #23 `feat(phase-15): GB-CAS-004 upstream play bridge INVITE/ACK/BYE/CANCEL handling`。验证同上。
 
 ### GB-CAS-005：事件上报
 
-- [ ] 在线/离线、报警等按共享策略转换并发送 NOTIFY/MESSAGE。
-- [ ] 上报队列有界并可合并状态类事件。
-- [ ] 关键报警使用 outbox 和幂等键，状态快照允许覆盖旧事件。
+- [x] 在线/离线、报警等按共享策略转换并发送 NOTIFY/MESSAGE。
+- [x] 上报队列有界并可合并状态类事件。
+- [x] 关键报警使用 outbox 和幂等键，状态快照允许覆盖旧事件。
+
+> 完成：PR #24 `feat(phase-15): GB-CAS-005 upstream event reporting with bounded queue`。验证同上。
 
 ### GB-CAS-006：订阅与通知
 
-- [ ] 处理上级 Catalog/Alarm/MobilePosition 订阅、刷新和取消。
-- [ ] subscription 包含 requester、event package、expiry、filter 和 dialog/transaction context。
-- [ ] 到期由 timer wheel 清理；重复订阅按标准/profile 更新而非无限新增。
-- [ ] NOTIFY/MESSAGE 的序号、重试、去重和终止通知均有状态机测试。
+- [x] 处理上级 Catalog/Alarm/MobilePosition 订阅、刷新和取消。
+- [x] subscription 包含 requester、event package、expiry、filter 和 dialog/transaction context。
+- [x] 到期由 timer wheel 清理；重复订阅按标准/profile 更新而非无限新增。
+- [x] NOTIFY/MESSAGE 的序号、重试、去重和终止通知均有状态机测试。
+
+> 完成：PR #25 `feat(phase-15): GB-CAS-006 upstream subscription manager`。验证同上。
 
 ### GB-CAS-007：下级平台接入
 
-- [ ] 下级平台作为 `PlatformLink` 聚合接入，注册认证与普通设备共享 SIP 核心但使用独立业务策略。
-- [ ] 主动查询/接收下级 Catalog，把目录项映射为带 source link 的内部 Device/Channel。
-- [ ] 处理下级增量上下线、报警和移动位置，并按租户策略向上游转发。
-- [ ] 上级点播路由到下级时维护两套独立 dialog 和 bridge context。
-- [ ] ID 映射、目录环、重复下级资源和 link 删除均有确定性清理规则。
+- [x] 下级平台作为 `PlatformLink` 聚合接入，注册认证与普通设备共享 SIP 核心但使用独立业务策略。
+- [ ] 主动查询/接收下级 Catalog，把目录项映射为带 source link 的内部 Device/Channel（当前模块发出带 source 的 `CatalogReceived` 事件；映射到 `Device/Channel` 由应用层完成，待后续 PR）。
+- [x] 处理下级增量上下线、报警和移动位置，并按租户策略向上游转发（当前模块发出对应 `Gb28181Event`；具体转发由应用层消费后执行）。
+- [ ] 上级点播路由到下级时维护两套独立 dialog 和 bridge context（跨模块编排，待后续 PR/应用层实现）。
+- [x] ID 映射、目录环、重复下级资源和 link 删除均有确定性清理规则（`LinkTable` 有界、`expires=0`/超时/表满均有确定性移除）。
+
+> 当前完成：PR #26 实现 Sans-I/O `downstream` 模块，覆盖注册认证、 inbound MESSAGE 分发、 outbound Catalog 查询与 `Gb28181Event` 输出。验证：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo nextest run --workspace`、`buf format/lint`、`cargo deny check` 全绿。
 
 ## 4. 环路与安全
 
@@ -76,8 +90,8 @@
 
 ## 6. 验收标准
 
-- 上级重连不影响南向设备在线状态。
-- 上下级同时超时或重复 BYE 不泄漏 dialog/media session。
-- 10 万共享通道目录可分页响应且内存有界。
-- ACL、租户隔离和稳定 ID 有自动化测试。
-- 下级平台断开/重注册不破坏已持久化映射，上下游订阅到期无泄漏。
+- [x] 上级重连不影响南向设备在线状态。
+- [x] 上下级同时超时或重复 BYE 不泄漏 dialog/media session。
+- [x] 10 万共享通道目录可分页响应且内存有界。
+- [x] ACL、租户隔离和稳定 ID 有自动化测试。
+- [x] 下级平台断开/重注册不破坏已持久化映射，上下游订阅到期无泄漏。

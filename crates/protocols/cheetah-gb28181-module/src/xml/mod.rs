@@ -15,8 +15,8 @@ pub mod writer;
 
 pub use alarm::{AlarmInfo, build_alarm_notify, parse_alarm};
 pub use catalog::{
-    CatalogItem, CatalogQuery, CatalogResponse, build_catalog_response, parse_catalog,
-    parse_catalog_query,
+    CatalogItem, CatalogQuery, CatalogResponse, build_catalog_query, build_catalog_response,
+    parse_catalog, parse_catalog_query,
 };
 pub use device_control::{
     DeviceControlKind, DeviceControlRequest, DeviceControlResponse, PresetAction, PresetCommand,
