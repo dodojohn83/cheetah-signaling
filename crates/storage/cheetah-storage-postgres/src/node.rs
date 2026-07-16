@@ -218,8 +218,8 @@ impl NodeRepository for PostgresNodeRepository {
         node_id: NodeId,
         instance_id: NodeInstanceId,
         updated_at: UtcTimestamp,
-    ) -> Result<(), StorageError> {
-        sqlx::query(
+    ) -> Result<bool, StorageError> {
+        let result = sqlx::query(
             "UPDATE cluster_nodes SET draining = true, updated_at = $1 WHERE node_id = $2 AND instance_id = $3",
         )
         .bind(updated_at.as_offset())
@@ -228,6 +228,6 @@ impl NodeRepository for PostgresNodeRepository {
         .execute(&self.write_pool)
         .await
         .map_err(|e| StorageError::backend(e.to_string()))?;
-        Ok(())
+        Ok(result.rows_affected() > 0)
     }
 }

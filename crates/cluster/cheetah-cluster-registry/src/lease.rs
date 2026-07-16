@@ -106,12 +106,17 @@ impl NodeLeaseService {
     pub async fn mark_draining(&mut self) -> Result<(), NodeLeaseError> {
         let instance_id = self.instance_id()?;
         let now = self.clock.now_wall();
-        self.repository
+        let updated = self
+            .repository
             .lock()
             .await
             .mark_draining(self.this_node, instance_id, now)
             .await
             .map_err(NodeLeaseError::Storage)?;
+        if !updated {
+            warn!(node_id = %self.this_node, "node drain rejected, instance fenced");
+            return Err(NodeLeaseError::Fenced(self.this_node.to_string()));
+        }
         Ok(())
     }
 
@@ -162,7 +167,9 @@ mod tests {
             }
         }
 
-        fn lock_nodes(&self) -> Result<std::sync::MutexGuard<'_, HashMap<NodeId, ClusterNode>>, StorageError> {
+        fn lock_nodes(
+            &self,
+        ) -> Result<std::sync::MutexGuard<'_, HashMap<NodeId, ClusterNode>>, StorageError> {
             self.nodes
                 .lock()
                 .map_err(|e| StorageError::internal(format!("{e}")))
@@ -226,14 +233,14 @@ mod tests {
                     .parse()
                     .map_err(|e| StorageError::invalid_argument(format!("invalid cursor: {e}")))?;
                 let cursor_node_id: NodeId = id.into();
-                start = alive
-                    .binary_search_by(|n| {
-                        n.updated_at
-                            .cmp(&updated_at)
-                            .then(n.node_id.cmp(&cursor_node_id))
-                    })
-                    .unwrap_or_else(|i| i);
-                start += 1;
+                start = match alive.binary_search_by(|n| {
+                    n.updated_at
+                        .cmp(&updated_at)
+                        .then(n.node_id.cmp(&cursor_node_id))
+                }) {
+                    Ok(i) => i + 1,
+                    Err(i) => i,
+                };
             }
 
             let end = (start + page.page_size as usize).min(alive.len());
@@ -265,15 +272,17 @@ mod tests {
             node_id: NodeId,
             instance_id: NodeInstanceId,
             updated_at: UtcTimestamp,
-        ) -> Result<(), StorageError> {
+        ) -> Result<bool, StorageError> {
             let mut nodes = self.lock_nodes()?;
             if let Some(node) = nodes.get_mut(&node_id)
                 && node.instance_id == instance_id
             {
                 node.draining = true;
                 node.updated_at = updated_at;
+                Ok(true)
+            } else {
+                Ok(false)
             }
-            Ok(())
         }
     }
 
@@ -354,6 +363,31 @@ mod tests {
 
         let stored = repo.lock().await.get(service.this_node).await?;
         assert!(stored.ok_or("node should exist")?.draining);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn mark_draining_rejects_fenced_instance() -> TestResult<()> {
+        let (mut service, clock, id_gen, repo) = setup();
+        service
+            .register(NodeCapacity { max_devices: 100 }, HashMap::new())
+            .await?;
+
+        let mut new_service = NodeLeaseService::new(
+            repo.clone(),
+            clock.clone(),
+            id_gen.clone(),
+            service.this_node,
+            "zone-a",
+            "0.1.0",
+            DurationMs::from_millis(10_000),
+        );
+        new_service
+            .register(NodeCapacity { max_devices: 100 }, HashMap::new())
+            .await?;
+
+        let result = service.mark_draining().await;
+        assert!(matches!(result, Err(NodeLeaseError::Fenced(_))));
         Ok(())
     }
 }

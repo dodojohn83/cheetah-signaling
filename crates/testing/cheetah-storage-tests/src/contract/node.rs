@@ -34,8 +34,7 @@ pub async fn run(storage: &dyn Storage, fixtures: &Fixtures) -> TestResult<()> {
             NodeLoad { devices: 5 },
         )
         .await?;
-    let heartbeat = heartbeat
-        .ok_or("heartbeat should match registered instance")?;
+    let heartbeat = heartbeat.ok_or("heartbeat should match registered instance")?;
     assert_eq!(heartbeat.load.devices, 5);
 
     // A heartbeat with a different instance should be rejected (fenced).
@@ -51,8 +50,12 @@ pub async fn run(storage: &dyn Storage, fixtures: &Fixtures) -> TestResult<()> {
         .await?;
     assert!(fenced.is_none(), "other instance must be fenced");
 
-    repo.mark_draining(node_id, instance_id, updated_at).await?;
-    let after_drain = repo.get(node_id).await?.ok_or("node should exist after drain")?;
+    let drained = repo.mark_draining(node_id, instance_id, updated_at).await?;
+    assert!(drained, "current instance should be able to mark draining");
+    let after_drain = repo
+        .get(node_id)
+        .await?
+        .ok_or("node should exist after drain")?;
     assert!(after_drain.draining);
 
     // list_alive should include the node while its lease is valid.
@@ -83,7 +86,10 @@ pub async fn run(storage: &dyn Storage, fixtures: &Fixtures) -> TestResult<()> {
     reregistered.lease_until = node.lease_until;
     reregistered.updated_at = node.updated_at;
     repo.register(reregistered.clone()).await?;
-    let loaded = repo.get(node_id).await?.ok_or("node should exist after re-registration")?;
+    let loaded = repo
+        .get(node_id)
+        .await?
+        .ok_or("node should exist after re-registration")?;
     assert_eq!(loaded.instance_id, new_instance);
     assert_eq!(loaded.version, "0.1.1");
 
@@ -100,6 +106,13 @@ pub async fn run(storage: &dyn Storage, fixtures: &Fixtures) -> TestResult<()> {
     assert!(
         fenced.is_none(),
         "old instance must be fenced after re-registration"
+    );
+
+    // Mark draining with the old instance should also be rejected.
+    let drained = repo.mark_draining(node_id, instance_id, updated_at).await?;
+    assert!(
+        !drained,
+        "old instance must be fenced when marking draining"
     );
 
     Ok(())

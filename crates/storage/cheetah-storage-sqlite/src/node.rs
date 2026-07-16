@@ -226,8 +226,8 @@ impl NodeRepository for SqliteNodeRepository {
         node_id: NodeId,
         instance_id: NodeInstanceId,
         updated_at: UtcTimestamp,
-    ) -> Result<(), StorageError> {
-        sqlx::query(
+    ) -> Result<bool, StorageError> {
+        let result = sqlx::query(
             "UPDATE cluster_nodes SET draining = 1, updated_at = ? WHERE node_id = ? AND instance_id = ?",
         )
         .bind(to_millis(updated_at))
@@ -236,6 +236,6 @@ impl NodeRepository for SqliteNodeRepository {
         .execute(&self.write_pool)
         .await
         .map_err(|e| StorageError::backend(e.to_string()))?;
-        Ok(())
+        Ok(result.rows_affected() > 0)
     }
 }

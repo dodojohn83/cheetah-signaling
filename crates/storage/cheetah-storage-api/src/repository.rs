@@ -144,10 +144,12 @@ pub trait NodeRepository: Send + Sync {
     ) -> Result<Page<ClusterNode>, StorageError>;
 
     /// Marks the node as draining if `instance_id` matches.
+    /// Returns `true` if the row was updated, or `false` if the node is
+    /// unknown or has been fenced by another instance.
     async fn mark_draining(
         &mut self,
         node_id: NodeId,
         instance_id: NodeInstanceId,
         updated_at: UtcTimestamp,
-    ) -> Result<(), StorageError>;
+    ) -> Result<bool, StorageError>;
 }
