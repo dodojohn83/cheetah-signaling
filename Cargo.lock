@@ -421,6 +421,15 @@ dependencies = [
 [[package]]
 name = "cheetah-cluster-registry"
 version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "cheetah-domain",
+ "cheetah-signal-types",
+ "cheetah-storage-api",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
 
 [[package]]
 name = "cheetah-config"

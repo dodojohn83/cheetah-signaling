@@ -14,6 +14,7 @@ pub mod event;
 pub mod media_binding;
 pub mod media_callback;
 pub mod media_session;
+pub mod node;
 pub mod operation;
 pub mod ports;
 pub mod webhook;
@@ -35,6 +36,7 @@ pub use media_callback::{MediaNodeCallback, MediaNodeCallbackKind, MediaNodeSess
 pub use media_session::{
     MediaPurpose, MediaSession, MediaSessionDesiredState, MediaSessionError, MediaSessionState,
 };
+pub use node::{ClusterNode, NodeCapacity, NodeLoad};
 pub use operation::{Operation, OperationError, OperationResult, OperationStatus};
 pub use ports::*;
 pub use webhook::{DeliveryStatus, WebhookConfig, WebhookDelivery, sign_webhook_payload};

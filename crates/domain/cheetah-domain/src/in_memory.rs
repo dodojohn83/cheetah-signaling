@@ -197,6 +197,10 @@ impl IdGenerator for InMemoryIdGenerator {
         NodeId::from_uuid(self.next_uuid())
     }
 
+    fn generate_node_instance_id(&self) -> cheetah_signal_types::NodeInstanceId {
+        cheetah_signal_types::NodeInstanceId::from_uuid(self.next_uuid())
+    }
+
     fn generate_plugin_id(&self) -> cheetah_signal_types::PluginId {
         cheetah_signal_types::PluginId::from_uuid(self.next_uuid())
     }

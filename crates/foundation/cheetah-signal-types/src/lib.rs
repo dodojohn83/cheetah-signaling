@@ -25,8 +25,8 @@ pub use error::{FieldViolation, Result, SignalError, SignalErrorKind};
 pub use event::Event;
 pub use id::{
     ChannelId, CorrelationId, DeliveryId, DeviceId, EndpointId, EventId, MediaBindingId,
-    MediaNodeInstanceEpoch, MediaSessionId, MessageId, NodeId, OperationId, OwnerEpoch, PluginId,
-    ProtocolIdentity, ProtocolSessionId, Revision, TenantId, WebhookId,
+    MediaNodeInstanceEpoch, MediaSessionId, MessageId, NodeId, NodeInstanceId, OperationId,
+    OwnerEpoch, PluginId, ProtocolIdentity, ProtocolSessionId, Revision, TenantId, WebhookId,
 };
 pub use net::is_internal_ip;
 pub use pagination::{DEFAULT_PAGE_SIZE, ListCursor, MAX_PAGE_SIZE, Page, PageRequest};
