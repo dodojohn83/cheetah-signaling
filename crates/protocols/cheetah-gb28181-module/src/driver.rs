@@ -44,6 +44,7 @@ impl CredentialProvider for NoopCredentialProvider {
 /// Built-in GB28181 protocol driver.
 pub struct Gb28181ProtocolDriver {
     inner: Mutex<Option<Gb28181Access<NoopCredentialProvider>>>,
+    started_at: std::time::Instant,
 }
 
 impl std::fmt::Debug for Gb28181ProtocolDriver {
@@ -59,6 +60,7 @@ impl Gb28181ProtocolDriver {
     pub fn new() -> Self {
         Self {
             inner: Mutex::new(None),
+            started_at: std::time::Instant::now(),
         }
     }
 }
@@ -260,21 +262,23 @@ async fn process_sip(
     let message = SipParser::parse_datagram(&bytes, SipParserConfig::default())
         .map_err(|e| PluginError::InvalidManifest(format!("SIP parse error: {e}")))?;
 
-    let now = time::OffsetDateTime::now_utc().unix_timestamp() as u64;
+    let now = driver.started_at.elapsed().as_secs();
     let input = AccessInput {
         source,
         now,
         message,
     };
 
-    let mut guard = driver.inner.lock().await;
-    let access = guard
-        .as_mut()
-        .ok_or_else(|| PluginError::Driver("GB28181 driver is not started".to_string()))?;
+    let outputs = {
+        let mut guard = driver.inner.lock().await;
+        let access = guard
+            .as_mut()
+            .ok_or_else(|| PluginError::Driver("GB28181 driver is not started".to_string()))?;
 
-    let outputs = access
-        .process(input)
-        .map_err(|e| PluginError::Driver(format!("GB28181 access error: {e}")))?;
+        access
+            .process(input)
+            .map_err(|e| PluginError::Driver(format!("GB28181 access error: {e}")))?
+    };
 
     for output in outputs {
         let event = match output {

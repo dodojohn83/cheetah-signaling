@@ -491,7 +491,6 @@ dependencies = [
  "serde_json",
  "sha2",
  "thiserror",
- "time",
  "tokio",
  "tracing",
 ]
@@ -656,6 +655,7 @@ dependencies = [
  "semver",
  "serde_json",
  "thiserror",
+ "time",
  "tokio",
  "tracing",
 ]

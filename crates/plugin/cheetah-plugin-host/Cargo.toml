@@ -14,6 +14,7 @@ async-trait = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time"] }
 semver = { workspace = true }
 serde_json = { workspace = true }
+time = { workspace = true }
 secrecy = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }

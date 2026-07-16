@@ -9,7 +9,7 @@ use cheetah_plugin_sdk::{
     PluginError, PluginManifest, PluginName, ProtocolDriver, ProtocolDriverFactory, ProtocolEvent,
     ResourceBudget,
 };
-use cheetah_signal_types::{DurationMs, PluginId};
+use cheetah_signal_types::{DurationMs, PluginId, UtcTimestamp};
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
@@ -119,9 +119,18 @@ pub struct PluginHost {
     default_timeout: DurationMs,
 }
 
+/// Minimum driver operation timeout. Non-positive explicit timeouts are
+/// coerced to this value so every lifecycle call remains bounded.
+const MIN_DRIVER_TIMEOUT: DurationMs = DurationMs::from_millis(1_000);
+
 impl PluginHost {
     /// Creates a new plugin host for the given SDK version.
     pub fn new(host_sdk_version: semver::Version, default_timeout: DurationMs) -> Self {
+        let default_timeout = if default_timeout.as_millis() <= 0 {
+            MIN_DRIVER_TIMEOUT
+        } else {
+            default_timeout
+        };
         Self {
             loader: ManifestLoader::new(host_sdk_version),
             registry: BuiltInRegistry::new(),
@@ -227,6 +236,9 @@ impl PluginHost {
     }
 
     /// Dispatches a command to a driver instance.
+    ///
+    /// The command's `deadline` is used as a wall-clock timeout; if none was set
+    /// (deadline is the Unix epoch) the host default is used.
     pub async fn handle_command(
         &self,
         id: PluginId,
@@ -236,11 +248,12 @@ impl PluginHost {
             .instances
             .get(&id)
             .ok_or_else(|| PluginHostError::NotFound(id.to_string()))?;
-        instance
-            .driver
-            .handle_command(&instance.context, command)
-            .await?;
-        Ok(())
+        let deadline = command_deadline(&command, self.default_timeout)?;
+        with_timeout(
+            deadline,
+            instance.driver.handle_command(&instance.context, command),
+        )
+        .await
     }
 
     /// Probes a target by creating a temporary driver and calling its probe.
@@ -354,13 +367,35 @@ impl CommandSource for NoOpSource {
     }
 }
 
+fn command_deadline(
+    command: &DriverCommand,
+    default: DurationMs,
+) -> Result<DurationMs, PluginHostError> {
+    let epoch = UtcTimestamp::default();
+    if command.deadline == epoch {
+        return Ok(default);
+    }
+
+    let now = time::OffsetDateTime::now_utc();
+    let deadline = command.deadline.as_offset();
+    let diff = deadline - now;
+    let remaining_ms = diff.whole_milliseconds();
+    if remaining_ms <= 0 {
+        return Err(PluginHostError::Timeout);
+    }
+    let remaining_ms: i64 = remaining_ms
+        .try_into()
+        .map_err(|_| PluginHostError::Internal("command deadline overflow".to_string()))?;
+    Ok(DurationMs::from_millis(remaining_ms))
+}
+
 async fn with_timeout<F, T>(deadline: DurationMs, fut: F) -> Result<T, PluginHostError>
 where
     F: std::future::Future<Output = Result<T, PluginError>> + Send,
 {
-    let millis = deadline.as_millis();
+    let mut millis = deadline.as_millis();
     if millis <= 0 {
-        return fut.await.map_err(Into::into);
+        millis = MIN_DRIVER_TIMEOUT.as_millis();
     }
     let std_duration = std::time::Duration::from_millis(millis as u64);
     timeout(std_duration, fut)

@@ -35,6 +35,11 @@ impl ManifestLoader {
         payload: &[u8],
     ) -> Result<ValidatedManifest, PluginHostError> {
         if let Some(checksum) = &manifest.checksum {
+            if checksum.algorithm == "hmac-sha256" {
+                return Err(PluginHostError::InvalidManifest(
+                    "hmac-sha256 manifest checksum requires a secret and is not supported by the built-in loader".to_string(),
+                ));
+            }
             verify_manifest_checksum(payload, &checksum.algorithm, &checksum.digest, &[])?;
         }
 
