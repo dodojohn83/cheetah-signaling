@@ -102,9 +102,10 @@ impl OwnerRepository for PostgresOwnerRepository {
         tenant_id: cheetah_signal_types::TenantId,
         device_id: cheetah_signal_types::DeviceId,
         node_id: cheetah_signal_types::NodeId,
+        now: cheetah_signal_types::UtcTimestamp,
         lease_until: cheetah_signal_types::UtcTimestamp,
     ) -> Result<OwnerInfo, StorageError> {
-        let updated_at = OffsetDateTime::now_utc();
+        let updated_at = now.as_offset();
         sqlx::query(
             "INSERT INTO device_owners (tenant_id, device_id, owner_node_id, owner_epoch, expires_at, updated_at)
              VALUES ($1, $2, $3, 1, $4, $5)
@@ -114,13 +115,21 @@ impl OwnerRepository for PostgresOwnerRepository {
                  owner_epoch = device_owners.owner_epoch + 1,
                  expires_at = EXCLUDED.expires_at,
                  updated_at = EXCLUDED.updated_at
-             WHERE (device_owners.expires_at IS NOT NULL AND device_owners.expires_at <= EXCLUDED.updated_at)
-                OR device_owners.owner_node_id = EXCLUDED.owner_node_id",
+             WHERE (device_owners.expires_at IS NOT NULL AND device_owners.expires_at <= $6)
+                OR device_owners.owner_node_id = $7
+                OR NOT EXISTS (
+                    SELECT 1 FROM cluster_nodes
+                    WHERE node_id = device_owners.owner_node_id
+                      AND lease_until > $8
+                )",
         )
         .bind(tenant_id.as_uuid())
         .bind(device_id.as_uuid())
         .bind(node_id.as_uuid())
         .bind(lease_until.as_offset())
+        .bind(updated_at)
+        .bind(updated_at)
+        .bind(node_id.as_uuid())
         .bind(updated_at)
         .execute(&self.write_pool)
         .await

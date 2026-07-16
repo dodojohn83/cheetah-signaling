@@ -356,6 +356,41 @@ impl Operation {
         }
     }
 
+    /// Fails the operation with a diagnostic error.
+    ///
+    /// Works for `Pending` or `Running` operations. The result is set to a
+    /// failure and the error is captured for observability.
+    pub fn fail(
+        &mut self,
+        code: impl Into<String>,
+        message: impl Into<String>,
+        clock: &dyn Clock,
+    ) -> crate::Result<DomainEvent> {
+        match self.status {
+            OperationStatus::Pending | OperationStatus::Running => {
+                let previous = self.status;
+                self.status = OperationStatus::Failed;
+                let code = code.into();
+                let message = message.into();
+                self.result = Some(OperationResult::failure(code.clone(), message.clone()));
+                self.error = Some(OperationError::new(code, message));
+                self.bump(clock);
+                Ok(self.state_changed_event(previous))
+            }
+            OperationStatus::Succeeded | OperationStatus::Failed => {
+                Err(DomainError::invalid_transition(
+                    "Operation",
+                    format!("{:?}", self.status),
+                    "Failed",
+                ))
+            }
+            _ => Err(DomainError::already_terminal(
+                "Operation",
+                format!("{:?}", self.status),
+            )),
+        }
+    }
+
     /// Times out the operation.
     pub fn timeout(
         &mut self,

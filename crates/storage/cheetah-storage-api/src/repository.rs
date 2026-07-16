@@ -30,15 +30,17 @@ pub trait OwnerRepository: Send + Sync {
 
     /// Atomically acquires or re-acquires ownership of a device.
     ///
-    /// If the device has no owner or the existing lease has expired, the
-    /// `node_id` becomes the new owner and the epoch is incremented. Returns
-    /// the new [`OwnerInfo`] on success.
+    /// If the device has no owner, the existing lease has expired, or the
+    /// current owner's node is no longer alive, the `node_id` becomes the new
+    /// owner and the epoch is incremented. Returns the new [`OwnerInfo`] on
+    /// success.
     async fn acquire(
         &mut self,
         tenant_id: TenantId,
         device_id: DeviceId,
         node_id: NodeId,
-        lease_until: cheetah_signal_types::UtcTimestamp,
+        now: UtcTimestamp,
+        lease_until: UtcTimestamp,
     ) -> Result<OwnerInfo, StorageError>;
 
     /// Extends an existing lease if `node_id` still owns the device and the
