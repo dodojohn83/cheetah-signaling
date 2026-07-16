@@ -167,15 +167,25 @@ pub fn parse_get_device_information_response(
                 let parent = ctx.parent().map(|s| s.to_string());
                 let name = local_name(&e.name());
                 let text = ctx.on_end();
-                if parent.as_deref() == Some("Information") && name == "Manufacturer" {
+                if parent.as_deref() == Some("GetDeviceInformationResponse")
+                    && name == "Manufacturer"
+                {
                     info.manufacturer = text.trim().to_string();
-                } else if parent.as_deref() == Some("Information") && name == "Model" {
+                } else if parent.as_deref() == Some("GetDeviceInformationResponse")
+                    && name == "Model"
+                {
                     info.model = text.trim().to_string();
-                } else if parent.as_deref() == Some("Information") && name == "FirmwareVersion" {
+                } else if parent.as_deref() == Some("GetDeviceInformationResponse")
+                    && name == "FirmwareVersion"
+                {
                     info.firmware_version = text.trim().to_string();
-                } else if parent.as_deref() == Some("Information") && name == "SerialNumber" {
+                } else if parent.as_deref() == Some("GetDeviceInformationResponse")
+                    && name == "SerialNumber"
+                {
                     info.serial_number = text.trim().to_string();
-                } else if parent.as_deref() == Some("Information") && name == "HardwareId" {
+                } else if parent.as_deref() == Some("GetDeviceInformationResponse")
+                    && name == "HardwareId"
+                {
                     info.hardware_id = text.trim().to_string();
                 }
                 ctx.pop();
@@ -493,13 +503,11 @@ mod tests {
 <s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">
   <s:Body>
     <tds:GetDeviceInformationResponse xmlns:tds="http://www.onvif.org/ver10/device/wsdl">
-      <tds:Information>
-        <tt:Manufacturer xmlns:tt="http://www.onvif.org/ver10/schema">Acme</tt:Manufacturer>
-        <tt:Model xmlns:tt="http://www.onvif.org/ver10/schema">Cam-1</tt:Model>
-        <tt:FirmwareVersion xmlns:tt="http://www.onvif.org/ver10/schema">1.0</tt:FirmwareVersion>
-        <tt:SerialNumber xmlns:tt="http://www.onvif.org/ver10/schema">SN123</tt:SerialNumber>
-        <tt:HardwareId xmlns:tt="http://www.onvif.org/ver10/schema">HW1</tt:HardwareId>
-      </tds:Information>
+      <tt:Manufacturer xmlns:tt="http://www.onvif.org/ver10/schema">Acme</tt:Manufacturer>
+      <tt:Model xmlns:tt="http://www.onvif.org/ver10/schema">Cam-1</tt:Model>
+      <tt:FirmwareVersion xmlns:tt="http://www.onvif.org/ver10/schema">1.0</tt:FirmwareVersion>
+      <tt:SerialNumber xmlns:tt="http://www.onvif.org/ver10/schema">SN123</tt:SerialNumber>
+      <tt:HardwareId xmlns:tt="http://www.onvif.org/ver10/schema">HW1</tt:HardwareId>
     </tds:GetDeviceInformationResponse>
   </s:Body>
 </s:Envelope>"#;
