@@ -200,7 +200,7 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
         now: u64,
         msg: SipMessage,
     ) -> Result<Vec<CascadeOutput>, CascadeError> {
-        let (_cseq_num, cseq_method, call_id) = match &msg {
+        let (cseq_num, cseq_method, call_id) = match &msg {
             SipMessage::Response { .. } => {
                 let cseq = msg
                     .cseq()
@@ -226,7 +226,9 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
                 _ => Ok(Vec::new()),
             },
             Method::Message => match &self.state {
-                State::Registered(reg) if reg.keepalive.call_id == call_id => {
+                State::Registered(reg)
+                    if reg.keepalive.call_id == call_id && reg.keepalive.cseq == cseq_num =>
+                {
                     let reg = reg.clone();
                     Ok(self.handle_keepalive_response(now, msg, reg))
                 }

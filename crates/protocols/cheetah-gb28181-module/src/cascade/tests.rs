@@ -773,3 +773,67 @@ fn keepalive_provisional_response_preserves_timeout() {
         CascadeOutput::EmitEvent(crate::events::Gb28181Event::CascadePlatformDisconnected { .. })
     )));
 }
+
+#[test]
+fn stale_keepalive_response_is_ignored() {
+    let mut cfg = config();
+    cfg.keepalive_interval_seconds = 30;
+    cfg.keepalive_timeout_seconds = 10;
+    cfg.keepalive_max_failures = 2;
+    let mut cascade = Gb28181Cascade::new(cfg, password_provider());
+    register_to_connected(&mut cascade);
+
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 1031,
+            event: CascadeEvent::Tick,
+        })
+        .unwrap();
+    let (call_id, cseq1) = request_call_id_cseq(&outputs);
+
+    // First keepalive times out.
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 1041,
+            event: CascadeEvent::Tick,
+        })
+        .unwrap();
+    assert!(outputs.is_empty());
+
+    // A new keepalive is sent with the next CSeq.
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 1061,
+            event: CascadeEvent::Tick,
+        })
+        .unwrap();
+    let (_call_id2, cseq2) = request_call_id_cseq(&outputs);
+    assert_ne!(cseq1, cseq2);
+
+    // A late 200 OK for the first (timed-out) keepalive must be ignored so
+    // that the pending second keepalive can still time out and disconnect.
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 1062,
+            event: CascadeEvent::Response(Box::new(message_response(
+                &call_id,
+                &cseq1,
+                200,
+                "OK",
+                Vec::new(),
+            ))),
+        })
+        .unwrap();
+    assert!(outputs.is_empty());
+
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 1071,
+            event: CascadeEvent::Tick,
+        })
+        .unwrap();
+    assert!(outputs.iter().any(|o| matches!(
+        o,
+        CascadeOutput::EmitEvent(crate::events::Gb28181Event::CascadePlatformDisconnected { .. })
+    )));
+}
