@@ -695,7 +695,9 @@ fn keepalive_redirect_treated_as_failure() {
     let mut cfg = config();
     cfg.keepalive_interval_seconds = 30;
     cfg.keepalive_timeout_seconds = 10;
-    cfg.keepalive_max_failures = 3;
+    // With max_failures set to 1, a single redirect response must immediately
+    // mark the platform disconnected.
+    cfg.keepalive_max_failures = 1;
     let mut cascade = Gb28181Cascade::new(cfg, password_provider());
     register_to_connected(&mut cascade);
 
@@ -719,11 +721,8 @@ fn keepalive_redirect_treated_as_failure() {
             ))),
         })
         .unwrap();
-    assert!(outputs.is_empty());
 
-    // Failures should accumulate until the maximum is reached; a single redirect
-    // does not immediately disconnect.
-    assert!(!outputs.iter().any(|o| matches!(
+    assert!(outputs.iter().any(|o| matches!(
         o,
         CascadeOutput::EmitEvent(crate::events::Gb28181Event::CascadePlatformDisconnected { .. })
     )));

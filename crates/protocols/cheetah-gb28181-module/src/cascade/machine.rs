@@ -411,9 +411,10 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
 
         reg.keepalive.pending_until = None;
 
-        // Any non-2xx final response is a transport failure. The business
-        // outcome of a 200 OK is further checked by parsing the XML body.
-        if status.code >= 400 {
+        // Any non-2xx final response (including 3xx redirects) is a
+        // transport failure. The business outcome of a 200 OK is further
+        // checked by parsing the XML body.
+        if status.code >= 300 {
             return self.keepalive_failure(now, reg, status.code, &status.reason);
         }
 
