@@ -212,7 +212,22 @@ pub(crate) fn handle_subscribe<P: CascadeCredentialProvider>(
     let granted_expiry =
         requested_expiry.clamp(min_expiry.min(max_expiry), min_expiry.max(max_expiry));
 
-    enforce_subscription_capacity(cascade, &key);
+    if let Some(existing) = cascade.subscriptions.get(&key)
+        && existing.event_package != event_package
+    {
+        return vec![CascadeOutput::SendResponse(build_response(
+            &msg,
+            489,
+            "Bad Event",
+            &local_tag,
+            Vec::new(),
+        ))];
+    }
+
+    let mut outputs = Vec::new();
+    if let Some(evicted) = enforce_subscription_capacity(cascade, &key, now) {
+        outputs.push(evicted);
+    }
 
     let mut sub = cascade
         .subscriptions
@@ -277,7 +292,7 @@ pub(crate) fn handle_subscribe<P: CascadeCredentialProvider>(
         HeaderValue::new(granted_expiry.to_string()),
     );
 
-    let mut outputs = vec![CascadeOutput::SendResponse(ok)];
+    outputs.push(CascadeOutput::SendResponse(ok));
     if let Some(n) = notify {
         outputs.push(CascadeOutput::SendRequest(n));
     }
@@ -290,8 +305,8 @@ pub(crate) fn handle_response<P: CascadeCredentialProvider>(
     _now: u64,
     msg: SipMessage,
 ) -> Vec<CascadeOutput> {
-    let (cseq_num, call_id) = match &msg {
-        SipMessage::Response { .. } => {
+    let (status_code, cseq_num, call_id) = match &msg {
+        SipMessage::Response { line, .. } => {
             let cseq = match msg.cseq() {
                 Some(c) => c,
                 None => return Vec::new(),
@@ -300,7 +315,7 @@ pub(crate) fn handle_response<P: CascadeCredentialProvider>(
                 Some(c) => c.to_string(),
                 None => return Vec::new(),
             };
-            (cseq.0, call_id)
+            (line.code, cseq.0, call_id)
         }
         SipMessage::Request { .. } => return Vec::new(),
     };
@@ -310,14 +325,24 @@ pub(crate) fn handle_response<P: CascadeCredentialProvider>(
         .iter()
         .find(|(_, s)| s.call_id == call_id)
         .map(|(k, _)| k.clone());
-    if let Some(key) = key
-        && let Some(sub) = cascade.subscriptions.get_mut(&key)
-        && sub
-            .pending_notify
-            .as_ref()
-            .is_some_and(|p| p.cseq == cseq_num)
-    {
-        sub.pending_notify = None;
+    let Some(key) = key else {
+        return Vec::new();
+    };
+
+    // Only act on final responses to a pending NOTIFY. 2xx stops retransmission;
+    // any final error (3xx/4xx/5xx/6xx) terminates the subscription because the
+    // upstream has rejected the dialog usage.
+    if (200..300).contains(&status_code) {
+        if let Some(sub) = cascade.subscriptions.get_mut(&key)
+            && sub
+                .pending_notify
+                .as_ref()
+                .is_some_and(|p| p.cseq == cseq_num)
+        {
+            sub.pending_notify = None;
+        }
+    } else if status_code >= 300 {
+        cascade.subscriptions.remove(&key);
     }
     Vec::new()
 }
@@ -433,21 +458,31 @@ fn canonical_event_package(raw: &str) -> Option<String> {
 fn enforce_subscription_capacity<P: CascadeCredentialProvider>(
     cascade: &mut Gb28181Cascade<P>,
     new_key: &str,
-) {
+    now: u64,
+) -> Option<CascadeOutput> {
     if cascade.subscriptions.len() < cascade.config.subscription_max_subscriptions as usize
         || cascade.subscriptions.contains_key(new_key)
     {
-        return;
+        return None;
     }
-    let Some(oldest) = cascade
+    let oldest = cascade
         .subscriptions
         .iter()
         .min_by_key(|(_, s)| s.last_active_at)
-        .map(|(k, _)| k.clone())
-    else {
-        return;
-    };
-    cascade.subscriptions.remove(&oldest);
+        .map(|(k, _)| k.clone())?;
+    let sub = cascade.subscriptions.remove(&oldest)?;
+    let cseq = sub.next_cseq;
+    let branch = cascade.next_branch(&sub.call_id, cseq);
+    build_notify(
+        cascade,
+        &sub,
+        cseq,
+        &branch,
+        "terminated;reason=timeout",
+        now,
+    )
+    .ok()
+    .map(CascadeOutput::SendRequest)
 }
 
 mod notify;
