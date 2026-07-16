@@ -125,6 +125,39 @@ fn retransmitted_two_hundred_ok_reacknowledges_active_session() {
 }
 
 #[test]
+fn retransmitted_invite_200_ok_matches_after_in_dialog_request() {
+    let mut media = Gb28181Media::new(config());
+    let sid = MediaSessionId::generate();
+    media.process(MediaInput::Command(start_live(sid))).unwrap();
+    media
+        .process(MediaInput::Message(build_test_200_ok()))
+        .unwrap();
+
+    let outputs = media
+        .process(MediaInput::Command(MediaCommand::ControlPlayback {
+            media_session_id: sid,
+            action: PlaybackAction::Play,
+            scale: None,
+            range: None,
+        }))
+        .unwrap();
+    assert_eq!(outputs.len(), 1);
+    assert!(matches!(&outputs[0], MediaOutput::SendMessage(_)));
+
+    let outputs = media
+        .process(MediaInput::Message(build_test_200_ok()))
+        .unwrap();
+    assert_eq!(outputs.len(), 1);
+    let MediaOutput::SendMessage(ack) = &outputs[0] else {
+        panic!("expected SendMessage ACK");
+    };
+    let SipMessage::Request { line, .. } = ack else {
+        panic!("expected ACK request");
+    };
+    assert_eq!(line.method, Method::Ack);
+}
+
+#[test]
 fn stop_live_sends_bye_and_removes_session_on_ok() {
     let mut media = Gb28181Media::new(config());
     let sid = MediaSessionId::generate();

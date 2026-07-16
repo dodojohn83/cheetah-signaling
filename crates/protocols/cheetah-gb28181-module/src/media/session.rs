@@ -28,7 +28,10 @@ pub struct Session {
     pub call_id: String,
     pub local_tag: String,
     pub remote_tag: Option<String>,
+    /// CSeq counter used for in-dialog requests; incremented after each request.
     pub cseq: u32,
+    /// CSeq number of the original INVITE transaction, used to match 2xx retransmissions.
+    pub invite_cseq: u32,
     pub branch: String,
     /// Original remote AOR used in the To header.
     pub target: SipUri,

@@ -268,6 +268,7 @@ fn do_start(
             local_tag: p.local_tag.clone(),
             remote_tag: None,
             cseq: p.cseq,
+            invite_cseq: p.cseq,
             branch: p.branch.clone(),
             target: p.target.clone(),
             remote_target: None,

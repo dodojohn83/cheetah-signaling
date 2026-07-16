@@ -40,7 +40,7 @@ fn on_response(
         let cseq_match = media
             .sessions
             .get(&sid)
-            .map(|s| s.cseq == cseq.0)
+            .map(|s| s.invite_cseq == cseq.0)
             .unwrap_or(false);
         if cseq_match {
             if (200..300).contains(&code) {
