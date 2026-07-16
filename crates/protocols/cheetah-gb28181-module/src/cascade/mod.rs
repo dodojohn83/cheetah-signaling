@@ -213,6 +213,9 @@ struct Registering {
     authenticated: bool,
     is_deregister: bool,
     previous: Option<Registered>,
+    /// Cached challenge from the last 401 response; used to pre-authenticate
+    /// refresh REGISTERs when the 200 OK does not repeat `WWW-Authenticate`.
+    challenge: Option<DigestChallenge>,
 }
 
 #[derive(Clone, Debug)]

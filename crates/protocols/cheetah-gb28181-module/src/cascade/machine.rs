@@ -204,7 +204,12 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
 
         if status.code >= 200 {
             let expires = parse_expires(&msg, self.config.register_interval_seconds);
-            let challenge = extract_challenge(&msg).ok().flatten();
+            // A 200 OK may not repeat WWW-Authenticate; carry the challenge
+            // from the 401 that authenticated this transaction forward.
+            let challenge = extract_challenge(&msg)
+                .ok()
+                .flatten()
+                .or_else(|| reg.challenge.clone());
 
             let registered = Registered {
                 cseq: reg.cseq,
@@ -321,8 +326,11 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
             Some(&auth),
         )?;
 
-        // Store the challenge used for the next refresh/deregister.
+        // Store the challenge used for the next refresh/deregister. The
+        // `Registering` field holds it even when `previous` is None, so an
+        // initial registration caches the challenge after its first 401.
         if !reg.is_deregister {
+            reg.challenge = Some(challenge.clone());
             reg.previous = reg.previous.take().map(|mut p| {
                 p.challenge = Some(challenge);
                 p
@@ -411,6 +419,7 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
             _ => 0,
         };
 
+        let challenge = previous.as_ref().and_then(|p| p.challenge.clone());
         Ok(Registering {
             cseq,
             branch,
@@ -421,6 +430,7 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
             authenticated: false,
             is_deregister,
             previous,
+            challenge,
         })
     }
 
