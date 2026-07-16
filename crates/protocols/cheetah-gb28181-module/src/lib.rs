@@ -29,6 +29,7 @@ pub use error::AccessError;
 pub use events::{DevicePresence, Gb28181Event};
 pub use media::{
     Gb28181Media, MediaCommand, MediaConfig, MediaError, MediaInput, MediaOutput, MediaTransport,
+    PlaybackAction,
 };
 pub use ports::CredentialProvider;
 pub use types::{DeviceId, DomainId};

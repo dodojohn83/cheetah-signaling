@@ -25,6 +25,8 @@ pub enum Method {
     Subscribe,
     /// NOTIFY (reserved).
     Notify,
+    /// INFO for in-dialog control (e.g., MANSRTSP playback control).
+    Info,
     /// Other method not in the GB28181 subset.
     Other(String),
 }
@@ -42,6 +44,7 @@ impl Method {
             "OPTIONS" => Method::Options,
             "SUBSCRIBE" => Method::Subscribe,
             "NOTIFY" => Method::Notify,
+            "INFO" => Method::Info,
             other if other.chars().all(|c| c.is_ascii_uppercase() || c == '-') => {
                 Method::Other(other.to_string())
             }
@@ -68,6 +71,7 @@ impl std::fmt::Display for Method {
             Method::Options => "OPTIONS",
             Method::Subscribe => "SUBSCRIBE",
             Method::Notify => "NOTIFY",
+            Method::Info => "INFO",
             Method::Other(other) => other.as_str(),
         };
         write!(f, "{s}")

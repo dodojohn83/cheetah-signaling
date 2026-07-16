@@ -7,6 +7,7 @@ use std::fmt::Write as _;
 
 /// Encodes an SDP session to a `CRLF`-terminated string.
 pub fn encode_sdp(session: &SdpSession) -> Result<String, SdpError> {
+    validate_session(session)?;
     let mut out = String::new();
     write_session(&mut out, session)?;
     for time in &session.times {
@@ -17,6 +18,105 @@ pub fn encode_sdp(session: &SdpSession) -> Result<String, SdpError> {
         write_media(&mut out, media)?;
     }
     Ok(out)
+}
+
+fn validate_no_crlf(value: &str) -> Result<(), SdpError> {
+    if value.contains('\r') || value.contains('\n') {
+        return Err(SdpError::Malformed(format!(
+            "SDP field contains forbidden line break: {value:?}"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_session(session: &SdpSession) -> Result<(), SdpError> {
+    validate_no_crlf(&session.version)?;
+    validate_no_crlf(&session.origin.username)?;
+    validate_no_crlf(&session.origin.sess_id)?;
+    validate_no_crlf(&session.origin.sess_version)?;
+    validate_no_crlf(&session.origin.nettype)?;
+    validate_no_crlf(&session.origin.addrtype)?;
+    validate_no_crlf(&session.origin.address)?;
+    validate_no_crlf(&session.name)?;
+    if let Some(info) = &session.info {
+        validate_no_crlf(info)?;
+    }
+    if let Some(subject) = &session.subject {
+        validate_no_crlf(subject)?;
+    }
+    if let Some(conn) = &session.connection {
+        validate_no_crlf(&conn.nettype)?;
+        validate_no_crlf(&conn.addrtype)?;
+        validate_no_crlf(&conn.address)?;
+    }
+    for attr in &session.attributes {
+        validate_attribute(attr)?;
+    }
+    for time in &session.times {
+        validate_no_crlf(&time.start)?;
+        validate_no_crlf(&time.stop)?;
+    }
+    for media in &session.media {
+        validate_media(media)?;
+    }
+    Ok(())
+}
+
+fn validate_media(media: &SdpMedia) -> Result<(), SdpError> {
+    validate_no_crlf(&media.media_type)?;
+    validate_no_crlf(&media.proto)?;
+    for fmt in &media.formats {
+        validate_no_crlf(fmt)?;
+    }
+    if let Some(title) = &media.title {
+        validate_no_crlf(title)?;
+    }
+    if let Some(conn) = &media.connection {
+        validate_no_crlf(&conn.nettype)?;
+        validate_no_crlf(&conn.addrtype)?;
+        validate_no_crlf(&conn.address)?;
+    }
+    for attr in &media.attributes {
+        validate_attribute(attr)?;
+    }
+    Ok(())
+}
+
+fn validate_attribute(attr: &SdpAttribute) -> Result<(), SdpError> {
+    match attr {
+        SdpAttribute::RtpMap(RtpMap {
+            pt,
+            encoding,
+            clock,
+            params,
+        }) => {
+            validate_no_crlf(pt)?;
+            validate_no_crlf(encoding)?;
+            validate_no_crlf(clock)?;
+            if let Some(p) = params {
+                validate_no_crlf(p)?;
+            }
+        }
+        SdpAttribute::Fmtp { pt, params } => {
+            validate_no_crlf(pt)?;
+            validate_no_crlf(params)?;
+        }
+        SdpAttribute::Ssrc { id, text } => {
+            validate_no_crlf(id)?;
+            if let Some(t) = text {
+                validate_no_crlf(t)?;
+            }
+        }
+        SdpAttribute::Y(v) => validate_no_crlf(v)?,
+        SdpAttribute::Unknown { name, value } => {
+            validate_no_crlf(name)?;
+            if let Some(v) = value {
+                validate_no_crlf(v)?;
+            }
+        }
+        SdpAttribute::Setup(_) | SdpAttribute::Connection(_) | SdpAttribute::Direction(_) => {}
+    }
+    Ok(())
 }
 
 use super::error::SdpError;

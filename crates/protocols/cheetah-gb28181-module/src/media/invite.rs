@@ -9,6 +9,64 @@ use cheetah_gb28181_core::{
     encode_sdp,
 };
 
+/// Parameters for an SDP offer.
+#[allow(missing_docs)]
+#[derive(Clone, Debug)]
+pub struct SdpParams {
+    /// `s=` session name (`Play`, `Playback`, `Download`, etc.).
+    pub session_name: String,
+    /// `m=` media type (`video` or `audio`).
+    pub media_type: String,
+    /// `m=` port.
+    pub media_port: u16,
+    /// RTP transport token.
+    pub transport: MediaTransport,
+    /// Media direction attribute.
+    pub direction: cheetah_gb28181_core::sdp::SdpDirection,
+    /// `t=` time description.
+    pub time: cheetah_gb28181_core::sdp::SdpTime,
+    /// Optional `a=y:` SSRC for GB28181 video sessions.
+    pub ssrc: Option<String>,
+    /// `c=` address and origin address.
+    pub media_address: String,
+    /// Optional explicit `rtpmap`; defaults to PS/90000 when absent.
+    pub rtpmap: Option<cheetah_gb28181_core::sdp::RtpMap>,
+    /// Extra `a=` attributes appended after the default set.
+    pub extra_attrs: Vec<cheetah_gb28181_core::sdp::SdpAttribute>,
+}
+
+impl SdpParams {
+    /// Returns the default PS/90000 `rtpmap` used for GB28181 video streams.
+    pub fn default_video_rtpmap() -> cheetah_gb28181_core::sdp::RtpMap {
+        cheetah_gb28181_core::sdp::RtpMap {
+            pt: "96".to_string(),
+            encoding: "PS".to_string(),
+            clock: "90000".to_string(),
+            params: None,
+        }
+    }
+
+    /// Returns a PCMA/8000 `rtpmap` for G.711A audio.
+    pub fn pcma_rtpmap() -> cheetah_gb28181_core::sdp::RtpMap {
+        cheetah_gb28181_core::sdp::RtpMap {
+            pt: "8".to_string(),
+            encoding: "PCMA".to_string(),
+            clock: "8000".to_string(),
+            params: None,
+        }
+    }
+
+    /// Returns a PCMU/8000 `rtpmap` for G.711U audio.
+    pub fn pcmu_rtpmap() -> cheetah_gb28181_core::sdp::RtpMap {
+        cheetah_gb28181_core::sdp::RtpMap {
+            pt: "0".to_string(),
+            encoding: "PCMU".to_string(),
+            clock: "8000".to_string(),
+            params: None,
+        }
+    }
+}
+
 /// Builds an INVITE request with an SDP offer.
 #[allow(clippy::too_many_arguments)]
 pub fn build_invite(
@@ -20,12 +78,9 @@ pub fn build_invite(
     branch: &str,
     device_id: &DeviceId,
     subject_session: &str,
-    media_address: &str,
-    media_port: u16,
-    ssrc: &str,
-    transport: MediaTransport,
+    sdp_params: &SdpParams,
 ) -> Result<SipMessage, AccessError> {
-    let sdp = build_sdp_offer(media_address, media_port, ssrc, transport)?;
+    let sdp = build_sdp_offer(sdp_params)?;
     let body = sdp.into_bytes();
 
     let mut headers = SipHeaders::new();
@@ -177,6 +232,54 @@ pub fn build_bye(
     })
 }
 
+/// Builds a CANCEL request for an outstanding INVITE.
+pub fn build_cancel(
+    local_uri: &SipUri,
+    session: &Session,
+    cseq: u32,
+    branch: &str,
+    target: &SipUri,
+) -> SipMessage {
+    let mut headers = SipHeaders::new();
+    let local_host = local_uri.host();
+    let local_port = local_uri.port().unwrap_or(5060);
+    headers.append(
+        HeaderName::Via,
+        HeaderValue::new(format!(
+            "SIP/2.0/UDP {local_host}:{local_port};branch={branch}"
+        )),
+    );
+    headers.append(
+        HeaderName::From,
+        HeaderValue::new(format!(
+            "<{}>;tag={}",
+            local_uri.encode(),
+            session.local_tag
+        )),
+    );
+    headers.append(
+        HeaderName::To,
+        HeaderValue::new(format!("<{}>", session.target.encode())),
+    );
+    headers.append(
+        HeaderName::CallId,
+        HeaderValue::new(session.call_id.clone()),
+    );
+    headers.append(HeaderName::CSeq, HeaderValue::new(format!("{cseq} CANCEL")));
+    headers.append(
+        HeaderName::Contact,
+        HeaderValue::new(format!("<{}>", local_uri.encode())),
+    );
+    headers.append(HeaderName::MaxForwards, HeaderValue::new("70"));
+    headers.append(HeaderName::ContentLength, HeaderValue::new("0"));
+
+    SipMessage::Request {
+        line: RequestLine::new(Method::Cancel, target.clone()),
+        headers,
+        body: Vec::new(),
+    }
+}
+
 /// Builds a `200 OK` response to an in-dialog request.
 pub fn build_ok_response(msg: &SipMessage) -> SipMessage {
     let mut headers = SipHeaders::new();
@@ -199,51 +302,51 @@ pub fn build_ok_response(msg: &SipMessage) -> SipMessage {
     }
 }
 
-/// Builds the SDP offer for a live or playback session.
-pub fn build_sdp_offer(
-    media_address: &str,
-    media_port: u16,
-    ssrc: &str,
-    transport: MediaTransport,
-) -> Result<String, AccessError> {
+/// Builds the SDP offer from [`SdpParams`].
+pub fn build_sdp_offer(params: &SdpParams) -> Result<String, AccessError> {
     use cheetah_gb28181_core::sdp::{
-        RtpMap, SdpAttribute, SdpConnection, SdpConnectionType, SdpDirection, SdpMedia, SdpOrigin,
-        SdpSession, SdpSetup, SdpTime,
+        SdpAttribute, SdpConnection, SdpConnectionType, SdpMedia, SdpOrigin, SdpSession, SdpSetup,
     };
 
-    let mut media = SdpMedia {
-        media_type: "video".to_string(),
-        port: media_port,
-        port_count: 1,
-        proto: transport.proto().to_string(),
-        formats: vec!["96".to_string()],
-        connection: Some(SdpConnection {
-            nettype: "IN".to_string(),
-            addrtype: "IP4".to_string(),
-            address: media_address.to_string(),
-        }),
-        attributes: vec![
-            SdpAttribute::Direction(SdpDirection::RecvOnly),
-            SdpAttribute::Connection(SdpConnectionType::New),
-            SdpAttribute::RtpMap(RtpMap {
-                pt: "96".to_string(),
-                encoding: "PS".to_string(),
-                clock: "90000".to_string(),
-                params: None,
-            }),
-            SdpAttribute::Y(ssrc.to_string()),
-        ],
-        ..Default::default()
-    };
+    let rtpmap = params
+        .rtpmap
+        .clone()
+        .unwrap_or_else(SdpParams::default_video_rtpmap);
+    let pt = rtpmap.pt.clone();
 
-    if transport.is_tcp() {
-        let setup = match transport {
+    let mut attrs = vec![
+        SdpAttribute::Direction(params.direction),
+        SdpAttribute::Connection(SdpConnectionType::New),
+        SdpAttribute::RtpMap(rtpmap),
+    ];
+    if let Some(ssrc) = &params.ssrc {
+        attrs.push(SdpAttribute::Y(ssrc.clone()));
+    }
+    attrs.extend(params.extra_attrs.iter().cloned());
+
+    if params.transport.is_tcp() {
+        let setup = match params.transport {
             MediaTransport::TcpPassive => SdpSetup::Passive,
             MediaTransport::TcpActive => SdpSetup::Active,
             _ => unreachable!(),
         };
-        media.attributes.insert(0, SdpAttribute::Setup(setup));
+        attrs.insert(0, SdpAttribute::Setup(setup));
     }
+
+    let media = SdpMedia {
+        media_type: params.media_type.clone(),
+        port: params.media_port,
+        port_count: 1,
+        proto: params.transport.proto().to_string(),
+        formats: vec![pt],
+        connection: Some(SdpConnection {
+            nettype: "IN".to_string(),
+            addrtype: "IP4".to_string(),
+            address: params.media_address.clone(),
+        }),
+        attributes: attrs,
+        ..Default::default()
+    };
 
     let session = SdpSession {
         version: "0".to_string(),
@@ -253,18 +356,15 @@ pub fn build_sdp_offer(
             sess_version: "0".to_string(),
             nettype: "IN".to_string(),
             addrtype: "IP4".to_string(),
-            address: media_address.to_string(),
+            address: params.media_address.clone(),
         },
-        name: "Play".to_string(),
+        name: params.session_name.clone(),
         connection: Some(SdpConnection {
             nettype: "IN".to_string(),
             addrtype: "IP4".to_string(),
-            address: media_address.to_string(),
+            address: params.media_address.clone(),
         }),
-        times: vec![SdpTime {
-            start: "0".to_string(),
-            stop: "0".to_string(),
-        }],
+        times: vec![params.time.clone()],
         media: vec![media],
         ..Default::default()
     };

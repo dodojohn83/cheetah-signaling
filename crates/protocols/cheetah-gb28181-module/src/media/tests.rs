@@ -4,7 +4,9 @@
 #![allow(clippy::unwrap_used)]
 
 use super::*;
-use cheetah_gb28181_core::{HeaderName, HeaderValue, RequestLine, SipHeaders, SipUri, StatusLine};
+use cheetah_gb28181_core::{
+    HeaderName, HeaderValue, Method, RequestLine, SipHeaders, SipUri, StatusLine,
+};
 use cheetah_signal_types::{ChannelId, MediaSessionId};
 
 fn config() -> MediaConfig {
@@ -98,7 +100,7 @@ fn stop_live_sends_bye_and_removes_session_on_ok() {
     media.process(MediaInput::Message(ok)).unwrap();
 
     let outputs = media
-        .process(MediaInput::Command(MediaCommand::StopLive {
+        .process(MediaInput::Command(MediaCommand::StopMediaSession {
             media_session_id: sid,
         }))
         .unwrap();
@@ -240,7 +242,7 @@ fn bye_uses_contact_request_uri_and_aor_to() {
     media.process(MediaInput::Message(ok)).unwrap();
 
     let outputs = media
-        .process(MediaInput::Command(MediaCommand::StopLive {
+        .process(MediaInput::Command(MediaCommand::StopMediaSession {
             media_session_id: sid,
         }))
         .unwrap();
@@ -268,7 +270,7 @@ fn call_index_cleaned_after_bye_response() {
     let ok = build_test_200_ok();
     media.process(MediaInput::Message(ok)).unwrap();
     media
-        .process(MediaInput::Command(MediaCommand::StopLive {
+        .process(MediaInput::Command(MediaCommand::StopMediaSession {
             media_session_id: sid,
         }))
         .unwrap();
@@ -343,4 +345,226 @@ fn build_response_to_bye() -> SipMessage {
         headers,
         body: Vec::new(),
     }
+}
+
+fn start_playback(media_session_id: MediaSessionId) -> MediaCommand {
+    MediaCommand::StartPlayback {
+        media_session_id,
+        channel_id: ChannelId::generate(),
+        device_id: DeviceId::new("34020000001320000001").unwrap(),
+        target: SipUri::parse("sip:34020000001320000001@192.168.1.20:5060").unwrap(),
+        call_id: "call-1".to_string(),
+        local_tag: "tag-local".to_string(),
+        cseq: 1,
+        branch: "z9hG4bK1234".to_string(),
+        subject_session: "0200000000".to_string(),
+        media_address: "192.168.1.100".to_string(),
+        media_port: 5000,
+        ssrc: "0200000000".to_string(),
+        transport: MediaTransport::Udp,
+        start_time: "1704067200".to_string(),
+        end_time: "1704153600".to_string(),
+    }
+}
+
+fn start_download(media_session_id: MediaSessionId) -> MediaCommand {
+    MediaCommand::StartDownload {
+        media_session_id,
+        channel_id: ChannelId::generate(),
+        device_id: DeviceId::new("34020000001320000001").unwrap(),
+        target: SipUri::parse("sip:34020000001320000001@192.168.1.20:5060").unwrap(),
+        call_id: "call-1".to_string(),
+        local_tag: "tag-local".to_string(),
+        cseq: 1,
+        branch: "z9hG4bK1234".to_string(),
+        subject_session: "0200000000".to_string(),
+        media_address: "192.168.1.100".to_string(),
+        media_port: 5000,
+        ssrc: "0200000000".to_string(),
+        transport: MediaTransport::Udp,
+        start_time: "1704067200".to_string(),
+        end_time: "1704153600".to_string(),
+        download_speed: 4,
+    }
+}
+
+fn start_talk(media_session_id: MediaSessionId, codec: &str) -> MediaCommand {
+    MediaCommand::StartTalk {
+        media_session_id,
+        channel_id: ChannelId::generate(),
+        device_id: DeviceId::new("34020000001320000001").unwrap(),
+        target: SipUri::parse("sip:34020000001320000001@192.168.1.20:5060").unwrap(),
+        call_id: "call-1".to_string(),
+        local_tag: "tag-local".to_string(),
+        cseq: 1,
+        branch: "z9hG4bK1234".to_string(),
+        subject_session: "0200000000".to_string(),
+        media_address: "192.168.1.100".to_string(),
+        media_port: 5000,
+        codec: codec.to_string(),
+        transport: MediaTransport::Udp,
+    }
+}
+
+#[test]
+fn start_playback_emits_invite_with_playback_sdp() {
+    let mut media = Gb28181Media::new(config());
+    let sid = MediaSessionId::generate();
+    let outputs = media
+        .process(MediaInput::Command(start_playback(sid)))
+        .unwrap();
+    let MediaOutput::SendMessage(msg) = &outputs[0] else {
+        panic!("expected SendMessage");
+    };
+    let SipMessage::Request { body, .. } = msg else {
+        panic!("expected request");
+    };
+    let sdp = String::from_utf8_lossy(body);
+    assert!(sdp.contains("s=Playback"));
+    assert!(sdp.contains("t=1704067200 1704153600"));
+    assert!(sdp.contains("a=y:0200000000"));
+    assert!(sdp.contains("m=video 5000 RTP/AVP 96"));
+}
+
+#[test]
+fn start_download_emits_invite_with_downloadspeed() {
+    let mut media = Gb28181Media::new(config());
+    let sid = MediaSessionId::generate();
+    let outputs = media
+        .process(MediaInput::Command(start_download(sid)))
+        .unwrap();
+    let MediaOutput::SendMessage(msg) = &outputs[0] else {
+        panic!("expected SendMessage");
+    };
+    let SipMessage::Request { body, .. } = msg else {
+        panic!("expected request");
+    };
+    let sdp = String::from_utf8_lossy(body);
+    assert!(sdp.contains("s=Download"));
+    assert!(sdp.contains("a=downloadspeed:4"));
+}
+
+#[test]
+fn start_talk_emits_audio_sendrecv_sdp() {
+    let mut media = Gb28181Media::new(config());
+    let sid = MediaSessionId::generate();
+    let outputs = media
+        .process(MediaInput::Command(start_talk(sid, "G.711A")))
+        .unwrap();
+    let MediaOutput::SendMessage(msg) = &outputs[0] else {
+        panic!("expected SendMessage");
+    };
+    let SipMessage::Request { body, .. } = msg else {
+        panic!("expected request");
+    };
+    let sdp = String::from_utf8_lossy(body);
+    assert!(sdp.contains("s=Talk"));
+    assert!(sdp.contains("m=audio 5000 RTP/AVP 8"));
+    assert!(sdp.contains("a=sendrecv"));
+    assert!(sdp.contains("a=rtpmap:8 PCMA/8000"));
+}
+
+#[test]
+fn start_talk_unsupported_codec_returns_unsupported() {
+    let mut media = Gb28181Media::new(config());
+    let sid = MediaSessionId::generate();
+    let result = media.process(MediaInput::Command(start_talk(sid, "AAC")));
+    assert!(matches!(result, Err(MediaError::Unsupported(_))));
+}
+
+#[test]
+fn control_playback_emits_mansrtsp_info() {
+    let mut media = Gb28181Media::new(config());
+    let sid = MediaSessionId::generate();
+    media
+        .process(MediaInput::Command(start_playback(sid)))
+        .unwrap();
+    media
+        .process(MediaInput::Message(build_test_200_ok()))
+        .unwrap();
+
+    let outputs = media
+        .process(MediaInput::Command(MediaCommand::ControlPlayback {
+            media_session_id: sid,
+            action: PlaybackAction::Play,
+            scale: Some(2.0),
+            range: Some("clock=20240101T000000Z-20240101T010000Z".to_string()),
+        }))
+        .unwrap();
+    assert_eq!(outputs.len(), 1);
+    let MediaOutput::SendMessage(info) = &outputs[0] else {
+        panic!("expected SendMessage");
+    };
+    let SipMessage::Request {
+        line,
+        headers,
+        body,
+        ..
+    } = info
+    else {
+        panic!("expected request");
+    };
+    assert_eq!(line.method, Method::Info);
+    let content_type = headers.get(&HeaderName::ContentType).unwrap().as_str();
+    assert!(content_type.contains("application/MANSRTSP"));
+    let body = String::from_utf8_lossy(body);
+    assert!(body.contains("PLAY MANSRTSP/1.0"));
+    assert!(body.contains("Scale: 2"));
+    assert!(body.contains("Range: clock=20240101T000000Z-20240101T010000Z"));
+}
+
+#[test]
+fn stop_pending_invite_sends_cancel_and_does_not_corrupt_cseq() {
+    let mut media = Gb28181Media::new(config());
+    let sid = MediaSessionId::generate();
+    media.process(MediaInput::Command(start_live(sid))).unwrap();
+
+    let outputs = media
+        .process(MediaInput::Command(MediaCommand::StopMediaSession {
+            media_session_id: sid,
+        }))
+        .unwrap();
+    let MediaOutput::SendMessage(cancel) = &outputs[0] else {
+        panic!("expected SendMessage");
+    };
+    let SipMessage::Request { line, headers, .. } = cancel else {
+        panic!("expected request");
+    };
+    assert_eq!(line.method, Method::Cancel);
+    let cseq = headers.get(&HeaderName::CSeq).unwrap().as_str();
+    assert!(cseq.starts_with("1 CANCEL"));
+
+    // Late 200 OK for the original INVITE must not establish a session.
+    let outputs = media
+        .process(MediaInput::Message(build_test_200_ok()))
+        .unwrap();
+    assert!(matches!(
+        &outputs[0],
+        MediaOutput::EmitEvent(Gb28181Event::MediaSessionFailed { .. })
+    ));
+}
+
+#[test]
+fn sdp_encoder_rejects_crlf_injection() {
+    use cheetah_gb28181_core::sdp::{SdpOrigin, SdpSession, SdpTime};
+
+    let session = SdpSession {
+        version: "0".to_string(),
+        origin: SdpOrigin {
+            username: "-\r\ninject".to_string(),
+            sess_id: "0".to_string(),
+            sess_version: "0".to_string(),
+            nettype: "IN".to_string(),
+            addrtype: "IP4".to_string(),
+            address: "0.0.0.0".to_string(),
+        },
+        name: "Play".to_string(),
+        times: vec![SdpTime {
+            start: "0".to_string(),
+            stop: "0".to_string(),
+        }],
+        ..Default::default()
+    };
+    let result = cheetah_gb28181_core::encode_sdp(&session);
+    assert!(result.is_err());
 }
