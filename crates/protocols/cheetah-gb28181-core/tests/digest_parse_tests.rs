@@ -3,8 +3,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use cheetah_gb28181_core::{
-    DigestAlgorithm, DigestContext, DigestError, DigestQop, DigestReplayCache, DigestResponse,
-    Method,
+    DigestAlgorithm, DigestChallenge, DigestContext, DigestError, DigestQop, DigestReplayCache,
+    DigestResponse, Method,
 };
 use secrecy::SecretString;
 
@@ -165,4 +165,12 @@ fn challenge_header_round_trips_quoted_realm_and_strips_crlf() -> Result<(), Dig
         &mut cache,
         1000,
     )
+}
+
+#[test]
+fn challenge_parse_defaults_to_md5_when_algorithm_missing() -> Result<(), DigestError> {
+    let header = r#"Digest realm="example.com", nonce="abc123""#;
+    let challenge = DigestChallenge::parse(header)?;
+    assert_eq!(challenge.algorithm, DigestAlgorithm::Md5);
+    Ok(())
 }

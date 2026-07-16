@@ -24,6 +24,12 @@ pub struct Gb28181Config {
     pub heartbeat_timeout_seconds: u64,
     /// Maximum number of catalog items per page.
     pub catalog_page_size: u32,
+    /// Maximum number of pending commands tracked for device responses.
+    pub max_pending_commands: usize,
+    /// Timeout for pending commands before they are considered failed.
+    pub pending_command_timeout_seconds: u64,
+    /// Maximum number of recent MESSAGE requests kept for deduplication.
+    pub max_recent_messages: usize,
     /// XML parser/generator limits.
     pub xml_limits: XmlLimits,
     /// Compatibility profiles for known vendors.
@@ -78,6 +84,12 @@ impl std::fmt::Debug for Gb28181Config {
             .field("auth_policy", &self.auth_policy)
             .field("heartbeat_timeout_seconds", &self.heartbeat_timeout_seconds)
             .field("catalog_page_size", &self.catalog_page_size)
+            .field("max_pending_commands", &self.max_pending_commands)
+            .field(
+                "pending_command_timeout_seconds",
+                &self.pending_command_timeout_seconds,
+            )
+            .field("max_recent_messages", &self.max_recent_messages)
             .field("xml_limits", &self.xml_limits)
             .field("compatibility_profiles", &self.compatibility_profiles.len())
             .field("default_device_name", &self.default_device_name)
@@ -209,6 +221,9 @@ pub struct Gb28181ConfigBuilder {
     password_lookup: Arc<dyn PasswordLookup>,
     heartbeat_timeout_seconds: u64,
     catalog_page_size: u32,
+    max_pending_commands: usize,
+    pending_command_timeout_seconds: u64,
+    max_recent_messages: usize,
     xml_limits: XmlLimits,
     default_device_name: String,
     compatibility_profiles: Vec<CompatibilityProfile>,
@@ -238,13 +253,14 @@ impl Gb28181ConfigBuilder {
             standard_version: "GB/T 28181-2016".into(),
             charset_policy: CharsetPolicy::Utf8,
             allow_md5: false,
-            server_secret: SecretString::from(
-                "this-is-a-very-long-server-secret-used-for-testing-only-do-not-use".to_string(),
-            ),
+            server_secret: SecretString::from(String::new()),
             nonce_ttl_seconds: 300,
             password_lookup: Arc::new(InMemoryPasswordLookup::default()),
             heartbeat_timeout_seconds: 60,
             catalog_page_size: 100,
+            max_pending_commands: 1024,
+            pending_command_timeout_seconds: 30,
+            max_recent_messages: 1024,
             xml_limits: XmlLimits::default(),
             default_device_name: "GB28181 device".into(),
             compatibility_profiles: Vec::new(),
@@ -275,6 +291,24 @@ impl Gb28181ConfigBuilder {
         self
     }
 
+    /// Sets the maximum number of pending commands.
+    pub fn max_pending_commands(mut self, limit: usize) -> Self {
+        self.max_pending_commands = limit;
+        self
+    }
+
+    /// Sets the pending command timeout in seconds.
+    pub fn pending_command_timeout_seconds(mut self, timeout: u64) -> Self {
+        self.pending_command_timeout_seconds = timeout;
+        self
+    }
+
+    /// Sets the maximum number of recent messages kept for deduplication.
+    pub fn max_recent_messages(mut self, limit: usize) -> Self {
+        self.max_recent_messages = limit;
+        self
+    }
+
     /// Builds the configuration.
     pub fn build(self) -> Gb28181Config {
         Gb28181Config {
@@ -291,6 +325,9 @@ impl Gb28181ConfigBuilder {
             },
             heartbeat_timeout_seconds: self.heartbeat_timeout_seconds,
             catalog_page_size: self.catalog_page_size,
+            max_pending_commands: self.max_pending_commands,
+            pending_command_timeout_seconds: self.pending_command_timeout_seconds,
+            max_recent_messages: self.max_recent_messages,
             xml_limits: self.xml_limits,
             compatibility_profiles: self.compatibility_profiles,
             default_device_name: self.default_device_name,

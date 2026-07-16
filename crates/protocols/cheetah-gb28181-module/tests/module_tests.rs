@@ -6,14 +6,15 @@ use cheetah_gb28181_module::{
     output::{Gb28181CommandResult, Gb28181Heartbeat, Gb28181Output, Gb28181Register},
 };
 use cheetah_runtime_api::DeviceKey;
-use cheetah_signal_types::{DeviceId, MessageId, TenantId};
+use cheetah_signal_types::{DeviceId, DurationMs, MessageId, TenantId, UtcTimestamp};
 use std::sync::Arc;
 
 mod common;
 use common::{
     DEVICE_ID, authorization_for_challenge, challenge_for_module, count_heartbeats,
     is_response_with_code, message_request, now, register_module, register_module_with_config,
-    register_request, source_addr, test_config, test_config_with_page_size, test_module,
+    register_request, source_addr, test_config, test_config_with_limits,
+    test_config_with_page_size, test_module,
 };
 
 #[test]
@@ -342,6 +343,10 @@ fn malformed_xml_does_not_close_session() -> Result<(), Box<dyn std::error::Erro
     assert!(outputs.iter().any(
         |o| matches!(o, Gb28181Output::ProtocolError { kind, .. } if kind == "xml_parse_error")
     ));
+    assert!(outputs.iter().any(|o| matches!(
+        o,
+        Gb28181Output::ProtocolError { message, .. } if message == "XML body rejected by parser"
+    )));
     assert!(outputs.iter().any(|o| matches!(o, Gb28181Output::SendMessage { message, .. } if is_response_with_code(message, 400))));
     Ok(())
 }
@@ -459,5 +464,102 @@ fn heartbeat_timeout_clears_registration() -> Result<(), Box<dyn std::error::Err
     assert!(outputs.iter().any(
         |o| matches!(o, Gb28181Output::ProtocolError { kind, .. } if kind == "heartbeat_timeout")
     ));
+    Ok(())
+}
+
+#[test]
+fn pending_command_times_out() -> Result<(), Box<dyn std::error::Error>> {
+    let config = test_config_with_limits(100, 1024, 1, 1024);
+    let mut module = register_module_with_config(config)?;
+    let command_id = MessageId::generate();
+    module.add_pending_command(command_id, now());
+
+    let later = UtcTimestamp::default()
+        .checked_add(DurationMs::from_seconds(2))
+        .ok_or("timestamp overflow")?;
+    let outputs = module.heartbeat_timeout(later);
+    assert!(outputs.iter().any(|o| matches!(
+        o,
+        Gb28181Output::CommandResponse {
+            result: Gb28181CommandResult::Timeout,
+            ..
+        }
+    )));
+    Ok(())
+}
+
+#[test]
+fn pending_command_capacity_evicts_oldest() -> Result<(), Box<dyn std::error::Error>> {
+    let config = test_config_with_limits(100, 2, 3600, 1024);
+    let mut module = register_module_with_config(config)?;
+    let id1 = MessageId::generate();
+    let id2 = MessageId::generate();
+    let id3 = MessageId::generate();
+    module.add_pending_command(id1, now());
+    module.add_pending_command(id2, now());
+    module.add_pending_command(id3, now());
+
+    let body = "<?xml version=\"1.0\"?>\n<Response>\n  <CmdType>DeviceControl</CmdType>\n  <SN>1</SN>\n  <DeviceID>34020000001320000001</DeviceID>\n  <Result>OK</Result>\n</Response>";
+    let request = message_request(1, body.as_bytes())?;
+    let outputs = module.handle(
+        Gb28181Input {
+            source: source_addr(),
+            message: request,
+        },
+        now(),
+    )?;
+    // SN 1 was evicted by the third insert, so id2 (SN 2) should still be present.
+    assert!(
+        outputs
+            .iter()
+            .find(|o| matches!(
+                o,
+                Gb28181Output::CommandResponse {
+                    result: Gb28181CommandResult::Ok,
+                    ..
+                }
+            ))
+            .is_none()
+    );
+    Ok(())
+}
+
+#[test]
+fn recent_message_capacity_evicts_oldest() -> Result<(), Box<dyn std::error::Error>> {
+    let config = test_config_with_limits(100, 1024, 30, 1);
+    let mut module = register_module_with_config(config)?;
+
+    let body = b"<?xml version=\"1.0\"?><Notify><CmdType>Keepalive</CmdType><DeviceID>34020000001320000001</DeviceID><Status>OK</Status></Notify>";
+    let req1 = message_request(1, body)?;
+    let req2 = message_request(2, body)?;
+
+    let out1 = module.handle(
+        Gb28181Input {
+            source: source_addr(),
+            message: req1,
+        },
+        now(),
+    )?;
+    assert!(count_heartbeats(&out1) == 1);
+
+    let out2 = module.handle(
+        Gb28181Input {
+            source: source_addr(),
+            message: req2,
+        },
+        now(),
+    )?;
+    assert!(count_heartbeats(&out2) == 1);
+
+    // req1 was evicted by the cap of 1, so the retransmission is treated as new.
+    let req1_again = message_request(1, body)?;
+    let out3 = module.handle(
+        Gb28181Input {
+            source: source_addr(),
+            message: req1_again,
+        },
+        now(),
+    )?;
+    assert!(count_heartbeats(&out3) == 1);
     Ok(())
 }

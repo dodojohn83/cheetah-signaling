@@ -208,6 +208,15 @@ pub fn register_module_with_config(
 }
 
 pub fn test_config_with_page_size(page_size: u32) -> Arc<Gb28181Config> {
+    test_config_with_limits(page_size, 1024, 30, 1024)
+}
+
+pub fn test_config_with_limits(
+    page_size: u32,
+    max_pending: usize,
+    pending_timeout: u64,
+    max_recent: usize,
+) -> Arc<Gb28181Config> {
     let mut lookup = InMemoryPasswordLookup::new();
     lookup.insert(DEVICE_ID, PASSWORD);
     let addr = SocketAddr::from(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 5060));
@@ -216,6 +225,9 @@ pub fn test_config_with_page_size(page_size: u32) -> Arc<Gb28181Config> {
             .server_secret(SECRET)
             .password_lookup(Arc::new(lookup))
             .catalog_page_size(page_size)
+            .max_pending_commands(max_pending)
+            .pending_command_timeout_seconds(pending_timeout)
+            .max_recent_messages(max_recent)
             .build(),
     )
 }

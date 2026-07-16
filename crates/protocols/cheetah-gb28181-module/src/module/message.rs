@@ -31,12 +31,12 @@ impl Gb28181Module {
         let body = message.body();
         let envelope = match xml::parse_xml(body, &self.config) {
             Ok(envelope) => envelope,
-            Err(e) => {
+            Err(_e) => {
                 return vec![
                     Gb28181Output::ProtocolError {
                         source: Some(source),
                         kind: "xml_parse_error".into(),
-                        message: e.to_string(),
+                        message: "XML body rejected by parser".into(),
                     },
                     Gb28181Output::SendMessage {
                         endpoint: source,
@@ -208,13 +208,21 @@ impl Gb28181Module {
     fn record_message(&mut self, message: &SipMessage, now_sec: u64) {
         let call_id = message.call_id().unwrap_or("").to_string();
         let cseq = message.cseq().map(|(n, _)| n).unwrap_or(0);
-        if self.recent_message_ids.insert((call_id.clone(), cseq)) {
-            self.recent_messages.push_back(RecentMessage {
-                call_id,
-                cseq,
-                seen_at: now_sec,
-            });
+        if !self.recent_message_ids.insert((call_id.clone(), cseq)) {
+            return;
         }
+        let limit = self.config.max_recent_messages.max(1);
+        while self.recent_messages.len() >= limit {
+            if let Some(oldest) = self.recent_messages.pop_front() {
+                self.recent_message_ids
+                    .remove(&(oldest.call_id, oldest.cseq));
+            }
+        }
+        self.recent_messages.push_back(RecentMessage {
+            call_id,
+            cseq,
+            seen_at: now_sec,
+        });
     }
 }
 

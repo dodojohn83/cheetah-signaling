@@ -130,7 +130,8 @@ impl Gb28181Module {
         input: Gb28181Input,
         now: UtcTimestamp,
     ) -> Result<Vec<crate::output::Gb28181Output>, Gb28181ModuleError> {
-        match &input.message {
+        let mut outputs = self.prune_pending_commands(now);
+        let mut rest = match &input.message {
             SipMessage::Request { line, .. } => match &line.method {
                 Method::Register => self.handle_register(input.source, input.message, now),
                 Method::Message => Ok(self.handle_message(input.source, input.message, now)),
@@ -152,7 +153,9 @@ impl Gb28181Module {
             SipMessage::Response { .. } => {
                 Ok(self.handle_response(input.source, input.message, now))
             }
-        }
+        }?;
+        outputs.append(&mut rest);
+        Ok(outputs)
     }
 
     /// Handles an incoming domain command and produces a SIP request, if any.
@@ -175,13 +178,15 @@ impl Gb28181Module {
     }
 
     /// Called when a heartbeat timer fires.
-    pub fn heartbeat_timeout(&mut self, _now: UtcTimestamp) -> Vec<crate::output::Gb28181Output> {
+    pub fn heartbeat_timeout(&mut self, now: UtcTimestamp) -> Vec<crate::output::Gb28181Output> {
+        let mut outputs = self.prune_pending_commands(now);
         self.registration = None;
-        vec![crate::output::Gb28181Output::ProtocolError {
+        outputs.push(crate::output::Gb28181Output::ProtocolError {
             source: None,
             kind: "heartbeat_timeout".into(),
             message: "heartbeat timeout; clearing registration".into(),
-        }]
+        });
+        outputs
     }
 
     /// Resets module state on ownership change.
@@ -197,6 +202,7 @@ impl Gb28181Module {
     pub fn add_pending_command(&mut self, command_id: MessageId, sent_at: UtcTimestamp) {
         let sn = self.next_sn;
         self.next_sn += 1;
+        self.enforce_pending_command_capacity();
         self.pending_commands.insert(
             sn,
             PendingCommand {
@@ -204,5 +210,41 @@ impl Gb28181Module {
                 sent_at,
             },
         );
+    }
+
+    fn prune_pending_commands(&mut self, now: UtcTimestamp) -> Vec<crate::output::Gb28181Output> {
+        let timeout = self.config.pending_command_timeout_seconds as i64;
+        let now_secs = now.as_unix_seconds();
+        let mut outputs = Vec::new();
+        let keys_to_remove: Vec<u32> = self
+            .pending_commands
+            .iter()
+            .filter(|(_, pending)| {
+                now_secs.saturating_sub(pending.sent_at.as_unix_seconds()) > timeout
+            })
+            .map(|(sn, _)| *sn)
+            .collect();
+        for sn in keys_to_remove {
+            if let Some(pending) = self.pending_commands.remove(&sn) {
+                outputs.push(crate::output::Gb28181Output::CommandResponse {
+                    command_id: pending.command_id,
+                    sn,
+                    result: crate::output::Gb28181CommandResult::Timeout,
+                });
+            }
+        }
+        outputs
+    }
+
+    fn enforce_pending_command_capacity(&mut self) {
+        let limit = self.config.max_pending_commands.max(1);
+        while self.pending_commands.len() >= limit {
+            let oldest = self.pending_commands.keys().next().copied();
+            if let Some(sn) = oldest {
+                self.pending_commands.remove(&sn);
+            } else {
+                break;
+            }
+        }
     }
 }

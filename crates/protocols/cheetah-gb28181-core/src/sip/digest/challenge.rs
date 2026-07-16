@@ -93,7 +93,7 @@ impl DigestChallenge {
             nonce: nonce.ok_or_else(|| DigestError::Malformed("missing nonce".to_string()))?,
             opaque,
             stale,
-            algorithm: algorithm.ok_or(DigestError::UnknownAlgorithm)?,
+            algorithm: algorithm.unwrap_or(DigestAlgorithm::Md5),
             qop,
         })
     }
