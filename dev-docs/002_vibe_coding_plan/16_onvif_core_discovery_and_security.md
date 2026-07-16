@@ -58,7 +58,7 @@ crates/protocol-onvif/src/
 ### ONVIF-CORE-005：UsernameToken
 
 - [x] 支持 PasswordDigest 和必要的 PasswordText 兼容策略。
-- [x] digest 使用 nonce + created + password 的规范字节顺序（SHA-256 HMAC）。
+- [x] digest 使用 nonce + created + password 的规范字节顺序（SHA1 PasswordDigest，符合 WS-Security UsernameToken Profile 1.0）。
 - [x] created 来自可校准设备时钟偏移，nonce 由 driver/调用方注入，core 不依赖全局随机源。
 - [ ] 凭据仅通过 `SecretProvider` 获取并尽快 zeroize 临时缓冲（`SecretProvider` 属于 driver/装配层，core 使用 `secrecy::SecretString`）。
 

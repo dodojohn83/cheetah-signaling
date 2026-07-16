@@ -21,6 +21,11 @@ pub struct XAddrPolicy {
     pub allow_link_local: bool,
     /// Whether `0.0.0.0` / `::` is allowed.
     pub allow_unspecified: bool,
+    /// Whether domain-name hosts are allowed. Defaults to `false` because the
+    /// Sans-I/O core cannot resolve or re-check DNS results; the driver should
+    /// set this to `true` only after validating the resolved address against
+    /// the same IP-classification policy and DNS-rebinding rules.
+    pub allow_domain_names: bool,
 }
 
 impl Default for XAddrPolicy {
@@ -32,6 +37,7 @@ impl Default for XAddrPolicy {
             allow_loopback: false,
             allow_link_local: false,
             allow_unspecified: false,
+            allow_domain_names: false,
         }
     }
 }
@@ -40,6 +46,13 @@ impl XAddrPolicy {
     /// Allows private addresses (still rejects loopback unless also enabled).
     pub fn with_allow_private(mut self, allow: bool) -> Self {
         self.allow_private = allow;
+        self
+    }
+
+    /// Allows domain-name hosts. The caller (driver) is responsible for DNS
+    /// resolution and DNS-rebinding validation before fetching the URL.
+    pub fn with_allow_domain_names(mut self, allow: bool) -> Self {
+        self.allow_domain_names = allow;
         self
     }
 
@@ -80,13 +93,21 @@ impl XAddrPolicy {
 
         match host {
             Host::Domain(domain) => {
-                if domain == "localhost" && !self.allow_loopback {
-                    return Err(OnvifError::SsrfRejected(
-                        "localhost not allowed".to_string(),
-                    ));
+                if domain == "localhost" {
+                    if !self.allow_loopback {
+                        return Err(OnvifError::SsrfRejected(
+                            "localhost not allowed".to_string(),
+                        ));
+                    }
+                    return Ok(());
                 }
                 if let Ok(ip) = domain.parse::<std::net::IpAddr>() {
-                    self.check_ip(ip)?;
+                    return self.check_ip(ip);
+                }
+                if !self.allow_domain_names {
+                    return Err(OnvifError::SsrfRejected(
+                        "domain name hosts not allowed".to_string(),
+                    ));
                 }
             }
             Host::Ipv4(v4) => self.check_ip(std::net::IpAddr::V4(v4))?,
@@ -151,7 +172,9 @@ impl XAddrPolicy {
             ));
         }
 
-        if original.host() != target.host() || original.port() != target.port() {
+        if original.host() != target.host()
+            || original.port_or_known_default() != target.port_or_known_default()
+        {
             return Err(OnvifError::SsrfRejected(
                 "redirect to different authority not allowed".to_string(),
             ));
@@ -237,7 +260,7 @@ mod tests {
         let policy = XAddrPolicy::default();
         assert!(
             policy
-                .validate(&Url::parse("ftp://192.168.1.1/onvif").unwrap())
+                .validate(&Url::parse("ftp://192.0.2.1/onvif").unwrap())
                 .is_err()
         );
     }
@@ -247,7 +270,7 @@ mod tests {
         let policy = XAddrPolicy::default();
         assert!(
             policy
-                .validate(&Url::parse("http://192.168.1.1:8080/onvif").unwrap())
+                .validate(&Url::parse("http://192.0.2.1:8080/onvif").unwrap())
                 .is_err()
         );
     }
@@ -257,7 +280,7 @@ mod tests {
         let policy = XAddrPolicy::default();
         assert!(
             policy
-                .validate(&Url::parse("http://user:pass@example.com/onvif").unwrap())
+                .validate(&Url::parse("http://user:pass@192.0.2.1/onvif").unwrap())
                 .is_err()
         );
     }
@@ -267,7 +290,7 @@ mod tests {
         let policy = XAddrPolicy::default();
         assert!(
             policy
-                .validate(&Url::parse("http://example.com//admin").unwrap())
+                .validate(&Url::parse("http://192.0.2.1//admin").unwrap())
                 .is_err()
         );
     }
@@ -277,12 +300,12 @@ mod tests {
         let policy = XAddrPolicy::default();
         assert!(
             policy
-                .validate(&Url::parse("http://example.com/").unwrap())
+                .validate(&Url::parse("http://192.0.2.1/").unwrap())
                 .is_ok()
         );
         assert!(
             policy
-                .validate(&Url::parse("http://example.com/onvif/").unwrap())
+                .validate(&Url::parse("http://192.0.2.1/onvif/").unwrap())
                 .is_ok()
         );
     }
@@ -313,6 +336,26 @@ mod tests {
     }
 
     #[test]
+    fn rejects_domain_names_by_default() {
+        let policy = XAddrPolicy::default();
+        assert!(
+            policy
+                .validate(&Url::parse("http://example.com/onvif").unwrap())
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn allows_domain_names_when_enabled() {
+        let policy = XAddrPolicy::default().with_allow_domain_names(true);
+        assert!(
+            policy
+                .validate(&Url::parse("http://example.com/onvif").unwrap())
+                .is_ok()
+        );
+    }
+
+    #[test]
     fn filter_skips_rejected_addresses() {
         let policy = XAddrPolicy::default();
         let addrs = vec![
@@ -329,7 +372,7 @@ mod tests {
 
     #[test]
     fn rejects_https_to_http_redirect() {
-        let policy = XAddrPolicy::default();
+        let policy = XAddrPolicy::default().with_allow_domain_names(true);
         let original = Url::parse("https://example.com/onvif").unwrap();
         let target = Url::parse("http://example.com/onvif").unwrap();
         assert!(policy.validate_redirect(&original, &target).is_err());
@@ -337,7 +380,7 @@ mod tests {
 
     #[test]
     fn rejects_redirect_to_different_authority() {
-        let policy = XAddrPolicy::default();
+        let policy = XAddrPolicy::default().with_allow_domain_names(true);
         let original = Url::parse("http://example.com/onvif").unwrap();
         let target = Url::parse("http://attacker.com/onvif").unwrap();
         assert!(policy.validate_redirect(&original, &target).is_err());

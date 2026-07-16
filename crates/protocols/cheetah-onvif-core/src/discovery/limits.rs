@@ -78,30 +78,43 @@ impl DiscoveryRateLimiter {
         let cutoff = now.saturating_sub(self.config.window_seconds);
         let max_per_source = self.config.max_per_source as usize;
 
-        // Prune expired entries and remove buckets that became empty so the
-        // `max_sources` capacity reflects currently active sources.
-        self.buckets.retain(|_, bucket| {
+        let mut remove_source = false;
+        if let Some(bucket) = self.buckets.get_mut(&source) {
             while bucket.front().is_some_and(|&t| t < cutoff) {
                 bucket.pop_front();
             }
-            !bucket.is_empty()
-        });
-
-        if let Some(bucket) = self.buckets.get_mut(&source) {
-            if bucket.len() >= max_per_source {
+            if bucket.is_empty() {
+                remove_source = true;
+            } else if bucket.len() >= max_per_source {
                 return false;
+            } else {
+                bucket.push_back(now);
+                return true;
             }
-            bucket.push_back(now);
-            true
-        } else {
+        }
+
+        if remove_source {
+            self.buckets.remove(&source);
+        }
+
+        if self.buckets.len() >= self.config.max_sources {
+            // Source capacity is full; do a one-time sweep to reclaim entries
+            // that became idle after their window expired.
+            self.buckets.retain(|_, bucket| {
+                while bucket.front().is_some_and(|&t| t < cutoff) {
+                    bucket.pop_front();
+                }
+                !bucket.is_empty()
+            });
             if self.buckets.len() >= self.config.max_sources {
                 return false;
             }
-            let mut bucket = VecDeque::with_capacity(max_per_source);
-            bucket.push_back(now);
-            self.buckets.insert(source, bucket);
-            true
         }
+
+        let mut bucket = VecDeque::with_capacity(max_per_source);
+        bucket.push_back(now);
+        self.buckets.insert(source, bucket);
+        true
     }
 
     /// Removes all source state.

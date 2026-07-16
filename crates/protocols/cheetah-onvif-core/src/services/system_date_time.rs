@@ -99,8 +99,9 @@ pub fn parse_get_system_date_and_time_response(xml: &str) -> OnvifResult<SystemD
                 context.push(local_name(&e.name()));
                 text.clear();
             }
-            Ok(Event::Empty(e)) => {
-                context.push(local_name(&e.name()));
+            Ok(Event::Empty(_e)) => {
+                // Empty elements are leaves; do not push onto the context stack
+                // because there will be no matching End event to pop them.
                 text.clear();
             }
             Ok(Event::Text(e)) => {
@@ -250,5 +251,29 @@ mod tests {
         assert_eq!(res.utc.second, 0);
         let dt = res.utc.to_utc().unwrap();
         assert_eq!(dt.unix_timestamp(), 1_783_953_060);
+    }
+
+    #[test]
+    fn parses_response_with_self_closing_extension() {
+        // Some devices include empty <tt:Extension/> elements that must not
+        // corrupt the parser's context stack.
+        let xml = r#"<?xml version="1.0"?>
+<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">
+  <s:Body>
+    <tds:GetSystemDateAndTimeResponse xmlns:tds="http://www.onvif.org/ver10/device/wsdl">
+      <tds:SystemDateAndTime>
+        <tt:DateTimeType xmlns:tt="http://www.onvif.org/ver10/schema">NTP</tt:DateTimeType>
+        <tt:DaylightSavings xmlns:tt="http://www.onvif.org/ver10/schema">false</tt:DaylightSavings>
+        <tt:Extension xmlns:tt="http://www.onvif.org/ver10/schema"/>
+        <tt:UTCDateTime xmlns:tt="http://www.onvif.org/ver10/schema">
+          <tt:Time><tt:Hour>14</tt:Hour><tt:Minute>31</tt:Minute><tt:Second>0</tt:Second></tt:Time>
+          <tt:Date><tt:Year>2026</tt:Year><tt:Month>7</tt:Month><tt:Day>13</tt:Day></tt:Date>
+        </tt:UTCDateTime>
+      </tds:SystemDateAndTime>
+    </tds:GetSystemDateAndTimeResponse>
+  </s:Body>
+</s:Envelope>"#;
+        let res = parse_get_system_date_and_time_response(xml).unwrap();
+        assert_eq!(res.utc.year, 2026);
     }
 }
