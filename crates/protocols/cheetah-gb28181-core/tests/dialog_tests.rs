@@ -2,16 +2,16 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use cheetah_protocol_gb28181_core::{
+use cheetah_gb28181_core::{
     Dialog, DialogEvent, DialogId, DialogOutput, DialogRole, DialogState, SipParser,
     SipParserConfig,
 };
 
-fn parse(data: &str) -> cheetah_protocol_gb28181_core::SipMessage {
+fn parse(data: &str) -> cheetah_gb28181_core::SipMessage {
     SipParser::parse_datagram(data.as_bytes(), SipParserConfig::default()).unwrap()
 }
 
-fn invite_request() -> cheetah_protocol_gb28181_core::SipMessage {
+fn invite_request() -> cheetah_gb28181_core::SipMessage {
     parse(
         "INVITE sip:bob@example.com SIP/2.0\r\n\
         Via: SIP/2.0/UDP 192.168.1.1:5060;branch=z9hG4bKinvite\r\n\
@@ -24,7 +24,7 @@ fn invite_request() -> cheetah_protocol_gb28181_core::SipMessage {
     )
 }
 
-fn ok_response() -> cheetah_protocol_gb28181_core::SipMessage {
+fn ok_response() -> cheetah_gb28181_core::SipMessage {
     parse(
         "SIP/2.0 200 OK\r\n\
         Via: SIP/2.0/UDP 192.168.1.1:5060;branch=z9hG4bKinvite\r\n\
@@ -39,7 +39,7 @@ fn ok_response() -> cheetah_protocol_gb28181_core::SipMessage {
     )
 }
 
-fn bye_request() -> cheetah_protocol_gb28181_core::SipMessage {
+fn bye_request() -> cheetah_gb28181_core::SipMessage {
     parse(
         "BYE sip:bob@192.168.1.3:5060 SIP/2.0\r\n\
         Via: SIP/2.0/UDP 192.168.1.2:5060;branch=z9hG4bKbye\r\n\
@@ -51,7 +51,7 @@ fn bye_request() -> cheetah_protocol_gb28181_core::SipMessage {
     )
 }
 
-fn bye_response() -> cheetah_protocol_gb28181_core::SipMessage {
+fn bye_response() -> cheetah_gb28181_core::SipMessage {
     parse(
         "SIP/2.0 200 OK\r\n\
         Via: SIP/2.0/UDP 192.168.1.2:5060;branch=z9hG4bKbye\r\n\
@@ -63,7 +63,7 @@ fn bye_response() -> cheetah_protocol_gb28181_core::SipMessage {
     )
 }
 
-fn reinvite_request() -> cheetah_protocol_gb28181_core::SipMessage {
+fn reinvite_request() -> cheetah_gb28181_core::SipMessage {
     parse(
         "INVITE sip:bob@192.168.1.3:5060 SIP/2.0\r\n\
         Via: SIP/2.0/UDP 192.168.1.2:5060;branch=z9hG4bKreinv\r\n\
@@ -76,7 +76,7 @@ fn reinvite_request() -> cheetah_protocol_gb28181_core::SipMessage {
     )
 }
 
-fn ack_request(seq: u32) -> cheetah_protocol_gb28181_core::SipMessage {
+fn ack_request(seq: u32) -> cheetah_gb28181_core::SipMessage {
     parse(&format!(
         "ACK sip:bob@192.168.1.3:5060 SIP/2.0\r\n\
         Via: SIP/2.0/UDP 192.168.1.2:5060;branch=z9hG4bKack{seq}\r\n\

@@ -454,14 +454,40 @@ dependencies = [
 [[package]]
 name = "cheetah-gb28181-core"
 version = "0.1.0"
+dependencies = [
+ "bytes",
+ "hex",
+ "hmac",
+ "md5",
+ "secrecy",
+ "sha2",
+ "subtle",
+ "thiserror",
+ "tracing",
+]
 
 [[package]]
 name = "cheetah-gb28181-driver-tokio"
 version = "0.1.0"
+dependencies = [
+ "cheetah-gb28181-core",
+ "tokio",
+ "tracing",
+]
 
 [[package]]
 name = "cheetah-gb28181-module"
 version = "0.1.0"
+dependencies = [
+ "cheetah-gb28181-core",
+ "encoding_rs",
+ "hex",
+ "quick-xml",
+ "secrecy",
+ "sha2",
+ "thiserror",
+ "tracing",
+]
 
 [[package]]
 name = "cheetah-grpc-api"
@@ -615,21 +641,6 @@ version = "0.1.0"
 [[package]]
 name = "cheetah-plugin-testkit"
 version = "0.1.0"
-
-[[package]]
-name = "cheetah-protocol-gb28181-core"
-version = "0.1.0"
-dependencies = [
- "bytes",
- "hex",
- "hmac",
- "md5",
- "secrecy",
- "sha2",
- "subtle",
- "thiserror",
- "tracing",
-]
 
 [[package]]
 name = "cheetah-runtime-api"
@@ -2352,6 +2363,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "50793def1b900256624a709439404384204a5dc3a6ec580281bfaac35e882e90"
 dependencies = [
  "pulldown-cmark",
+]
+
+[[package]]
+name = "quick-xml"
+version = "0.41.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e660451e55124f798a69a5af3f49ccfbefbd41910eefd25caf2393e1f3473ec1"
+dependencies = [
+ "memchr",
 ]
 
 [[package]]

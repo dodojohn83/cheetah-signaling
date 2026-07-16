@@ -2,17 +2,17 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use cheetah_protocol_gb28181_core::{
+use cheetah_gb28181_core::{
     SipParser, SipParserConfig, TimerKind, Transaction, TransactionConfig, TransactionEvent,
     TransactionOutput,
 };
 use std::time::Duration;
 
-fn parse(data: &str) -> cheetah_protocol_gb28181_core::SipMessage {
+fn parse(data: &str) -> cheetah_gb28181_core::SipMessage {
     SipParser::parse_datagram(data.as_bytes(), SipParserConfig::default()).unwrap()
 }
 
-fn invite_request() -> cheetah_protocol_gb28181_core::SipMessage {
+fn invite_request() -> cheetah_gb28181_core::SipMessage {
     parse(
         "INVITE sip:bob@example.com SIP/2.0\r\n\
         Via: SIP/2.0/UDP 192.168.1.1:5060;branch=z9hG4bKinvite\r\n\
@@ -24,7 +24,7 @@ fn invite_request() -> cheetah_protocol_gb28181_core::SipMessage {
     )
 }
 
-fn ack_request() -> cheetah_protocol_gb28181_core::SipMessage {
+fn ack_request() -> cheetah_gb28181_core::SipMessage {
     parse(
         "ACK sip:bob@example.com SIP/2.0\r\n\
         Via: SIP/2.0/UDP 192.168.1.1:5060;branch=z9hG4bKinvite\r\n\
@@ -36,7 +36,7 @@ fn ack_request() -> cheetah_protocol_gb28181_core::SipMessage {
     )
 }
 
-fn cancel_request() -> cheetah_protocol_gb28181_core::SipMessage {
+fn cancel_request() -> cheetah_gb28181_core::SipMessage {
     parse(
         "CANCEL sip:bob@example.com SIP/2.0\r\n\
         Via: SIP/2.0/UDP 192.168.1.1:5060;branch=z9hG4bKinvite\r\n\
@@ -48,7 +48,7 @@ fn cancel_request() -> cheetah_protocol_gb28181_core::SipMessage {
     )
 }
 
-fn invite_response_100() -> cheetah_protocol_gb28181_core::SipMessage {
+fn invite_response_100() -> cheetah_gb28181_core::SipMessage {
     parse(
         "SIP/2.0 100 Trying\r\n\
         Via: SIP/2.0/UDP 192.168.1.1:5060;branch=z9hG4bKinvite\r\n\
@@ -60,7 +60,7 @@ fn invite_response_100() -> cheetah_protocol_gb28181_core::SipMessage {
     )
 }
 
-fn invite_response_200() -> cheetah_protocol_gb28181_core::SipMessage {
+fn invite_response_200() -> cheetah_gb28181_core::SipMessage {
     parse(
         "SIP/2.0 200 OK\r\n\
         Via: SIP/2.0/UDP 192.168.1.1:5060;branch=z9hG4bKinvite\r\n\
@@ -72,7 +72,7 @@ fn invite_response_200() -> cheetah_protocol_gb28181_core::SipMessage {
     )
 }
 
-fn invite_response_487() -> cheetah_protocol_gb28181_core::SipMessage {
+fn invite_response_487() -> cheetah_gb28181_core::SipMessage {
     parse(
         "SIP/2.0 487 Request Terminated\r\n\
         Via: SIP/2.0/UDP 192.168.1.1:5060;branch=z9hG4bKinvite\r\n\
@@ -84,7 +84,7 @@ fn invite_response_487() -> cheetah_protocol_gb28181_core::SipMessage {
     )
 }
 
-fn register_request() -> cheetah_protocol_gb28181_core::SipMessage {
+fn register_request() -> cheetah_gb28181_core::SipMessage {
     parse(
         "REGISTER sip:registrar.example.com SIP/2.0\r\n\
         Via: SIP/2.0/UDP 192.168.1.1:5060;branch=z9hG4bKregister\r\n\
@@ -96,7 +96,7 @@ fn register_request() -> cheetah_protocol_gb28181_core::SipMessage {
     )
 }
 
-fn register_response_200() -> cheetah_protocol_gb28181_core::SipMessage {
+fn register_response_200() -> cheetah_gb28181_core::SipMessage {
     parse(
         "SIP/2.0 200 OK\r\n\
         Via: SIP/2.0/UDP 192.168.1.1:5060;branch=z9hG4bKregister\r\n\
