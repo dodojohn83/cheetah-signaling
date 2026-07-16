@@ -7,7 +7,7 @@ use crate::access::{
 use crate::config::AuthPolicy;
 use crate::downstream::link::{LinkTable, PlatformLink};
 use crate::downstream::{DownstreamConfig, DownstreamError, DownstreamOutput};
-use crate::events::Gb28181Event;
+use crate::events::{DevicePresence, Gb28181Event};
 use crate::ports::CredentialProvider;
 use crate::types::DeviceId;
 use cheetah_gb28181_core::{
@@ -156,17 +156,31 @@ fn register_accepted(
         local_tag,
         next_cseq: 1,
     };
-    links.upsert(platform_id.clone(), link)?;
+    let previous = links.upsert(platform_id.clone(), link)?;
+    let was_offline = previous.as_ref().is_some_and(|l| l.offline);
 
-    Ok(vec![
-        DownstreamOutput::SendResponse(response),
-        DownstreamOutput::EmitEvent(Gb28181Event::DeviceRegistered {
+    let mut outputs = Vec::with_capacity(3);
+    if was_offline {
+        outputs.push(DownstreamOutput::EmitEvent(
+            Gb28181Event::DevicePresenceChanged {
+                domain_id: config.domain_id().clone(),
+                device_id: platform_id.clone(),
+                source,
+                presence: DevicePresence::Online,
+            },
+        ));
+    }
+
+    outputs.push(DownstreamOutput::SendResponse(response));
+    outputs.push(DownstreamOutput::EmitEvent(
+        Gb28181Event::DeviceRegistered {
             domain_id: config.domain_id().clone(),
             device_id: platform_id,
             source,
             contact: contact_string,
             expires,
             user_agent,
-        }),
-    ])
+        },
+    ));
+    Ok(outputs)
 }

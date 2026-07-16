@@ -68,12 +68,12 @@
 ### GB-CAS-007：下级平台接入
 
 - [x] 下级平台作为 `PlatformLink` 聚合接入，注册认证与普通设备共享 SIP 核心但使用独立业务策略。
-- [x] 主动查询/接收下级 Catalog，把目录项映射为带 source link 的内部 Device/Channel。
-- [x] 处理下级增量上下线、报警和移动位置，并按租户策略向上游转发。
-- [x] 上级点播路由到下级时维护两套独立 dialog 和 bridge context。
-- [x] ID 映射、目录环、重复下级资源和 link 删除均有确定性清理规则。
+- [ ] 主动查询/接收下级 Catalog，把目录项映射为带 source link 的内部 Device/Channel（当前模块发出带 source 的 `CatalogReceived` 事件；映射到 `Device/Channel` 由应用层完成，待后续 PR）。
+- [x] 处理下级增量上下线、报警和移动位置，并按租户策略向上游转发（当前模块发出对应 `Gb28181Event`；具体转发由应用层消费后执行）。
+- [ ] 上级点播路由到下级时维护两套独立 dialog 和 bridge context（跨模块编排，待后续 PR/应用层实现）。
+- [x] ID 映射、目录环、重复下级资源和 link 删除均有确定性清理规则（`LinkTable` 有界、`expires=0`/超时/表满均有确定性移除）。
 
-> 完成：PR #26 `feat(phase-15): GB-CAS-007 lower-platform downstream access`。验证同上。
+> 当前完成：PR #26 实现 Sans-I/O `downstream` 模块，覆盖注册认证、 inbound MESSAGE 分发、 outbound Catalog 查询与 `Gb28181Event` 输出。验证：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo nextest run --workspace`、`buf format/lint`、`cargo deny check` 全绿。
 
 ## 4. 环路与安全
 

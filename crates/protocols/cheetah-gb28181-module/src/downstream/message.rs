@@ -3,6 +3,7 @@
 use crate::access::{
     add_or_replace_tag, build_message_response, copy_common_headers, device_from_address,
 };
+use crate::cascade::validate_token;
 use crate::downstream::link::LinkTable;
 use crate::downstream::{DownstreamCommand, DownstreamConfig, DownstreamError, DownstreamOutput};
 use crate::events::{DevicePresence, Gb28181Event};
@@ -26,71 +27,108 @@ pub(crate) fn process_message(
     source: SocketAddr,
     now: u64,
     message: SipMessage,
-) -> Result<Vec<DownstreamOutput>, DownstreamError> {
+) -> Vec<DownstreamOutput> {
     let SipMessage::Request { headers, body, .. } = &message else {
-        return Ok(Vec::new());
+        return Vec::new();
     };
 
+    let tag = next_tag(tag_counter);
+
     let Some(from) = headers.get(&HeaderName::From) else {
-        return Ok(vec![DownstreamOutput::SendResponse(build_error_response(
+        return vec![DownstreamOutput::SendResponse(build_error_response(
             &message,
             400,
             "Bad Request",
-            next_tag(tag_counter),
-        ))]);
+            tag,
+        ))];
     };
     let Some(platform_id) = device_from_address(from.as_str()) else {
-        return Ok(vec![DownstreamOutput::SendResponse(build_error_response(
+        return vec![DownstreamOutput::SendResponse(build_error_response(
             &message,
             400,
             "Bad Request",
-            next_tag(tag_counter),
-        ))]);
+            tag,
+        ))];
     };
 
     let Some(link) = links.get_mut(&platform_id) else {
-        return Ok(vec![DownstreamOutput::SendResponse(build_error_response(
+        return vec![DownstreamOutput::SendResponse(build_error_response(
             &message,
             403,
             "Forbidden",
-            next_tag(tag_counter),
-        ))]);
+            tag,
+        ))];
     };
 
     if link.source != source {
-        return Ok(vec![DownstreamOutput::SendResponse(build_error_response(
+        return vec![DownstreamOutput::SendResponse(build_error_response(
             &message,
             403,
             "Forbidden",
-            next_tag(tag_counter),
-        ))]);
+            tag,
+        ))];
     }
 
     let domain_id = config.domain_id().clone();
 
-    // Parse and validate the body before mutating link state so that a
-    // malformed or unrecognized message does not silently clear the offline
-    // flag and lose the subsequent Online presence event.
-    let root = parse_xml(body, &XmlLimits::default()).map_err(DownstreamError::Access)?;
-    let cmd_type = root.child_text("CmdType").ok_or_else(|| {
-        DownstreamError::Access(crate::error::AccessError::InvalidXml(
-            "missing CmdType".to_string(),
-        ))
-    })?;
+    // Parse the body once and validate CmdType and DeviceID before mutating
+    // link state or dispatching to a typed parser.
+    let root = match parse_xml(body, &XmlLimits::default()) {
+        Ok(root) => root,
+        Err(_) => {
+            return vec![DownstreamOutput::SendResponse(build_error_response(
+                &message,
+                400,
+                "Bad Request",
+                tag,
+            ))];
+        }
+    };
+
+    let Some(cmd_type) = root.child_text("CmdType") else {
+        return vec![DownstreamOutput::SendResponse(build_error_response(
+            &message,
+            400,
+            "Bad Request",
+            tag,
+        ))];
+    };
+    let Some(xml_device_id) = root.child_text("DeviceID") else {
+        return vec![DownstreamOutput::SendResponse(build_error_response(
+            &message,
+            400,
+            "Bad Request",
+            tag,
+        ))];
+    };
+    if xml_device_id.trim() != platform_id.as_ref() {
+        return vec![DownstreamOutput::SendResponse(build_error_response(
+            &message,
+            400,
+            "Bad Request",
+            tag,
+        ))];
+    }
 
     let event = match cmd_type.as_str() {
-        "Keepalive" => {
-            let keepalive = parse_keepalive(body).map_err(DownstreamError::Access)?;
-            Gb28181Event::Keepalive {
+        "Keepalive" => match parse_keepalive(body) {
+            Ok(keepalive) => Gb28181Event::Keepalive {
                 domain_id: domain_id.clone(),
                 device_id: platform_id.clone(),
                 source,
                 status: keepalive.status,
+            },
+            Err(_) => {
+                return vec![DownstreamOutput::SendResponse(build_error_response(
+                    &message,
+                    400,
+                    "Bad Request",
+                    tag,
+                ))];
             }
-        }
-        "Catalog" => {
-            let catalog = parse_catalog(body).map_err(DownstreamError::Access)?;
-            Gb28181Event::CatalogReceived {
+        },
+        "Catalog" => match parse_catalog(body) {
+            Ok(catalog) => Gb28181Event::CatalogReceived {
                 domain_id: domain_id.clone(),
                 device_id: platform_id.clone(),
                 source,
@@ -98,11 +136,18 @@ pub(crate) fn process_message(
                 sum_num: catalog.sum_num,
                 num: catalog.num,
                 items: catalog.items,
+            },
+            Err(_) => {
+                return vec![DownstreamOutput::SendResponse(build_error_response(
+                    &message,
+                    400,
+                    "Bad Request",
+                    tag,
+                ))];
             }
-        }
-        "DeviceInfo" => {
-            let info = parse_device_info(body).map_err(DownstreamError::Access)?;
-            Gb28181Event::DeviceInfoReceived {
+        },
+        "DeviceInfo" => match parse_device_info(body) {
+            Ok(info) => Gb28181Event::DeviceInfoReceived {
                 domain_id: domain_id.clone(),
                 device_id: platform_id.clone(),
                 source,
@@ -111,11 +156,18 @@ pub(crate) fn process_message(
                 manufacturer: info.manufacturer,
                 model: info.model,
                 firmware: info.firmware,
+            },
+            Err(_) => {
+                return vec![DownstreamOutput::SendResponse(build_error_response(
+                    &message,
+                    400,
+                    "Bad Request",
+                    tag,
+                ))];
             }
-        }
-        "DeviceStatus" => {
-            let status = parse_device_status(body).map_err(DownstreamError::Access)?;
-            Gb28181Event::DeviceStatusReceived {
+        },
+        "DeviceStatus" => match parse_device_status(body) {
+            Ok(status) => Gb28181Event::DeviceStatusReceived {
                 domain_id: domain_id.clone(),
                 device_id: platform_id.clone(),
                 source,
@@ -125,11 +177,18 @@ pub(crate) fn process_message(
                 status: status.status,
                 reason: status.reason,
                 invalid_equip: status.invalid_equip,
+            },
+            Err(_) => {
+                return vec![DownstreamOutput::SendResponse(build_error_response(
+                    &message,
+                    400,
+                    "Bad Request",
+                    tag,
+                ))];
             }
-        }
-        "Alarm" => {
-            let alarm = parse_alarm(body).map_err(DownstreamError::Access)?;
-            Gb28181Event::AlarmReceived {
+        },
+        "Alarm" => match parse_alarm(body) {
+            Ok(alarm) => Gb28181Event::AlarmReceived {
                 domain_id: domain_id.clone(),
                 device_id: platform_id.clone(),
                 source,
@@ -139,11 +198,18 @@ pub(crate) fn process_message(
                 alarm_type: alarm.alarm_type,
                 time: alarm.time,
                 info: alarm.info,
+            },
+            Err(_) => {
+                return vec![DownstreamOutput::SendResponse(build_error_response(
+                    &message,
+                    400,
+                    "Bad Request",
+                    tag,
+                ))];
             }
-        }
-        "MobilePosition" => {
-            let pos = parse_mobile_position(body).map_err(DownstreamError::Access)?;
-            Gb28181Event::MobilePositionReceived {
+        },
+        "MobilePosition" => match parse_mobile_position(body) {
+            Ok(pos) => Gb28181Event::MobilePositionReceived {
                 domain_id: domain_id.clone(),
                 device_id: platform_id.clone(),
                 source,
@@ -154,11 +220,18 @@ pub(crate) fn process_message(
                 speed: pos.speed,
                 direction: pos.direction,
                 altitude: pos.altitude,
+            },
+            Err(_) => {
+                return vec![DownstreamOutput::SendResponse(build_error_response(
+                    &message,
+                    400,
+                    "Bad Request",
+                    tag,
+                ))];
             }
-        }
-        "RecordInfo" => {
-            let info = parse_record_info(body).map_err(DownstreamError::Access)?;
-            Gb28181Event::RecordInfoReceived {
+        },
+        "RecordInfo" => match parse_record_info(body) {
+            Ok(info) => Gb28181Event::RecordInfoReceived {
                 domain_id: domain_id.clone(),
                 device_id: platform_id.clone(),
                 source,
@@ -167,25 +240,40 @@ pub(crate) fn process_message(
                 sum_num: info.sum_num,
                 num: info.num,
                 items: info.items,
+            },
+            Err(_) => {
+                return vec![DownstreamOutput::SendResponse(build_error_response(
+                    &message,
+                    400,
+                    "Bad Request",
+                    tag,
+                ))];
             }
-        }
-        "DeviceControl" => {
-            let resp = parse_device_control_response(body).map_err(DownstreamError::Access)?;
-            Gb28181Event::DeviceControlResponseReceived {
+        },
+        "DeviceControl" => match parse_device_control_response(body) {
+            Ok(resp) => Gb28181Event::DeviceControlResponseReceived {
                 domain_id: domain_id.clone(),
                 device_id: platform_id.clone(),
                 source,
                 sn: resp.sn,
                 result: resp.result,
+            },
+            Err(_) => {
+                return vec![DownstreamOutput::SendResponse(build_error_response(
+                    &message,
+                    400,
+                    "Bad Request",
+                    tag,
+                ))];
             }
-        }
+        },
         _other => {
-            return Ok(vec![DownstreamOutput::SendResponse(build_error_response(
+            return vec![DownstreamOutput::SendResponse(build_error_response(
                 &message,
                 400,
                 "Bad Request",
-                next_tag(tag_counter),
-            ))]);
+                tag,
+            ))];
         }
     };
 
@@ -210,7 +298,7 @@ pub(crate) fn process_message(
         &message,
         next_tag(tag_counter),
     )));
-    Ok(outputs)
+    outputs
 }
 
 /// Handles an outbound command to a registered lower platform.
@@ -248,6 +336,10 @@ fn build_message_request(
     branch: &str,
     body: Body,
 ) -> Result<SipMessage, DownstreamError> {
+    validate_token(call_id).map_err(|_| DownstreamError::InvalidToken)?;
+    validate_token(branch).map_err(|_| DownstreamError::InvalidToken)?;
+    validate_token(&link.local_tag).map_err(|_| DownstreamError::InvalidToken)?;
+
     let local_uri = config.local_uri();
     let local_host = local_uri.host();
     let local_port = local_uri.port().unwrap_or(5060);

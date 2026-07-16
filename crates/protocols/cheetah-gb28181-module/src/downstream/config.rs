@@ -5,10 +5,11 @@ use crate::downstream::DownstreamError;
 use crate::types::DomainId;
 use cheetah_gb28181_core::{DigestAlgorithm, SipUri};
 use secrecy::{ExposeSecret, SecretSlice};
+use std::fmt;
 
 /// Configuration for the local domain when acting as an upper platform to
 /// lower-platform cascades.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct DownstreamConfig {
     domain_id: DomainId,
     local_uri: SipUri,
@@ -21,7 +22,6 @@ pub struct DownstreamConfig {
     heartbeat_timeout_seconds: u64,
     max_links: usize,
     auth_policy: AuthPolicy,
-    catalog_page_limit: usize,
 }
 
 impl DownstreamConfig {
@@ -64,7 +64,6 @@ impl DownstreamConfig {
             heartbeat_timeout_seconds: 90,
             max_links: DEFAULT_MAX_LINKS,
             auth_policy: AuthPolicy::Required,
-            catalog_page_limit: 128,
         })
     }
 
@@ -123,11 +122,6 @@ impl DownstreamConfig {
         self.auth_policy
     }
 
-    /// Maximum items per catalog page.
-    pub fn catalog_page_limit(&self) -> usize {
-        self.catalog_page_limit
-    }
-
     /// Returns a config with the supplied link capacity.
     pub fn with_max_links(mut self, max_links: usize) -> Self {
         self.max_links = max_links;
@@ -150,5 +144,23 @@ impl DownstreamConfig {
     pub fn with_preferred_algorithm(mut self, alg: DigestAlgorithm) -> Self {
         self.preferred_algorithm = alg;
         self
+    }
+}
+
+impl fmt::Debug for DownstreamConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DownstreamConfig")
+            .field("domain_id", &self.domain_id)
+            .field("local_uri", &self.local_uri)
+            .field("realm", &self.realm)
+            .field("digest_secret", &"[REDACTED]")
+            .field("allow_md5", &self.allow_md5)
+            .field("preferred_algorithm", &self.preferred_algorithm)
+            .field("default_expires_seconds", &self.default_expires_seconds)
+            .field("max_expires_seconds", &self.max_expires_seconds)
+            .field("heartbeat_timeout_seconds", &self.heartbeat_timeout_seconds)
+            .field("max_links", &self.max_links)
+            .field("auth_policy", &self.auth_policy)
+            .finish()
     }
 }
