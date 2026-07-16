@@ -130,7 +130,12 @@ impl<P: CredentialProvider> Gb28181Access<P> {
         let device_id = device_id_from_request(line, headers)?;
         let (contact_uri, contact_expires) = parse_contact_header(headers)?;
         let expires_header = parse_expires_header(headers);
-        let expires = resolve_expires(contact_expires, expires_header, &self.config);
+        let expires = resolve_expires(
+            contact_expires,
+            expires_header,
+            self.config.default_expires_seconds(),
+            self.config.max_expires_seconds(),
+        );
 
         let user_agent = headers
             .get(&HeaderName::UserAgent)
@@ -455,7 +460,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
     }
 }
 
-fn device_id_from_request(
+pub(crate) fn device_id_from_request(
     request: &cheetah_gb28181_core::RequestLine,
     headers: &SipHeaders,
 ) -> Result<DeviceId, AccessError> {
@@ -482,7 +487,7 @@ fn device_id_from_request(
     Err(AccessError::InvalidDeviceId)
 }
 
-fn device_from_address(value: &str) -> Option<DeviceId> {
+pub(crate) fn device_from_address(value: &str) -> Option<DeviceId> {
     let value = value.trim();
     let uri_text = if let Some(start) = value.find('<') {
         let end = value.find('>')?;
@@ -498,7 +503,9 @@ fn device_from_address(value: &str) -> Option<DeviceId> {
     })
 }
 
-fn parse_contact_header(headers: &SipHeaders) -> Result<(SipUri, Option<u32>), AccessError> {
+pub(crate) fn parse_contact_header(
+    headers: &SipHeaders,
+) -> Result<(SipUri, Option<u32>), AccessError> {
     let value = headers
         .get(&HeaderName::Contact)
         .ok_or(AccessError::InvalidContact)?
@@ -506,7 +513,9 @@ fn parse_contact_header(headers: &SipHeaders) -> Result<(SipUri, Option<u32>), A
     parse_address_with_expires(value).map_err(|_| AccessError::InvalidContact)
 }
 
-fn parse_address_with_expires(value: &str) -> Result<(SipUri, Option<u32>), AccessError> {
+pub(crate) fn parse_address_with_expires(
+    value: &str,
+) -> Result<(SipUri, Option<u32>), AccessError> {
     let value = value.trim();
     let (uri_text, params_text) = if let Some(start) = value.find('<') {
         let end = value.find('>').ok_or(AccessError::InvalidContact)?;
@@ -530,28 +539,31 @@ fn parse_address_with_expires(value: &str) -> Result<(SipUri, Option<u32>), Acce
     Ok((uri, expires))
 }
 
-fn parse_expires_header(headers: &SipHeaders) -> Option<u32> {
+pub(crate) fn parse_expires_header(headers: &SipHeaders) -> Option<u32> {
     headers
         .get(&HeaderName::Expires)
         .and_then(|v| v.as_str().trim().parse::<u32>().ok())
 }
 
-fn resolve_expires(
+pub(crate) fn resolve_expires(
     contact_expires: Option<u32>,
     header_expires: Option<u32>,
-    config: &Gb28181DomainConfig,
+    default_expires_seconds: u32,
+    max_expires_seconds: u32,
 ) -> u32 {
     let requested = contact_expires
         .or(header_expires)
-        .unwrap_or(config.default_expires_seconds());
-    requested.clamp(0, config.max_expires_seconds())
+        .unwrap_or(default_expires_seconds);
+    requested.clamp(0, max_expires_seconds)
 }
 
-fn parse_authorization(value: &str) -> Result<DigestResponse, cheetah_gb28181_core::DigestError> {
+pub(crate) fn parse_authorization(
+    value: &str,
+) -> Result<DigestResponse, cheetah_gb28181_core::DigestError> {
     DigestResponse::parse_with_limit(value, 4096)
 }
 
-fn build_challenge_response(
+pub(crate) fn build_challenge_response(
     request: &SipMessage,
     challenge: &DigestChallenge,
     tag: String,
@@ -575,7 +587,7 @@ fn build_challenge_response(
     }
 }
 
-fn build_success_response(
+pub(crate) fn build_success_response(
     request: &SipMessage,
     contact: &SipUri,
     expires: u32,
@@ -601,7 +613,7 @@ fn build_success_response(
     }
 }
 
-fn build_message_response(request: &SipMessage, tag: String) -> SipMessage {
+pub(crate) fn build_message_response(request: &SipMessage, tag: String) -> SipMessage {
     let mut headers = copy_common_headers(request);
     if let Some(to) = request.headers().get(&HeaderName::To) {
         headers.append(
@@ -617,7 +629,7 @@ fn build_message_response(request: &SipMessage, tag: String) -> SipMessage {
     }
 }
 
-fn copy_common_headers(request: &SipMessage) -> SipHeaders {
+pub(crate) fn copy_common_headers(request: &SipMessage) -> SipHeaders {
     let mut headers = SipHeaders::new();
     // Via may appear multiple times (one per proxy hop); copy all of them.
     for value in request.headers().get_all(&HeaderName::Via) {
@@ -631,7 +643,7 @@ fn copy_common_headers(request: &SipMessage) -> SipHeaders {
     headers
 }
 
-fn add_or_replace_tag(value: &str, tag: &str) -> String {
+pub(crate) fn add_or_replace_tag(value: &str, tag: &str) -> String {
     let value = value.trim();
     if value.is_empty() {
         return String::new();

@@ -170,6 +170,15 @@ pub fn parse_catalog_query(body: &[u8]) -> Result<CatalogQuery, AccessError> {
     })
 }
 
+/// Builds a `Catalog` query XML payload.
+pub fn build_catalog_query(sn: &str, device_id: &str) -> Result<String, AccessError> {
+    let mut root = child_element("Query", "");
+    root.children.push(child_element("CmdType", "Catalog"));
+    root.children.push(child_element("SN", sn));
+    root.children.push(child_element("DeviceID", device_id));
+    encode_xml(&root, true)
+}
+
 fn child_element(name: &str, text: &str) -> XmlElement {
     XmlElement {
         name: name.to_string(),
