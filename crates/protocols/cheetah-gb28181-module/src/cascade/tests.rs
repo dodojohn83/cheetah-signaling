@@ -33,6 +33,7 @@ fn config() -> CascadeConfig {
         "example.com".to_string(),
         "upstream-cred".to_string(),
         3600,
+        30,
         true,
         false,
     )
@@ -258,6 +259,7 @@ fn config_rejects_internal_upstream_ip() {
         "example.com".to_string(),
         "cred".to_string(),
         3600,
+        30,
         true,
         false,
     );
@@ -274,6 +276,7 @@ fn config_allows_internal_upstream_ip_when_enabled() {
         "example.com".to_string(),
         "cred".to_string(),
         3600,
+        30,
         true,
         true,
     );
@@ -356,4 +359,73 @@ fn transaction_timeout_triggers_retry() {
     // A timed out transaction may emit nothing (backoff) or a disconnect; it
     // must not panic and must leave the state machine in Idle or Failed.
     assert!(outputs.len() <= 1);
+}
+
+#[test]
+fn zero_expiry_disconnects_and_does_not_schedule_refresh() {
+    let mut cascade = Gb28181Cascade::new(config(), password_provider());
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 1000,
+            event: CascadeEvent::Register,
+        })
+        .unwrap();
+    let (call_id, cseq) = request_call_id_cseq(&outputs);
+
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 1001,
+            event: CascadeEvent::Response(Box::new(build_200(0, &call_id, &cseq))),
+        })
+        .unwrap();
+
+    assert!(outputs.iter().any(|o| matches!(
+        o,
+        CascadeOutput::EmitEvent(crate::events::Gb28181Event::CascadePlatformDisconnected { .. })
+    )));
+}
+
+#[test]
+fn short_expiry_uses_proportional_refresh_margin() {
+    let mut cascade = Gb28181Cascade::new(config(), password_provider());
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 1000,
+            event: CascadeEvent::Register,
+        })
+        .unwrap();
+    let (call_id, cseq) = request_call_id_cseq(&outputs);
+
+    // Server grants only 60 seconds; refresh should happen at 1001 + 30,
+    // not at now + 0 (which would happen with expires.saturating_sub(30)).
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 1001,
+            event: CascadeEvent::Response(Box::new(build_200(60, &call_id, &cseq))),
+        })
+        .unwrap();
+
+    assert!(outputs.iter().any(|o| matches!(
+        o,
+        CascadeOutput::EmitEvent(crate::events::Gb28181Event::CascadePlatformConnected { .. })
+    )));
+
+    // Tick just before the refresh point does nothing.
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 1030,
+            event: CascadeEvent::Tick,
+        })
+        .unwrap();
+    assert!(outputs.is_empty());
+
+    // Tick at the refresh point sends a new REGISTER.
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 1031,
+            event: CascadeEvent::Tick,
+        })
+        .unwrap();
+    assert_eq!(outputs.len(), 1);
+    assert!(matches!(outputs[0], CascadeOutput::SendRequest(_)));
 }

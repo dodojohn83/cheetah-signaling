@@ -44,6 +44,10 @@ pub struct CascadeConfig {
     pub credential_ref: String,
     /// Desired registration lifetime in seconds.
     pub register_interval_seconds: u32,
+    /// How many seconds before expiry to schedule the next refresh. The actual
+    /// margin is clamped to at most half of the server-granted expiry to avoid
+    /// a refresh loop when the upstream returns a short lifetime.
+    pub register_refresh_margin_seconds: u32,
     /// Maximum number of consecutive failed REGISTER attempts before emitting
     /// a disconnection event.
     pub max_retries: u32,
@@ -81,6 +85,7 @@ impl CascadeConfig {
             realm,
             credential_ref,
             register_interval_seconds,
+            30,
             false,
             false,
         )
@@ -95,12 +100,18 @@ impl CascadeConfig {
         realm: String,
         credential_ref: String,
         register_interval_seconds: u32,
+        register_refresh_margin_seconds: u32,
         allow_md5: bool,
         allow_internal_upstreams: bool,
     ) -> Result<Self, CascadeError> {
         if register_interval_seconds == 0 {
             return Err(CascadeError::Internal(
                 "register_interval_seconds must be greater than zero".to_string(),
+            ));
+        }
+        if register_refresh_margin_seconds == 0 {
+            return Err(CascadeError::Internal(
+                "register_refresh_margin_seconds must be greater than zero".to_string(),
             ));
         }
         validate_token(&realm)?;
@@ -124,6 +135,7 @@ impl CascadeConfig {
             realm,
             credential_ref,
             register_interval_seconds,
+            register_refresh_margin_seconds,
             max_retries: 5,
             base_backoff_ms: 1_000,
             max_backoff_ms: 60_000,
@@ -190,6 +202,12 @@ pub enum CascadeError {
 impl From<DigestError> for CascadeError {
     fn from(e: DigestError) -> Self {
         CascadeError::AuthenticationFailed(e.to_string())
+    }
+}
+
+impl From<cheetah_gb28181_core::SipError> for CascadeError {
+    fn from(e: cheetah_gb28181_core::SipError) -> Self {
+        CascadeError::MalformedSip(e.to_string())
     }
 }
 

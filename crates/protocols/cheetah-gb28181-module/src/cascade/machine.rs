@@ -204,6 +204,18 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
 
         if status.code >= 200 {
             let expires = parse_expires(&msg, self.config.register_interval_seconds);
+            if expires == 0 {
+                // The upstream removed the binding; do not schedule a refresh.
+                self.state = State::Idle;
+                return Ok(vec![CascadeOutput::EmitEvent(
+                    Gb28181Event::CascadePlatformDisconnected {
+                        domain_id: self.config.domain_id.clone(),
+                        platform_id: self.platform_id().to_string(),
+                        reason: "upstream granted zero expiry".to_string(),
+                    },
+                )]);
+            }
+
             // A 200 OK may not repeat WWW-Authenticate; carry the challenge
             // from the 401 that authenticated this transaction forward.
             let challenge = extract_challenge(&msg)
@@ -211,11 +223,18 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
                 .flatten()
                 .or_else(|| reg.challenge.clone());
 
+            let expires_u64 = u64::from(expires);
+            let margin = u64::from(self.config.register_refresh_margin_seconds)
+                .min(expires_u64 / 2)
+                .max(1);
+            let refresh_after = expires_u64.saturating_sub(margin).max(1);
+            let refresh_at = now.saturating_add(refresh_after);
+
             let registered = Registered {
                 cseq: reg.cseq,
                 call_id: reg.call_id.clone(),
                 local_tag: reg.local_tag.clone(),
-                refresh_at: now.saturating_add(expires.saturating_sub(30).into()),
+                refresh_at,
                 challenge,
             };
 
