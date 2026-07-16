@@ -151,10 +151,15 @@ fn retransmitted_invite_200_ok_matches_after_in_dialog_request() {
     let MediaOutput::SendMessage(ack) = &outputs[0] else {
         panic!("expected SendMessage ACK");
     };
-    let SipMessage::Request { line, .. } = ack else {
+    let SipMessage::Request { line, headers, .. } = ack else {
         panic!("expected ACK request");
     };
     assert_eq!(line.method, Method::Ack);
+    let cseq = headers.get(&HeaderName::CSeq).unwrap().as_str();
+    assert!(
+        cseq.starts_with("1 ACK"),
+        "re-ACK must use original INVITE CSeq"
+    );
 }
 
 #[test]

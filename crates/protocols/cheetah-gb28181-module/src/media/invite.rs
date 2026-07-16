@@ -178,7 +178,7 @@ pub fn build_ack(
     );
     headers.append(
         HeaderName::CSeq,
-        HeaderValue::new(format!("{} ACK", session.cseq)),
+        HeaderValue::new(format!("{} ACK", session.invite_cseq)),
     );
     headers.append(
         HeaderName::Contact,
