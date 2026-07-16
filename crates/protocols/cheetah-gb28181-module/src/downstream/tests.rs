@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use super::*;
-use crate::events::Gb28181Event;
+use crate::events::{DevicePresence, Gb28181Event};
 use cheetah_gb28181_core::{
     HeaderName, HeaderValue, Method, RequestLine, SipHeaders, SipMessage, SipUri,
 };
@@ -375,4 +375,71 @@ fn alarm_from_sub_device_uses_sub_device_id() {
         _ => panic!("expected AlarmReceived event"),
     }
     assert!(matches!(outputs[1], DownstreamOutput::SendResponse(_)));
+}
+
+#[test]
+fn sub_device_notification_restores_platform_online_presence() {
+    let mut downstream = Gb28181Downstream::new(make_config(), credential_provider).unwrap();
+    let source = "192.168.1.100:5060".parse().unwrap();
+    downstream
+        .process(DownstreamInput::Sip {
+            source,
+            now: 0,
+            message: make_register(3600),
+        })
+        .unwrap();
+
+    // Trigger the heartbeat timeout so the platform is marked offline.
+    let outputs = downstream.tick(91);
+    assert!(outputs.iter().any(|o| matches!(
+        o,
+        DownstreamOutput::EmitEvent(Gb28181Event::DevicePresenceChanged {
+            presence: DevicePresence::Offline,
+            ..
+        })
+    )));
+
+    let sub_id = "34020000001320000001";
+    let body = format!(
+        r#"<?xml version="1.0"?>
+<Notify>
+    <CmdType>Alarm</CmdType>
+    <SN>1</SN>
+    <DeviceID>{sub_id}</DeviceID>
+    <AlarmPriority>1</AlarmPriority>
+    <AlarmMethod>2</AlarmMethod>
+    <AlarmType>1</AlarmType>
+    <AlarmTime>2026-07-13T14:31:00</AlarmTime>
+    <Info>motion</Info>
+</Notify>"#
+    );
+    let outputs = downstream
+        .process(DownstreamInput::Sip {
+            source,
+            now: 92,
+            message: make_message(body.as_bytes()),
+        })
+        .unwrap();
+
+    assert_eq!(outputs.len(), 3);
+    match &outputs[0] {
+        DownstreamOutput::EmitEvent(Gb28181Event::DevicePresenceChanged {
+            device_id,
+            presence: DevicePresence::Online,
+            ..
+        }) => {
+            assert_eq!(device_id.as_ref(), PLATFORM_ID);
+        }
+        _ => panic!(
+            "expected platform online presence change, got {:?}",
+            outputs[0]
+        ),
+    }
+    match &outputs[1] {
+        DownstreamOutput::EmitEvent(Gb28181Event::AlarmReceived { device_id, .. }) => {
+            assert_eq!(device_id.as_ref(), sub_id);
+        }
+        _ => panic!("expected AlarmReceived event"),
+    }
+    assert!(matches!(outputs[2], DownstreamOutput::SendResponse(_)));
 }

@@ -398,7 +398,7 @@ pub(crate) fn process_message(
         outputs.push(DownstreamOutput::EmitEvent(
             Gb28181Event::DevicePresenceChanged {
                 domain_id,
-                device_id: device_id.clone(),
+                device_id: platform_id.clone(),
                 source,
                 presence: DevicePresence::Online,
             },
