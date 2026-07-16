@@ -94,7 +94,7 @@ impl DeviceAssignmentService {
         // race, return the owner it established.
         let mut owner_repo = self.owner_repository.lock().await;
         match owner_repo
-            .acquire(tenant_id, device_id, candidate.node_id, lease_until)
+            .acquire(tenant_id, device_id, candidate.node_id, now, lease_until)
             .await
         {
             Ok(owner) => {
@@ -527,15 +527,13 @@ mod tests {
     struct FakeOwnerRepository {
         owners: StdMutex<HashMap<(TenantId, DeviceId), OwnerInfo>>,
         next_epoch: AtomicU64,
-        clock: Arc<InMemoryClock>,
     }
 
     impl FakeOwnerRepository {
-        fn new(clock: Arc<InMemoryClock>) -> Self {
+        fn new() -> Self {
             Self {
                 owners: StdMutex::new(HashMap::new()),
                 next_epoch: AtomicU64::new(2),
-                clock,
             }
         }
     }
@@ -583,9 +581,9 @@ mod tests {
             tenant_id: TenantId,
             device_id: DeviceId,
             node_id: NodeId,
+            now: UtcTimestamp,
             lease_until: UtcTimestamp,
         ) -> Result<OwnerInfo, StorageError> {
-            let now = self.clock.now_wall();
             let mut owners = self.owners();
             let key = (tenant_id, device_id);
             if let Some(owner) = owners.get(&key) {
@@ -672,7 +670,7 @@ mod tests {
     ) {
         let clock = Arc::new(InMemoryClock::new());
         let node_repo = Arc::new(AsyncMutex::new(FakeNodeRepository::new()));
-        let owner_repo = Arc::new(AsyncMutex::new(FakeOwnerRepository::new(clock.clone())));
+        let owner_repo = Arc::new(AsyncMutex::new(FakeOwnerRepository::new()));
         let id_gen = InMemoryIdGenerator::new();
         let service = DeviceAssignmentService::new(
             node_repo.clone(),
@@ -814,7 +812,7 @@ mod tests {
     async fn enforces_rate_limit() -> TestResult<()> {
         let clock = Arc::new(InMemoryClock::new());
         let node_repo = Arc::new(AsyncMutex::new(FakeNodeRepository::new()));
-        let owner_repo = Arc::new(AsyncMutex::new(FakeOwnerRepository::new(clock.clone())));
+        let owner_repo = Arc::new(AsyncMutex::new(FakeOwnerRepository::new()));
         let id_gen = InMemoryIdGenerator::new();
         let service = DeviceAssignmentService::new(
             node_repo.clone(),

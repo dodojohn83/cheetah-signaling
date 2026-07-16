@@ -12,6 +12,7 @@ pub(crate) mod media_service_reconciliation;
 pub(crate) mod media_service_start;
 pub mod operation_service;
 pub mod outbox_relay;
+pub mod takeover_service;
 pub mod webhook_service;
 
 pub use command_dispatcher::CommandDispatcher;
@@ -22,6 +23,7 @@ pub use inbox::{CommandHandler, CommandHandlerResult, InboxService};
 pub use media_service::MediaService;
 pub use operation_service::OperationService;
 pub use outbox_relay::OutboxRelay;
+pub use takeover_service::{OwnerValidation, TakeoverResult, TakeoverService};
 pub use webhook_service::{
     WebhookDeliveryConfig, WebhookHttpClient, WebhookHttpRequest, WebhookHttpResponse,
     WebhookService,

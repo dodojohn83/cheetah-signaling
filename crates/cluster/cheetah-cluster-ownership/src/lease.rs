@@ -44,10 +44,11 @@ impl OwnerLeaseService {
         tenant_id: TenantId,
         device_id: DeviceId,
     ) -> Result<OwnerInfo, StorageError> {
+        let now = self.clock.now_wall();
         let lease_until = self.lease_until()?;
         let mut repo = self.repository.lock().await;
         let owner = repo
-            .acquire(tenant_id, device_id, self.this_node, lease_until)
+            .acquire(tenant_id, device_id, self.this_node, now, lease_until)
             .await?;
         info!(
             tenant_id = %tenant_id.as_uuid(),

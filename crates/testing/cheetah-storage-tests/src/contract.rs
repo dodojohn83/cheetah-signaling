@@ -15,6 +15,7 @@ pub(crate) mod operation;
 pub(crate) mod outbox;
 pub(crate) mod outbox_retry;
 pub(crate) mod owner;
+pub(crate) mod ownership;
 pub(crate) mod processed_message;
 pub(crate) mod step;
 pub(crate) mod transaction;
@@ -38,6 +39,7 @@ pub async fn run_all(storage: &dyn Storage, fixtures: &Fixtures) -> TestResult<(
     transaction::run(storage, fixtures).await?;
     processed_message::run(storage, fixtures).await?;
     owner::run(storage, fixtures).await?;
+    ownership::run(storage, fixtures).await?;
     step::run(storage, fixtures).await?;
     unicode::run(storage, fixtures).await?;
 

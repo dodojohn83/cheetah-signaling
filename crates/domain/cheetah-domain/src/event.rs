@@ -278,4 +278,25 @@ pub enum DomainEvent {
         /// Error, if any.
         error: Option<crate::MediaBindingError>,
     },
+    /// Device ownership changed.
+    ///
+    /// Emitted when a different node wins ownership or an existing owner is
+    /// re-confirmed after a lease change. Consumers use this to fence stale
+    /// local protocol sessions and trigger recovery.
+    OwnerChanged {
+        /// Tenant of the device.
+        tenant_id: TenantId,
+        /// Device identifier.
+        device_id: DeviceId,
+        /// New owner node identifier.
+        node_id: NodeId,
+        /// New owner epoch.
+        owner_epoch: OwnerEpoch,
+        /// Previous owner node identifier, if known.
+        previous_node_id: Option<NodeId>,
+        /// Previous owner epoch, if known.
+        previous_epoch: Option<OwnerEpoch>,
+        /// Whether this was a takeover from a different or failed node.
+        takeover: bool,
+    },
 }
