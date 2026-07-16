@@ -48,17 +48,6 @@ pub(crate) fn process_register<P: CredentialProvider>(
         .get(&HeaderName::UserAgent)
         .map(|v| v.as_str().to_string());
 
-    let remote_tag = headers
-        .get(&HeaderName::From)
-        .map(|v| v.as_str())
-        .and_then(extract_tag)
-        .filter(|t| !t.is_empty())
-        .unwrap_or_else(|| next_tag(tag_counter));
-    let call_id = headers
-        .get(&HeaderName::CallId)
-        .map(|v| v.as_str().trim().to_string())
-        .unwrap_or_default();
-
     let local_tag = format!("gb{}", tag_counter.fetch_add(1, Ordering::Relaxed));
 
     let mut authenticated = false;
@@ -118,8 +107,6 @@ pub(crate) fn process_register<P: CredentialProvider>(
             user_agent,
             links,
             local_tag,
-            remote_tag,
-            call_id,
             now,
         )
     } else {
@@ -143,8 +130,6 @@ fn register_accepted(
     user_agent: Option<String>,
     links: &mut LinkTable,
     local_tag: String,
-    remote_tag: String,
-    call_id: String,
     now: u64,
 ) -> Result<Vec<DownstreamOutput>, DownstreamError> {
     if expires == 0 {
@@ -169,9 +154,7 @@ fn register_accepted(
         expires,
         last_seen: now,
         offline: false,
-        call_id,
         local_tag,
-        remote_tag,
         next_cseq: 1,
     };
     links.upsert(platform_id.clone(), link)?;
@@ -187,20 +170,4 @@ fn register_accepted(
             user_agent,
         }),
     ])
-}
-
-fn next_tag(tag_counter: &AtomicU64) -> String {
-    let n = tag_counter.fetch_add(1, Ordering::Relaxed);
-    format!("gb{n}")
-}
-
-fn extract_tag(value: &str) -> Option<String> {
-    let mut parts = value.split(';');
-    let _uri = parts.next();
-    parts.find_map(|param| {
-        let param = param.trim();
-        param
-            .strip_prefix("tag=")
-            .map(|tag| tag.trim().trim_matches('"').to_string())
-    })
 }

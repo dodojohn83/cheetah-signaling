@@ -226,9 +226,11 @@ pub(crate) fn handle_command(
             let cseq = link.next_cseq;
             link.next_cseq = link.next_cseq.saturating_add(1);
             let branch = next_branch(tag_counter);
+            let call_id = format!("query-{}", next_tag(tag_counter));
             let body = build_catalog_query(&sn, platform_id.as_ref())
                 .map_err(|e| DownstreamError::Encode(e.to_string()))?;
-            let request = build_message_request(config, link, cseq, &branch, body.into_bytes())?;
+            let request =
+                build_message_request(config, link, cseq, &call_id, &branch, body.into_bytes())?;
             let destination = link.source;
             Ok(vec![DownstreamOutput::SendRequest(request, destination)])
         }
@@ -239,6 +241,7 @@ fn build_message_request(
     config: &DownstreamConfig,
     link: &crate::downstream::link::PlatformLink,
     cseq: u32,
+    call_id: &str,
     branch: &str,
     body: Body,
 ) -> Result<SipMessage, DownstreamError> {
@@ -257,16 +260,9 @@ fn build_message_request(
         HeaderValue::from_uri(local_uri, &link.local_tag)
             .map_err(|e| DownstreamError::Encode(e.to_string()))?,
     );
-    headers.append(
-        HeaderName::To,
-        HeaderValue::from_uri(&link.contact, &link.remote_tag)
-            .map_err(|e| DownstreamError::Encode(e.to_string()))?,
-    );
-    headers.append(HeaderName::CallId, HeaderValue::new(link.call_id.clone()));
-    headers.append(
-        HeaderName::CSeq,
-        HeaderValue::new(format!("{} {}", cseq, Method::Message)),
-    );
+    headers.append(HeaderName::To, HeaderValue::to_uri(&link.contact));
+    headers.append(HeaderName::CallId, HeaderValue::new(call_id.to_string()));
+    headers.append(HeaderName::CSeq, HeaderValue::cseq(cseq, Method::Message));
     headers.append(HeaderName::MaxForwards, HeaderValue::new("70"));
     headers.append(
         HeaderName::ContentType,

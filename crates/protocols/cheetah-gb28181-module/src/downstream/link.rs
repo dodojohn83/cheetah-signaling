@@ -21,12 +21,8 @@ pub(crate) struct PlatformLink {
     pub last_seen: u64,
     /// Whether the link is currently considered offline.
     pub offline: bool,
-    /// Call-ID established at registration.
-    pub call_id: String,
-    /// Local tag used in the `To` header of the 200 OK.
+    /// Local tag used in the `To` header of the 200 OK and outbound `From`.
     pub local_tag: String,
-    /// Remote tag from the lower platform `From` header.
-    pub remote_tag: String,
     /// Next CSeq value for outbound requests.
     pub next_cseq: u32,
 }
