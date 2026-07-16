@@ -409,16 +409,18 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
             _ => unreachable!("caller ensures a response"),
         };
 
-        reg.keepalive.pending_until = None;
-
         // Any non-2xx final response (including 3xx redirects) is a
         // transport failure. The business outcome of a 200 OK is further
-        // checked by parsing the XML body.
+        // checked by parsing the XML body. Only clear the pending timeout for
+        // final responses; provisional responses must retain it so a lost final
+        // response still triggers the timeout.
         if status.code >= 300 {
+            reg.keepalive.pending_until = None;
             return self.keepalive_failure(now, reg, status.code, &status.reason);
         }
 
         if (200..300).contains(&status.code) {
+            reg.keepalive.pending_until = None;
             let business_ok = if body.is_empty() {
                 // Empty body is treated as transport-level success.
                 true

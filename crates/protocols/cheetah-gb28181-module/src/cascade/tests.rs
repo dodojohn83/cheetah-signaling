@@ -727,3 +727,49 @@ fn keepalive_redirect_treated_as_failure() {
         CascadeOutput::EmitEvent(crate::events::Gb28181Event::CascadePlatformDisconnected { .. })
     )));
 }
+
+#[test]
+fn keepalive_provisional_response_preserves_timeout() {
+    let mut cfg = config();
+    cfg.keepalive_interval_seconds = 30;
+    cfg.keepalive_timeout_seconds = 10;
+    cfg.keepalive_max_failures = 1;
+    let mut cascade = Gb28181Cascade::new(cfg, password_provider());
+    register_to_connected(&mut cascade);
+
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 1031,
+            event: CascadeEvent::Tick,
+        })
+        .unwrap();
+    let (call_id, cseq) = request_call_id_cseq(&outputs);
+
+    // A 100 Trying provisional response must not disarm the timeout.
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 1032,
+            event: CascadeEvent::Response(Box::new(message_response(
+                &call_id,
+                &cseq,
+                100,
+                "Trying",
+                Vec::new(),
+            ))),
+        })
+        .unwrap();
+    assert!(outputs.is_empty());
+
+    // After the timeout elapses with no final response, the failure count
+    // (which was 0 when the provisional arrived) reaches max and disconnects.
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 1041,
+            event: CascadeEvent::Tick,
+        })
+        .unwrap();
+    assert!(outputs.iter().any(|o| matches!(
+        o,
+        CascadeOutput::EmitEvent(crate::events::Gb28181Event::CascadePlatformDisconnected { .. })
+    )));
+}
