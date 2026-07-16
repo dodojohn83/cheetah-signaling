@@ -479,14 +479,20 @@ dependencies = [
 name = "cheetah-gb28181-module"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "cheetah-gb28181-core",
+ "cheetah-plugin-sdk",
  "cheetah-signal-types",
  "encoding_rs",
  "hex",
  "quick-xml",
  "secrecy",
+ "serde",
+ "serde_json",
  "sha2",
  "thiserror",
+ "time",
+ "tokio",
  "tracing",
 ]
 
@@ -630,10 +636,29 @@ version = "0.1.0"
 [[package]]
 name = "cheetah-onvif-module"
 version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "cheetah-plugin-sdk",
+ "cheetah-signal-types",
+ "serde_json",
+ "thiserror",
+ "tokio",
+]
 
 [[package]]
 name = "cheetah-plugin-host"
 version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "cheetah-plugin-sdk",
+ "cheetah-signal-types",
+ "secrecy",
+ "semver",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
 
 [[package]]
 name = "cheetah-plugin-sdk"
