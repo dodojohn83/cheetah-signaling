@@ -15,10 +15,17 @@ pub(super) fn on_message(
         .call_id()
         .ok_or_else(|| MediaError::MalformedSip("missing Call-ID".to_string()))?
         .to_string();
-    let sid = *media
-        .call_index
-        .get(&call_id)
-        .ok_or(MediaError::SessionNotFound)?;
+    let Some(&sid) = media.call_index.get(&call_id) else {
+        // A BYE response may be a retransmission after the dialog was already torn down.
+        if msg
+            .cseq()
+            .map(|(_, method)| method == Method::Bye)
+            .unwrap_or(false)
+        {
+            return Ok(Vec::new());
+        }
+        return Err(MediaError::SessionNotFound);
+    };
 
     match &msg {
         SipMessage::Response { line, .. } => on_response(media, sid, line.code, msg.clone()),
@@ -58,12 +65,13 @@ fn on_response(
         }
     }
 
-    if cseq.1 == Method::Bye {
-        let session = media
-            .remove_session(sid)
-            .ok_or(MediaError::SessionNotFound)?;
-        let event = stopped_event(&session, &media.config.domain_id);
-        return Ok(vec![MediaOutput::EmitEvent(event)]);
+    if cseq.1 == Method::Bye && code >= 200 {
+        if let Some(session) = media.remove_session(sid) {
+            let event = stopped_event(&session, &media.config.domain_id);
+            return Ok(vec![MediaOutput::EmitEvent(event)]);
+        }
+        // Final BYE response retransmission after the session was already torn down.
+        return Ok(Vec::new());
     }
 
     // INFO responses for playback control are not tracked at this layer.

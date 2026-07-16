@@ -352,8 +352,55 @@ fn call_index_cleaned_after_bye_response() {
 
     // A second BYE response for the same Call-ID must no longer route to a session.
     let duplicate = build_response_to_bye();
-    let result = media.process(MediaInput::Message(duplicate));
-    assert!(matches!(result, Err(MediaError::SessionNotFound)));
+    let outputs = media.process(MediaInput::Message(duplicate)).unwrap();
+    assert!(outputs.is_empty());
+}
+
+#[test]
+fn bye_provisional_response_is_ignored() {
+    let mut media = Gb28181Media::new(config());
+    let sid = MediaSessionId::generate();
+    media.process(MediaInput::Command(start_live(sid))).unwrap();
+    media
+        .process(MediaInput::Message(build_test_200_ok()))
+        .unwrap();
+    media
+        .process(MediaInput::Command(MediaCommand::StopMediaSession {
+            media_session_id: sid,
+        }))
+        .unwrap();
+
+    let mut headers = SipHeaders::new();
+    headers.append(
+        HeaderName::Via,
+        HeaderValue::new("SIP/2.0/UDP 192.168.1.10:5060;branch=z9hG4bK1234-bye"),
+    );
+    headers.append(
+        HeaderName::From,
+        HeaderValue::new("<sip:server@192.168.1.10:5060>;tag=tag-local"),
+    );
+    headers.append(
+        HeaderName::To,
+        HeaderValue::new("<sip:34020000001320000001@192.168.1.20:5060>;tag=tag-remote"),
+    );
+    headers.append(HeaderName::CallId, HeaderValue::new("call-1"));
+    headers.append(HeaderName::CSeq, HeaderValue::new("2 BYE"));
+    headers.append(HeaderName::ContentLength, HeaderValue::new("0"));
+    let trying = SipMessage::Response {
+        line: StatusLine::new(100, "Trying"),
+        headers,
+        body: Vec::new(),
+    };
+
+    let outputs = media.process(MediaInput::Message(trying)).unwrap();
+    assert!(outputs.is_empty());
+
+    let final_ok = build_response_to_bye();
+    let outputs = media.process(MediaInput::Message(final_ok)).unwrap();
+    assert!(matches!(
+        &outputs[0],
+        MediaOutput::EmitEvent(Gb28181Event::MediaSessionStopped { .. })
+    ));
 }
 
 #[test]
@@ -391,8 +438,8 @@ fn invite_failure_cleans_call_index() {
     ));
 
     let duplicate = build_response_to_bye();
-    let result = media.process(MediaInput::Message(duplicate));
-    assert!(matches!(result, Err(MediaError::SessionNotFound)));
+    let outputs = media.process(MediaInput::Message(duplicate)).unwrap();
+    assert!(outputs.is_empty());
 }
 
 fn build_response_to_bye() -> SipMessage {
