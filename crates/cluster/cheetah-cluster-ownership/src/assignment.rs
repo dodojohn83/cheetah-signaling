@@ -65,7 +65,7 @@ impl DeviceAssignmentService {
         if let Some(owner) = maybe_owner
             && owner.lease_until.is_none_or(|lease| lease > now)
             && let Some(node) = self.get_node(owner.owner_node_id).await?
-            && is_eligible(&node, protocol, now)
+            && is_owner_alive(&node, protocol, now)
         {
             return Ok(owner);
         }
@@ -315,17 +315,29 @@ impl RateLimiter {
     }
 }
 
+/// Checks whether a node can accept a new device assignment.
 fn is_eligible(node: &ClusterNode, protocol: &str, now: UtcTimestamp) -> bool {
+    if !is_owner_alive(node, protocol, now) {
+        return false;
+    }
     if node.draining {
         return false;
     }
+    if node.load.devices >= node.capacity.max_devices {
+        return false;
+    }
+    true
+}
+
+/// Checks whether an existing owner's node is still alive for the protocol.
+/// Unlike `is_eligible`, this ignores capacity and draining, which only affect
+/// new assignments: an already-owned device stays with its node until the
+/// owner lease expires and a graceful migration can occur.
+fn is_owner_alive(node: &ClusterNode, protocol: &str, now: UtcTimestamp) -> bool {
     if node.lease_until <= now {
         return false;
     }
     if !protocol.is_empty() && !node.contract_versions.contains_key(protocol) {
-        return false;
-    }
-    if node.load.devices >= node.capacity.max_devices {
         return false;
     }
     true
