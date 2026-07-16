@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use cheetah_gb28181_core::{
-    Body, HeaderName, HeaderValue, Method, RequestLine, SipHeaders, SipMessage, StatusLine,
+    Body, HeaderName, HeaderValue, Method, RequestLine, SipHeaders, SipMessage, SipUri, StatusLine,
 };
 
 use crate::cascade::{CascadeConfig, CascadeError, validate_token};
@@ -77,20 +77,58 @@ impl CatalogFilter {
     }
 }
 
+/// Returns true when the `From` header of the request identifies the
+/// configured upstream platform.
+pub(crate) fn request_from_matches_upstream(request: &SipMessage, upstream: &SipUri) -> bool {
+    let SipMessage::Request { headers, .. } = request else {
+        return false;
+    };
+    let Some(from) = headers.get(&HeaderName::From) else {
+        return false;
+    };
+    let from_str = from.as_str().trim();
+    let uri_str = if let Some(start) = from_str.find('<') {
+        let Some(end) = from_str.find('>') else {
+            return false;
+        };
+        &from_str[start + 1..end]
+    } else if let Some(semi) = from_str.find(';') {
+        &from_str[..semi]
+    } else {
+        from_str
+    };
+    let Ok(uri) = SipUri::parse(uri_str.trim()) else {
+        return false;
+    };
+
+    if !uri.host().eq_ignore_ascii_case(upstream.host()) {
+        return false;
+    }
+    if let Some(expected_user) = upstream.user() {
+        return uri.user() == Some(expected_user);
+    }
+    true
+}
+
 /// Builds a `200 OK` response for an incoming SIP request.
-pub(crate) fn build_ok_response(request: &SipMessage) -> SipMessage {
-    build_response(request, 200, "OK", Vec::new())
+pub(crate) fn build_ok_response(request: &SipMessage, response_tag: &str) -> SipMessage {
+    build_response(request, 200, "OK", response_tag, Vec::new())
 }
 
 /// Builds a `400 Bad Request` response for an incoming SIP request.
-pub(crate) fn build_bad_request_response(request: &SipMessage, reason: &str) -> SipMessage {
-    build_response(request, 400, reason, Vec::new())
+pub(crate) fn build_bad_request_response(
+    request: &SipMessage,
+    reason: &str,
+    response_tag: &str,
+) -> SipMessage {
+    build_response(request, 400, reason, response_tag, Vec::new())
 }
 
 pub(crate) fn build_response(
     request: &SipMessage,
     code: u16,
     reason: &str,
+    response_tag: &str,
     body: Body,
 ) -> SipMessage {
     let SipMessage::Request { headers, .. } = request else {
@@ -105,7 +143,18 @@ pub(crate) fn build_response(
         response_headers.append(HeaderName::From, from.clone());
     }
     if let Some(to) = headers.get(&HeaderName::To) {
-        response_headers.append(HeaderName::To, to.clone());
+        let to_str = to.as_str();
+        let has_tag = to_str
+            .split(';')
+            .any(|param| param.trim().starts_with("tag="));
+        if has_tag {
+            response_headers.append(HeaderName::To, to.clone());
+        } else {
+            response_headers.append(
+                HeaderName::To,
+                HeaderValue::new(format!("{};tag={}", to_str.trim(), response_tag)),
+            );
+        }
     }
     if let Some(call_id) = headers.get(&HeaderName::CallId) {
         response_headers.append(HeaderName::CallId, call_id.clone());

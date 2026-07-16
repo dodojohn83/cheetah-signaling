@@ -96,6 +96,30 @@ fn challenge_ctx() -> DigestContext {
     .unwrap()
 }
 
+pub(crate) fn register_to_connected(
+    cascade: &mut Gb28181Cascade<impl CascadeCredentialProvider>,
+) -> String {
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 1000,
+            event: CascadeEvent::Register,
+        })
+        .unwrap();
+    let (call_id, cseq) = request_call_id_cseq(&outputs);
+
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 1001,
+            event: CascadeEvent::Response(Box::new(build_200(3600, &call_id, &cseq))),
+        })
+        .unwrap();
+    assert!(matches!(
+        outputs[0],
+        CascadeOutput::EmitEvent(crate::events::Gb28181Event::CascadePlatformConnected { .. })
+    ));
+    call_id
+}
+
 #[test]
 fn register_from_idle_sends_register_without_authorization() {
     let mut cascade = Gb28181Cascade::new(config(), password_provider());

@@ -10,7 +10,7 @@ use cheetah_gb28181_core::{
 
 use super::catalog::{
     CatalogProvider, CatalogQuery, build_bad_request_response, build_catalog_pages,
-    build_ok_response, build_response,
+    build_ok_response, build_response, request_from_matches_upstream,
 };
 use super::keepalive::build_keepalive_message;
 use super::registration::build_register_request;
@@ -272,12 +272,36 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
             return Vec::new();
         }
 
+        // All final responses below need a local To-tag.
+        let response_tag = self.next_local_tag(now);
+
+        // Only answer catalog queries from the configured upstream platform and
+        // only while registered. Requests from other sources are rejected with a
+        // 403 so the transaction terminates without disclosing catalog data.
+        if !matches!(self.state, State::Registered(_))
+            || !request_from_matches_upstream(&msg, &self.config.upstream)
+        {
+            return vec![CascadeOutput::SendResponse(build_response(
+                &msg,
+                403,
+                "Forbidden",
+                &response_tag,
+                Vec::new(),
+            ))];
+        }
+
         let Some(content_type) = headers.get(&HeaderName::ContentType) else {
-            return vec![CascadeOutput::SendResponse(build_ok_response(&msg))];
+            return vec![CascadeOutput::SendResponse(build_ok_response(
+                &msg,
+                &response_tag,
+            ))];
         };
 
         if !content_type.as_str().contains("MANSCDP") && !content_type.as_str().contains("xml") {
-            return vec![CascadeOutput::SendResponse(build_ok_response(&msg))];
+            return vec![CascadeOutput::SendResponse(build_ok_response(
+                &msg,
+                &response_tag,
+            ))];
         }
 
         let query = match parse_catalog_query(body) {
@@ -286,6 +310,7 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
                 return vec![CascadeOutput::SendResponse(build_bad_request_response(
                     &msg,
                     "Bad Request",
+                    &response_tag,
                 ))];
             }
         };
@@ -309,7 +334,10 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
         ) {
             Ok(messages) => {
                 let mut outputs = Vec::with_capacity(messages.len() + 1);
-                outputs.push(CascadeOutput::SendResponse(build_ok_response(&msg)));
+                outputs.push(CascadeOutput::SendResponse(build_ok_response(
+                    &msg,
+                    &response_tag,
+                )));
                 for message in messages {
                     outputs.push(CascadeOutput::SendRequest(message));
                 }
@@ -319,6 +347,7 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
                 &msg,
                 500,
                 "Server Internal Error",
+                &response_tag,
                 Vec::new(),
             ))],
         }
