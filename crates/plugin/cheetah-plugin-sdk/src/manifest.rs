@@ -3,14 +3,14 @@
 use crate::error::PluginError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fmt;
 
 /// A human-readable plugin type identifier, e.g. `cheetah/gb28181`.
 ///
 /// This is separate from the runtime [`PluginId`](cheetah_signal_types::PluginId)
 /// so the same plugin binary can be instantiated multiple times with different
 /// configuration instances.
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct PluginName(String);
 
 impl PluginName {
@@ -58,15 +58,41 @@ impl AsRef<str> for PluginName {
     }
 }
 
-impl std::fmt::Display for PluginName {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for PluginName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
     }
 }
 
+impl Serialize for PluginName {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for PluginName {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Self::new(value).map_err(serde::de::Error::custom)
+    }
+}
+
+impl std::str::FromStr for PluginName {
+    type Err = PluginError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::new(s)
+    }
+}
+
 /// A semantic version of a plugin or the SDK.
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct PluginVersion(String);
 
 impl PluginVersion {
@@ -87,14 +113,13 @@ impl PluginVersion {
     }
 
     /// Parses the version as a [`semver::Version`].
-    ///
-    /// # Panics
-    ///
-    /// This panics only if the stored string is modified after construction.
-    /// The constructor validates the string, so this is an internal invariant.
-    #[allow(clippy::expect_used)]
-    pub fn parse(&self) -> semver::Version {
-        semver::Version::parse(&self.0).expect("version validated at construction")
+    pub fn parse(&self) -> Result<semver::Version, PluginError> {
+        semver::Version::parse(&self.0).map_err(|e| {
+            PluginError::InvalidManifest(format!(
+                "plugin version {version:?}: {e}",
+                version = self.0
+            ))
+        })
     }
 }
 
@@ -104,15 +129,41 @@ impl Default for PluginVersion {
     }
 }
 
-impl std::fmt::Display for PluginVersion {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for PluginVersion {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
     }
 }
 
+impl Serialize for PluginVersion {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for PluginVersion {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Self::new(value).map_err(serde::de::Error::custom)
+    }
+}
+
+impl std::str::FromStr for PluginVersion {
+    type Err = PluginError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::new(s)
+    }
+}
+
 /// A semantic-version range for the SDK versions a plugin is compatible with.
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct SdkVersionReq(String);
 
 impl SdkVersionReq {
@@ -133,19 +184,18 @@ impl SdkVersionReq {
     }
 
     /// Parses the requirement as a [`semver::VersionReq`].
-    ///
-    /// # Panics
-    ///
-    /// This panics only if the stored string is modified after construction.
-    /// The constructor validates the string, so this is an internal invariant.
-    #[allow(clippy::expect_used)]
-    pub fn parse(&self) -> semver::VersionReq {
-        semver::VersionReq::parse(&self.0).expect("version requirement validated at construction")
+    pub fn parse(&self) -> Result<semver::VersionReq, PluginError> {
+        semver::VersionReq::parse(&self.0).map_err(|e| {
+            PluginError::InvalidManifest(format!(
+                "SDK version requirement {req:?}: {e}",
+                req = self.0
+            ))
+        })
     }
 
     /// Returns whether the given host SDK version satisfies this requirement.
-    pub fn matches(&self, host: &semver::Version) -> bool {
-        self.parse().matches(host)
+    pub fn matches(&self, host: &semver::Version) -> Result<bool, PluginError> {
+        Ok(self.parse()?.matches(host))
     }
 }
 
@@ -155,9 +205,36 @@ impl Default for SdkVersionReq {
     }
 }
 
-impl std::fmt::Display for SdkVersionReq {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for SdkVersionReq {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
+    }
+}
+
+impl Serialize for SdkVersionReq {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for SdkVersionReq {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Self::new(value).map_err(serde::de::Error::custom)
+    }
+}
+
+impl std::str::FromStr for SdkVersionReq {
+    type Err = PluginError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::new(s)
     }
 }
 
@@ -303,6 +380,6 @@ impl PluginManifest {
                 "config schema must be a valid JSON object".to_string(),
             ));
         }
-        Ok(self.version.parse())
+        self.version.parse()
     }
 }

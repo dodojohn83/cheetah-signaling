@@ -123,3 +123,84 @@ mod checksum_tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod deserialization_tests {
+    use crate::manifest::{
+        ConfigSchema, PluginEntry, PluginManifest, PluginPermission, ProtocolCapability,
+        ProtocolDirection, ResourceBudget,
+    };
+    use serde_json::json;
+
+    #[test]
+    fn manifest_round_trips_and_validates() -> Result<(), Box<dyn std::error::Error>> {
+        let manifest = PluginManifest {
+            name: "cheetah/test".parse()?,
+            version: "0.1.0".parse()?,
+            sdk_version: ">=1.0.0, <2.0.0".parse()?,
+            protocols: vec![ProtocolCapability {
+                protocol: "test".to_string(),
+                direction: ProtocolDirection::Bidirectional,
+                media_transport: None,
+            }],
+            entry: PluginEntry::BuiltIn {
+                path: "test".to_string(),
+            },
+            permissions: vec![PluginPermission::PublishEvents],
+            config_schema: ConfigSchema {
+                schema: json!({"type": "object"}),
+                required: vec![],
+            },
+            resource_budget: ResourceBudget::default(),
+            checksum: None,
+            metadata: Default::default(),
+        };
+
+        let json = serde_json::to_string(&manifest)?;
+        let decoded: PluginManifest = serde_json::from_str(&json)?;
+        assert!(decoded.validate().is_ok());
+        Ok(())
+    }
+
+    #[test]
+    fn manifest_deserialization_rejects_invalid_version() {
+        let json = json!({
+            "name": "cheetah/test",
+            "version": "not-a-version",
+            "sdk_version": ">=1.0.0, <2.0.0",
+            "protocols": [{"protocol": "test", "direction": "bidirectional"}],
+            "entry": {"built_in": {"path": "test"}},
+            "permissions": ["publish_events"],
+            "config_schema": {"schema": {"type": "object"}, "required": []},
+            "resource_budget": {
+                "max_memory_mb": 0,
+                "max_cpu_milli": 0,
+                "max_fds": 0,
+                "max_bandwidth_mbps": 0
+            },
+            "metadata": {}
+        });
+        assert!(serde_json::from_str::<PluginManifest>(&json.to_string()).is_err());
+    }
+
+    #[test]
+    fn manifest_deserialization_rejects_invalid_name() {
+        let json = json!({
+            "name": "HAS UPPERCASE",
+            "version": "0.1.0",
+            "sdk_version": ">=1.0.0, <2.0.0",
+            "protocols": [{"protocol": "test", "direction": "bidirectional"}],
+            "entry": {"built_in": {"path": "test"}},
+            "permissions": ["publish_events"],
+            "config_schema": {"schema": {"type": "object"}, "required": []},
+            "resource_budget": {
+                "max_memory_mb": 0,
+                "max_cpu_milli": 0,
+                "max_fds": 0,
+                "max_bandwidth_mbps": 0
+            },
+            "metadata": {}
+        });
+        assert!(serde_json::from_str::<PluginManifest>(&json.to_string()).is_err());
+    }
+}

@@ -616,6 +616,7 @@ dependencies = [
  "cheetah-signal-types",
  "hex",
  "hmac",
+ "secrecy",
  "semver",
  "serde",
  "serde_json",

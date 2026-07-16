@@ -11,7 +11,7 @@ pub fn negotiate_sdk_version(
     plugin_requirement: &SdkVersionReq,
     host_version: &semver::Version,
 ) -> Result<semver::Version, PluginError> {
-    if plugin_requirement.matches(host_version) {
+    if plugin_requirement.matches(host_version)? {
         Ok(host_version.clone())
     } else {
         Err(PluginError::IncompatibleSdk {

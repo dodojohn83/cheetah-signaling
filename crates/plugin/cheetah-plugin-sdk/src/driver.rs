@@ -4,6 +4,7 @@ use crate::error::PluginError;
 use crate::manifest::{PluginName, ProtocolCapability, ResourceBudget};
 use async_trait::async_trait;
 use cheetah_signal_types::{DurationMs, TenantId, UtcTimestamp};
+use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -61,7 +62,10 @@ pub trait DriverContext: Send + Sync {
     /// Looks up a tenant-scoped secret reference.
     ///
     /// Returns `None` if the secret is not found or access is denied.
-    async fn secret(&self, name: &str) -> Result<Option<String>, PluginError>;
+    /// The returned `SecretString` prevents accidental logging or serialization
+    /// of the credential; callers must explicitly call `ExposeSecret::expose_secret`
+    /// to access the plaintext.
+    async fn secret(&self, name: &str) -> Result<Option<SecretString>, PluginError>;
     /// Requests a new media session from the host.
     async fn request_media_session(
         &self,
