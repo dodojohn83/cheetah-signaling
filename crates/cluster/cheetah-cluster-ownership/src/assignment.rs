@@ -197,6 +197,8 @@ pub struct RateLimitConfig {
     pub global_per_second: u32,
     /// Maximum number of new assignments per second for a single node.
     pub per_node_per_second: u32,
+    /// Maximum number of nodes to retain in the per-node rate limiter.
+    pub max_tracked_nodes: usize,
 }
 
 impl Default for RateLimitConfig {
@@ -204,6 +206,7 @@ impl Default for RateLimitConfig {
         Self {
             global_per_second: 1_000,
             per_node_per_second: 100,
+            max_tracked_nodes: 4_096,
         }
     }
 }
@@ -212,6 +215,7 @@ struct SlidingWindow {
     max_per_window: u32,
     window: DurationMs,
     events: VecDeque<DurationMs>,
+    last_used: Option<DurationMs>,
 }
 
 impl SlidingWindow {
@@ -220,6 +224,7 @@ impl SlidingWindow {
             max_per_window,
             window,
             events: VecDeque::new(),
+            last_used: None,
         }
     }
 
@@ -234,12 +239,19 @@ impl SlidingWindow {
     }
 
     fn allow(&mut self, now: DurationMs) -> bool {
+        self.last_used = Some(now);
         self.prune(now);
         self.events.len() < self.max_per_window as usize
     }
 
     fn record(&mut self, now: DurationMs) {
+        self.last_used = Some(now);
         self.events.push_back(now);
+    }
+
+    fn is_active(&mut self, now: DurationMs) -> bool {
+        self.prune(now);
+        !self.events.is_empty()
     }
 }
 
@@ -254,7 +266,7 @@ impl RateLimiter {
         let window = DurationMs::from_millis(1_000);
         Self {
             global: SlidingWindow::new(config.global_per_second, window),
-            per_node: HashMap::new(),
+            per_node: HashMap::with_capacity(config.max_tracked_nodes),
             config,
         }
     }
@@ -274,7 +286,32 @@ impl RateLimiter {
         }
         self.global.record(now);
         node_window.record(now);
+        self.trim_per_node(now);
         true
+    }
+
+    fn trim_per_node(&mut self, now: DurationMs) {
+        if self.per_node.len() <= self.config.max_tracked_nodes {
+            return;
+        }
+
+        // First drop windows whose events have all expired; they no longer
+        // affect rate-limit accounting.
+        self.per_node.retain(|_, w| w.is_active(now));
+
+        // If still over capacity, evict the least-recently-used tracked node.
+        if self.per_node.len() > self.config.max_tracked_nodes {
+            let mut ordered: Vec<(NodeId, Option<DurationMs>)> = self
+                .per_node
+                .iter()
+                .map(|(k, v)| (*k, v.last_used))
+                .collect();
+            ordered.sort_by_key(|a| a.1);
+            let excess = self.per_node.len() - self.config.max_tracked_nodes;
+            for (key, _) in ordered.into_iter().take(excess) {
+                self.per_node.remove(&key);
+            }
+        }
     }
 }
 
@@ -696,6 +733,7 @@ mod tests {
             RateLimitConfig {
                 global_per_second: 1,
                 per_node_per_second: 1,
+                max_tracked_nodes: 16,
             },
         );
 
