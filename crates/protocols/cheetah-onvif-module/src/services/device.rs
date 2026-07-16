@@ -99,14 +99,21 @@ impl<'a> ParseContext<'a> {
         Ok(())
     }
 
-    fn on_end(&mut self) -> (String, String) {
-        let text = std::mem::take(&mut self.text);
-        let name = self.stack.pop().unwrap_or_default();
-        (name, text)
+    fn on_end(&mut self) -> String {
+        std::mem::take(&mut self.text)
+    }
+
+    fn pop(&mut self) {
+        self.stack.pop();
     }
 
     fn parent(&self) -> Option<&str> {
-        self.stack.last().map(|s| s.as_str())
+        let len = self.stack.len();
+        if len >= 2 {
+            self.stack.get(len - 2).map(|s| s.as_str())
+        } else {
+            None
+        }
     }
 }
 
@@ -156,21 +163,22 @@ pub fn parse_get_device_information_response(
             Ok(Event::Text(e)) => {
                 ctx.append_text(&e.xml10_content().unwrap_or_default())?;
             }
-            Ok(Event::End(_e)) => {
+            Ok(Event::End(e)) => {
                 let parent = ctx.parent().map(|s| s.to_string());
-                let (name, text) = ctx.on_end();
-                if parent.as_deref() == Some("Manufacturer") && name == "Manufacturer" {
+                let name = local_name(&e.name());
+                let text = ctx.on_end();
+                if parent.as_deref() == Some("Information") && name == "Manufacturer" {
                     info.manufacturer = text.trim().to_string();
-                } else if parent.as_deref() == Some("Model") && name == "Model" {
+                } else if parent.as_deref() == Some("Information") && name == "Model" {
                     info.model = text.trim().to_string();
-                } else if parent.as_deref() == Some("FirmwareVersion") && name == "FirmwareVersion"
-                {
+                } else if parent.as_deref() == Some("Information") && name == "FirmwareVersion" {
                     info.firmware_version = text.trim().to_string();
-                } else if parent.as_deref() == Some("SerialNumber") && name == "SerialNumber" {
+                } else if parent.as_deref() == Some("Information") && name == "SerialNumber" {
                     info.serial_number = text.trim().to_string();
-                } else if parent.as_deref() == Some("HardwareId") && name == "HardwareId" {
+                } else if parent.as_deref() == Some("Information") && name == "HardwareId" {
                     info.hardware_id = text.trim().to_string();
                 }
+                ctx.pop();
             }
             Ok(Event::Eof) => break,
             Err(e) => {
@@ -262,27 +270,47 @@ pub fn parse_get_services_response(
             Ok(Event::Text(e)) => {
                 ctx.append_text(&e.xml10_content().unwrap_or_default())?;
             }
-            Ok(Event::End(_e)) => {
+            Ok(Event::End(e)) => {
                 let parent = ctx.parent().map(|s| s.to_string());
-                let (name, text) = ctx.on_end();
-                if name == "Service" && parent.as_deref() == Some("Service") {
+                let name = local_name(&e.name());
+                let text = ctx.on_end();
+                if name == "Service" {
                     if let Some(builder) = current.take() {
                         services.push(builder.build()?);
                     }
                 } else if let Some(ref mut b) = current {
                     match name.as_str() {
-                        "Namespace" => b.namespace = text.trim().to_string(),
-                        "XAddr" => b.xaddr = text.trim().to_string(),
-                        "Version" => b.version = text.trim().to_string(),
+                        "Namespace" if parent.as_deref() == Some("Service") => {
+                            b.namespace = text.trim().to_string();
+                        }
+                        "XAddr" if parent.as_deref() == Some("Service") => {
+                            b.xaddr = text.trim().to_string();
+                        }
+                        "Version" if parent.as_deref() == Some("Service") => {
+                            if b.major.is_some() || b.minor.is_some() {
+                                b.version = b.version_or_default();
+                            } else {
+                                b.version = text.trim().to_string();
+                            }
+                        }
+                        "Major" if parent.as_deref() == Some("Version") => {
+                            b.major = Some(text.trim().to_string());
+                        }
+                        "Minor" if parent.as_deref() == Some("Version") => {
+                            b.minor = Some(text.trim().to_string());
+                        }
                         _ => {}
                     }
-                } else if name == "Namespace" && parent.as_deref() == Some("Namespace") {
+                } else if name == "Namespace" && parent.as_deref() == Some("Service") {
                     current = Some(ServiceBuilder {
                         namespace: text.trim().to_string(),
                         xaddr: String::new(),
                         version: String::new(),
+                        major: None,
+                        minor: None,
                     });
                 }
+                ctx.pop();
             }
             Ok(Event::Eof) => break,
             Err(e) => {
@@ -302,9 +330,19 @@ struct ServiceBuilder {
     namespace: String,
     xaddr: String,
     version: String,
+    major: Option<String>,
+    minor: Option<String>,
 }
 
 impl ServiceBuilder {
+    fn version_or_default(&self) -> String {
+        match (&self.major, &self.minor) {
+            (Some(major), Some(minor)) => format!("{major}.{minor}"),
+            _ if !self.version.is_empty() => self.version.clone(),
+            _ => String::new(),
+        }
+    }
+
     fn build(self) -> Result<Service, OnvifModuleError> {
         if self.namespace.is_empty() {
             return Err(OnvifModuleError::MissingField("Namespace".to_string()));
@@ -312,10 +350,11 @@ impl ServiceBuilder {
         if self.xaddr.is_empty() {
             return Err(OnvifModuleError::MissingField("XAddr".to_string()));
         }
+        let version = self.version_or_default();
         Ok(Service {
             namespace: self.namespace,
             xaddr: self.xaddr,
-            version: self.version,
+            version,
         })
     }
 }
@@ -351,8 +390,9 @@ pub fn parse_get_capabilities_response(
                 check_capability(&mut caps, &name);
                 ctx.on_empty()?;
             }
-            Ok(Event::End(_)) => {
+            Ok(Event::End(_e)) => {
                 let _ = ctx.on_end();
+                ctx.pop();
             }
             Ok(Event::Eof) => break,
             Err(e) => {
@@ -508,6 +548,29 @@ mod tests {
             "http://www.onvif.org/ver10/device/wsdl"
         );
         assert_eq!(services[0].xaddr, "http://192.0.2.1/onvif/device_service");
+        Ok(())
+    }
+
+    #[test]
+    fn parses_services_response_with_major_minor_version() -> Result<(), OnvifModuleError> {
+        let xml = r#"<?xml version="1.0"?>
+<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">
+  <s:Body>
+    <tds:GetServicesResponse xmlns:tds="http://www.onvif.org/ver10/device/wsdl">
+      <tds:Service>
+        <tds:Namespace>http://www.onvif.org/ver10/device/wsdl</tds:Namespace>
+        <tds:XAddr>http://192.0.2.1/onvif/device_service</tds:XAddr>
+        <tds:Version>
+          <tt:Major xmlns:tt="http://www.onvif.org/ver10/schema">2</tt:Major>
+          <tt:Minor xmlns:tt="http://www.onvif.org/ver10/schema">60</tt:Minor>
+        </tds:Version>
+      </tds:Service>
+    </tds:GetServicesResponse>
+  </s:Body>
+</s:Envelope>"#;
+        let services = parse_get_services_response(xml, &limits())?;
+        assert_eq!(services.len(), 1);
+        assert_eq!(services[0].version, "2.60");
         Ok(())
     }
 
