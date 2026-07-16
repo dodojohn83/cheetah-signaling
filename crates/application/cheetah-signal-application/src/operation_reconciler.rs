@@ -7,7 +7,7 @@
 use crate::dto::OperationReconciliationReport;
 use crate::operation_service::{operation_resource_ref, wrap_event};
 use cheetah_domain::{OperationError, OperationStatus, UnitOfWork};
-use cheetah_signal_types::{Clock, IdGenerator, PageRequest, RequestContext};
+use cheetah_signal_types::{Clock, IdGenerator, MAX_PAGE_SIZE, PageRequest, RequestContext};
 use std::sync::Arc;
 
 /// Reconciles pending and running operations against their deadlines.
@@ -21,6 +21,9 @@ pub struct OperationReconciler {
 
 impl OperationReconciler {
     /// Creates a new operation reconciler.
+    ///
+    /// `batch_size` is clamped to the range `[1, MAX_PAGE_SIZE]` so the
+    /// configured value cannot cause `PageRequest::new` to fail at runtime.
     pub fn new(
         clock: Arc<dyn Clock>,
         id_generator: Arc<dyn IdGenerator>,
@@ -30,7 +33,7 @@ impl OperationReconciler {
         Self {
             clock,
             id_generator,
-            batch_size,
+            batch_size: batch_size.clamp(1, MAX_PAGE_SIZE),
             max_timeouts_per_run,
         }
     }
