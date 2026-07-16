@@ -48,7 +48,16 @@ pub(crate) fn process_message(
         ))]);
     };
 
-    if !links.contains(&platform_id) {
+    let Some(link) = links.get_mut(&platform_id) else {
+        return Ok(vec![DownstreamOutput::SendResponse(build_error_response(
+            &message,
+            403,
+            "Forbidden",
+            next_tag(tag_counter),
+        ))]);
+    };
+
+    if link.source != source {
         return Ok(vec![DownstreamOutput::SendResponse(build_error_response(
             &message,
             403,
@@ -180,15 +189,6 @@ pub(crate) fn process_message(
         }
     };
 
-    let Some(link) = links.get_mut(&platform_id) else {
-        return Ok(vec![DownstreamOutput::SendResponse(build_error_response(
-            &message,
-            403,
-            "Forbidden",
-            next_tag(tag_counter),
-        ))]);
-    };
-    link.source = source;
     link.last_seen = now;
     let was_offline = link.offline;
     link.offline = false;

@@ -212,3 +212,86 @@ fn unregistered_message_returns_403() {
         _ => panic!("expected 403 response"),
     };
 }
+
+#[test]
+fn message_from_different_source_returns_403() {
+    let mut downstream = Gb28181Downstream::new(make_config(), credential_provider).unwrap();
+    let registered_source = "192.168.1.100:5060".parse().unwrap();
+    downstream
+        .process(DownstreamInput::Sip {
+            source: registered_source,
+            now: 0,
+            message: make_register(3600),
+        })
+        .unwrap();
+
+    let body = br#"<?xml version="1.0"?>
+<Notify>
+    <CmdType>Keepalive</CmdType>
+    <SN>1</SN>
+    <DeviceID>34020000002000000001</DeviceID>
+    <Status>OK</Status>
+</Notify>"#;
+    let outputs = downstream
+        .process(DownstreamInput::Sip {
+            source: "10.0.0.5:5060".parse().unwrap(),
+            now: 1,
+            message: make_message(body),
+        })
+        .unwrap();
+
+    assert_eq!(outputs.len(), 1);
+    match &outputs[0] {
+        DownstreamOutput::SendResponse(SipMessage::Response { line, .. }) => {
+            assert_eq!(line.code, 403);
+        }
+        _ => panic!("expected 403 response"),
+    };
+}
+
+#[test]
+fn query_catalog_destination_not_overwritten_by_spoofed_message() {
+    let mut downstream = Gb28181Downstream::new(make_config(), credential_provider).unwrap();
+    let registered_source = "192.168.1.100:5060".parse().unwrap();
+    downstream
+        .process(DownstreamInput::Sip {
+            source: registered_source,
+            now: 0,
+            message: make_register(3600),
+        })
+        .unwrap();
+
+    let body = br#"<?xml version="1.0"?>
+<Notify>
+    <CmdType>Keepalive</CmdType>
+    <SN>1</SN>
+    <DeviceID>34020000002000000001</DeviceID>
+    <Status>OK</Status>
+</Notify>"#;
+    downstream
+        .process(DownstreamInput::Sip {
+            source: "10.0.0.5:5060".parse().unwrap(),
+            now: 1,
+            message: make_message(body),
+        })
+        .unwrap();
+
+    let platform_id = DeviceId::new(PLATFORM_ID).unwrap();
+    let outputs = downstream
+        .process(DownstreamInput::Command {
+            now: 2,
+            command: DownstreamCommand::QueryCatalog {
+                platform_id,
+                sn: "8".to_string(),
+            },
+        })
+        .unwrap();
+
+    assert_eq!(outputs.len(), 1);
+    let (request, destination) = match &outputs[0] {
+        DownstreamOutput::SendRequest(r, d) => (r, d),
+        _ => panic!("expected SendRequest"),
+    };
+    assert_eq!(destination, &registered_source);
+    assert!(matches!(request, SipMessage::Request { line, .. } if line.method == Method::Message));
+}
