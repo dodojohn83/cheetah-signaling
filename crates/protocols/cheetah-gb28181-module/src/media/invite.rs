@@ -9,6 +9,16 @@ use cheetah_gb28181_core::{
     encode_sdp,
 };
 
+/// Rejects values that would inject extra SIP header lines.
+fn validate_sip_header_token(value: &str) -> Result<(), AccessError> {
+    if value.contains('\r') || value.contains('\n') {
+        return Err(AccessError::Internal(
+            "SIP header token contains forbidden line break".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 /// Parameters for an SDP offer.
 #[allow(missing_docs)]
 #[derive(Clone, Debug)]
@@ -82,6 +92,11 @@ pub fn build_invite(
 ) -> Result<SipMessage, AccessError> {
     let sdp = build_sdp_offer(sdp_params)?;
     let body = sdp.into_bytes();
+
+    validate_sip_header_token(call_id)?;
+    validate_sip_header_token(local_tag)?;
+    validate_sip_header_token(branch)?;
+    validate_sip_header_token(subject_session)?;
 
     let mut headers = SipHeaders::new();
     let local_host = local_uri.host();
@@ -328,7 +343,11 @@ pub fn build_sdp_offer(params: &SdpParams) -> Result<String, AccessError> {
         let setup = match params.transport {
             MediaTransport::TcpPassive => SdpSetup::Passive,
             MediaTransport::TcpActive => SdpSetup::Active,
-            _ => unreachable!(),
+            _ => {
+                return Err(AccessError::Internal(
+                    "unexpected non-TCP transport in TCP branch".to_string(),
+                ));
+            }
         };
         attrs.insert(0, SdpAttribute::Setup(setup));
     }

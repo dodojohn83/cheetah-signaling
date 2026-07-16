@@ -596,11 +596,44 @@ fn stop_pending_invite_sends_cancel_and_does_not_corrupt_cseq() {
     assert!(cseq.starts_with("1 CANCEL"));
 
     // Late 200 OK for the original INVITE must not establish a session.
+    // It must still be ACKnowledged and BYE'd to tear down the accidental dialog.
     let outputs = media
         .process(MediaInput::Message(build_test_200_ok()))
         .unwrap();
+    assert_eq!(outputs.len(), 3);
+
+    let MediaOutput::SendMessage(ack) = &outputs[0] else {
+        panic!("expected ACK SendMessage");
+    };
+    let SipMessage::Request {
+        line: ack_line,
+        headers: ack_headers,
+        ..
+    } = ack
+    else {
+        panic!("expected ACK request");
+    };
+    assert_eq!(ack_line.method, Method::Ack);
+    let ack_cseq = ack_headers.get(&HeaderName::CSeq).unwrap().as_str();
+    assert!(ack_cseq.starts_with("1 ACK"));
+
+    let MediaOutput::SendMessage(bye) = &outputs[1] else {
+        panic!("expected BYE SendMessage");
+    };
+    let SipMessage::Request {
+        line: bye_line,
+        headers: bye_headers,
+        ..
+    } = bye
+    else {
+        panic!("expected BYE request");
+    };
+    assert_eq!(bye_line.method, Method::Bye);
+    let bye_cseq = bye_headers.get(&HeaderName::CSeq).unwrap().as_str();
+    assert!(bye_cseq.starts_with("2 BYE"));
+
     assert!(matches!(
-        &outputs[0],
+        &outputs[2],
         MediaOutput::EmitEvent(Gb28181Event::MediaSessionFailed { .. })
     ));
 }

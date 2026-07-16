@@ -61,7 +61,7 @@ pub struct SdpTime {
 }
 
 /// A single media description (`m=` line and its attributes).
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SdpMedia {
     /// Media type, e.g. `video`, `audio`, `application`.
     pub media_type: String,
@@ -79,6 +79,21 @@ pub struct SdpMedia {
     pub attributes: Vec<SdpAttribute>,
     /// Media title, if present.
     pub title: Option<String>,
+}
+
+impl Default for SdpMedia {
+    fn default() -> Self {
+        Self {
+            media_type: String::new(),
+            port: 0,
+            port_count: 1,
+            proto: String::new(),
+            formats: Vec::new(),
+            connection: None,
+            attributes: Vec::new(),
+            title: None,
+        }
+    }
 }
 
 /// RTP mapping for a payload type (`a=rtpmap:`).

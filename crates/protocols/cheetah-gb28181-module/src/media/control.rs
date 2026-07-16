@@ -51,6 +51,8 @@ pub fn build_info_mansrtsp(
     scale: Option<f64>,
     range: Option<&str>,
 ) -> Result<SipMessage, AccessError> {
+    validate_mansrtsp_field(branch)?;
+
     let remote_tag = session
         .remote_tag
         .as_ref()

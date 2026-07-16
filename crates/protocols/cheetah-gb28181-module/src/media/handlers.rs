@@ -1,6 +1,6 @@
 //! SIP response and request handlers for GB28181 media sessions.
 
-use super::invite::{build_ack, build_ok_response, first_contact_uri, tag_from_header};
+use super::invite::{build_ack, build_bye, build_ok_response, first_contact_uri, tag_from_header};
 use super::session::{SessionState, failed_event, socket_addr, stopped_event};
 use super::{Gb28181Media, MediaError, MediaOutput};
 use crate::events::Gb28181Event;
@@ -96,23 +96,69 @@ fn on_invite_success(
     sid: super::MediaSessionId,
     msg: SipMessage,
 ) -> Result<Vec<MediaOutput>, MediaError> {
+    let state = media
+        .sessions
+        .get(&sid)
+        .map(|s| s.state)
+        .ok_or(MediaError::SessionNotFound)?;
+
+    let remote_tag = tag_from_header(&msg, &HeaderName::To);
+    let contact = first_contact_uri(&msg);
+
+    // If we already asked to stop/cancel the pending INVITE, acknowledge the 200 OK
+    // and tear down the accidental dialog before reporting failure.
+    if state != SessionState::Inviting {
+        let mut outputs = Vec::new();
+        if let (Some(remote_tag), Ok(contact)) = (remote_tag, contact) {
+            let session_ref = media
+                .sessions
+                .get(&sid)
+                .ok_or(MediaError::SessionNotFound)?;
+            let mut session = session_ref.clone();
+            session.remote_tag = Some(remote_tag.clone());
+            session.remote_target = Some(contact.clone());
+
+            let ack_branch = format!("{}-ack-late", session.branch);
+            let ack = build_ack(
+                &media.config.local_sip_uri,
+                &session,
+                &remote_tag,
+                &contact,
+                &ack_branch,
+            );
+            outputs.push(MediaOutput::SendMessage(ack));
+
+            session.cseq += 1;
+            let bye_branch = format!("{}-bye-late", session.branch);
+            let bye = build_bye(
+                &media.config.local_sip_uri,
+                &session,
+                session.cseq,
+                &bye_branch,
+                &contact,
+            )
+            .map_err(|e| MediaError::MalformedSip(e.to_string()))?;
+            outputs.push(MediaOutput::SendMessage(bye));
+        }
+        let session = media
+            .remove_session(sid)
+            .ok_or(MediaError::SessionNotFound)?;
+        outputs.push(MediaOutput::EmitEvent(failed_event(
+            &session,
+            &media.config.domain_id,
+            "late 200 OK after stop",
+        )));
+        return Ok(outputs);
+    }
+
     let session = media
         .sessions
         .get_mut(&sid)
         .ok_or(MediaError::SessionNotFound)?;
-
-    // If we already asked to stop/cancel the pending INVITE, do not establish the dialog.
-    if session.state != SessionState::Inviting {
-        let session = media
-            .remove_session(sid)
-            .ok_or(MediaError::SessionNotFound)?;
-        let event = failed_event(&session, &media.config.domain_id, "late 200 OK after stop");
-        return Ok(vec![MediaOutput::EmitEvent(event)]);
-    }
-
-    let remote_tag = tag_from_header(&msg, &HeaderName::To)
+    let remote_tag = remote_tag
         .ok_or_else(|| MediaError::MalformedSip("missing To tag in 200 OK".to_string()))?;
-    let contact = first_contact_uri(&msg)?;
+    let contact = contact?;
+
     let parsed_remote_sdp = cheetah_gb28181_core::parse_sdp(msg.body(), &Default::default())
         .map_err(|e| MediaError::MalformedSdp(e.to_string()))?;
     let remote_sdp_text = String::from_utf8_lossy(msg.body()).to_string();
