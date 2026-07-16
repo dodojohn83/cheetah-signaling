@@ -72,6 +72,10 @@ struct PendingCommand {
 struct CatalogAggregator {
     sn: u32,
     sum_num: u32,
+    /// Effective completion target, capped by `catalog_page_size`.
+    target: u32,
+    /// Whether `sum_num` exceeded `catalog_page_size`.
+    capped: bool,
     items: Vec<crate::output::Gb28181CatalogItem>,
     received_fragments: u32,
 }
@@ -88,7 +92,8 @@ impl Gb28181Module {
             .expose_secret()
             .as_bytes()
             .to_vec();
-        let digest = DigestContext::new(&config.realm, secret)?;
+        let digest = DigestContext::new(&config.realm, secret)?
+            .nonce_ttl_seconds(config.auth_policy.nonce_ttl_seconds);
         let digest = if config.auth_policy.allow_md5 {
             digest.allow_md5(true)
         } else {

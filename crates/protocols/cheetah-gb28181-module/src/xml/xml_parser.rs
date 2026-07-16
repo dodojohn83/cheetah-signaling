@@ -29,7 +29,7 @@ pub fn parse_xml(
     Ok(envelope)
 }
 
-fn decode_xml_body(bytes: &[u8], _policy: &CharsetPolicy) -> Result<String, Gb28181ModuleError> {
+fn decode_xml_body(bytes: &[u8], policy: &CharsetPolicy) -> Result<String, Gb28181ModuleError> {
     let declaration = String::from_utf8_lossy(&bytes[..bytes.len().min(256)]);
     let lower = declaration.to_ascii_lowercase();
     let encoding = if let Some((_, rest)) = lower.split_once("encoding=\"") {
@@ -46,6 +46,11 @@ fn decode_xml_body(bytes: &[u8], _policy: &CharsetPolicy) -> Result<String, Gb28
     }
 
     if encoding.eq_ignore_ascii_case("gb2312") || encoding.eq_ignore_ascii_case("gbk") {
+        if matches!(policy, CharsetPolicy::Utf8) {
+            return Err(Gb28181ModuleError::Xml(
+                "non-UTF-8 XML encoding disabled by charset policy".into(),
+            ));
+        }
         let (cow, _, had_errors) = encoding_rs::GBK.decode(bytes);
         if had_errors {
             return Err(Gb28181ModuleError::Xml(format!(
@@ -80,12 +85,31 @@ fn validate_xml_limits(
     let mut item_count: usize = 0;
     let mut buf = Vec::new();
 
+    let mut check_element =
+        |e: &quick_xml::events::BytesStart<'_>| -> Result<(), Gb28181ModuleError> {
+            if e.attributes().count() > limits.max_attrs_per_element {
+                return Err(Gb28181ModuleError::Xml(
+                    "too many attributes on element".to_string(),
+                ));
+            }
+            if e.name().local_name().as_ref() == b"Item" {
+                item_count += 1;
+                if item_count > limits.max_list_items {
+                    return Err(Gb28181ModuleError::Xml(format!(
+                        "too many list items: limit {}",
+                        limits.max_list_items
+                    )));
+                }
+            }
+            Ok(())
+        };
+
     loop {
         let event = reader
             .read_event_into(&mut buf)
             .map_err(|e| Gb28181ModuleError::Xml(format!("XML validation error: {e}")))?;
         match event {
-            Event::Start(e) | Event::Empty(e) => {
+            Event::Start(e) => {
                 depth += 1;
                 max_depth = max_depth.max(depth);
                 if max_depth > limits.max_depth {
@@ -94,21 +118,9 @@ fn validate_xml_limits(
                         limits.max_depth
                     )));
                 }
-                if e.attributes().count() > limits.max_attrs_per_element {
-                    return Err(Gb28181ModuleError::Xml(
-                        "too many attributes on element".to_string(),
-                    ));
-                }
-                if e.name().local_name().as_ref() == b"Item" {
-                    item_count += 1;
-                    if item_count > limits.max_list_items {
-                        return Err(Gb28181ModuleError::Xml(format!(
-                            "too many list items: limit {}",
-                            limits.max_list_items
-                        )));
-                    }
-                }
+                check_element(&e)?;
             }
+            Event::Empty(e) => check_element(&e)?,
             Event::End(_) => {
                 depth = depth.saturating_sub(1);
             }
