@@ -509,8 +509,69 @@ fn control_playback_emits_mansrtsp_info() {
     assert!(content_type.contains("application/MANSRTSP"));
     let body = String::from_utf8_lossy(body);
     assert!(body.contains("PLAY MANSRTSP/1.0"));
-    assert!(body.contains("Scale: 2"));
-    assert!(body.contains("Range: clock=20240101T000000Z-20240101T010000Z"));
+    assert!(body.contains("Scale: 2\r\n"));
+    assert!(body.contains("Range: clock=20240101T000000Z-20240101T010000Z\r\n"));
+    assert!(!body.contains("1.0\nScale")); // no bare LF
+    assert!(body.ends_with("\r\n"));
+}
+
+#[test]
+fn playback_control_branch_is_unique_per_request() {
+    let mut media = Gb28181Media::new(config());
+    let sid = MediaSessionId::generate();
+    media
+        .process(MediaInput::Command(start_playback(sid)))
+        .unwrap();
+    media
+        .process(MediaInput::Message(build_test_200_ok()))
+        .unwrap();
+
+    let first = media
+        .process(MediaInput::Command(MediaCommand::ControlPlayback {
+            media_session_id: sid,
+            action: PlaybackAction::Play,
+            scale: Some(2.0),
+            range: None,
+        }))
+        .unwrap();
+    let second = media
+        .process(MediaInput::Command(MediaCommand::ControlPlayback {
+            media_session_id: sid,
+            action: PlaybackAction::Play,
+            scale: Some(4.0),
+            range: None,
+        }))
+        .unwrap();
+
+    let get_branch = |out: &[MediaOutput]| {
+        let MediaOutput::SendMessage(SipMessage::Request { headers, .. }) = &out[0] else {
+            panic!("expected request");
+        };
+        headers.get(&HeaderName::Via).unwrap().as_str().to_string()
+    };
+    let first_branch = get_branch(&first);
+    let second_branch = get_branch(&second);
+    assert_ne!(first_branch, second_branch);
+}
+
+#[test]
+fn playback_control_rejects_range_injection() {
+    let mut media = Gb28181Media::new(config());
+    let sid = MediaSessionId::generate();
+    media
+        .process(MediaInput::Command(start_playback(sid)))
+        .unwrap();
+    media
+        .process(MediaInput::Message(build_test_200_ok()))
+        .unwrap();
+
+    let result = media.process(MediaInput::Command(MediaCommand::ControlPlayback {
+        media_session_id: sid,
+        action: PlaybackAction::Play,
+        scale: None,
+        range: Some("clock=0-\r\nInjected: 1".to_string()),
+    }));
+    assert!(matches!(result, Err(MediaError::MalformedSip(_))));
 }
 
 #[test]

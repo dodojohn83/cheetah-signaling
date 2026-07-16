@@ -14,6 +14,9 @@ pub fn encode_sdp(session: &SdpSession) -> Result<String, SdpError> {
         write!(&mut out, "t={} {}\r\n", time.start, time.stop)
             .map_err(|e| SdpError::Malformed(e.to_string()))?;
     }
+    for attr in &session.attributes {
+        write_attribute(&mut out, attr)?;
+    }
     for media in &session.media {
         write_media(&mut out, media)?;
     }
@@ -146,9 +149,6 @@ fn write_session(out: &mut String, session: &SdpSession) -> Result<(), SdpError>
         )
         .map_err(|e| SdpError::Malformed(e.to_string()))?;
     }
-    for attr in &session.attributes {
-        write_attribute(out, attr)?;
-    }
     Ok(())
 }
 
@@ -247,7 +247,9 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::super::parser::parse_sdp;
-    use super::super::session::{SdpConnection, SdpOrigin, SdpSession, SdpTime};
+    use super::super::session::{
+        SdpAttribute, SdpConnection, SdpDirection, SdpMedia, SdpOrigin, SdpSession, SdpTime,
+    };
     use super::*;
 
     #[test]
@@ -284,5 +286,46 @@ mod tests {
         )
         .unwrap();
         assert_eq!(reparsed, session);
+    }
+
+    #[test]
+    fn session_attributes_follow_time_descriptions() {
+        let session = SdpSession {
+            version: "0".to_string(),
+            origin: SdpOrigin {
+                username: "-".to_string(),
+                sess_id: "0".to_string(),
+                sess_version: "0".to_string(),
+                nettype: "IN".to_string(),
+                addrtype: "IP4".to_string(),
+                address: "0.0.0.0".to_string(),
+            },
+            name: "Play".to_string(),
+            connection: Some(SdpConnection {
+                nettype: "IN".to_string(),
+                addrtype: "IP4".to_string(),
+                address: "192.168.1.100".to_string(),
+            }),
+            times: vec![SdpTime {
+                start: "0".to_string(),
+                stop: "0".to_string(),
+            }],
+            attributes: vec![SdpAttribute::Direction(SdpDirection::RecvOnly)],
+            media: vec![SdpMedia {
+                media_type: "video".to_string(),
+                port: 5000,
+                proto: "RTP/AVP".to_string(),
+                formats: vec!["96".to_string()],
+                attributes: vec![SdpAttribute::Direction(SdpDirection::RecvOnly)],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let encoded = encode_sdp(&session).unwrap();
+        let t_pos = encoded.find("t=0 0").unwrap();
+        let a_pos = encoded.find("a=recvonly").unwrap();
+        let m_pos = encoded.find("m=video 5000").unwrap();
+        assert!(t_pos < a_pos, "session attributes must follow t= lines");
+        assert!(a_pos < m_pos, "session attributes must precede m= lines");
     }
 }

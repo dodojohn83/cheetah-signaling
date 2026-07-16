@@ -29,6 +29,16 @@ impl PlaybackAction {
     }
 }
 
+/// Rejects values that would inject extra MANSRTSP lines.
+fn validate_mansrtsp_field(value: &str) -> Result<(), AccessError> {
+    if value.contains('\r') || value.contains('\n') {
+        return Err(AccessError::Internal(
+            "MANSRTSP field contains forbidden line break".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 /// Builds a SIP INFO request carrying a `MANSRTSP` body.
 #[allow(clippy::too_many_arguments)]
 pub fn build_info_mansrtsp(
@@ -47,14 +57,20 @@ pub fn build_info_mansrtsp(
         .ok_or_else(|| AccessError::Internal("missing remote tag for INFO".to_string()))?;
 
     let mut body = String::new();
-    writeln!(body, "{} MANSRTSP/1.0", action.method())
+    write!(body, "{} MANSRTSP/1.0\r\n", action.method())
         .map_err(|e| AccessError::Internal(e.to_string()))?;
-    writeln!(body, "CSeq: {cseq}").map_err(|e| AccessError::Internal(e.to_string()))?;
+    write!(body, "CSeq: {cseq}\r\n").map_err(|e| AccessError::Internal(e.to_string()))?;
     if let Some(s) = scale {
-        writeln!(body, "Scale: {s}").map_err(|e| AccessError::Internal(e.to_string()))?;
+        if !s.is_finite() {
+            return Err(AccessError::Internal("non-finite Scale value".to_string()));
+        }
+        let value = format!("{s}");
+        validate_mansrtsp_field(&value)?;
+        write!(body, "Scale: {value}\r\n").map_err(|e| AccessError::Internal(e.to_string()))?;
     }
     if let Some(r) = range {
-        writeln!(body, "Range: {r}").map_err(|e| AccessError::Internal(e.to_string()))?;
+        validate_mansrtsp_field(r)?;
+        write!(body, "Range: {r}\r\n").map_err(|e| AccessError::Internal(e.to_string()))?;
     }
     let body_bytes = body.into_bytes();
 
