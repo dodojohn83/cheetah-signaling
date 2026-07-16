@@ -275,25 +275,29 @@ impl Provisioner {
                     return Err(ProvisionerError::UnknownDevice);
                 };
                 state.capabilities.insert(kind, result.clone());
+                let previous_stage = state.stage;
                 let stage = if state.capabilities.len() >= 4 {
                     ProvisioningStage::FetchingProfiles
                 } else {
-                    state.stage
+                    previous_stage
                 };
                 state.stage = stage;
-                Ok(vec![
-                    ProvisioningOutput::EmitEvent(OnvifEvent::CapabilityProbed {
+                let mut outputs = vec![ProvisioningOutput::EmitEvent(
+                    OnvifEvent::CapabilityProbed {
                         tenant_id,
                         device_id,
                         kind,
                         result,
-                    }),
-                    ProvisioningOutput::StageChanged {
+                    },
+                )];
+                if stage != previous_stage {
+                    outputs.push(ProvisioningOutput::StageChanged {
                         tenant_id,
                         device_id,
                         stage,
-                    },
-                ])
+                    });
+                }
+                Ok(outputs)
             }
             ProvisioningInput::ServicesReceived {
                 tenant_id,
@@ -638,6 +642,47 @@ mod tests {
         )?;
         assert!(p.remove(tid, did));
         assert!(!p.remove(tid, did));
+        Ok(())
+    }
+
+    #[test]
+    fn capability_probed_does_not_emit_duplicate_stage_changed() -> Result<(), ProvisionerError> {
+        let mut p = Provisioner::new();
+        let id_gen = generator();
+        let tid = id_gen.generate_tenant_id();
+        let did = id_gen.generate_device_id();
+        p.process(
+            &*id_gen,
+            ProvisioningInput::Discovered {
+                tenant_id: tid,
+                device_id: did,
+                endpoint_reference: "urn:uuid:cam".to_string(),
+                xaddrs: vec!["http://192.0.2.1/onvif".to_string()],
+            },
+        )?;
+        p.start(&*id_gen, tid, did)?;
+        let mut seen = 0;
+        for _ in 0..3 {
+            let out = p.process(
+                &*id_gen,
+                ProvisioningInput::CapabilityProbed {
+                    tenant_id: tid,
+                    device_id: did,
+                    kind: CapabilityKind::Device,
+                    result: CapabilityProbeResult::Unsupported,
+                },
+            )?;
+            if out
+                .iter()
+                .any(|o| matches!(o, ProvisioningOutput::StageChanged { .. }))
+            {
+                seen += 1;
+            }
+        }
+        assert!(
+            seen <= 1,
+            "expected at most one stage change for repeated probes"
+        );
         Ok(())
     }
 }
