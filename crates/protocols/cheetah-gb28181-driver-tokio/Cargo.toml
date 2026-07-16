@@ -8,6 +8,9 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+cheetah-gb28181-core = { path = "../cheetah-gb28181-core" }
+tokio = { workspace = true, features = ["net", "rt", "time", "sync", "macros"] }
+tracing = { workspace = true }
 
 [dev-dependencies]
 
