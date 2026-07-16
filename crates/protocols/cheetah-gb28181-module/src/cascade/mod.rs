@@ -1,5 +1,6 @@
 //! Sans-I/O GB28181 cascade upstream registration state machine.
 
+mod bridge;
 mod catalog;
 mod keepalive;
 mod machine;
@@ -16,6 +17,7 @@ use cheetah_gb28181_core::{
 };
 use cheetah_signal_types::is_internal_ip;
 use secrecy::{SecretBox, SecretString};
+use std::collections::BTreeMap;
 use std::net::IpAddr;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
@@ -94,6 +96,14 @@ pub struct CascadeConfig {
     /// Maximum number of catalog response packets emitted for one upstream
     /// query. This bounds both memory and transaction state for large catalogs.
     pub catalog_max_query_pages: u32,
+    /// Maximum number of concurrent upstream play bridge sessions.
+    pub media_bridge_max_sessions: u32,
+    /// How long an upstream INVITE transaction may stay in `Invited` or
+    /// `Accepted` state before the bridge is abandoned and cleaned up.
+    pub media_bridge_transaction_timeout_seconds: u32,
+    /// How long an active bridge may stay without a `BYE` before the cascade
+    /// sends its own `BYE`. A value of `0` disables the active timeout.
+    pub media_bridge_active_timeout_seconds: u32,
     /// Filter controlling which resources may be shared with the upstream
     /// platform.
     pub catalog_filter: CatalogFilter,
@@ -190,6 +200,12 @@ impl CascadeConfig {
             keepalive_max_failures: 3,
             catalog_max_items_per_packet: 100,
             catalog_max_query_pages: 1000,
+            media_bridge_max_sessions: 1000,
+            media_bridge_transaction_timeout_seconds: 60,
+            // A generous safety deadline (7 days) so a stuck active bridge is
+            // eventually reclaimed even if BYE/stop signals are lost. Set to 0
+            // to disable active-timeout cleanup explicitly.
+            media_bridge_active_timeout_seconds: 604_800,
             catalog_filter: CatalogFilter::default(),
             user_agent: None,
             catalog_inbound_digest_credential_ref: None,
@@ -231,6 +247,20 @@ pub enum CascadeEvent {
     Request(Box<SipMessage>),
     /// A SIP response received from the network.
     Response(Box<SipMessage>),
+    /// The application has allocated media resources and produced an SDP answer
+    /// for an upstream play bridge.
+    BridgeMediaReady {
+        /// Bridge identifier supplied by `CascadePlayRequested`.
+        bridge_id: String,
+        /// Answer SDP to send in the `200 OK` to the upstream platform.
+        answer_sdp: String,
+    },
+    /// The application wants to tear down an upstream play bridge (e.g., the
+    /// downstream device hung up or allocation failed).
+    BridgeMediaStop {
+        /// Bridge identifier supplied by `CascadePlayRequested`.
+        bridge_id: String,
+    },
     /// A periodic tick for refresh, retry and transaction timeout processing.
     Tick,
 }
@@ -382,9 +412,11 @@ pub struct Gb28181Cascade<P: CascadeCredentialProvider> {
     provider: P,
     state: State,
     request_counter: u64,
+    bridge_counter: u64,
     auth: Option<AuthorizationContext>,
     catalog_provider: Option<Arc<dyn CatalogProvider>>,
     inbound_auth: Option<Arc<InboundAuthContext>>,
+    bridges: BTreeMap<String, bridge::Bridge>,
 }
 
 impl<P: CascadeCredentialProvider> std::fmt::Debug for Gb28181Cascade<P> {
@@ -393,6 +425,8 @@ impl<P: CascadeCredentialProvider> std::fmt::Debug for Gb28181Cascade<P> {
             .field("config", &self.config)
             .field("state", &self.state)
             .field("request_counter", &self.request_counter)
+            .field("bridge_counter", &self.bridge_counter)
+            .field("bridges", &self.bridges.len())
             .field("auth", &self.auth.is_some())
             .field("catalog_provider", &self.catalog_provider.is_some())
             .field("inbound_auth", &self.inbound_auth.is_some())
