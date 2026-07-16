@@ -12,7 +12,10 @@ pub mod services;
 pub mod types;
 pub mod workflow;
 
-pub use config::{AuthPolicy, MediaPreference, OnvifConfig, PullPointConfig, SnapshotConfig};
+pub use config::{
+    AuthPolicy, MediaPreference, OnvifConfig, ParserLimits, PullPointConfig, SnapshotConfig,
+    XAddrPolicy,
+};
 pub use error::OnvifModuleError;
 pub use ports::CredentialProvider;
 pub use types::{

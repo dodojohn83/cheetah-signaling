@@ -1,5 +1,7 @@
 //! ONVIF module configuration.
 
+pub use cheetah_onvif_core::discovery::XAddrPolicy;
+
 /// Authentication policy for an ONVIF device.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub enum AuthPolicy {
@@ -91,7 +93,7 @@ impl Default for ParserLimits {
 }
 
 /// ONVIF module configuration for a tenant or device.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OnvifConfig {
     /// Authentication policy.
     pub auth_policy: AuthPolicy,
@@ -101,11 +103,26 @@ pub struct OnvifConfig {
     pub pull_point: PullPointConfig,
     /// Snapshot settings.
     pub snapshot: SnapshotConfig,
-    /// Whether to allow domain-name hosts in discovered XAddrs; the driver is
-    /// responsible for DNS resolution and DNS-rebinding validation.
-    pub allow_domain_names: bool,
+    /// SSRF policy for discovered and service XAddrs.
+    pub xaddr_policy: XAddrPolicy,
+    /// Maximum number of devices kept in the provisioning workflow map.
+    pub max_provisioning_state_entries: usize,
     /// XML parser limits.
     pub parser: ParserLimits,
+}
+
+impl Default for OnvifConfig {
+    fn default() -> Self {
+        Self {
+            auth_policy: AuthPolicy::UsernameToken,
+            media_preference: MediaPreference::Media2ThenMedia1,
+            pull_point: PullPointConfig::default(),
+            snapshot: SnapshotConfig::default(),
+            xaddr_policy: XAddrPolicy::default(),
+            max_provisioning_state_entries: 4096,
+            parser: ParserLimits::default(),
+        }
+    }
 }
 
 impl OnvifConfig {
@@ -123,6 +140,18 @@ impl OnvifConfig {
     /// Sets the media preference.
     pub fn with_media_preference(mut self, media_preference: MediaPreference) -> Self {
         self.media_preference = media_preference;
+        self
+    }
+
+    /// Sets the XAddr SSRF policy.
+    pub fn with_xaddr_policy(mut self, xaddr_policy: XAddrPolicy) -> Self {
+        self.xaddr_policy = xaddr_policy;
+        self
+    }
+
+    /// Sets the maximum number of in-flight provisioning states.
+    pub fn with_max_provisioning_state_entries(mut self, max: usize) -> Self {
+        self.max_provisioning_state_entries = max.max(1);
         self
     }
 }

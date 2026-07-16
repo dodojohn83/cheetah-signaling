@@ -4,6 +4,7 @@ use crate::config::ParserLimits;
 use crate::error::OnvifModuleError;
 use crate::types::{CapabilityKind, CapabilityProbeResult, DeviceInformation, Service};
 use cheetah_onvif_core::OnvifError;
+use cheetah_onvif_core::discovery::XAddrPolicy;
 use cheetah_onvif_core::services::system_date_time;
 use cheetah_onvif_core::soap::Envelope;
 use quick_xml::events::{BytesStart, Event};
@@ -256,10 +257,11 @@ pub fn get_services_request(
         .map_err(OnvifModuleError::Onvif)
 }
 
-/// Parses a `GetServicesResponse`.
+/// Parses a `GetServicesResponse` and validates each service XAddr against `policy`.
 pub fn parse_get_services_response(
     xml: &str,
     limits: &ParserLimits,
+    xaddr_policy: &XAddrPolicy,
 ) -> Result<Vec<Service>, OnvifModuleError> {
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(true);
@@ -286,7 +288,7 @@ pub fn parse_get_services_response(
                 let text = ctx.on_end();
                 if name == "Service" {
                     if let Some(builder) = current.take() {
-                        services.push(builder.build()?);
+                        services.push(builder.build(xaddr_policy)?);
                     }
                 } else if let Some(ref mut b) = current {
                     match name.as_str() {
@@ -353,13 +355,15 @@ impl ServiceBuilder {
         }
     }
 
-    fn build(self) -> Result<Service, OnvifModuleError> {
+    fn build(self, xaddr_policy: &XAddrPolicy) -> Result<Service, OnvifModuleError> {
         if self.namespace.is_empty() {
             return Err(OnvifModuleError::MissingField("Namespace".to_string()));
         }
         if self.xaddr.is_empty() {
             return Err(OnvifModuleError::MissingField("XAddr".to_string()));
         }
+        let url = url::Url::parse(&self.xaddr)?;
+        xaddr_policy.validate(&url)?;
         let version = self.version_or_default();
         Ok(Service {
             namespace: self.namespace,
@@ -487,6 +491,10 @@ mod tests {
         }
     }
 
+    fn policy() -> XAddrPolicy {
+        XAddrPolicy::default()
+    }
+
     #[test]
     fn get_device_information_request_contains_action() -> Result<(), OnvifModuleError> {
         let xml = get_device_information_request("urn:uuid:1")?;
@@ -549,7 +557,7 @@ mod tests {
     </tds:GetServicesResponse>
   </s:Body>
 </s:Envelope>"#;
-        let services = parse_get_services_response(xml, &limits())?;
+        let services = parse_get_services_response(xml, &limits(), &policy())?;
         assert_eq!(services.len(), 2);
         assert_eq!(
             services[0].namespace,
@@ -576,10 +584,27 @@ mod tests {
     </tds:GetServicesResponse>
   </s:Body>
 </s:Envelope>"#;
-        let services = parse_get_services_response(xml, &limits())?;
+        let services = parse_get_services_response(xml, &limits(), &policy())?;
         assert_eq!(services.len(), 1);
         assert_eq!(services[0].version, "2.60");
         Ok(())
+    }
+
+    #[test]
+    fn parser_rejects_ssrf_xaddr() {
+        let xml = r#"<?xml version="1.0"?>
+<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">
+  <s:Body>
+    <tds:GetServicesResponse xmlns:tds="http://www.onvif.org/ver10/device/wsdl">
+      <tds:Service>
+        <tds:Namespace>http://www.onvif.org/ver10/device/wsdl</tds:Namespace>
+        <tds:XAddr>http://127.0.0.1/onvif/device_service</tds:XAddr>
+        <tds:Version>1.0</tds:Version>
+      </tds:Service>
+    </tds:GetServicesResponse>
+  </s:Body>
+</s:Envelope>"#;
+        assert!(parse_get_services_response(xml, &limits(), &policy()).is_err());
     }
 
     #[test]

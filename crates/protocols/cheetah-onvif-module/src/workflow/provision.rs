@@ -1,5 +1,6 @@
 //! ONVIF device provisioning workflow.
 
+use crate::config::XAddrPolicy;
 use crate::error::OnvifModuleError;
 use crate::services::{
     get_capabilities_request, get_device_information_request, get_services_request,
@@ -8,7 +9,7 @@ use crate::types::{
     CapabilityKind, CapabilityProbeResult, DeviceInformation, OnvifEvent, ProvisioningStage,
 };
 use cheetah_signal_types::{DeviceId, IdGenerator, TenantId};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 fn message_id(id_generator: &dyn IdGenerator) -> String {
     format!("urn:uuid:{}", id_generator.generate_message_id())
@@ -126,15 +127,51 @@ struct ProvisioningState {
 }
 
 /// Manages the ONVIF device provisioning workflow.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Provisioner {
     states: HashMap<(TenantId, DeviceId), ProvisioningState>,
+    xaddr_policy: XAddrPolicy,
+    max_states: usize,
+    eviction_order: VecDeque<(TenantId, DeviceId)>,
+}
+
+impl Default for Provisioner {
+    fn default() -> Self {
+        Self {
+            states: HashMap::new(),
+            xaddr_policy: XAddrPolicy::default(),
+            max_states: 4096,
+            eviction_order: VecDeque::new(),
+        }
+    }
 }
 
 impl Provisioner {
-    /// Creates a new provisioner.
+    /// Creates a new provisioner with default capacity and XAddr policy.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Sets the XAddr SSRF policy applied to discovered and service addresses.
+    pub fn with_xaddr_policy(mut self, policy: XAddrPolicy) -> Self {
+        self.xaddr_policy = policy;
+        self
+    }
+
+    /// Sets the maximum number of in-flight provisioning states.
+    pub fn with_max_states(mut self, max: usize) -> Self {
+        self.max_states = max.max(1);
+        self
+    }
+
+    /// Removes a device's provisioning state, returning whether it existed.
+    pub fn remove(&mut self, tenant_id: TenantId, device_id: DeviceId) -> bool {
+        let key = (tenant_id, device_id);
+        let removed = self.states.remove(&key).is_some();
+        if removed {
+            self.eviction_order.retain(|k| k != &key);
+        }
+        removed
     }
 
     /// Processes an input and returns the resulting outputs.
@@ -153,6 +190,7 @@ impl Provisioner {
                 endpoint_reference,
                 xaddrs,
             } => {
+                let xaddrs = self.xaddr_policy.filter(&xaddrs);
                 if xaddrs.is_empty() {
                     return Err(ProvisionerError::NoXAddr);
                 }
@@ -161,13 +199,22 @@ impl Provisioner {
                     state.endpoint_reference = endpoint_reference;
                     return Ok(vec![]);
                 }
+                let key = (tenant_id, device_id);
+                if self.states.len() >= self.max_states {
+                    while let Some(oldest) = self.eviction_order.pop_front() {
+                        if self.states.remove(&oldest).is_some() {
+                            break;
+                        }
+                    }
+                }
+                self.eviction_order.push_back(key);
                 let state = ProvisioningState {
                     stage: ProvisioningStage::PendingApproval,
                     xaddrs,
                     endpoint_reference,
                     ..Default::default()
                 };
-                self.states.insert((tenant_id, device_id), state);
+                self.states.insert(key, state);
                 Ok(vec![ProvisioningOutput::StageChanged {
                     tenant_id,
                     device_id,
@@ -523,6 +570,74 @@ mod tests {
                 ..
             }
         )));
+        Ok(())
+    }
+
+    #[test]
+    fn discovered_rejects_blocked_xaddrs() {
+        let mut p = Provisioner::new();
+        let id_gen = generator();
+        let tid = id_gen.generate_tenant_id();
+        let did = id_gen.generate_device_id();
+        let out = p.process(
+            &*id_gen,
+            ProvisioningInput::Discovered {
+                tenant_id: tid,
+                device_id: did,
+                endpoint_reference: "urn:uuid:cam".to_string(),
+                xaddrs: vec!["http://127.0.0.1/onvif".to_string()],
+            },
+        );
+        assert!(matches!(out, Err(ProvisionerError::NoXAddr)));
+    }
+
+    #[test]
+    fn eviction_bounds_state_map() -> Result<(), ProvisionerError> {
+        let mut p = Provisioner::new().with_max_states(1);
+        let id_gen = generator();
+        let tid = id_gen.generate_tenant_id();
+        let did1 = id_gen.generate_device_id();
+        let did2 = id_gen.generate_device_id();
+        p.process(
+            &*id_gen,
+            ProvisioningInput::Discovered {
+                tenant_id: tid,
+                device_id: did1,
+                endpoint_reference: "urn:uuid:cam1".to_string(),
+                xaddrs: vec!["http://192.0.2.1/onvif".to_string()],
+            },
+        )?;
+        p.process(
+            &*id_gen,
+            ProvisioningInput::Discovered {
+                tenant_id: tid,
+                device_id: did2,
+                endpoint_reference: "urn:uuid:cam2".to_string(),
+                xaddrs: vec!["http://192.0.2.2/onvif".to_string()],
+            },
+        )?;
+        assert!(p.stage(tid, did1).is_none());
+        assert!(p.stage(tid, did2).is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn remove_drops_state() -> Result<(), ProvisionerError> {
+        let mut p = Provisioner::new();
+        let id_gen = generator();
+        let tid = id_gen.generate_tenant_id();
+        let did = id_gen.generate_device_id();
+        p.process(
+            &*id_gen,
+            ProvisioningInput::Discovered {
+                tenant_id: tid,
+                device_id: did,
+                endpoint_reference: "urn:uuid:cam".to_string(),
+                xaddrs: vec!["http://192.0.2.1/onvif".to_string()],
+            },
+        )?;
+        assert!(p.remove(tid, did));
+        assert!(!p.remove(tid, did));
         Ok(())
     }
 }
