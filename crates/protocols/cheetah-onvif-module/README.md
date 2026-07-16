@@ -20,7 +20,11 @@ used by the Tokio driver.
 - `quick-xml` for additional XML helpers.
 - `url` for stream/snapshot URI normalization and validation.
 - `secrecy` for password handling.
-- `thiserror` and `tracing`.
+- `thiserror` for error derivation.
+
+## Dev dependencies
+
+- `uuid` for deterministic test fixtures.
 
 ## Forbidden dependencies
 

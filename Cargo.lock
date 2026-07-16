@@ -645,14 +645,11 @@ version = "0.1.0"
 name = "cheetah-onvif-module"
 version = "0.1.0"
 dependencies = [
- "base64",
  "cheetah-onvif-core",
  "cheetah-signal-types",
  "quick-xml",
  "secrecy",
  "thiserror",
- "time",
- "tracing",
  "url",
  "uuid",
 ]

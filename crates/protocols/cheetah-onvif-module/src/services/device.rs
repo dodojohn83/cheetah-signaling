@@ -1,7 +1,9 @@
 //! ONVIF Device service request builders and response parsers.
 
+use crate::config::ParserLimits;
 use crate::error::OnvifModuleError;
 use crate::types::{CapabilityKind, CapabilityProbeResult, DeviceInformation, Service};
+use cheetah_onvif_core::OnvifError;
 use cheetah_onvif_core::services::system_date_time;
 use cheetah_onvif_core::soap::Envelope;
 use quick_xml::events::{BytesStart, Event};
@@ -22,10 +24,97 @@ fn local_name(name: &quick_xml::name::QName<'_>) -> String {
     String::from_utf8_lossy(name.local_name().as_ref()).to_string()
 }
 
+fn limit_error(message: impl Into<String>) -> OnvifModuleError {
+    OnvifModuleError::Onvif(OnvifError::LimitExceeded(message.into()))
+}
+
+/// Tracks parser limits while scanning an ONVIF response.
+struct ParseContext<'a> {
+    limits: &'a ParserLimits,
+    stack: Vec<String>,
+    text: String,
+    node_count: usize,
+}
+
+impl<'a> ParseContext<'a> {
+    fn new(limits: &'a ParserLimits, input: &str) -> Result<Self, OnvifModuleError> {
+        if input.len() > limits.max_input_bytes {
+            return Err(limit_error(format!(
+                "response exceeds {} bytes",
+                limits.max_input_bytes
+            )));
+        }
+        Ok(Self {
+            limits,
+            stack: Vec::new(),
+            text: String::new(),
+            node_count: 0,
+        })
+    }
+
+    fn on_start(&mut self, name: String) -> Result<(), OnvifModuleError> {
+        self.node_count += 1;
+        if self.node_count > self.limits.max_nodes {
+            return Err(limit_error(format!(
+                "response exceeds {} nodes",
+                self.limits.max_nodes
+            )));
+        }
+        if self.stack.len() + 1 > self.limits.max_depth {
+            return Err(limit_error(format!(
+                "response exceeds {} nesting depth",
+                self.limits.max_depth
+            )));
+        }
+        self.stack.push(name);
+        self.text.clear();
+        Ok(())
+    }
+
+    fn on_empty(&mut self) -> Result<(), OnvifModuleError> {
+        self.node_count += 1;
+        if self.node_count > self.limits.max_nodes {
+            return Err(limit_error(format!(
+                "response exceeds {} nodes",
+                self.limits.max_nodes
+            )));
+        }
+        if self.stack.len() > self.limits.max_depth {
+            return Err(limit_error(format!(
+                "response exceeds {} nesting depth",
+                self.limits.max_depth
+            )));
+        }
+        Ok(())
+    }
+
+    fn append_text(&mut self, s: &str) -> Result<(), OnvifModuleError> {
+        if self.text.len() + s.len() > self.limits.max_text_bytes {
+            return Err(limit_error(format!(
+                "response text exceeds {} bytes",
+                self.limits.max_text_bytes
+            )));
+        }
+        self.text.push_str(s);
+        Ok(())
+    }
+
+    fn on_end(&mut self) -> (String, String) {
+        let text = std::mem::take(&mut self.text);
+        let name = self.stack.pop().unwrap_or_default();
+        (name, text)
+    }
+
+    fn parent(&self) -> Option<&str> {
+        self.stack.last().map(|s| s.as_str())
+    }
+}
+
 fn empty_body(name: &str) -> Result<String, OnvifModuleError> {
     let mut cursor = Cursor::new(Vec::new());
     let mut writer = Writer::new(&mut cursor);
-    let element = BytesStart::new(name);
+    let mut element = BytesStart::new(name);
+    element.push_attribute(("xmlns:tds", DEVICE_NS));
     writer.write_event(Event::Empty(element))?;
     String::from_utf8(cursor.into_inner())
         .map_err(|e| OnvifModuleError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string())))
@@ -47,46 +136,41 @@ pub fn get_device_information_request(
 /// Parses a `GetDeviceInformationResponse`.
 pub fn parse_get_device_information_response(
     xml: &str,
+    limits: &ParserLimits,
 ) -> Result<DeviceInformation, OnvifModuleError> {
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(true);
 
     let mut info = DeviceInformation::default();
-    let mut context: Vec<String> = Vec::new();
-    let mut text = String::new();
+    let mut ctx = ParseContext::new(limits, xml)?;
 
     loop {
         match reader.read_event() {
             Ok(Event::Start(e)) => {
-                context.push(local_name(&e.name()));
-                text.clear();
+                let name = local_name(&e.name());
+                ctx.on_start(name)?;
             }
             Ok(Event::Empty(_)) => {
-                text.clear();
+                ctx.on_empty()?;
             }
             Ok(Event::Text(e)) => {
-                text.push_str(&e.xml10_content().unwrap_or_default());
+                ctx.append_text(&e.xml10_content().unwrap_or_default())?;
             }
-            Ok(Event::End(e)) => {
-                let name = local_name(&e.name());
-                if context.last().is_some_and(|c| c == "Manufacturer") && name == "Manufacturer" {
+            Ok(Event::End(_e)) => {
+                let parent = ctx.parent().map(|s| s.to_string());
+                let (name, text) = ctx.on_end();
+                if parent.as_deref() == Some("Manufacturer") && name == "Manufacturer" {
                     info.manufacturer = text.trim().to_string();
-                } else if context.last().is_some_and(|c| c == "Model") && name == "Model" {
+                } else if parent.as_deref() == Some("Model") && name == "Model" {
                     info.model = text.trim().to_string();
-                } else if context.last().is_some_and(|c| c == "FirmwareVersion")
-                    && name == "FirmwareVersion"
+                } else if parent.as_deref() == Some("FirmwareVersion") && name == "FirmwareVersion"
                 {
                     info.firmware_version = text.trim().to_string();
-                } else if context.last().is_some_and(|c| c == "SerialNumber")
-                    && name == "SerialNumber"
-                {
+                } else if parent.as_deref() == Some("SerialNumber") && name == "SerialNumber" {
                     info.serial_number = text.trim().to_string();
-                } else if context.last().is_some_and(|c| c == "HardwareId") && name == "HardwareId"
-                {
+                } else if parent.as_deref() == Some("HardwareId") && name == "HardwareId" {
                     info.hardware_id = text.trim().to_string();
                 }
-                context.pop();
-                text.clear();
             }
             Ok(Event::Eof) => break,
             Err(e) => {
@@ -155,30 +239,33 @@ pub fn get_services_request(
 }
 
 /// Parses a `GetServicesResponse`.
-pub fn parse_get_services_response(xml: &str) -> Result<Vec<Service>, OnvifModuleError> {
+pub fn parse_get_services_response(
+    xml: &str,
+    limits: &ParserLimits,
+) -> Result<Vec<Service>, OnvifModuleError> {
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(true);
 
     let mut services = Vec::new();
-    let mut context: Vec<String> = Vec::new();
-    let mut text = String::new();
+    let mut ctx = ParseContext::new(limits, xml)?;
     let mut current: Option<ServiceBuilder> = None;
 
     loop {
         match reader.read_event() {
             Ok(Event::Start(e)) => {
-                context.push(local_name(&e.name()));
-                text.clear();
+                let name = local_name(&e.name());
+                ctx.on_start(name)?;
             }
             Ok(Event::Empty(_)) => {
-                text.clear();
+                ctx.on_empty()?;
             }
             Ok(Event::Text(e)) => {
-                text.push_str(&e.xml10_content().unwrap_or_default());
+                ctx.append_text(&e.xml10_content().unwrap_or_default())?;
             }
-            Ok(Event::End(e)) => {
-                let name = local_name(&e.name());
-                if name == "Service" && context.last().is_some_and(|c| c == "Service") {
+            Ok(Event::End(_e)) => {
+                let parent = ctx.parent().map(|s| s.to_string());
+                let (name, text) = ctx.on_end();
+                if name == "Service" && parent.as_deref() == Some("Service") {
                     if let Some(builder) = current.take() {
                         services.push(builder.build()?);
                     }
@@ -189,15 +276,13 @@ pub fn parse_get_services_response(xml: &str) -> Result<Vec<Service>, OnvifModul
                         "Version" => b.version = text.trim().to_string(),
                         _ => {}
                     }
-                } else if name == "Namespace" && context.last().is_some_and(|c| c == "Namespace") {
+                } else if name == "Namespace" && parent.as_deref() == Some("Namespace") {
                     current = Some(ServiceBuilder {
                         namespace: text.trim().to_string(),
                         xaddr: String::new(),
                         version: String::new(),
                     });
                 }
-                context.pop();
-                text.clear();
             }
             Ok(Event::Eof) => break,
             Err(e) => {
@@ -246,26 +331,28 @@ pub fn get_capabilities_request(message_id: impl Into<String>) -> Result<String,
 /// Parses a `GetCapabilitiesResponse` into high-level capability results.
 pub fn parse_get_capabilities_response(
     xml: &str,
+    limits: &ParserLimits,
 ) -> Result<HashMap<CapabilityKind, CapabilityProbeResult>, OnvifModuleError> {
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(true);
 
     let mut caps: HashMap<CapabilityKind, CapabilityProbeResult> = HashMap::new();
-    let mut context: Vec<String> = Vec::new();
+    let mut ctx = ParseContext::new(limits, xml)?;
 
     loop {
         match reader.read_event() {
             Ok(Event::Start(e)) => {
                 let name = local_name(&e.name());
                 check_capability(&mut caps, &name);
-                context.push(name);
+                ctx.on_start(name)?;
             }
             Ok(Event::Empty(e)) => {
                 let name = local_name(&e.name());
                 check_capability(&mut caps, &name);
+                ctx.on_empty()?;
             }
             Ok(Event::End(_)) => {
-                context.pop();
+                let _ = ctx.on_end();
             }
             Ok(Event::Eof) => break,
             Err(e) => {
@@ -341,12 +428,22 @@ pub fn get_network_interfaces_request(
 mod tests {
     use super::*;
 
+    fn limits() -> ParserLimits {
+        ParserLimits {
+            max_depth: 64,
+            max_nodes: 1024,
+            max_text_bytes: 1024,
+            max_input_bytes: 65_536,
+        }
+    }
+
     #[test]
     fn get_device_information_request_contains_action() -> Result<(), OnvifModuleError> {
         let xml = get_device_information_request("urn:uuid:1")?;
         assert!(xml.contains(GET_DEVICE_INFO_ACTION));
         assert!(xml.contains("GetDeviceInformation"));
         assert!(xml.contains("urn:uuid:1"));
+        assert!(xml.contains("xmlns:tds"));
         Ok(())
     }
 
@@ -366,7 +463,7 @@ mod tests {
     </tds:GetDeviceInformationResponse>
   </s:Body>
 </s:Envelope>"#;
-        let info = parse_get_device_information_response(xml)?;
+        let info = parse_get_device_information_response(xml, &limits())?;
         assert_eq!(info.manufacturer, "Acme");
         assert_eq!(info.model, "Cam-1");
         assert_eq!(info.firmware_version, "1.0");
@@ -404,7 +501,7 @@ mod tests {
     </tds:GetServicesResponse>
   </s:Body>
 </s:Envelope>"#;
-        let services = parse_get_services_response(xml)?;
+        let services = parse_get_services_response(xml, &limits())?;
         assert_eq!(services.len(), 2);
         assert_eq!(
             services[0].namespace,
@@ -428,10 +525,38 @@ mod tests {
     </tds:GetCapabilitiesResponse>
   </s:Body>
 </s:Envelope>"#;
-        let caps = parse_get_capabilities_response(xml)?;
+        let caps = parse_get_capabilities_response(xml, &limits())?;
         assert!(caps.contains_key(&CapabilityKind::Device));
         assert!(caps.contains_key(&CapabilityKind::Media));
         assert!(caps.contains_key(&CapabilityKind::Ptz));
         Ok(())
+    }
+
+    #[test]
+    fn parser_rejects_oversized_input() {
+        let small_limits = ParserLimits {
+            max_input_bytes: 10,
+            ..ParserLimits::default()
+        };
+        assert!(parse_get_device_information_response("<root></root>", &small_limits).is_err());
+    }
+
+    #[test]
+    fn parser_rejects_deep_nesting() {
+        let shallow_limits = ParserLimits {
+            max_depth: 2,
+            ..ParserLimits::default()
+        };
+        let xml = r#"<?xml version="1.0"?>
+<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">
+  <s:Body>
+    <tds:GetDeviceInformationResponse xmlns:tds="http://www.onvif.org/ver10/device/wsdl">
+      <tds:Information>
+        <tt:Manufacturer xmlns:tt="http://www.onvif.org/ver10/schema">Acme</tt:Manufacturer>
+      </tds:Information>
+    </tds:GetDeviceInformationResponse>
+  </s:Body>
+</s:Envelope>"#;
+        assert!(parse_get_device_information_response(xml, &shallow_limits).is_err());
     }
 }

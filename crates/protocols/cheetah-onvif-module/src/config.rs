@@ -66,6 +66,30 @@ impl Default for SnapshotConfig {
     }
 }
 
+/// XML response parsing limits to bound memory and CPU usage.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ParserLimits {
+    /// Maximum element nesting depth.
+    pub max_depth: usize,
+    /// Maximum number of XML nodes (Start/Empty events) to read.
+    pub max_nodes: usize,
+    /// Maximum accumulated text length in bytes for a single element.
+    pub max_text_bytes: usize,
+    /// Maximum total input size in bytes.
+    pub max_input_bytes: usize,
+}
+
+impl Default for ParserLimits {
+    fn default() -> Self {
+        Self {
+            max_depth: 64,
+            max_nodes: 65_536,
+            max_text_bytes: 65_536,
+            max_input_bytes: 16_777_216,
+        }
+    }
+}
+
 /// ONVIF module configuration for a tenant or device.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct OnvifConfig {
@@ -80,6 +104,8 @@ pub struct OnvifConfig {
     /// Whether to allow domain-name hosts in discovered XAddrs; the driver is
     /// responsible for DNS resolution and DNS-rebinding validation.
     pub allow_domain_names: bool,
+    /// XML parser limits.
+    pub parser: ParserLimits,
 }
 
 impl OnvifConfig {
