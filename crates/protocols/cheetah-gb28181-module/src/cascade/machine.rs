@@ -46,6 +46,7 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
             report_queue: std::collections::VecDeque::new(),
             report_state: std::collections::HashMap::new(),
             report_state_order: std::collections::VecDeque::new(),
+            subscriptions: std::collections::BTreeMap::new(),
         })
     }
 
@@ -152,6 +153,9 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
     fn on_tick(&mut self, now: u64) -> Result<Vec<CascadeOutput>, CascadeError> {
         let mut outputs = super::bridge::on_tick(self, now)?;
 
+        let subscription_outputs = super::subscription::on_tick(self, now);
+        outputs.extend(subscription_outputs);
+
         let more = match self.state.clone() {
             State::Registered(reg) if now >= reg.refresh_at => {
                 // Trigger a refresh.
@@ -195,6 +199,7 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
             reg.keepalive.failures += 1;
             reg.keepalive.pending_until = None;
             if reg.keepalive.failures >= self.config.keepalive_max_failures {
+                self.subscriptions.clear();
                 self.state = State::Idle;
                 return Ok(vec![CascadeOutput::EmitEvent(
                     Gb28181Event::CascadePlatformDisconnected {
@@ -279,6 +284,7 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
                 }
                 _ => Ok(Vec::new()),
             },
+            Method::Notify => Ok(super::subscription::handle_response(self, now, msg)),
             _ => Ok(Vec::new()),
         }
     }
@@ -293,6 +299,7 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
             Method::Invite | Method::Ack | Method::Bye | Method::Cancel => {
                 super::bridge::handle_request(self, now, msg)
             }
+            Method::Subscribe => super::subscription::handle_subscribe(self, now, msg),
             _ => super::request_handler::handle_request(self, now, msg),
         }
     }
@@ -337,6 +344,7 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
             let expires = parse_expires(&msg, self.config.register_interval_seconds);
             if expires == 0 {
                 // The upstream removed the binding; do not schedule a refresh.
+                self.subscriptions.clear();
                 self.state = State::Idle;
                 return Ok(vec![CascadeOutput::EmitEvent(
                     Gb28181Event::CascadePlatformDisconnected {
@@ -409,6 +417,7 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
 
         if status.code == 401 && reg.authenticated {
             // If already authenticated and still 401, give up on deregister.
+            self.subscriptions.clear();
             self.state = State::Idle;
             return Ok(vec![CascadeOutput::EmitEvent(
                 Gb28181Event::CascadePlatformDisconnected {
@@ -421,6 +430,7 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
 
         if status.code >= 400 {
             // Deregister attempt failed, but the binding may still expire.
+            self.subscriptions.clear();
             self.state = State::Idle;
             return Ok(vec![CascadeOutput::EmitEvent(
                 Gb28181Event::CascadePlatformDisconnected {
@@ -432,6 +442,7 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
         }
 
         if status.code >= 300 {
+            self.subscriptions.clear();
             self.state = State::Idle;
             return Ok(vec![CascadeOutput::EmitEvent(
                 Gb28181Event::CascadePlatformDisconnected {
@@ -446,6 +457,7 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
         }
 
         if (200..300).contains(&status.code) {
+            self.subscriptions.clear();
             self.state = State::Idle;
             return Ok(vec![CascadeOutput::EmitEvent(
                 Gb28181Event::CascadePlatformDisconnected {
@@ -517,6 +529,7 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
     ) -> Vec<CascadeOutput> {
         reg.keepalive.failures += 1;
         if reg.keepalive.failures >= self.config.keepalive_max_failures {
+            self.subscriptions.clear();
             self.state = State::Idle;
             return vec![CascadeOutput::EmitEvent(
                 Gb28181Event::CascadePlatformDisconnected {
@@ -686,6 +699,7 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
         reason: String,
     ) -> Vec<CascadeOutput> {
         if is_deregister || attempt >= self.config.max_retries {
+            self.subscriptions.clear();
             self.state = State::Idle;
             return vec![CascadeOutput::EmitEvent(
                 Gb28181Event::CascadePlatformDisconnected {
@@ -697,6 +711,7 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
         }
 
         let retry_at = now.saturating_add(self.backoff_ms(attempt + 1) / 1000);
+        self.subscriptions.clear();
         self.state = State::Failed {
             retry_at,
             attempt: attempt + 1,
