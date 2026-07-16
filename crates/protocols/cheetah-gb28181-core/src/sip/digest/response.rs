@@ -321,6 +321,96 @@ impl fmt::Debug for DigestChallenge {
 }
 
 impl DigestChallenge {
+    /// Default maximum length for a `WWW-Authenticate` header value.
+    pub const DEFAULT_MAX_HEADER_LEN: usize = 2048;
+
+    /// Parses a `WWW-Authenticate` Digest challenge.
+    pub fn parse(value: &str) -> Result<Self, DigestError> {
+        Self::parse_with_limit(value, Self::DEFAULT_MAX_HEADER_LEN)
+    }
+
+    /// Parses a `WWW-Authenticate` Digest challenge, rejecting inputs longer
+    /// than `max_len` bytes.
+    pub fn parse_with_limit(value: &str, max_len: usize) -> Result<Self, DigestError> {
+        if value.len() > max_len {
+            return Err(DigestError::Malformed(format!(
+                "digest header exceeds maximum length of {max_len}"
+            )));
+        }
+        let value = value.trim();
+        let value = if value.len() > 7
+            && value.is_char_boundary(7)
+            && value[..7].eq_ignore_ascii_case("digest ")
+        {
+            &value[7..]
+        } else {
+            value
+        };
+
+        let mut realm = None;
+        let mut nonce = None;
+        let mut opaque = None;
+        let mut stale = false;
+        let mut algorithm = None;
+        let mut qop = None;
+
+        for part in split_commas(value) {
+            let part = part.trim();
+            if part.is_empty() {
+                continue;
+            }
+            let Some(eq) = part.find('=') else {
+                return Err(DigestError::Malformed(
+                    "missing '=' in digest parameter".to_string(),
+                ));
+            };
+            let key = part[..eq].trim().to_ascii_lowercase();
+            let raw = part[eq + 1..].trim();
+            let value = unquote(raw);
+
+            match key.as_str() {
+                "realm" => realm = Some(value.into_owned()),
+                "nonce" => nonce = Some(value.into_owned()),
+                "opaque" => opaque = Some(value.into_owned()),
+                "stale" => stale = value.eq_ignore_ascii_case("true"),
+                "algorithm" => {
+                    algorithm = Some(
+                        DigestAlgorithm::parse(value.as_ref())
+                            .ok_or(DigestError::UnknownAlgorithm)?,
+                    );
+                }
+                "qop" => {
+                    let value = value.into_owned();
+                    let mut selected = None;
+                    for token in split_commas(&value) {
+                        let token = token.trim();
+                        if token.is_empty() {
+                            continue;
+                        }
+                        let token = unquote(token).into_owned();
+                        if token.eq_ignore_ascii_case("auth") {
+                            selected = Some(DigestQop::Auth);
+                            break;
+                        } else if token.eq_ignore_ascii_case("auth-int") {
+                            selected = Some(DigestQop::AuthInt);
+                        }
+                    }
+                    qop = selected;
+                }
+                _ => {}
+            }
+        }
+
+        Ok(Self {
+            realm: realm.ok_or_else(|| DigestError::Malformed("missing realm".to_string()))?,
+            nonce: nonce.ok_or_else(|| DigestError::Malformed("missing nonce".to_string()))?,
+            opaque,
+            stale,
+            algorithm: algorithm.unwrap_or(DigestAlgorithm::Md5),
+            qop,
+        })
+    }
+
     /// Encodes the challenge as the value of a `WWW-Authenticate` header.
     pub fn to_header_value(&self) -> String {
         let mut out = String::from("Digest");

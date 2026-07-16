@@ -14,6 +14,7 @@
 #![warn(missing_docs)]
 
 pub mod access;
+pub mod cascade;
 pub mod config;
 pub mod error;
 pub mod events;
@@ -24,6 +25,10 @@ pub mod types;
 pub mod xml;
 
 pub use access::{AccessInput, AccessOutput, Gb28181Access};
+pub use cascade::{
+    CascadeConfig, CascadeCredentialProvider, CascadeError, CascadeEvent, CascadeInput,
+    CascadeOutput, Gb28181Cascade,
+};
 pub use config::{AuthPolicy, CharsetPolicy, Gb28181DomainConfig};
 pub use error::AccessError;
 pub use events::{DevicePresence, Gb28181Event};
