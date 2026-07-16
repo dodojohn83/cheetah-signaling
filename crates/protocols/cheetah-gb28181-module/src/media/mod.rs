@@ -160,6 +160,13 @@ impl Gb28181Media {
         }
     }
 
+    /// Removes a session and its Call-ID index entry, returning it.
+    fn remove_session(&mut self, sid: MediaSessionId) -> Option<Session> {
+        let session = self.sessions.remove(&sid)?;
+        self.call_index.remove(&session.call_id);
+        Some(session)
+    }
+
     /// Processes an input and returns ordered outputs.
     pub fn process(&mut self, input: MediaInput) -> Result<Vec<MediaOutput>, MediaError> {
         match input {
@@ -221,6 +228,7 @@ impl Gb28181Media {
                         cseq,
                         branch,
                         target,
+                        remote_target: None,
                         state: SessionState::Inviting,
                         media_address,
                         media_port,
@@ -243,8 +251,15 @@ impl Gb28181Media {
 
                 session.cseq += 1;
                 let branch = format!("{}-bye", session.branch);
-                let bye = build_bye(&self.config.local_sip_uri, session, session.cseq, &branch)
-                    .map_err(|e| MediaError::MalformedSip(e.to_string()))?;
+                let target = session.remote_target.as_ref().unwrap_or(&session.target);
+                let bye = build_bye(
+                    &self.config.local_sip_uri,
+                    session,
+                    session.cseq,
+                    &branch,
+                    target,
+                )
+                .map_err(|e| MediaError::MalformedSip(e.to_string()))?;
                 session.state = SessionState::Stopping;
 
                 Ok(vec![MediaOutput::SendMessage(bye)])
@@ -290,8 +305,7 @@ impl Gb28181Media {
                 }
                 if code >= 300 {
                     let session = self
-                        .sessions
-                        .remove(&sid)
+                        .remove_session(sid)
                         .ok_or(MediaError::SessionNotFound)?;
                     let event = failed_event(&session, &self.config.domain_id, "invite rejected");
                     return Ok(vec![MediaOutput::EmitEvent(event)]);
@@ -303,8 +317,7 @@ impl Gb28181Media {
 
         if cseq.1 == Method::Bye {
             let session = self
-                .sessions
-                .remove(&sid)
+                .remove_session(sid)
                 .ok_or(MediaError::SessionNotFound)?;
             let event = stopped_event(&session, &self.config.domain_id);
             return Ok(vec![MediaOutput::EmitEvent(event)]);
@@ -321,8 +334,7 @@ impl Gb28181Media {
     ) -> Result<Vec<MediaOutput>, MediaError> {
         if method == &Method::Bye {
             let session = self
-                .sessions
-                .remove(&sid)
+                .remove_session(sid)
                 .ok_or(MediaError::SessionNotFound)?;
             let ok = build_ok_response(&msg);
             let event = stopped_event(&session, &self.config.domain_id);
@@ -375,7 +387,7 @@ impl Gb28181Media {
             .unwrap_or_default();
 
         session.remote_tag = Some(remote_tag.clone());
-        session.target = contact.clone();
+        session.remote_target = Some(contact.clone());
 
         let ack_branch = format!("{}-ack", session.branch);
         let ack = build_ack(

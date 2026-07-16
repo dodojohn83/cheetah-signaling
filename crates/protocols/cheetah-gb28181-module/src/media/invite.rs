@@ -130,6 +130,7 @@ pub fn build_bye(
     session: &Session,
     cseq: u32,
     branch: &str,
+    target: &SipUri,
 ) -> Result<SipMessage, AccessError> {
     let remote_tag = session
         .remote_tag
@@ -170,7 +171,7 @@ pub fn build_bye(
     headers.append(HeaderName::ContentLength, HeaderValue::new("0"));
 
     Ok(SipMessage::Request {
-        line: RequestLine::new(Method::Bye, session.target.clone()),
+        line: RequestLine::new(Method::Bye, target.clone()),
         headers,
         body: Vec::new(),
     })

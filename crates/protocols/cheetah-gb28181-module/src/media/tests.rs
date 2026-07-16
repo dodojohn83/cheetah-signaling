@@ -1,5 +1,6 @@
 //! Unit tests for the GB28181 media session state machine.
 
+#![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
 
 use super::*;
@@ -204,6 +205,120 @@ fn build_test_200_ok() -> SipMessage {
         headers,
         body: sdp.as_bytes().to_vec(),
     }
+}
+
+#[test]
+fn ack_uses_aor_for_to_and_contact_for_request_uri() {
+    let mut media = Gb28181Media::new(config());
+    let sid = MediaSessionId::generate();
+    media.process(MediaInput::Command(start_live(sid))).unwrap();
+
+    let ok = build_test_200_ok();
+    let outputs = media.process(MediaInput::Message(ok)).unwrap();
+
+    let MediaOutput::SendMessage(ack) = &outputs[0] else {
+        panic!("expected SendMessage ACK");
+    };
+    let SipMessage::Request { line, headers, .. } = ack else {
+        panic!("expected request");
+    };
+    assert_eq!(
+        line.uri.encode(),
+        "sip:34020000001320000001@192.168.1.20:5061"
+    );
+    let to = headers.get(&HeaderName::To).expect("missing To").as_str();
+    assert!(to.contains("sip:34020000001320000001@192.168.1.20:5060"));
+    assert!(to.contains("tag=tag-remote"));
+}
+
+#[test]
+fn bye_uses_contact_request_uri_and_aor_to() {
+    let mut media = Gb28181Media::new(config());
+    let sid = MediaSessionId::generate();
+    media.process(MediaInput::Command(start_live(sid))).unwrap();
+    let ok = build_test_200_ok();
+    media.process(MediaInput::Message(ok)).unwrap();
+
+    let outputs = media
+        .process(MediaInput::Command(MediaCommand::StopLive {
+            media_session_id: sid,
+        }))
+        .unwrap();
+
+    let MediaOutput::SendMessage(bye) = &outputs[0] else {
+        panic!("expected SendMessage BYE");
+    };
+    let SipMessage::Request { line, headers, .. } = bye else {
+        panic!("expected request");
+    };
+    assert_eq!(
+        line.uri.encode(),
+        "sip:34020000001320000001@192.168.1.20:5061"
+    );
+    let to = headers.get(&HeaderName::To).expect("missing To").as_str();
+    assert!(to.contains("sip:34020000001320000001@192.168.1.20:5060"));
+    assert!(to.contains("tag=tag-remote"));
+}
+
+#[test]
+fn call_index_cleaned_after_bye_response() {
+    let mut media = Gb28181Media::new(config());
+    let sid = MediaSessionId::generate();
+    media.process(MediaInput::Command(start_live(sid))).unwrap();
+    let ok = build_test_200_ok();
+    media.process(MediaInput::Message(ok)).unwrap();
+    media
+        .process(MediaInput::Command(MediaCommand::StopLive {
+            media_session_id: sid,
+        }))
+        .unwrap();
+
+    let bye_ok = build_response_to_bye();
+    media.process(MediaInput::Message(bye_ok)).unwrap();
+
+    // A second BYE response for the same Call-ID must no longer route to a session.
+    let duplicate = build_response_to_bye();
+    let result = media.process(MediaInput::Message(duplicate));
+    assert!(matches!(result, Err(MediaError::SessionNotFound)));
+}
+
+#[test]
+fn invite_failure_cleans_call_index() {
+    let mut media = Gb28181Media::new(config());
+    let sid = MediaSessionId::generate();
+    media.process(MediaInput::Command(start_live(sid))).unwrap();
+
+    let mut headers = SipHeaders::new();
+    headers.append(
+        HeaderName::Via,
+        HeaderValue::new("SIP/2.0/UDP 192.168.1.10:5060;branch=z9hG4bK1234"),
+    );
+    headers.append(
+        HeaderName::From,
+        HeaderValue::new("<sip:server@192.168.1.10:5060>;tag=tag-local"),
+    );
+    headers.append(
+        HeaderName::To,
+        HeaderValue::new("<sip:34020000001320000001@192.168.1.20:5060>;tag=tag-remote"),
+    );
+    headers.append(HeaderName::CallId, HeaderValue::new("call-1"));
+    headers.append(HeaderName::CSeq, HeaderValue::new("1 INVITE"));
+    headers.append(HeaderName::ContentLength, HeaderValue::new("0"));
+    let busy = SipMessage::Response {
+        line: StatusLine::new(486, "Busy Here"),
+        headers,
+        body: Vec::new(),
+    };
+
+    let outputs = media.process(MediaInput::Message(busy)).unwrap();
+    assert!(matches!(
+        &outputs[0],
+        MediaOutput::EmitEvent(Gb28181Event::MediaSessionFailed { .. })
+    ));
+
+    let duplicate = build_response_to_bye();
+    let result = media.process(MediaInput::Message(duplicate));
+    assert!(matches!(result, Err(MediaError::SessionNotFound)));
 }
 
 fn build_response_to_bye() -> SipMessage {

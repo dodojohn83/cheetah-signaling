@@ -30,7 +30,10 @@ pub struct Session {
     pub remote_tag: Option<String>,
     pub cseq: u32,
     pub branch: String,
+    /// Original remote AOR used in the To header.
     pub target: SipUri,
+    /// Remote Contact URI used for in-dialog Request-URIs (ACK/BYE).
+    pub remote_target: Option<SipUri>,
     pub state: SessionState,
     pub media_address: String,
     pub media_port: u16,
