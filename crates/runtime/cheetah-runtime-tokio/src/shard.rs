@@ -36,6 +36,7 @@ pub(crate) struct ShardContext<A: DeviceActor> {
     clock: Arc<dyn Clock>,
     id_gen: Arc<AtomicU64>,
     session_registry: SessionRegistry<A::SessionHandle>,
+    actor_config: Option<Arc<dyn std::any::Any + Send + Sync>>,
 }
 
 impl<A: DeviceActor> ShardContext<A> {
@@ -46,6 +47,7 @@ impl<A: DeviceActor> ShardContext<A> {
         clock: Arc<dyn Clock>,
         id_gen: Arc<AtomicU64>,
         session_registry: SessionRegistry<A::SessionHandle>,
+        actor_config: Option<Arc<dyn std::any::Any + Send + Sync>>,
     ) -> Self {
         Self {
             config,
@@ -54,6 +56,7 @@ impl<A: DeviceActor> ShardContext<A> {
             clock,
             id_gen,
             session_registry,
+            actor_config,
         }
     }
 
@@ -64,6 +67,7 @@ impl<A: DeviceActor> ShardContext<A> {
             self.clock.clone(),
             self.id_gen.clone(),
             self.session_registry.clone(),
+            self.actor_config.clone(),
         )
     }
 }
@@ -73,6 +77,7 @@ pub(crate) struct Shard;
 
 impl Shard {
     /// Starts a shard task and returns its future.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn run<A: DeviceActor>(
         config: ShardConfig,
         mut receiver: mpsc::Receiver<RuntimeMessage>,
@@ -81,6 +86,7 @@ impl Shard {
         clock: Arc<dyn Clock>,
         id_gen: Arc<AtomicU64>,
         session_registry: SessionRegistry<A::SessionHandle>,
+        actor_config: Option<Arc<dyn std::any::Any + Send + Sync>>,
     ) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>> {
         Box::pin(async move {
             let mut ready_queue: BTreeMap<DeviceKey, VecDeque<RuntimeMessage>> = BTreeMap::new();
@@ -92,6 +98,7 @@ impl Shard {
                 clock,
                 id_gen,
                 session_registry,
+                actor_config,
             );
 
             let mut shutdown = false;

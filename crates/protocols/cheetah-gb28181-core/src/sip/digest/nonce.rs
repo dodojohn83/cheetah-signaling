@@ -1,6 +1,6 @@
 //! Signed-nonce generation and validation for digest authentication.
 
-use super::response::DigestError;
+use super::types::DigestError;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use subtle::ConstantTimeEq;

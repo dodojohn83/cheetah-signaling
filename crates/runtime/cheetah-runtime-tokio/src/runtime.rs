@@ -67,6 +67,7 @@ impl<A: DeviceActor> Runtime<A> {
         let mut shard_senders = Vec::with_capacity(config.shard_count);
         let mut join_handles = Vec::with_capacity(config.shard_count + 1);
 
+        let actor_config = config.actor_config.clone();
         for _ in 0..config.shard_count {
             let (sender, receiver) = mpsc::channel(config.shard_mailbox_capacity);
             shard_senders.push(sender);
@@ -78,6 +79,7 @@ impl<A: DeviceActor> Runtime<A> {
                 clock.clone(),
                 id_gen.clone(),
                 session_registry.clone(),
+                actor_config.clone(),
             )));
         }
 

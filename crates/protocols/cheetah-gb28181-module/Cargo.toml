@@ -6,10 +6,24 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+description = "GB28181 protocol module: device access, XML mapping and Sans-I/O business state machine."
 
 [dependencies]
+cheetah-domain = { path = "../../domain/cheetah-domain", version = "0.1.0" }
+cheetah-gb28181-core = { path = "../cheetah-gb28181-core", version = "0.1.0" }
+cheetah-runtime-api = { path = "../../runtime/cheetah-runtime-api", version = "0.1.0" }
+cheetah-signal-types = { path = "../../foundation/cheetah-signal-types", version = "0.1.0" }
+async-trait = { workspace = true }
+quick-xml = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+bytes = { workspace = true }
+secrecy = { workspace = true }
+encoding_rs = { workspace = true }
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 
 [lints]
 workspace = true

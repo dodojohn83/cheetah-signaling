@@ -5,11 +5,15 @@
 //! performs constant-time response comparison. All time values are supplied by
 //! the caller as a monotonically non-decreasing second counter.
 
+pub(crate) mod challenge;
 pub(crate) mod context;
 pub(crate) mod nonce;
 pub(crate) mod replay_cache;
 pub(crate) mod response;
+pub(crate) mod types;
 
+pub use challenge::DigestChallenge;
 pub use context::DigestContext;
 pub use replay_cache::DigestReplayCache;
-pub use response::{DigestAlgorithm, DigestChallenge, DigestError, DigestQop, DigestResponse};
+pub use response::DigestResponse;
+pub use types::{DigestAlgorithm, DigestError, DigestQop};

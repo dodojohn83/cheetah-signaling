@@ -1,9 +1,12 @@
 //! Runtime configuration and validation.
 
+use std::any::Any;
+use std::sync::Arc;
+
 use crate::RuntimeError;
 
 /// Configuration for the runtime, sharding, timer wheel, and admission.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct RuntimeConfig {
     /// Number of fixed shard workers.
     pub shard_count: usize,
@@ -31,6 +34,9 @@ pub struct RuntimeConfig {
 
     /// Maximum number of sessions held in the session registry.
     pub max_sessions: usize,
+
+    /// Opaque actor-specific configuration passed to `DeviceActor::create`.
+    pub actor_config: Option<Arc<dyn Any + Send + Sync>>,
 }
 
 impl Default for RuntimeConfig {
@@ -45,7 +51,31 @@ impl Default for RuntimeConfig {
             max_consecutive_per_device: 16,
             max_pending_dispatch: 65536,
             max_sessions: 1_000_000,
+            actor_config: None,
         }
+    }
+}
+
+impl std::fmt::Debug for RuntimeConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RuntimeConfig")
+            .field("shard_count", &self.shard_count)
+            .field("shard_mailbox_capacity", &self.shard_mailbox_capacity)
+            .field("output_channel_capacity", &self.output_channel_capacity)
+            .field(
+                "timer_command_channel_capacity",
+                &self.timer_command_channel_capacity,
+            )
+            .field("timer_tick_resolution_ms", &self.timer_tick_resolution_ms)
+            .field("max_messages_per_poll", &self.max_messages_per_poll)
+            .field(
+                "max_consecutive_per_device",
+                &self.max_consecutive_per_device,
+            )
+            .field("max_pending_dispatch", &self.max_pending_dispatch)
+            .field("max_sessions", &self.max_sessions)
+            .field("actor_config", &self.actor_config.is_some())
+            .finish()
     }
 }
 

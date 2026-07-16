@@ -1,5 +1,6 @@
 //! Portable device actor API and actor context.
 
+use std::any::Any;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 
@@ -44,7 +45,8 @@ pub trait DeviceActor: Send + Sized + 'static {
 /// Context passed to a `DeviceActor`.
 ///
 /// The context is cheap to clone and carries the scheduler, clock, session
-/// registry, and per-device identity needed by the actor.
+/// registry, actor-specific configuration, and per-device identity needed by
+/// the actor.
 #[derive(Clone)]
 pub struct ActorContext<Handle: Clone + Send + Sync + 'static> {
     device_key: DeviceKey,
@@ -52,12 +54,14 @@ pub struct ActorContext<Handle: Clone + Send + Sync + 'static> {
     clock: Arc<dyn Clock>,
     id_generator: Arc<AtomicU64>,
     session_registry: SessionRegistry<Handle>,
+    actor_config: Option<Arc<dyn Any + Send + Sync>>,
 }
 
 impl<Handle: Clone + Send + Sync + 'static> std::fmt::Debug for ActorContext<Handle> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ActorContext")
             .field("device_key", &self.device_key)
+            .field("actor_config", &self.actor_config.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -70,6 +74,7 @@ impl<Handle: Clone + Send + Sync + 'static> ActorContext<Handle> {
         clock: Arc<dyn Clock>,
         id_generator: Arc<AtomicU64>,
         session_registry: SessionRegistry<Handle>,
+        actor_config: Option<Arc<dyn Any + Send + Sync>>,
     ) -> Self {
         Self {
             device_key,
@@ -77,6 +82,7 @@ impl<Handle: Clone + Send + Sync + 'static> ActorContext<Handle> {
             clock,
             id_generator,
             session_registry,
+            actor_config,
         }
     }
 
@@ -103,6 +109,13 @@ impl<Handle: Clone + Send + Sync + 'static> ActorContext<Handle> {
     /// Returns the clock.
     pub fn clock(&self) -> &dyn Clock {
         self.clock.as_ref()
+    }
+
+    /// Returns the actor-specific configuration, if any.
+    pub fn actor_config<T: Any + Send + Sync>(&self) -> Option<Arc<T>> {
+        self.actor_config
+            .as_ref()
+            .and_then(|cfg| cfg.clone().downcast::<T>().ok())
     }
 
     /// Schedules a timer and returns its identifier.
@@ -143,6 +156,7 @@ mod tests {
             Arc::new(NoopClock),
             Arc::new(AtomicU64::new(1)),
             SessionRegistry::new(10),
+            None,
         );
         assert_eq!(ctx.device_key(), key);
         assert_eq!(ctx.tenant_id(), tenant_id);

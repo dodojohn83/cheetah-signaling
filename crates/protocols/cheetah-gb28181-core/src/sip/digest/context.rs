@@ -2,9 +2,9 @@
 
 use super::nonce::{generate_nonce, validate_nonce};
 use super::replay_cache::DigestReplayCache;
-use super::response::{DigestAlgorithm, DigestChallenge, DigestError, DigestQop, DigestResponse};
+use super::types::{DigestAlgorithm, DigestError, DigestQop};
+use super::{DigestChallenge, DigestResponse};
 use crate::Method;
-use secrecy::zeroize::Zeroizing;
 use secrecy::{ExposeSecret, SecretBox, SecretString};
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -170,7 +170,7 @@ impl DigestContext {
         let nc = response.nc.unwrap_or(0);
 
         let method = method.to_string();
-        let expected = compute_response(
+        let expected = DigestResponse::compute_response(
             algorithm,
             &response.username,
             &response.realm,
@@ -198,36 +198,6 @@ impl DigestContext {
 
         Ok(())
     }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn compute_response(
-    algorithm: DigestAlgorithm,
-    username: &str,
-    realm: &str,
-    password: &str,
-    nonce: &str,
-    nc: u64,
-    cnonce: Option<&str>,
-    qop: Option<DigestQop>,
-    method: &str,
-    uri: &str,
-) -> String {
-    let a1 = Zeroizing::new(format!("{username}:{realm}:{password}"));
-    let ha1 = Zeroizing::new(algorithm.hash_hex(a1.as_bytes()));
-
-    let a2 = format!("{method}:{uri}");
-    let ha2 = algorithm.hash_hex(a2.as_bytes());
-
-    let a3: Zeroizing<String> = match qop {
-        Some(DigestQop::Auth) => {
-            let cnonce = cnonce.unwrap_or("");
-            let nc = format!("{nc:08x}");
-            Zeroizing::new(format!("{}:{nonce}:{nc}:{cnonce}:auth:{ha2}", ha1.as_str()))
-        }
-        _ => Zeroizing::new(format!("{}:{nonce}:{ha2}", ha1.as_str())),
-    };
-    algorithm.hash_hex(a3.as_bytes())
 }
 
 fn strip_crlf(s: &str) -> String {
