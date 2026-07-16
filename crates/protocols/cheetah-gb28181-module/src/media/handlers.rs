@@ -105,6 +105,25 @@ fn on_invite_success(
     let remote_tag = tag_from_header(&msg, &HeaderName::To);
     let contact = first_contact_uri(&msg);
 
+    if state == SessionState::Active {
+        // Retransmitted 200 OK for an already-active session: just re-ACK.
+        let remote_tag = remote_tag
+            .ok_or_else(|| MediaError::MalformedSip("missing To tag in 200 OK".to_string()))?;
+        let session = media
+            .sessions
+            .get(&sid)
+            .ok_or(MediaError::SessionNotFound)?;
+        let target = session.remote_target.as_ref().unwrap_or(&session.target);
+        let ack = build_ack(
+            &media.config.local_sip_uri,
+            session,
+            &remote_tag,
+            target,
+            &format!("{}-ack", session.branch),
+        );
+        return Ok(vec![MediaOutput::SendMessage(ack)]);
+    }
+
     // If we already asked to stop/cancel the pending INVITE, acknowledge the 200 OK
     // and tear down the accidental dialog before reporting failure.
     if state != SessionState::Inviting {

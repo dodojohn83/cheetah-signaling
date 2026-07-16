@@ -96,6 +96,35 @@ fn two_hundred_ok_triggers_ack_and_started_event() {
 }
 
 #[test]
+fn retransmitted_two_hundred_ok_reacknowledges_active_session() {
+    let mut media = Gb28181Media::new(config());
+    let sid = MediaSessionId::generate();
+    media.process(MediaInput::Command(start_live(sid))).unwrap();
+
+    media
+        .process(MediaInput::Message(build_test_200_ok()))
+        .unwrap();
+
+    let outputs = media
+        .process(MediaInput::Message(build_test_200_ok()))
+        .unwrap();
+    assert_eq!(outputs.len(), 1);
+    let MediaOutput::SendMessage(ack) = &outputs[0] else {
+        panic!("expected SendMessage ACK");
+    };
+    let SipMessage::Request { line, headers, .. } = ack else {
+        panic!("expected ACK request");
+    };
+    assert_eq!(line.method, Method::Ack);
+    assert_eq!(
+        line.uri.encode(),
+        "sip:34020000001320000001@192.168.1.20:5061"
+    );
+    let cseq = headers.get(&HeaderName::CSeq).unwrap().as_str();
+    assert!(cseq.starts_with("1 ACK"));
+}
+
+#[test]
 fn stop_live_sends_bye_and_removes_session_on_ok() {
     let mut media = Gb28181Media::new(config());
     let sid = MediaSessionId::generate();
