@@ -18,10 +18,11 @@ impl Gb28181Module {
             .map(|list| list.item.iter().map(catalog_item_from_dto).collect())
             .unwrap_or_default();
 
-        let page_size = self.config.catalog_page_size;
+        let page_size = self.config.catalog_page_size.max(1);
         let sum_num = declared_sum.max(items.len() as u32);
         let target = sum_num.min(page_size);
         let capped = sum_num > page_size;
+        let items: Vec<Gb28181CatalogItem> = items.into_iter().take(target as usize).collect();
 
         if let Some(agg) = self.catalog.as_mut()
             && agg.sn == sn
@@ -31,6 +32,7 @@ impl Gb28181Module {
             agg.sum_num = agg.sum_num.max(sum_num);
             agg.target = agg.target.max(target);
             agg.capped = agg.capped || capped;
+            agg.items.truncate(agg.target as usize);
             if agg.items.len() as u32 >= agg.target {
                 return self.take_catalog(sn, msg);
             }

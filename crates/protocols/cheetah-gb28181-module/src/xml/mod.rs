@@ -93,6 +93,42 @@ mod tests {
     }
 
     #[test]
+    fn self_closing_elements_do_not_inflate_depth() {
+        let mut config = test_config();
+        config.xml_limits.max_depth = 3;
+        let xml = br#"<?xml version="1.0"?>
+<Response>
+  <CmdType>Catalog</CmdType>
+  <SN>1</SN>
+  <DeviceID>34020000001320000001</DeviceID>
+  <SumNum>1</SumNum>
+  <ItemList>
+    <Item>
+      <Info/>
+    </Item>
+  </ItemList>
+</Response>"#;
+        let result = parse_xml(xml, &config);
+        assert!(result.is_ok(), "{:#?}", result.err());
+    }
+
+    #[test]
+    fn charset_policy_rejects_gbk_when_utf8_strict() {
+        let mut config = test_config();
+        config.charset_policy = crate::config::CharsetPolicy::Utf8;
+        let xml = b"<?xml version=\"1.0\" encoding=\"GBK\"?><Notify><CmdType>Keepalive</CmdType><DeviceID>34020000001320000001</DeviceID><Status>OK</Status></Notify>";
+        assert!(parse_xml(xml, &config).is_err());
+    }
+
+    #[test]
+    fn charset_policy_allows_gbk_when_enabled() {
+        let mut config = test_config();
+        config.charset_policy = crate::config::CharsetPolicy::Gbk;
+        let xml = b"<?xml version=\"1.0\" encoding=\"GBK\"?><Notify><CmdType>Keepalive</CmdType><DeviceID>34020000001320000001</DeviceID><Status>OK</Status></Notify>";
+        assert!(parse_xml(xml, &config).is_ok());
+    }
+
+    #[test]
     fn encode_catalog_query() -> Result<(), crate::Gb28181ModuleError> {
         let body = encode_request("Query", "Catalog", 1, "34020000001320000001", &[])?;
         assert!(body.contains("<CmdType>Catalog</CmdType>"));

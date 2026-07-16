@@ -183,7 +183,16 @@ pub fn challenge_for_module(
 }
 
 pub fn register_module() -> Result<Gb28181Module, Box<dyn std::error::Error>> {
-    let mut module = test_module()?;
+    register_module_with_config(test_config())
+}
+
+pub fn register_module_with_config(
+    config: Arc<Gb28181Config>,
+) -> Result<Gb28181Module, Box<dyn std::error::Error>> {
+    let mut module = Gb28181Module::new(
+        DeviceKey::new(TenantId::generate(), DeviceId::generate()),
+        config,
+    )?;
     let now = now();
     let challenge = challenge_for_module(&mut module, now)?;
     let auth = authorization_for_challenge(&challenge, 1, "abc123");
@@ -196,6 +205,19 @@ pub fn register_module() -> Result<Gb28181Module, Box<dyn std::error::Error>> {
         now,
     )?;
     Ok(module)
+}
+
+pub fn test_config_with_page_size(page_size: u32) -> Arc<Gb28181Config> {
+    let mut lookup = InMemoryPasswordLookup::new();
+    lookup.insert(DEVICE_ID, PASSWORD);
+    let addr = SocketAddr::from(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 5060));
+    Arc::new(
+        Gb28181ConfigBuilder::new(TenantId::generate(), REALM, addr)
+            .server_secret(SECRET)
+            .password_lookup(Arc::new(lookup))
+            .catalog_page_size(page_size)
+            .build(),
+    )
 }
 
 pub fn is_response_with_code(message: &SipMessage, code: u16) -> bool {

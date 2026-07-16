@@ -12,8 +12,8 @@ use std::sync::Arc;
 mod common;
 use common::{
     DEVICE_ID, authorization_for_challenge, challenge_for_module, count_heartbeats,
-    is_response_with_code, message_request, now, register_module, register_request, source_addr,
-    test_config, test_module,
+    is_response_with_code, message_request, now, register_module, register_module_with_config,
+    register_request, source_addr, test_config, test_config_with_page_size, test_module,
 };
 
 #[test]
@@ -407,6 +407,48 @@ fn command_response_maps_to_pending_command() -> Result<(), Box<dyn std::error::
         })
         .ok_or("missing command response")?;
     assert!(matches!(response, Gb28181CommandResult::Ok));
+    Ok(())
+}
+
+#[test]
+fn catalog_aggregation_respects_page_size() -> Result<(), Box<dyn std::error::Error>> {
+    let mut module = register_module_with_config(test_config_with_page_size(1))?;
+    let body = br#"<?xml version="1.0"?>
+<Response>
+  <CmdType>Catalog</CmdType>
+  <SN>1</SN>
+  <DeviceID>34020000001320000001</DeviceID>
+  <SumNum>2</SumNum>
+  <ItemList>
+    <Item>
+      <DeviceID>34020000001320000001</DeviceID>
+      <Name>Camera 1</Name>
+      <Status>ON</Status>
+    </Item>
+    <Item>
+      <DeviceID>34020000001320000002</DeviceID>
+      <Name>Camera 2</Name>
+      <Status>ON</Status>
+    </Item>
+  </ItemList>
+</Response>"#;
+    let request = message_request(1, body)?;
+    let outputs = module.handle(
+        Gb28181Input {
+            source: source_addr(),
+            message: request,
+        },
+        now(),
+    )?;
+    let catalog = outputs
+        .iter()
+        .find_map(|o| match o {
+            Gb28181Output::Catalog(c) => Some(c.clone()),
+            _ => None,
+        })
+        .ok_or("missing catalog output")?;
+    assert_eq!(catalog.items.len(), 1);
+    assert!(!catalog.complete);
     Ok(())
 }
 
