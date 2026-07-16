@@ -85,7 +85,7 @@ impl UnitOfWork for PostgresUnitOfWork {
         let conn = self.tx()?.as_mut();
 
         let candidate_alive: Option<(i64,)> = sqlx::query_as(
-            "SELECT 1 FROM cluster_nodes WHERE node_id = $1 AND lease_until > $2 AND draining = false",
+            "SELECT 1::int8 FROM cluster_nodes WHERE node_id = $1 AND lease_until > $2 AND draining = false",
         )
         .bind(node_id.as_uuid())
         .bind(now.as_offset())

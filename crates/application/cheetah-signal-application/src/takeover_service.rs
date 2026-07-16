@@ -105,13 +105,12 @@ impl TakeoverService {
 
         if let Some(owner) = current.clone()
             && let Some(node) = self.get_node(owner.owner_node_id).await?
+            && is_owner_valid(&owner, &node, now)
         {
-            if is_node_alive(&node, now) && owner.owner_node_id == self.this_node {
+            if owner.owner_node_id == self.this_node {
                 return Ok(TakeoverResult::Current);
             }
-            if is_node_alive(&node, now) && owner.owner_node_id != self.this_node {
-                return Ok(TakeoverResult::RemoteOwner { owner });
-            }
+            return Ok(TakeoverResult::RemoteOwner { owner });
         }
 
         if !self.is_this_node_eligible(now).await? {
@@ -157,9 +156,7 @@ impl TakeoverService {
                 owner_epoch: owner.owner_epoch,
                 previous_node_id: previous.as_ref().map(|o| o.owner_node_id),
                 previous_epoch: previous.as_ref().map(|o| o.owner_epoch),
-                takeover: previous.is_none_or(|p| {
-                    p.owner_node_id != owner.owner_node_id || p.owner_epoch < owner.owner_epoch
-                }),
+                takeover: previous.is_none_or(|p| p.owner_node_id != owner.owner_node_id),
             },
         );
         uow.outbox().append(event).await?;
@@ -276,6 +273,16 @@ impl std::fmt::Debug for TakeoverService {
 
 fn is_node_alive(node: &cheetah_domain::ClusterNode, now: UtcTimestamp) -> bool {
     node.lease_until > now
+}
+
+fn is_owner_valid(
+    owner: &cheetah_domain::OwnerInfo,
+    node: &cheetah_domain::ClusterNode,
+    now: UtcTimestamp,
+) -> bool {
+    let node_alive = is_node_alive(node, now);
+    let lease_valid = owner.lease_until.is_some_and(|lease| lease > now);
+    node_alive && lease_valid
 }
 
 fn device_resource_ref(tenant_id: TenantId, device_id: DeviceId) -> ResourceRef {
