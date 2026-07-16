@@ -86,10 +86,16 @@ impl MediaSessionReconciler {
                         continue;
                     }
                     report.scanned += 1;
+                    let session_rev_before = session.revision().0;
+                    let binding_rev_before = binding.revision().0;
                     self.reconcile_one(context, uow, &mut session, &mut binding, &mut report)
                         .await?;
-                    uow.media_session_repository().save(&session).await?;
-                    uow.media_binding_repository().save(&binding).await?;
+                    if session.revision().0 != session_rev_before {
+                        uow.media_session_repository().save(&session).await?;
+                    }
+                    if binding.revision().0 != binding_rev_before {
+                        uow.media_binding_repository().save(&binding).await?;
+                    }
                 }
             }
 

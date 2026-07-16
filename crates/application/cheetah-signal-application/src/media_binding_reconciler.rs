@@ -150,6 +150,8 @@ impl MediaBindingReconciler {
             report.sessions_found += reported.len() as u64;
 
             for (mut session, mut binding) in local_list {
+                let session_rev_before = session.revision().0;
+                let binding_rev_before = binding.revision().0;
                 match reported.get(&session.media_session_id()) {
                     Some(report_ref) => {
                         if report_ref.media_node_instance_epoch
@@ -200,8 +202,12 @@ impl MediaBindingReconciler {
                             .push(binding.media_binding_id());
                     }
                 }
-                uow.media_session_repository().save(&session).await?;
-                uow.media_binding_repository().save(&binding).await?;
+                if session.revision().0 != session_rev_before {
+                    uow.media_session_repository().save(&session).await?;
+                }
+                if binding.revision().0 != binding_rev_before {
+                    uow.media_binding_repository().save(&binding).await?;
+                }
             }
 
             for id in reported.keys() {
@@ -221,6 +227,8 @@ impl MediaBindingReconciler {
         // no longer active in the cluster (crashed, deregistered, or expired).
         for (_node_id, sessions) in active_by_node {
             for (mut session, mut binding) in sessions {
+                let session_rev_before = session.revision().0;
+                let binding_rev_before = binding.revision().0;
                 fail_session_and_binding(
                     self.id_generator.as_ref(),
                     self.clock.as_ref(),
@@ -232,8 +240,12 @@ impl MediaBindingReconciler {
                     "media node no longer active",
                 )
                 .await?;
-                uow.media_session_repository().save(&session).await?;
-                uow.media_binding_repository().save(&binding).await?;
+                if session.revision().0 != session_rev_before {
+                    uow.media_session_repository().save(&session).await?;
+                }
+                if binding.revision().0 != binding_rev_before {
+                    uow.media_binding_repository().save(&binding).await?;
+                }
                 report
                     .reservations_to_release
                     .push(binding.media_binding_id());
