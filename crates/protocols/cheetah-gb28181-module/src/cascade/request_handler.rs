@@ -9,20 +9,6 @@ use super::catalog::{
 use super::{CascadeCredentialProvider, CascadeOutput, Gb28181Cascade, State};
 use crate::xml::catalog::parse_catalog_query;
 
-fn request_to_tag_matches(request: &SipMessage, expected_tag: &str) -> bool {
-    let SipMessage::Request { headers, .. } = request else {
-        return false;
-    };
-    let Some(to) = headers.get(&HeaderName::To) else {
-        return false;
-    };
-    to.as_str()
-        .split(';')
-        .find_map(|param| param.trim().strip_prefix("tag="))
-        .map(|tag| tag.trim() == expected_tag)
-        .unwrap_or(false)
-}
-
 pub(super) fn handle_request<P: CascadeCredentialProvider>(
     cascade: &mut Gb28181Cascade<P>,
     now: u64,
@@ -49,35 +35,23 @@ pub(super) fn handle_request<P: CascadeCredentialProvider>(
     // All final responses below need a local To-tag.
     let response_tag = cascade.next_local_tag(now);
 
-    // Only answer catalog queries from the configured upstream platform and only
-    // while registered. Requests from other sources are rejected with a 403 so
-    // the transaction terminates without disclosing catalog data.
-    let Some(call_id) = headers.get(&HeaderName::CallId) else {
+    // Catalog queries are accepted only while the cascade is registered and the
+    // request comes from the configured upstream platform. REGISTER is dialog-less
+    // in SIP, so upstream platforms send Catalog queries as standalone MESSAGE
+    // transactions with their own Call-ID and a fresh To tag. We therefore do NOT
+    // require the query to reuse the registration Call-ID or To-tag.
+    let Some(_call_id) = headers.get(&HeaderName::CallId) else {
         return vec![CascadeOutput::SendResponse(build_response(
             &msg,
-            403,
-            "Forbidden",
+            400,
+            "Bad Request",
             &response_tag,
             Vec::new(),
         ))];
     };
 
-    let (registered_call_id, registered_local_tag) = match &cascade.state {
-        State::Registered(r) => (r.call_id.clone(), r.local_tag.clone()),
-        _ => {
-            return vec![CascadeOutput::SendResponse(build_response(
-                &msg,
-                403,
-                "Forbidden",
-                &response_tag,
-                Vec::new(),
-            ))];
-        }
-    };
-
-    if registered_call_id != call_id.as_str()
+    if !matches!(cascade.state, State::Registered(_))
         || !request_from_matches_upstream(&msg, &cascade.config.upstream)
-        || !request_to_tag_matches(&msg, &registered_local_tag)
     {
         return vec![CascadeOutput::SendResponse(build_response(
             &msg,
@@ -113,6 +87,15 @@ pub(super) fn handle_request<P: CascadeCredentialProvider>(
         }
     };
 
+    let platform_id = cascade.platform_id().to_string();
+    if query.device_id != platform_id {
+        return vec![CascadeOutput::SendResponse(build_bad_request_response(
+            &msg,
+            "Catalog target DeviceID mismatch",
+            &response_tag,
+        ))];
+    }
+
     let catalog_query = CatalogQuery {
         sn: query.sn,
         device_id: query.device_id,
@@ -120,7 +103,6 @@ pub(super) fn handle_request<P: CascadeCredentialProvider>(
     };
 
     let max_per_packet = cascade.config.catalog_max_items_per_packet as usize;
-    let platform_id = cascade.platform_id().to_string();
     match build_catalog_pages(
         &cascade.config,
         &provider,

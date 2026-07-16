@@ -13,7 +13,7 @@ use cheetah_gb28181_core::{
 
 use super::{config, local_uri, password_provider, register_to_connected, upstream_uri};
 
-fn catalog_query_message(sn: &str, device_id: &str, call_id: &str, local_tag: &str) -> SipMessage {
+fn catalog_query_message(sn: &str, device_id: &str, call_id: &str) -> SipMessage {
     let body = format!(
         r#"<?xml version="1.0"?>
 <Query>
@@ -33,10 +33,7 @@ fn catalog_query_message(sn: &str, device_id: &str, call_id: &str, local_tag: &s
         HeaderName::From,
         HeaderValue::from_uri(&upstream_uri(), "upstream-tag").unwrap(),
     );
-    headers.append(
-        HeaderName::To,
-        HeaderValue::from_uri(&local_uri(), local_tag).unwrap(),
-    );
+    headers.append(HeaderName::To, HeaderValue::to_uri(&local_uri()));
     headers.append(HeaderName::CallId, HeaderValue::new(call_id));
     headers.append(HeaderName::CSeq, HeaderValue::cseq(1, Method::Message));
     headers.append(
@@ -151,8 +148,8 @@ fn catalog_response_bodies(outputs: &[CascadeOutput]) -> Vec<String> {
 #[test]
 fn catalog_query_without_provider_is_ignored() {
     let mut cascade = Gb28181Cascade::new(config(), password_provider());
-    let (call_id, local_tag) = register_to_connected(&mut cascade);
-    let msg = catalog_query_message("1", "34020000001320000001", &call_id, &local_tag);
+    let (call_id, _) = register_to_connected(&mut cascade);
+    let msg = catalog_query_message("1", "34020000001320000001", &call_id);
     let outputs = cascade
         .process(CascadeInput {
             now: 100,
@@ -197,9 +194,9 @@ fn catalog_query_returns_ok_and_paginated_messages() {
     let mut cfg = config();
     cfg.catalog_max_items_per_packet = 2;
     let mut cascade = Gb28181Cascade::new(cfg, password_provider()).with_catalog_provider(provider);
-    let (call_id, local_tag) = register_to_connected(&mut cascade);
+    let (call_id, _) = register_to_connected(&mut cascade);
 
-    let msg = catalog_query_message("7", "34020000001320000001", &call_id, &local_tag);
+    let msg = catalog_query_message("7", "34020000001320000001", &call_id);
     let outputs = cascade
         .process(CascadeInput {
             now: 100,
@@ -251,9 +248,9 @@ fn catalog_filter_respects_tenant_and_whitelist() {
         ..Default::default()
     };
     let mut cascade = Gb28181Cascade::new(cfg, password_provider()).with_catalog_provider(provider);
-    let (call_id, local_tag) = register_to_connected(&mut cascade);
+    let (call_id, _) = register_to_connected(&mut cascade);
 
-    let msg = catalog_query_message("1", "34020000001320000001", &call_id, &local_tag);
+    let msg = catalog_query_message("1", "34020000001320000001", &call_id);
     let outputs = cascade
         .process(CascadeInput {
             now: 100,
@@ -285,9 +282,9 @@ fn catalog_filter_respects_tags_and_org_prefix() {
         ..Default::default()
     };
     let mut cascade = Gb28181Cascade::new(cfg, password_provider()).with_catalog_provider(provider);
-    let (call_id, local_tag) = register_to_connected(&mut cascade);
+    let (call_id, _) = register_to_connected(&mut cascade);
 
-    let msg = catalog_query_message("1", "34020000001320000001", &call_id, &local_tag);
+    let msg = catalog_query_message("1", "34020000001320000001", &call_id);
     let outputs = cascade
         .process(CascadeInput {
             now: 100,
@@ -316,9 +313,9 @@ fn catalog_empty_result_emits_single_message_with_sum_zero() {
     let mut cfg = config();
     cfg.catalog_max_items_per_packet = 100;
     let mut cascade = Gb28181Cascade::new(cfg, password_provider()).with_catalog_provider(provider);
-    let (call_id, local_tag) = register_to_connected(&mut cascade);
+    let (call_id, _) = register_to_connected(&mut cascade);
 
-    let msg = catalog_query_message("1", "34020000001320000001", &call_id, &local_tag);
+    let msg = catalog_query_message("1", "34020000001320000001", &call_id);
     let outputs = cascade
         .process(CascadeInput {
             now: 100,
@@ -340,9 +337,9 @@ fn malformed_catalog_body_returns_bad_request() {
     let mut cfg = config();
     cfg.catalog_max_items_per_packet = 100;
     let mut cascade = Gb28181Cascade::new(cfg, password_provider()).with_catalog_provider(provider);
-    let (call_id, local_tag) = register_to_connected(&mut cascade);
+    let (call_id, _) = register_to_connected(&mut cascade);
 
-    let mut msg = catalog_query_message("1", "34020000001320000001", &call_id, &local_tag);
+    let mut msg = catalog_query_message("1", "34020000001320000001", &call_id);
     if let SipMessage::Request { body, .. } = &mut msg {
         *body = b"not xml".to_vec();
     }
@@ -366,7 +363,7 @@ fn non_catalog_query_returns_bad_request() {
     let mut cfg = config();
     cfg.catalog_max_items_per_packet = 100;
     let mut cascade = Gb28181Cascade::new(cfg, password_provider()).with_catalog_provider(provider);
-    let (call_id, local_tag) = register_to_connected(&mut cascade);
+    let (call_id, _) = register_to_connected(&mut cascade);
 
     let body = br#"<?xml version="1.0"?>
 <Query>
@@ -374,7 +371,7 @@ fn non_catalog_query_returns_bad_request() {
     <SN>1</SN>
     <DeviceID>34020000001320000001</DeviceID>
 </Query>"#;
-    let mut msg = catalog_query_message("1", "34020000001320000001", &call_id, &local_tag);
+    let mut msg = catalog_query_message("1", "34020000001320000001", &call_id);
     if let SipMessage::Request { body: req_body, .. } = &mut msg {
         *req_body = body.to_vec();
     }
@@ -398,9 +395,9 @@ fn catalog_message_preserves_response_headers() {
     let mut cfg = config();
     cfg.catalog_max_items_per_packet = 2;
     let mut cascade = Gb28181Cascade::new(cfg, password_provider()).with_catalog_provider(provider);
-    let (call_id, local_tag) = register_to_connected(&mut cascade);
+    let (call_id, _) = register_to_connected(&mut cascade);
 
-    let msg = catalog_query_message("1", "34020000001320000001", &call_id, &local_tag);
+    let msg = catalog_query_message("1", "34020000001320000001", &call_id);
     let outputs = cascade
         .process(CascadeInput {
             now: 100,
@@ -418,7 +415,7 @@ fn catalog_message_preserves_response_headers() {
     assert!(resp.headers().get(&HeaderName::Via).is_some());
 }
 
-fn plain_message_request(call_id: &str, local_tag: &str) -> SipMessage {
+fn plain_message_request(call_id: &str) -> SipMessage {
     let body: Body = b"plain text body".to_vec();
     let mut headers = SipHeaders::new();
     headers.append(
@@ -429,10 +426,7 @@ fn plain_message_request(call_id: &str, local_tag: &str) -> SipMessage {
         HeaderName::From,
         HeaderValue::from_uri(&upstream_uri(), "upstream-tag").unwrap(),
     );
-    headers.append(
-        HeaderName::To,
-        HeaderValue::from_uri(&local_uri(), local_tag).unwrap(),
-    );
+    headers.append(HeaderName::To, HeaderValue::to_uri(&local_uri()));
     headers.append(HeaderName::CallId, HeaderValue::new(call_id));
     headers.append(HeaderName::CSeq, HeaderValue::cseq(1, Method::Message));
     headers.append(HeaderName::ContentType, HeaderValue::new("text/plain"));
@@ -454,9 +448,9 @@ fn message_without_manscdp_content_type_returns_ok_and_no_catalog() {
     let mut cfg = config();
     cfg.catalog_max_items_per_packet = 100;
     let mut cascade = Gb28181Cascade::new(cfg, password_provider()).with_catalog_provider(provider);
-    let (call_id, local_tag) = register_to_connected(&mut cascade);
+    let (call_id, _) = register_to_connected(&mut cascade);
 
-    let msg = plain_message_request(&call_id, &local_tag);
+    let msg = plain_message_request(&call_id);
     let outputs = cascade
         .process(CascadeInput {
             now: 100,
@@ -475,9 +469,9 @@ fn catalog_query_respects_max_pages_cap() {
     cfg.catalog_max_items_per_packet = 2;
     cfg.catalog_max_query_pages = 2;
     let mut cascade = Gb28181Cascade::new(cfg, password_provider()).with_catalog_provider(provider);
-    let (call_id, local_tag) = register_to_connected(&mut cascade);
+    let (call_id, _) = register_to_connected(&mut cascade);
 
-    let msg = catalog_query_message("1", "34020000001320000001", &call_id, &local_tag);
+    let msg = catalog_query_message("1", "34020000001320000001", &call_id);
     let outputs = cascade
         .process(CascadeInput {
             now: 100,
@@ -543,9 +537,9 @@ fn catalog_provider_error_returns_500() {
     let mut cfg = config();
     cfg.catalog_max_items_per_packet = 100;
     let mut cascade = Gb28181Cascade::new(cfg, password_provider()).with_catalog_provider(provider);
-    let (call_id, local_tag) = register_to_connected(&mut cascade);
+    let (call_id, _) = register_to_connected(&mut cascade);
 
-    let msg = catalog_query_message("1", "34020000001320000001", &call_id, &local_tag);
+    let msg = catalog_query_message("1", "34020000001320000001", &call_id);
     let outputs = cascade
         .process(CascadeInput {
             now: 100,
@@ -574,9 +568,9 @@ fn catalog_query_does_not_loop_forever_on_inconsistent_provider() {
     cfg.catalog_max_items_per_packet = 2;
     cfg.catalog_max_query_pages = 3;
     let mut cascade = Gb28181Cascade::new(cfg, password_provider()).with_catalog_provider(provider);
-    let (call_id, local_tag) = register_to_connected(&mut cascade);
+    let (call_id, _) = register_to_connected(&mut cascade);
 
-    let msg = catalog_query_message("1", "34020000001320000001", &call_id, &local_tag);
+    let msg = catalog_query_message("1", "34020000001320000001", &call_id);
     let outputs = cascade
         .process(CascadeInput {
             now: 100,
@@ -600,7 +594,7 @@ fn catalog_query_when_unregistered_returns_403() {
     cfg.catalog_max_items_per_packet = 100;
     let mut cascade = Gb28181Cascade::new(cfg, password_provider()).with_catalog_provider(provider);
 
-    let msg = catalog_query_message("1", "34020000001320000001", "ignored", "ignored");
+    let msg = catalog_query_message("1", "34020000001320000001", "ignored");
     let outputs = cascade
         .process(CascadeInput {
             now: 100,
@@ -624,7 +618,6 @@ fn catalog_query_message_with_from(
     from: SipUri,
     tag: &str,
     call_id: &str,
-    local_tag: &str,
 ) -> SipMessage {
     let body = format!(
         r#"<?xml version="1.0"?>
@@ -642,10 +635,7 @@ fn catalog_query_message_with_from(
         HeaderValue::via("UDP", "upstream.example.com", 5060, "z9hG4bK-abc").unwrap(),
     );
     headers.append(HeaderName::From, HeaderValue::from_uri(&from, tag).unwrap());
-    headers.append(
-        HeaderName::To,
-        HeaderValue::from_uri(&local_uri(), local_tag).unwrap(),
-    );
+    headers.append(HeaderName::To, HeaderValue::to_uri(&local_uri()));
     headers.append(HeaderName::CallId, HeaderValue::new(call_id));
     headers.append(HeaderName::CSeq, HeaderValue::new("1 MESSAGE"));
     headers.append(
@@ -670,17 +660,11 @@ fn catalog_query_from_unknown_upstream_returns_403() {
     let mut cfg = config();
     cfg.catalog_max_items_per_packet = 100;
     let mut cascade = Gb28181Cascade::new(cfg, password_provider()).with_catalog_provider(provider);
-    let (call_id, local_tag) = register_to_connected(&mut cascade);
+    let (call_id, _) = register_to_connected(&mut cascade);
 
     let foreign = SipUri::parse("sip:attacker@evil.example.com").unwrap();
-    let msg = catalog_query_message_with_from(
-        "1",
-        "34020000001320000001",
-        foreign,
-        "bad",
-        &call_id,
-        &local_tag,
-    );
+    let msg =
+        catalog_query_message_with_from("1", "34020000001320000001", foreign, "bad", &call_id);
     let outputs = cascade
         .process(CascadeInput {
             now: 100,
@@ -704,9 +688,9 @@ fn catalog_response_includes_local_to_tag() {
     let mut cfg = config();
     cfg.catalog_max_items_per_packet = 100;
     let mut cascade = Gb28181Cascade::new(cfg, password_provider()).with_catalog_provider(provider);
-    let (call_id, local_tag) = register_to_connected(&mut cascade);
+    let (call_id, _) = register_to_connected(&mut cascade);
 
-    let msg = catalog_query_message("1", "34020000001320000001", &call_id, &local_tag);
+    let msg = catalog_query_message("1", "34020000001320000001", &call_id);
     let outputs = cascade
         .process(CascadeInput {
             now: 100,
@@ -727,14 +711,15 @@ fn catalog_response_includes_local_to_tag() {
 }
 
 #[test]
-fn catalog_query_wrong_call_id_returns_403() {
+fn catalog_query_with_new_call_id_succeeds() {
     let provider = setup_provider();
     let mut cfg = config();
     cfg.catalog_max_items_per_packet = 100;
     let mut cascade = Gb28181Cascade::new(cfg, password_provider()).with_catalog_provider(provider);
-    let (_call_id, local_tag) = register_to_connected(&mut cascade);
+    let _ = register_to_connected(&mut cascade);
 
-    let msg = catalog_query_message("1", "34020000001320000001", "wrong-call-id", &local_tag);
+    // A real upstream platform uses a fresh Call-ID for each MESSAGE query.
+    let msg = catalog_query_message("1", "34020000001320000001", "call-standalone-1");
     let outputs = cascade
         .process(CascadeInput {
             now: 100,
@@ -742,25 +727,26 @@ fn catalog_query_wrong_call_id_returns_403() {
         })
         .unwrap();
 
-    assert_eq!(outputs.len(), 1);
+    assert!(!outputs.is_empty());
     let CascadeOutput::SendResponse(resp) = &outputs[0] else {
         panic!("expected SendResponse");
     };
     match resp {
-        SipMessage::Response { line, .. } => assert_eq!(line.code, 403),
+        SipMessage::Response { line, .. } => assert_eq!(line.code, 200),
         _ => panic!("expected a response"),
     }
 }
 
 #[test]
-fn catalog_query_wrong_to_tag_returns_403() {
+fn catalog_query_wrong_device_id_returns_bad_request() {
     let provider = setup_provider();
     let mut cfg = config();
     cfg.catalog_max_items_per_packet = 100;
     let mut cascade = Gb28181Cascade::new(cfg, password_provider()).with_catalog_provider(provider);
-    let (call_id, _local_tag) = register_to_connected(&mut cascade);
+    let _ = register_to_connected(&mut cascade);
 
-    let msg = catalog_query_message("1", "34020000001320000001", &call_id, "wrong-tag");
+    // The queried DeviceID must equal the local platform ID.
+    let msg = catalog_query_message("1", "34020000001320000002", "call-standalone-2");
     let outputs = cascade
         .process(CascadeInput {
             now: 100,
@@ -773,7 +759,7 @@ fn catalog_query_wrong_to_tag_returns_403() {
         panic!("expected SendResponse");
     };
     match resp {
-        SipMessage::Response { line, .. } => assert_eq!(line.code, 403),
+        SipMessage::Response { line, .. } => assert_eq!(line.code, 400),
         _ => panic!("expected a response"),
     }
 }
