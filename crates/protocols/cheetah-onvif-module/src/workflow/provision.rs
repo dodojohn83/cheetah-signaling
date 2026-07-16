@@ -10,6 +10,10 @@ use crate::types::{
 use cheetah_signal_types::{DeviceId, IdGenerator, TenantId};
 use std::collections::HashMap;
 
+fn message_id(id_generator: &dyn IdGenerator) -> String {
+    format!("urn:uuid:{}", id_generator.generate_message_id())
+}
+
 /// Input to the provisioning workflow.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProvisioningInput {
@@ -180,7 +184,7 @@ impl Provisioner {
                     .first()
                     .cloned()
                     .ok_or(ProvisionerError::NoXAddr)?;
-                let msg_id = id_generator.generate_message_id().to_string();
+                let msg_id = message_id(id_generator);
                 let mut outputs = vec![
                     ProvisioningOutput::EmitEvent(OnvifEvent::DeviceInformationReceived {
                         tenant_id,
@@ -205,7 +209,7 @@ impl Provisioner {
                     device_id,
                     xaddr,
                     action: "GetCapabilities",
-                    body: get_capabilities_request(id_generator.generate_message_id().to_string())?,
+                    body: get_capabilities_request(message_id(id_generator))?,
                 });
                 Ok(outputs)
             }
@@ -275,7 +279,7 @@ impl Provisioner {
             .first()
             .cloned()
             .ok_or(ProvisionerError::NoXAddr)?;
-        let body = get_device_information_request(id_generator.generate_message_id().to_string())?;
+        let body = get_device_information_request(message_id(id_generator))?;
         Ok(vec![
             ProvisioningOutput::SendRequest {
                 tenant_id,
@@ -424,13 +428,22 @@ mod tests {
             },
         )?;
         let out = p.start(&*id_gen, tid, did)?;
-        assert!(out.iter().any(|o| matches!(
-            o,
-            ProvisioningOutput::SendRequest {
-                action: "GetDeviceInformation",
-                ..
-            }
-        )));
+        let req = out.iter().find(|o| {
+            matches!(
+                o,
+                ProvisioningOutput::SendRequest {
+                    action: "GetDeviceInformation",
+                    ..
+                }
+            )
+        });
+        assert!(req.is_some());
+        if let Some(ProvisioningOutput::SendRequest { body, .. }) = req {
+            assert!(
+                body.contains("urn:uuid:"),
+                "MessageID must be a urn:uuid IRI"
+            );
+        }
         Ok(())
     }
 
