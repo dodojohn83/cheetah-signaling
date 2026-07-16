@@ -2,6 +2,7 @@
 
 use crate::types::{DeviceId, DomainId};
 use crate::xml::{CatalogItem, RecordItem};
+use cheetah_signal_types::{ChannelId, MediaSessionId};
 use std::net::SocketAddr;
 
 /// Presence state reported by a device.
@@ -195,5 +196,54 @@ pub enum Gb28181Event {
         sn: String,
         /// Result reported by the device, if any.
         result: Option<String>,
+    },
+    /// A live or playback media session was successfully established.
+    MediaSessionStarted {
+        /// Logical domain the device belongs to.
+        domain_id: DomainId,
+        /// Media session identifier from the originating command.
+        media_session_id: MediaSessionId,
+        /// Channel identifier.
+        channel_id: ChannelId,
+        /// Device identifier.
+        device_id: DeviceId,
+        /// Remote media address (from the device SDP connection line).
+        source: SocketAddr,
+        /// Raw remote SDP answer.
+        remote_sdp: String,
+        /// SSRC reported by the device, if present.
+        remote_ssrc: Option<String>,
+        /// Remote media port.
+        remote_port: u16,
+        /// Negotiated transport protocol (e.g. `RTP/AVP` or `TCP/RTP/AVP`).
+        remote_proto: String,
+    },
+    /// A media session was torn down.
+    MediaSessionStopped {
+        /// Logical domain the device belongs to.
+        domain_id: DomainId,
+        /// Media session identifier.
+        media_session_id: MediaSessionId,
+        /// Channel identifier.
+        channel_id: ChannelId,
+        /// Device identifier.
+        device_id: DeviceId,
+        /// Remote address that was used for the session.
+        source: SocketAddr,
+    },
+    /// A media session establishment or operation failed.
+    MediaSessionFailed {
+        /// Logical domain the device belongs to.
+        domain_id: DomainId,
+        /// Media session identifier.
+        media_session_id: MediaSessionId,
+        /// Channel identifier.
+        channel_id: ChannelId,
+        /// Device identifier.
+        device_id: DeviceId,
+        /// Remote address, if known.
+        source: Option<SocketAddr>,
+        /// Stable failure reason.
+        reason: String,
     },
 }

@@ -1,12 +1,19 @@
-//! Sans-I/O GB28181 SIP protocol core.
+//! Sans-I/O GB28181 SIP/SDP protocol core.
 //!
-//! This crate provides message types, headers, URI handling and a streaming
-//! parser/encoder that does not perform any network I/O. Transport drivers
-//! are implemented in `cheetah-gb28181-driver-tokio`.
+//! This crate provides message types, headers, URI handling, a streaming
+//! SIP parser/encoder and a limited SDP parser/encoder. It does not perform
+//! any network I/O; transport drivers are implemented in
+//! `cheetah-gb28181-driver-tokio`.
 
 #![warn(missing_docs)]
 
+pub mod sdp;
 pub mod sip;
+
+pub use sdp::{
+    RtpMap, SdpAttribute, SdpConnection, SdpConnectionType, SdpDirection, SdpError, SdpMedia,
+    SdpOrigin, SdpParserConfig, SdpSession, SdpSetup, SdpTime, encode_sdp, parse_sdp,
+};
 
 pub use sip::dialog::{Dialog, DialogEvent, DialogId, DialogOutput, DialogRole, DialogState};
 pub use sip::digest::{

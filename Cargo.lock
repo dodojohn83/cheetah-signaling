@@ -480,6 +480,7 @@ name = "cheetah-gb28181-module"
 version = "0.1.0"
 dependencies = [
  "cheetah-gb28181-core",
+ "cheetah-signal-types",
  "encoding_rs",
  "hex",
  "quick-xml",
