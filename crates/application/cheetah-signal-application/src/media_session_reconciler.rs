@@ -110,6 +110,27 @@ impl MediaSessionReconciler {
         binding: &mut cheetah_domain::MediaBinding,
         report: &mut MediaSessionReconciliationReport,
     ) -> crate::Result<()> {
+        // A terminal session may still hold a non-terminal binding (e.g. a
+        // Reserved binding that was never activated, or a callback that stopped
+        // the session without releasing the binding). Release it before any
+        // other path can try to activate an already-terminal session.
+        if session.is_terminal() {
+            release_session_and_binding(
+                self.id_generator.as_ref(),
+                self.clock.as_ref(),
+                context,
+                uow,
+                session,
+                binding,
+            )
+            .await?;
+            report.released += 1;
+            report
+                .reservations_to_release
+                .push(binding.media_binding_id());
+            return Ok(());
+        }
+
         if session.desired_state() == MediaSessionDesiredState::Stopped {
             release_session_and_binding(
                 self.id_generator.as_ref(),
