@@ -3,7 +3,9 @@
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 
-use crate::cascade::tests::{config, password_provider, register_to_connected};
+use crate::cascade::tests::{
+    build_200, config, password_provider, register_to_connected, request_call_id_cseq,
+};
 use crate::cascade::{CascadeConfig, CascadeEvent, CascadeInput, CascadeOutput, Gb28181Cascade};
 use cheetah_gb28181_core::{
     HeaderName, HeaderValue, Method, RequestLine, SipHeaders, SipMessage, SipUri, StatusLine,
@@ -317,4 +319,73 @@ fn subscribe_without_expires_uses_configured_default() {
             .map(|v| v.as_str()),
         Some("1234")
     );
+}
+
+#[test]
+fn refresh_preserves_local_tag_when_upstream_omits_to_tag() {
+    let mut cascade = Gb28181Cascade::new(test_config(), password_provider()).unwrap();
+    register_to_connected(&mut cascade);
+
+    cascade
+        .process(CascadeInput {
+            now: 2000,
+            event: CascadeEvent::Request(Box::new(subscribe_request("Catalog", 60))),
+        })
+        .unwrap();
+
+    let first_local_tag = cascade
+        .subscriptions
+        .values()
+        .next()
+        .unwrap()
+        .local_tag()
+        .to_string();
+
+    cascade
+        .process(CascadeInput {
+            now: 2005,
+            event: CascadeEvent::Request(Box::new(subscribe_request("Catalog", 120))),
+        })
+        .unwrap();
+
+    let second_local_tag = cascade
+        .subscriptions
+        .values()
+        .next()
+        .unwrap()
+        .local_tag()
+        .to_string();
+    assert_eq!(first_local_tag, second_local_tag);
+}
+
+#[test]
+fn subscriptions_cleared_on_deregister() {
+    let mut cascade = Gb28181Cascade::new(test_config(), password_provider()).unwrap();
+    register_to_connected(&mut cascade);
+
+    cascade
+        .process(CascadeInput {
+            now: 2000,
+            event: CascadeEvent::Request(Box::new(subscribe_request("Catalog", 60))),
+        })
+        .unwrap();
+
+    assert_eq!(cascade.subscriptions.len(), 1);
+
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 2010,
+            event: CascadeEvent::Deregister,
+        })
+        .unwrap();
+    let (call_id, cseq) = request_call_id_cseq(&outputs);
+
+    cascade
+        .process(CascadeInput {
+            now: 2011,
+            event: CascadeEvent::Response(Box::new(build_200(0, &call_id, &cseq))),
+        })
+        .unwrap();
+
+    assert!(cascade.subscriptions.is_empty());
 }

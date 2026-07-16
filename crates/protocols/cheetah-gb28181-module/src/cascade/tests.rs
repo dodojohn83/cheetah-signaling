@@ -44,13 +44,13 @@ pub(crate) fn password_provider() -> impl CascadeCredentialProvider {
     |_: &str| -> Option<SecretString> { Some(SecretString::new("secret".into())) }
 }
 
-fn extract_call_id_cseq(msg: &SipMessage) -> (String, String) {
+pub(crate) fn extract_call_id_cseq(msg: &SipMessage) -> (String, String) {
     let call_id = msg.call_id().unwrap().to_string();
     let cseq = msg.cseq().unwrap();
     (call_id, format!("{} {}", cseq.0, cseq.1))
 }
 
-fn request_call_id_cseq(outputs: &[CascadeOutput]) -> (String, String) {
+pub(crate) fn request_call_id_cseq(outputs: &[CascadeOutput]) -> (String, String) {
     let CascadeOutput::SendRequest(msg) = &outputs[0] else {
         panic!("expected SendRequest output");
     };
@@ -72,7 +72,7 @@ fn extract_from_tag(msg: &SipMessage) -> String {
     tag.trim().to_string()
 }
 
-fn build_401(challenge: &str, call_id: &str, cseq: &str) -> SipMessage {
+pub(crate) fn build_401(challenge: &str, call_id: &str, cseq: &str) -> SipMessage {
     let mut headers = SipHeaders::new();
     headers.append(HeaderName::CallId, HeaderValue::new(call_id.to_string()));
     headers.append(HeaderName::CSeq, HeaderValue::new(cseq.to_string()));
@@ -87,7 +87,7 @@ fn build_401(challenge: &str, call_id: &str, cseq: &str) -> SipMessage {
     }
 }
 
-fn build_200(expires: u32, call_id: &str, cseq: &str) -> SipMessage {
+pub(crate) fn build_200(expires: u32, call_id: &str, cseq: &str) -> SipMessage {
     let mut headers = SipHeaders::new();
     headers.append(HeaderName::CallId, HeaderValue::new(call_id.to_string()));
     headers.append(HeaderName::CSeq, HeaderValue::new(cseq.to_string()));

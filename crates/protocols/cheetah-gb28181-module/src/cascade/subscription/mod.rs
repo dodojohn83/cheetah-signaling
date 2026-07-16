@@ -13,7 +13,7 @@ use super::catalog::{
     build_ok_response, build_response, parse_uri_from_header, request_from_matches_upstream,
     request_target_matches_local, request_to_uri_matches_local,
 };
-use super::{CascadeCredentialProvider, CascadeError, CascadeOutput, Gb28181Cascade, State};
+use super::{CascadeCredentialProvider, CascadeOutput, Gb28181Cascade, State, validate_token};
 
 /// How long a `NOTIFY` request may stay pending before it is retransmitted.
 const NOTIFY_TIMEOUT_SECONDS: u64 = 5;
@@ -37,6 +37,13 @@ pub(crate) struct Subscription {
     next_cseq: u32,
     pending_notify: Option<PendingNotify>,
     last_active_at: u64,
+}
+
+#[cfg(test)]
+impl Subscription {
+    pub(crate) fn local_tag(&self) -> &str {
+        &self.local_tag
+    }
 }
 
 /// State for a `NOTIFY` that has been sent but not yet acknowledged.
@@ -84,7 +91,7 @@ pub(crate) fn handle_subscribe<P: CascadeCredentialProvider>(
         ))];
     };
     let call_id = call_id_header.as_str().trim().to_string();
-    if call_id.is_empty() {
+    if call_id.is_empty() || validate_token(&call_id).is_err() {
         return vec![CascadeOutput::SendResponse(build_response(
             &msg,
             400,
@@ -103,7 +110,11 @@ pub(crate) fn handle_subscribe<P: CascadeCredentialProvider>(
             Vec::new(),
         ))];
     };
-    let Some(remote_tag) = extract_tag(from) else {
+    let remote_tag = extract_tag(from);
+    if remote_tag
+        .as_ref()
+        .is_some_and(|t| validate_token(t).is_err())
+    {
         return vec![CascadeOutput::SendResponse(build_response(
             &msg,
             400,
@@ -111,6 +122,18 @@ pub(crate) fn handle_subscribe<P: CascadeCredentialProvider>(
             &response_tag,
             Vec::new(),
         ))];
+    }
+    let remote_tag = match remote_tag {
+        Some(t) => t,
+        None => {
+            return vec![CascadeOutput::SendResponse(build_response(
+                &msg,
+                400,
+                "Bad Request",
+                &response_tag,
+                Vec::new(),
+            ))];
+        }
     };
 
     let Some(event_header) = headers.get(&HeaderName::Other("Event".to_string())) else {
@@ -143,12 +166,22 @@ pub(crate) fn handle_subscribe<P: CascadeCredentialProvider>(
         .and_then(|v| v.as_str().trim().parse::<u64>().ok())
         .unwrap_or(cascade.config.subscription_default_expiry_seconds as u64);
 
-    let local_tag = headers
-        .get(&HeaderName::To)
-        .and_then(extract_tag)
-        .unwrap_or_else(|| cascade.next_local_tag(now));
-
     let key = subscription_key(&call_id, &remote_tag);
+    let to_tag = headers.get(&HeaderName::To).and_then(extract_tag);
+    if to_tag.as_ref().is_some_and(|t| validate_token(t).is_err()) {
+        return vec![CascadeOutput::SendResponse(build_response(
+            &msg,
+            400,
+            "Bad Request",
+            &response_tag,
+            Vec::new(),
+        ))];
+    }
+    let local_tag = if let Some(sub) = cascade.subscriptions.get(&key) {
+        to_tag.unwrap_or_else(|| sub.local_tag.clone())
+    } else {
+        to_tag.unwrap_or_else(|| cascade.next_local_tag(now))
+    };
 
     if requested_expiry == 0 {
         let final_notify = cascade.subscriptions.remove(&key).and_then(|sub| {
@@ -174,10 +207,10 @@ pub(crate) fn handle_subscribe<P: CascadeCredentialProvider>(
         return outputs;
     }
 
-    let granted_expiry = requested_expiry.clamp(
-        cascade.config.subscription_min_expiry_seconds as u64,
-        cascade.config.subscription_max_expiry_seconds as u64,
-    );
+    let min_expiry = cascade.config.subscription_min_expiry_seconds as u64;
+    let max_expiry = cascade.config.subscription_max_expiry_seconds as u64;
+    let granted_expiry =
+        requested_expiry.clamp(min_expiry.min(max_expiry), min_expiry.max(max_expiry));
 
     enforce_subscription_capacity(cascade, &key);
 
@@ -294,7 +327,7 @@ pub(crate) fn handle_response<P: CascadeCredentialProvider>(
 pub(crate) fn on_tick<P: CascadeCredentialProvider>(
     cascade: &mut Gb28181Cascade<P>,
     now: u64,
-) -> Result<Vec<CascadeOutput>, CascadeError> {
+) -> Vec<CascadeOutput> {
     let mut outputs = Vec::new();
     let keys: Vec<String> = cascade.subscriptions.keys().cloned().collect();
 
@@ -340,27 +373,34 @@ pub(crate) fn on_tick<P: CascadeCredentialProvider>(
             }
 
             let remaining = sub.expires_at.saturating_sub(now);
-            let notify = build_notify(
+            match build_notify(
                 cascade,
                 &sub,
                 pending.cseq,
                 &pending.branch,
                 &format!("active;expires={remaining}"),
                 now,
-            )?;
-            sub.pending_notify = Some(PendingNotify {
-                cseq: pending.cseq,
-                branch: pending.branch.clone(),
-                sent_at: now,
-                retry_count: pending.retry_count + 1,
-            });
-            outputs.push(CascadeOutput::SendRequest(notify));
+            ) {
+                Ok(notify) => {
+                    sub.pending_notify = Some(PendingNotify {
+                        cseq: pending.cseq,
+                        branch: pending.branch.clone(),
+                        sent_at: now,
+                        retry_count: pending.retry_count + 1,
+                    });
+                    outputs.push(CascadeOutput::SendRequest(notify));
+                }
+                Err(e) => {
+                    tracing::warn!("failed to build retransmission NOTIFY: {e}");
+                    sub.pending_notify = None;
+                }
+            }
         }
 
         cascade.subscriptions.insert(key, sub);
     }
 
-    Ok(outputs)
+    outputs
 }
 
 fn subscription_key(call_id: &str, remote_tag: &str) -> String {

@@ -20,6 +20,7 @@ pub(super) fn build_notify<P: CascadeCredentialProvider>(
     validate_token(branch)?;
     validate_token(&sub.local_tag)?;
     validate_token(&sub.remote_tag)?;
+    validate_token(&sub.call_id)?;
 
     let body = build_notify_body(cascade, sub, cseq)?;
     let local_host = cascade.config.local_uri.host();
