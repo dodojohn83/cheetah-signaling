@@ -22,7 +22,9 @@ pub use device_control::{
 pub use device_info::{DeviceInfoResponse, parse_device_info};
 pub use device_status::{DeviceStatusResponse, parse_device_status};
 pub use element::XmlElement;
-pub use keepalive::{KeepaliveInfo, build_keepalive, parse_keepalive};
+pub use keepalive::{
+    KeepaliveInfo, KeepaliveResponse, build_keepalive, parse_keepalive, parse_keepalive_response,
+};
 pub use limits::XmlLimits;
 pub use mobile_position::{MobilePositionInfo, parse_mobile_position};
 pub use reader::parse_xml;
@@ -167,5 +169,33 @@ mod tests {
             info.extensions.get("Extra").map(String::as_str),
             Some("value")
         );
+    }
+
+    #[test]
+    fn parse_valid_keepalive_response() {
+        let body = br#"<?xml version="1.0"?>
+<Response>
+    <CmdType>Keepalive</CmdType>
+    <SN>1</SN>
+    <DeviceID>34020000001320000001</DeviceID>
+    <Result>OK</Result>
+</Response>"#;
+        let resp = parse_keepalive_response(body).unwrap();
+        assert_eq!(resp.sn, "1");
+        assert_eq!(resp.device_id, "34020000001320000001");
+        assert_eq!(resp.result, "OK");
+    }
+
+    #[test]
+    fn parse_keepalive_response_rejects_error_result() {
+        let body = br#"<?xml version="1.0"?>
+<Response>
+    <CmdType>Keepalive</CmdType>
+    <SN>1</SN>
+    <DeviceID>34020000001320000001</DeviceID>
+    <Result>ERROR</Result>
+</Response>"#;
+        let resp = parse_keepalive_response(body).unwrap();
+        assert_eq!(resp.result, "ERROR");
     }
 }

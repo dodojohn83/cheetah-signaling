@@ -20,7 +20,21 @@ pub struct KeepaliveInfo {
     pub extensions: std::collections::HashMap<String, String>,
 }
 
+/// Parsed content of a GB28181 `Keepalive` response (`Response`) message.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct KeepaliveResponse {
+    /// Sequence number from the `<SN>` element.
+    pub sn: String,
+    /// Device identifier from the `<DeviceID>` element.
+    pub device_id: String,
+    /// Result string from the `<Result>` element (typically `OK`).
+    pub result: String,
+    /// Unknown extension fields preserved from the message.
+    pub extensions: std::collections::HashMap<String, String>,
+}
+
 const KNOWN_KEEPALIVE_FIELDS: &[&str] = &["CmdType", "SN", "DeviceID", "Status"];
+const KNOWN_KEEPALIVE_RESPONSE_FIELDS: &[&str] = &["CmdType", "SN", "DeviceID", "Result"];
 
 /// Parses a `Keepalive` message body and returns the extracted fields.
 pub fn parse_keepalive(body: &[u8]) -> Result<KeepaliveInfo, AccessError> {
@@ -45,6 +59,34 @@ pub fn build_keepalive(sn: &str, device_id: &str, status: &str) -> Result<String
     root.children.push(child_element("DeviceID", device_id));
     root.children.push(child_element("Status", status));
     encode_xml(&root, true)
+}
+
+/// Parses a `Keepalive` response body and returns the extracted fields.
+pub fn parse_keepalive_response(body: &[u8]) -> Result<KeepaliveResponse, AccessError> {
+    let root = parse_xml(body, &XmlLimits::default())?;
+    extract_keepalive_response(&root)
+}
+
+fn extract_keepalive_response(root: &XmlElement) -> Result<KeepaliveResponse, AccessError> {
+    if root.name != "Response" {
+        return Err(AccessError::InvalidXml(format!(
+            "expected Response root, got {}",
+            root.name
+        )));
+    }
+    let cmd_type = root
+        .child_text("CmdType")
+        .ok_or_else(|| AccessError::InvalidXml("missing CmdType".to_string()))?;
+    if cmd_type != "Keepalive" {
+        return Err(AccessError::UnsupportedCmdType(cmd_type));
+    }
+
+    Ok(KeepaliveResponse {
+        sn: root.child_text("SN").unwrap_or_default(),
+        device_id: root.child_text("DeviceID").unwrap_or_default(),
+        result: root.child_text("Result").unwrap_or_default(),
+        extensions: root.extension_map(KNOWN_KEEPALIVE_RESPONSE_FIELDS),
+    })
 }
 
 fn extract_keepalive(root: &XmlElement) -> Result<KeepaliveInfo, AccessError> {

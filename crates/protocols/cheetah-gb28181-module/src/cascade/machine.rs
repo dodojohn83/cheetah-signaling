@@ -404,38 +404,65 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
         msg: SipMessage,
         mut reg: Registered,
     ) -> Vec<CascadeOutput> {
-        let status = match &msg {
-            SipMessage::Response { line, .. } => line.clone(),
+        let (status, body) = match msg {
+            SipMessage::Response { line, body, .. } => (line, body),
             _ => unreachable!("caller ensures a response"),
         };
 
         reg.keepalive.pending_until = None;
 
+        // Any non-2xx final response is a transport failure. The business
+        // outcome of a 200 OK is further checked by parsing the XML body.
         if status.code >= 400 {
-            reg.keepalive.failures += 1;
-            if reg.keepalive.failures >= self.config.keepalive_max_failures {
-                self.state = State::Idle;
-                return vec![CascadeOutput::EmitEvent(
-                    Gb28181Event::CascadePlatformDisconnected {
-                        domain_id: self.config.domain_id.clone(),
-                        platform_id: self.platform_id().to_string(),
-                        reason: format!("keepalive failed with {} {}", status.code, status.reason),
-                    },
-                )];
-            }
-            self.state = State::Registered(reg);
-            return Vec::new();
+            return self.keepalive_failure(now, reg, status.code, &status.reason);
         }
 
-        if status.code >= 200 {
-            reg.keepalive.failures = 0;
-            reg.keepalive.next_at =
-                now.saturating_add(self.config.keepalive_interval_seconds.into());
-            self.state = State::Registered(reg);
-            return Vec::new();
+        if (200..300).contains(&status.code) {
+            let business_ok = if body.is_empty() {
+                // Empty body is treated as transport-level success.
+                true
+            } else {
+                matches!(
+                    crate::xml::parse_keepalive_response(&body).map(|r| r.result),
+                    Ok(ref r) if r.eq_ignore_ascii_case("OK")
+                )
+            };
+
+            if business_ok {
+                reg.keepalive.failures = 0;
+                reg.keepalive.next_at =
+                    now.saturating_add(self.config.keepalive_interval_seconds.into());
+                self.state = State::Registered(reg);
+                return Vec::new();
+            }
+
+            return self.keepalive_failure(now, reg, status.code, "upstream rejected keepalive");
         }
 
         // Provisional response; wait for final.
+        self.state = State::Registered(reg);
+        Vec::new()
+    }
+
+    fn keepalive_failure(
+        &mut self,
+        now: u64,
+        mut reg: Registered,
+        code: u16,
+        reason: &str,
+    ) -> Vec<CascadeOutput> {
+        reg.keepalive.failures += 1;
+        if reg.keepalive.failures >= self.config.keepalive_max_failures {
+            self.state = State::Idle;
+            return vec![CascadeOutput::EmitEvent(
+                Gb28181Event::CascadePlatformDisconnected {
+                    domain_id: self.config.domain_id.clone(),
+                    platform_id: self.platform_id().to_string(),
+                    reason: format!("keepalive failed with {code} {reason}"),
+                },
+            )];
+        }
+        reg.keepalive.next_at = now.saturating_add(self.config.keepalive_interval_seconds.into());
         self.state = State::Registered(reg);
         Vec::new()
     }

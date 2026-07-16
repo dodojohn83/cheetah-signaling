@@ -27,23 +27,15 @@ pub(crate) fn build_keepalive_message(
     let local_port = config.local_uri.port().unwrap_or(5060);
     headers.append(
         HeaderName::Via,
-        HeaderValue::new(format!(
-            "SIP/2.0/UDP {local_host}:{local_port};branch={branch}"
-        )),
+        HeaderValue::via("UDP", local_host, local_port, branch)?,
     );
     headers.append(
         HeaderName::From,
-        HeaderValue::new(format!("<{}>;tag={local_tag}", config.local_uri.encode())),
+        HeaderValue::from_uri(&config.local_uri, local_tag)?,
     );
-    headers.append(
-        HeaderName::To,
-        HeaderValue::new(format!("<{}>", config.upstream.encode())),
-    );
+    headers.append(HeaderName::To, HeaderValue::to_uri(&config.upstream));
     headers.append(HeaderName::CallId, HeaderValue::new(call_id.to_string()));
-    headers.append(
-        HeaderName::CSeq,
-        HeaderValue::new(format!("{cseq} {}", Method::Message)),
-    );
+    headers.append(HeaderName::CSeq, HeaderValue::cseq(cseq, Method::Message));
     headers.append(
         HeaderName::ContentType,
         HeaderValue::new("Application/MANSCDP+xml"),
