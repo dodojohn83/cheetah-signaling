@@ -79,7 +79,7 @@ impl<'a> ParseContext<'a> {
                 self.limits.max_nodes
             )));
         }
-        if self.stack.len() > self.limits.max_depth {
+        if self.stack.len() + 1 > self.limits.max_depth {
             return Err(limit_error(format!(
                 "response exceeds {} nesting depth",
                 self.limits.max_depth
