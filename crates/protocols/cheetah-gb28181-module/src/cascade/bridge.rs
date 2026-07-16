@@ -400,11 +400,15 @@ pub(crate) fn on_media_ready<P: super::CascadeCredentialProvider>(
     answer_sdp: String,
 ) -> Result<Vec<CascadeOutput>, CascadeError> {
     validate_token(&bridge_id)?;
-    let bridge = cascade
+    let Some(bridge) = cascade
         .bridges
         .values_mut()
         .find(|b| b.bridge_id == bridge_id)
-        .ok_or_else(|| CascadeError::InvalidState("bridge not found".to_string()))?;
+    else {
+        // The bridge may have been cancelled/timed out while the application
+        // was preparing the answer; treat that as a harmless no-op.
+        return Ok(Vec::new());
+    };
 
     if bridge.state != BridgeState::Invited {
         return Ok(Vec::new());

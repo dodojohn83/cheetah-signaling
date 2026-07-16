@@ -595,6 +595,54 @@ fn bridge_invited_timeout_sends_487_and_stops() {
 }
 
 #[test]
+fn bridge_media_ready_after_cancel_is_noop() {
+    let mut cascade = Gb28181Cascade::new(config(), password_provider()).unwrap();
+    register_to_connected(&mut cascade);
+    let body = sample_sdp().as_bytes();
+    let msg = build_invite(
+        "call-1",
+        "34020000001320000002",
+        &upstream_uri(),
+        "from-tag",
+        body,
+    );
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 100,
+            event: CascadeEvent::Request(Box::new(msg)),
+        })
+        .unwrap();
+
+    let CascadeOutput::EmitEvent(Gb28181Event::CascadePlayRequested { bridge_id, .. }) =
+        &outputs[1]
+    else {
+        panic!("expected CascadePlayRequested");
+    };
+
+    // Upstream cancels before the application finishes preparing media.
+    let cancel = build_cancel("call-1", "from-tag");
+    cascade
+        .process(CascadeInput {
+            now: 101,
+            event: CascadeEvent::Request(Box::new(cancel)),
+        })
+        .unwrap();
+
+    // The application's answer is now harmless.
+    let answer = sample_answer_sdp().to_string();
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 102,
+            event: CascadeEvent::BridgeMediaReady {
+                bridge_id: bridge_id.clone(),
+                answer_sdp: answer,
+            },
+        })
+        .unwrap();
+    assert!(outputs.is_empty());
+}
+
+#[test]
 fn bridge_invite_to_wrong_host_is_ignored() {
     let mut cascade = Gb28181Cascade::new(config(), password_provider()).unwrap();
     register_to_connected(&mut cascade);
