@@ -17,7 +17,7 @@ pub struct DeviceAssignmentService {
     owner_repository: Arc<tokio::sync::Mutex<dyn OwnerRepository>>,
     clock: Arc<dyn Clock>,
     lease_duration: DurationMs,
-    rate_limiter: Mutex<RateLimiter>,
+    rate_limiter: Arc<Mutex<RateLimiter>>,
 }
 
 impl DeviceAssignmentService {
@@ -34,7 +34,7 @@ impl DeviceAssignmentService {
             owner_repository,
             clock,
             lease_duration,
-            rate_limiter: Mutex::new(RateLimiter::new(rate_limit)),
+            rate_limiter: Arc::new(Mutex::new(RateLimiter::new(rate_limit))),
         }
     }
 
@@ -77,16 +77,18 @@ impl DeviceAssignmentService {
 
         let now_mono = self.clock.now_monotonic();
 
-        // Reject early if the assignment budget is exhausted. The actual slot
-        // is only recorded after a successful ownership change.
-        {
+        // Reserve an assignment slot atomically. The slot is committed only
+        // after a successful ownership change; it rolls back automatically on
+        // renewal, lost race, or error.
+        let permit = {
             let mut limiter = self.rate_limiter.lock().map_err(|e| {
                 StorageError::internal(format!("assignment rate limiter poisoned: {e}"))
             })?;
-            if !limiter.allow(now_mono, candidate.node_id) {
+            if !limiter.reserve(now_mono, candidate.node_id) {
                 return Err(DeviceAssignmentError::RateLimited);
             }
-        }
+            RateLimitPermit::new(Arc::clone(&self.rate_limiter), candidate.node_id, now_mono)
+        };
 
         // Acquire ownership on the selected node. If another node won the
         // race, return the owner it established.
@@ -96,17 +98,14 @@ impl DeviceAssignmentService {
             .await
         {
             Ok(owner) => {
-                // Only consume rate-limit budget when the owner actually
+                // Only consume the reserved slot when the owner actually
                 // changed; renewals and lost races must not burn slots.
                 let changed = maybe_owner.as_ref().is_none_or(|previous| {
                     previous.owner_node_id != owner.owner_node_id
                         || previous.owner_epoch != owner.owner_epoch
                 });
                 if changed {
-                    let mut limiter = self.rate_limiter.lock().map_err(|e| {
-                        StorageError::internal(format!("assignment rate limiter poisoned: {e}"))
-                    })?;
-                    limiter.record(now_mono, candidate.node_id);
+                    permit.commit();
                 }
                 info!(
                     tenant_id = %tenant_id.as_uuid(),
@@ -229,6 +228,7 @@ struct SlidingWindow {
     max_per_window: u32,
     window: DurationMs,
     events: VecDeque<DurationMs>,
+    pending: u32,
     last_used: Option<DurationMs>,
 }
 
@@ -238,6 +238,7 @@ impl SlidingWindow {
             max_per_window,
             window,
             events: VecDeque::new(),
+            pending: 0,
             last_used: None,
         }
     }
@@ -252,14 +253,27 @@ impl SlidingWindow {
         }
     }
 
-    fn allow(&mut self, now: DurationMs) -> bool {
+    /// Reserves one slot in the window if capacity is available, returning
+    /// whether the reservation succeeded.
+    fn reserve(&mut self, now: DurationMs) -> bool {
         self.prune(now);
-        self.events.len() < self.max_per_window as usize
+        if self.events.len() + self.pending as usize >= self.max_per_window as usize {
+            return false;
+        }
+        self.pending += 1;
+        true
     }
 
-    fn record(&mut self, now: DurationMs) {
+    /// Converts a previously reserved slot into a committed event.
+    fn commit(&mut self, now: DurationMs) {
         self.last_used = Some(now);
+        self.pending = self.pending.saturating_sub(1);
         self.events.push_back(now);
+    }
+
+    /// Releases a previously reserved slot without recording an event.
+    fn rollback(&mut self) {
+        self.pending = self.pending.saturating_sub(1);
     }
 
     fn is_active(&mut self, now: DurationMs) -> bool {
@@ -284,26 +298,39 @@ impl RateLimiter {
         }
     }
 
-    fn allow(&mut self, now: DurationMs, node_id: NodeId) -> bool {
-        if !self.global.allow(now) {
+    /// Reserves one assignment slot atomically. Callers must either `commit`
+    /// the reservation on success or `rollback` on failure/no-change.
+    fn reserve(&mut self, now: DurationMs, node_id: NodeId) -> bool {
+        if !self.global.reserve(now) {
             return false;
         }
-        match self.per_node.get_mut(&node_id) {
-            Some(window) => window.allow(now),
-            None => true,
-        }
-    }
-
-    fn record(&mut self, now: DurationMs, node_id: NodeId) {
-        self.global.record(now);
-        let node_window = self.per_node.entry(node_id).or_insert_with(|| {
+        let window = self.per_node.entry(node_id).or_insert_with(|| {
             SlidingWindow::new(
                 self.config.per_node_per_second,
                 DurationMs::from_millis(1_000),
             )
         });
-        node_window.record(now);
+        if window.reserve(now) {
+            true
+        } else {
+            self.global.rollback();
+            false
+        }
+    }
+
+    fn commit(&mut self, now: DurationMs, node_id: NodeId) {
+        self.global.commit(now);
+        if let Some(window) = self.per_node.get_mut(&node_id) {
+            window.commit(now);
+        }
         self.trim_per_node(now);
+    }
+
+    fn rollback(&mut self, node_id: NodeId) {
+        self.global.rollback();
+        if let Some(window) = self.per_node.get_mut(&node_id) {
+            window.rollback();
+        }
     }
 
     fn trim_per_node(&mut self, now: DurationMs) {
@@ -328,6 +355,42 @@ impl RateLimiter {
                 self.per_node.remove(&key);
             }
         }
+    }
+}
+
+/// A reserved assignment rate-limit slot. Commits on success and rolls back
+/// automatically if dropped without being committed.
+struct RateLimitPermit {
+    limiter: Arc<Mutex<RateLimiter>>,
+    node_id: NodeId,
+    now: DurationMs,
+    committed: bool,
+}
+
+impl RateLimitPermit {
+    fn new(limiter: Arc<Mutex<RateLimiter>>, node_id: NodeId, now: DurationMs) -> Self {
+        Self {
+            limiter,
+            node_id,
+            now,
+            committed: false,
+        }
+    }
+
+    fn commit(mut self) {
+        let mut limiter = self.limiter.lock().unwrap_or_else(|e| e.into_inner());
+        limiter.commit(self.now, self.node_id);
+        self.committed = true;
+    }
+}
+
+impl Drop for RateLimitPermit {
+    fn drop(&mut self) {
+        if self.committed {
+            return;
+        }
+        let mut limiter = self.limiter.lock().unwrap_or_else(|e| e.into_inner());
+        limiter.rollback(self.node_id);
     }
 }
 
