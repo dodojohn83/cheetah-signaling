@@ -63,6 +63,11 @@ impl LinkTable {
         self.table.remove(platform_id)
     }
 
+    /// Returns true if a link exists for the given platform.
+    pub fn contains(&self, platform_id: &DeviceId) -> bool {
+        self.table.contains_key(platform_id)
+    }
+
     /// Returns a mutable reference to a link.
     pub fn get_mut(&mut self, platform_id: &DeviceId) -> Option<&mut PlatformLink> {
         self.table.get_mut(platform_id)

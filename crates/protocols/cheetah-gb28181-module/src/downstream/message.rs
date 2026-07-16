@@ -48,33 +48,20 @@ pub(crate) fn process_message(
         ))]);
     };
 
-    let Some(link) = links.get_mut(&platform_id) else {
+    if !links.contains(&platform_id) {
         return Ok(vec![DownstreamOutput::SendResponse(build_error_response(
             &message,
             403,
             "Forbidden",
             next_tag(tag_counter),
         ))]);
-    };
-
-    link.source = source;
-    link.last_seen = now;
-    let was_offline = link.offline;
-    link.offline = false;
-
-    let domain_id = config.domain_id().clone();
-    let mut outputs = Vec::with_capacity(3);
-    if was_offline {
-        outputs.push(DownstreamOutput::EmitEvent(
-            Gb28181Event::DevicePresenceChanged {
-                domain_id: domain_id.clone(),
-                device_id: platform_id.clone(),
-                source,
-                presence: DevicePresence::Online,
-            },
-        ));
     }
 
+    let domain_id = config.domain_id().clone();
+
+    // Parse and validate the body before mutating link state so that a
+    // malformed or unrecognized message does not silently clear the offline
+    // flag and lose the subsequent Online presence event.
     let root = parse_xml(body, &XmlLimits::default()).map_err(DownstreamError::Access)?;
     let cmd_type = root.child_text("CmdType").ok_or_else(|| {
         DownstreamError::Access(crate::error::AccessError::InvalidXml(
@@ -82,19 +69,19 @@ pub(crate) fn process_message(
         ))
     })?;
 
-    match cmd_type.as_str() {
+    let event = match cmd_type.as_str() {
         "Keepalive" => {
             let keepalive = parse_keepalive(body).map_err(DownstreamError::Access)?;
-            outputs.push(DownstreamOutput::EmitEvent(Gb28181Event::Keepalive {
+            Gb28181Event::Keepalive {
                 domain_id: domain_id.clone(),
                 device_id: platform_id.clone(),
                 source,
                 status: keepalive.status,
-            }));
+            }
         }
         "Catalog" => {
             let catalog = parse_catalog(body).map_err(DownstreamError::Access)?;
-            outputs.push(DownstreamOutput::EmitEvent(Gb28181Event::CatalogReceived {
+            Gb28181Event::CatalogReceived {
                 domain_id: domain_id.clone(),
                 device_id: platform_id.clone(),
                 source,
@@ -102,42 +89,38 @@ pub(crate) fn process_message(
                 sum_num: catalog.sum_num,
                 num: catalog.num,
                 items: catalog.items,
-            }));
+            }
         }
         "DeviceInfo" => {
             let info = parse_device_info(body).map_err(DownstreamError::Access)?;
-            outputs.push(DownstreamOutput::EmitEvent(
-                Gb28181Event::DeviceInfoReceived {
-                    domain_id: domain_id.clone(),
-                    device_id: platform_id.clone(),
-                    source,
-                    sn: info.sn,
-                    result: info.result,
-                    manufacturer: info.manufacturer,
-                    model: info.model,
-                    firmware: info.firmware,
-                },
-            ));
+            Gb28181Event::DeviceInfoReceived {
+                domain_id: domain_id.clone(),
+                device_id: platform_id.clone(),
+                source,
+                sn: info.sn,
+                result: info.result,
+                manufacturer: info.manufacturer,
+                model: info.model,
+                firmware: info.firmware,
+            }
         }
         "DeviceStatus" => {
             let status = parse_device_status(body).map_err(DownstreamError::Access)?;
-            outputs.push(DownstreamOutput::EmitEvent(
-                Gb28181Event::DeviceStatusReceived {
-                    domain_id: domain_id.clone(),
-                    device_id: platform_id.clone(),
-                    source,
-                    sn: status.sn,
-                    result: status.result,
-                    online: status.online,
-                    status: status.status,
-                    reason: status.reason,
-                    invalid_equip: status.invalid_equip,
-                },
-            ));
+            Gb28181Event::DeviceStatusReceived {
+                domain_id: domain_id.clone(),
+                device_id: platform_id.clone(),
+                source,
+                sn: status.sn,
+                result: status.result,
+                online: status.online,
+                status: status.status,
+                reason: status.reason,
+                invalid_equip: status.invalid_equip,
+            }
         }
         "Alarm" => {
             let alarm = parse_alarm(body).map_err(DownstreamError::Access)?;
-            outputs.push(DownstreamOutput::EmitEvent(Gb28181Event::AlarmReceived {
+            Gb28181Event::AlarmReceived {
                 domain_id: domain_id.clone(),
                 device_id: platform_id.clone(),
                 source,
@@ -147,51 +130,45 @@ pub(crate) fn process_message(
                 alarm_type: alarm.alarm_type,
                 time: alarm.time,
                 info: alarm.info,
-            }));
+            }
         }
         "MobilePosition" => {
             let pos = parse_mobile_position(body).map_err(DownstreamError::Access)?;
-            outputs.push(DownstreamOutput::EmitEvent(
-                Gb28181Event::MobilePositionReceived {
-                    domain_id: domain_id.clone(),
-                    device_id: platform_id.clone(),
-                    source,
-                    sn: pos.sn,
-                    time: pos.time,
-                    longitude: pos.longitude,
-                    latitude: pos.latitude,
-                    speed: pos.speed,
-                    direction: pos.direction,
-                    altitude: pos.altitude,
-                },
-            ));
+            Gb28181Event::MobilePositionReceived {
+                domain_id: domain_id.clone(),
+                device_id: platform_id.clone(),
+                source,
+                sn: pos.sn,
+                time: pos.time,
+                longitude: pos.longitude,
+                latitude: pos.latitude,
+                speed: pos.speed,
+                direction: pos.direction,
+                altitude: pos.altitude,
+            }
         }
         "RecordInfo" => {
             let info = parse_record_info(body).map_err(DownstreamError::Access)?;
-            outputs.push(DownstreamOutput::EmitEvent(
-                Gb28181Event::RecordInfoReceived {
-                    domain_id: domain_id.clone(),
-                    device_id: platform_id.clone(),
-                    source,
-                    sn: info.sn,
-                    name: info.name,
-                    sum_num: info.sum_num,
-                    num: info.num,
-                    items: info.items,
-                },
-            ));
+            Gb28181Event::RecordInfoReceived {
+                domain_id: domain_id.clone(),
+                device_id: platform_id.clone(),
+                source,
+                sn: info.sn,
+                name: info.name,
+                sum_num: info.sum_num,
+                num: info.num,
+                items: info.items,
+            }
         }
         "DeviceControl" => {
             let resp = parse_device_control_response(body).map_err(DownstreamError::Access)?;
-            outputs.push(DownstreamOutput::EmitEvent(
-                Gb28181Event::DeviceControlResponseReceived {
-                    domain_id: domain_id.clone(),
-                    device_id: platform_id.clone(),
-                    source,
-                    sn: resp.sn,
-                    result: resp.result,
-                },
-            ));
+            Gb28181Event::DeviceControlResponseReceived {
+                domain_id: domain_id.clone(),
+                device_id: platform_id.clone(),
+                source,
+                sn: resp.sn,
+                result: resp.result,
+            }
         }
         _other => {
             return Ok(vec![DownstreamOutput::SendResponse(build_error_response(
@@ -201,8 +178,34 @@ pub(crate) fn process_message(
                 next_tag(tag_counter),
             ))]);
         }
+    };
+
+    let Some(link) = links.get_mut(&platform_id) else {
+        return Ok(vec![DownstreamOutput::SendResponse(build_error_response(
+            &message,
+            403,
+            "Forbidden",
+            next_tag(tag_counter),
+        ))]);
+    };
+    link.source = source;
+    link.last_seen = now;
+    let was_offline = link.offline;
+    link.offline = false;
+
+    let mut outputs = Vec::with_capacity(3);
+    if was_offline {
+        outputs.push(DownstreamOutput::EmitEvent(
+            Gb28181Event::DevicePresenceChanged {
+                domain_id,
+                device_id: platform_id.clone(),
+                source,
+                presence: DevicePresence::Online,
+            },
+        ));
     }
 
+    outputs.push(DownstreamOutput::EmitEvent(event));
     outputs.push(DownstreamOutput::SendResponse(build_message_response(
         &message,
         next_tag(tag_counter),
