@@ -279,6 +279,13 @@ pub trait Outbox: Send {
     ///
     /// When `attempts` reaches the configured maximum the caller should set
     /// `failed` to `true` and provide a permanent failure reason.
+    ///
+    /// Calling this on an entry that is already permanently failed is a no-op
+    /// so a late retry cannot resurrect a dead-lettered outbox record.
+    ///
+    /// Returns `true` when the row was found and updated; `false` when no
+    /// matching non-failed row existed (e.g. it was already dead-lettered by
+    /// another writer).
     async fn mark_failed(
         &mut self,
         event_id: EventId,
@@ -286,7 +293,7 @@ pub trait Outbox: Send {
         failed: bool,
         error: Option<String>,
         next_attempt_at: Option<UtcTimestamp>,
-    ) -> Result<()>;
+    ) -> Result<bool>;
 }
 
 /// Publishes events to the message bus.

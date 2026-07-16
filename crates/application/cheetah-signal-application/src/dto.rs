@@ -668,3 +668,14 @@ pub struct OperationReconciliationReport {
     /// Number of operations that were timed out.
     pub timed_out: u64,
 }
+
+/// Result of an outbox reconciliation pass.
+#[derive(Clone, Debug, Default, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct OutboxReconciliationReport {
+    /// Number of outbox entries scanned, including those scheduled for a future
+    /// retry.
+    pub scanned: u64,
+    /// Number of entries that were dead-lettered because they exceeded the
+    /// maximum age.
+    pub dead_lettered: u64,
+}

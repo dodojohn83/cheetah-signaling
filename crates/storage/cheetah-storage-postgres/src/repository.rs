@@ -690,11 +690,11 @@ impl Outbox for PostgresUnitOfWork {
         failed: bool,
         error: Option<String>,
         next_attempt_at: Option<cheetah_signal_types::UtcTimestamp>,
-    ) -> cheetah_domain::Result<()> {
-        sqlx::query(
+    ) -> cheetah_domain::Result<bool> {
+        let result = sqlx::query(
             "UPDATE outbox_events
              SET attempts = $1, failed = $2, error = $3, next_attempt_at = $4
-             WHERE event_id = $5",
+             WHERE event_id = $5 AND failed = false",
         )
         .bind(attempts as i64)
         .bind(failed)
@@ -704,7 +704,7 @@ impl Outbox for PostgresUnitOfWork {
         .execute(self.tx()?.as_mut())
         .await
         .map_err(sqlx_to_domain)?;
-        Ok(())
+        Ok(result.rows_affected() > 0)
     }
 }
 

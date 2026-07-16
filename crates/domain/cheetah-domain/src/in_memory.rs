@@ -951,19 +951,21 @@ impl Outbox for InMemoryUnitOfWork {
         failed: bool,
         error: Option<String>,
         next_attempt_at: Option<UtcTimestamp>,
-    ) -> crate::Result<()> {
+    ) -> crate::Result<bool> {
+        let mut updated = false;
         self.with_pending(|pending| {
             for entry in &mut pending.outbox {
-                if entry.event.event_id == event_id {
+                if entry.event.event_id == event_id && !entry.failed {
                     entry.attempts = attempts;
                     entry.failed = failed;
                     entry.error.clone_from(&error);
                     entry.next_attempt_at = next_attempt_at;
+                    updated = true;
                     break;
                 }
             }
         });
-        Ok(())
+        Ok(updated)
     }
 }
 
@@ -1031,18 +1033,18 @@ impl Outbox for InMemoryOutbox {
         failed: bool,
         error: Option<String>,
         next_attempt_at: Option<UtcTimestamp>,
-    ) -> crate::Result<()> {
+    ) -> crate::Result<bool> {
         let mut stores = lock_mutex(&self.stores);
         for entry in &mut stores.outbox {
-            if entry.event.event_id == event_id {
+            if entry.event.event_id == event_id && !entry.failed {
                 entry.attempts = attempts;
                 entry.failed = failed;
                 entry.error.clone_from(&error);
                 entry.next_attempt_at = next_attempt_at;
-                break;
+                return Ok(true);
             }
         }
-        Ok(())
+        Ok(false)
     }
 }
 
