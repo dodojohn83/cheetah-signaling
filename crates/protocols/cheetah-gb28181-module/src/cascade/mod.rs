@@ -5,6 +5,7 @@ mod catalog;
 mod keepalive;
 mod machine;
 mod registration;
+mod report;
 mod request_handler;
 
 pub use catalog::{CatalogError, CatalogFilter, CatalogPage, CatalogProvider, CatalogQuery};
@@ -118,6 +119,9 @@ pub struct CascadeConfig {
     /// bytes when provided. Wrapped in `Arc` so the secret is shared rather
     /// than copied when the configuration is cloned.
     pub catalog_inbound_digest_server_secret: Option<Arc<SecretBox<[u8]>>>,
+    /// Maximum number of pending upstream event reports to queue while not
+    /// registered or while the upstream is slow.
+    pub report_max_queue_size: u32,
 }
 
 impl CascadeConfig {
@@ -210,6 +214,7 @@ impl CascadeConfig {
             user_agent: None,
             catalog_inbound_digest_credential_ref: None,
             catalog_inbound_digest_server_secret: None,
+            report_max_queue_size: 1000,
         })
     }
 
@@ -263,6 +268,12 @@ pub enum CascadeEvent {
     },
     /// A periodic tick for refresh, retry and transaction timeout processing.
     Tick,
+    /// A domain event that should be forwarded to the upstream platform
+    /// according to the configured sharing policy.
+    Report {
+        /// The domain event produced by a device or another subsystem.
+        event: Box<Gb28181Event>,
+    },
 }
 
 /// A single input to the cascade state machine.
@@ -413,10 +424,14 @@ pub struct Gb28181Cascade<P: CascadeCredentialProvider> {
     state: State,
     request_counter: u64,
     bridge_counter: u64,
+    report_counter: u64,
     auth: Option<AuthorizationContext>,
     catalog_provider: Option<Arc<dyn CatalogProvider>>,
     inbound_auth: Option<Arc<InboundAuthContext>>,
     bridges: BTreeMap<String, bridge::Bridge>,
+    report_queue: std::collections::VecDeque<report::PendingReport>,
+    report_state: std::collections::HashMap<String, report::PendingReport>,
+    report_state_order: std::collections::VecDeque<String>,
 }
 
 impl<P: CascadeCredentialProvider> std::fmt::Debug for Gb28181Cascade<P> {

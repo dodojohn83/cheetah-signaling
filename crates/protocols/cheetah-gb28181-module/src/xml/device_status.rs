@@ -1,8 +1,11 @@
-//! GB28181 DeviceStatus response parsing.
+//! GB28181 DeviceStatus response parsing and upstream notify encoding.
+
+use std::collections::HashMap;
 
 use super::element::XmlElement;
 use super::limits::XmlLimits;
 use super::reader::parse_xml;
+use super::writer::encode_xml;
 use crate::error::AccessError;
 
 /// Parsed content of a GB28181 `DeviceStatus` response.
@@ -28,6 +31,33 @@ pub struct DeviceStatusResponse {
 pub fn parse_device_status(body: &[u8]) -> Result<DeviceStatusResponse, AccessError> {
     let root = parse_xml(body, &XmlLimits::default())?;
     extract_device_status(&root)
+}
+
+fn child_element(name: &str, text: &str) -> XmlElement {
+    XmlElement {
+        name: name.to_string(),
+        attributes: HashMap::new(),
+        text: text.to_string(),
+        children: Vec::new(),
+    }
+}
+
+/// Encodes a `DeviceStatus` NOTIFY payload for an upstream platform.
+pub fn build_device_status_notify(
+    sn: &str,
+    device_id: &str,
+    online: bool,
+) -> Result<String, AccessError> {
+    let mut root = child_element("Notify", "");
+    root.children.push(child_element("CmdType", "DeviceStatus"));
+    root.children.push(child_element("SN", sn));
+    root.children.push(child_element("DeviceID", device_id));
+    root.children.push(child_element(
+        "Online",
+        if online { "ONLINE" } else { "OFFLINE" },
+    ));
+    root.children.push(child_element("Status", "OK"));
+    encode_xml(&root, true)
 }
 
 fn extract_device_status(root: &XmlElement) -> Result<DeviceStatusResponse, AccessError> {
