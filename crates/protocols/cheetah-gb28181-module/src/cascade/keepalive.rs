@@ -4,7 +4,7 @@ use cheetah_gb28181_core::{
     Body, HeaderName, HeaderValue, Method, RequestLine, SipHeaders, SipMessage,
 };
 
-use crate::cascade::{CascadeConfig, CascadeError};
+use crate::cascade::{CascadeConfig, CascadeError, validate_token};
 use crate::xml::build_keepalive;
 
 /// Builds a `MESSAGE` request carrying a GB28181 `Keepalive` XML payload.
@@ -18,6 +18,10 @@ pub(crate) fn build_keepalive_message(
     sn: u32,
     platform_id: &str,
 ) -> Result<SipMessage, CascadeError> {
+    validate_token(call_id)?;
+    validate_token(local_tag)?;
+    validate_token(branch)?;
+
     let body_str = build_keepalive(&sn.to_string(), platform_id, "OK")
         .map_err(|e| CascadeError::Internal(format!("failed to encode keepalive XML: {e}")))?;
     let body: Body = body_str.into_bytes();

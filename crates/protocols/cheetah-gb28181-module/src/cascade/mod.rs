@@ -4,7 +4,6 @@ mod keepalive;
 mod machine;
 mod registration;
 
-use crate::cascade::registration::validate_token;
 use crate::events::Gb28181Event;
 use crate::types::DomainId;
 use cheetah_gb28181_core::{DigestChallenge, DigestClient, DigestError, SipMessage, SipUri};
@@ -27,6 +26,16 @@ where
     fn password_for(&self, credential_ref: &str) -> Option<SecretString> {
         (self)(credential_ref)
     }
+}
+
+/// Rejects values that would inject extra SIP header lines.
+pub(crate) fn validate_token(value: &str) -> Result<(), CascadeError> {
+    if value.contains('\r') || value.contains('\n') {
+        return Err(CascadeError::Internal(
+            "SIP header token contains forbidden line break".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 /// Configuration for one upstream GB28181 cascade platform.
