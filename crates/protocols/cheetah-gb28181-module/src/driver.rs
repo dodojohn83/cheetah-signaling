@@ -118,7 +118,7 @@ impl ProtocolDriver for Gb28181ProtocolDriver {
     ) -> Result<CapabilityDescriptor, PluginError> {
         let _ = target
             .parse::<SocketAddr>()
-            .map_err(|e| PluginError::InvalidManifest(format!("invalid target address: {e}")))?;
+            .map_err(|e| PluginError::Driver(format!("invalid target address: {e}")))?;
         Ok(CapabilityDescriptor {
             protocol: "gb28181".to_string(),
             direction: ProtocolDirection::Bidirectional,
@@ -194,20 +194,19 @@ impl ProtocolDriverFactory for Gb28181DriverFactory {
 /// Parses the driver configuration JSON into a [`Gb28181DomainConfig`].
 fn load_domain_config(config: &serde_json::Value) -> Result<Gb28181DomainConfig, PluginError> {
     let cfg: DriverConfig = serde_json::from_value(config.clone())
-        .map_err(|e| PluginError::InvalidManifest(format!("invalid GB28181 config: {e}")))?;
+        .map_err(|e| PluginError::Driver(format!("invalid GB28181 config: {e}")))?;
 
-    let digest_bytes = hex::decode(&cfg.digest_secret).map_err(|e| {
-        PluginError::InvalidManifest(format!("digest_secret is not valid hex: {e}"))
-    })?;
+    let digest_bytes = hex::decode(&cfg.digest_secret)
+        .map_err(|e| PluginError::Driver(format!("digest_secret is not valid hex: {e}")))?;
     if digest_bytes.len() < 32 {
-        return Err(PluginError::InvalidManifest(
+        return Err(PluginError::Driver(
             "digest_secret must be at least 32 bytes".to_string(),
         ));
     }
 
     let domain_config =
         Gb28181DomainConfig::new(&cfg.domain_id, &cfg.realm, SecretSlice::from(digest_bytes))
-            .map_err(|e| PluginError::InvalidManifest(format!("GB28181 domain config: {e}")))?
+            .map_err(|e| PluginError::Driver(format!("GB28181 domain config: {e}")))?
             .with_auth_policy(AuthPolicy::ChallengeOptional)
             .with_allow_md5(cfg.allow_md5.unwrap_or(false))
             .with_preferred_algorithm(parse_algorithm(&cfg.preferred_algorithm)?);
@@ -222,7 +221,7 @@ fn parse_algorithm(
         None | Some("sha256") => Ok(cheetah_gb28181_core::DigestAlgorithm::Sha256),
         Some("sha512") => Ok(cheetah_gb28181_core::DigestAlgorithm::Sha512),
         Some("md5") => Ok(cheetah_gb28181_core::DigestAlgorithm::Md5),
-        Some(other) => Err(PluginError::InvalidManifest(format!(
+        Some(other) => Err(PluginError::Unsupported(format!(
             "unsupported digest algorithm {other}"
         ))),
     }
@@ -251,16 +250,16 @@ async fn process_sip(
     payload: &serde_json::Value,
 ) -> Result<(), PluginError> {
     let req: ProcessSipPayload = serde_json::from_value(payload.clone())
-        .map_err(|e| PluginError::InvalidManifest(format!("process_sip payload: {e}")))?;
+        .map_err(|e| PluginError::Driver(format!("process_sip payload: {e}")))?;
     let source = req
         .source
         .parse::<SocketAddr>()
-        .map_err(|e| PluginError::InvalidManifest(format!("invalid source address: {e}")))?;
+        .map_err(|e| PluginError::Driver(format!("invalid source address: {e}")))?;
     let bytes = hex::decode(&req.message_hex)
-        .map_err(|e| PluginError::InvalidManifest(format!("invalid message_hex: {e}")))?;
+        .map_err(|e| PluginError::Driver(format!("invalid message_hex: {e}")))?;
 
     let message = SipParser::parse_datagram(&bytes, SipParserConfig::default())
-        .map_err(|e| PluginError::InvalidManifest(format!("SIP parse error: {e}")))?;
+        .map_err(|e| PluginError::Driver(format!("SIP parse error: {e}")))?;
 
     let now = driver.started_at.elapsed().as_secs();
     let input = AccessInput {
