@@ -1,9 +1,8 @@
 //! WS-Security `UsernameToken` helpers for ONVIF SOAP requests.
 
 use crate::error::{OnvifError, OnvifResult};
-use hmac::{Hmac, Mac};
 use secrecy::{ExposeSecret, SecretString};
-use sha2::Sha256;
+use sha1::{Digest, Sha1};
 
 /// Number of random bytes for a WS-Security nonce.
 pub const NONCE_SIZE: usize = 16;
@@ -104,7 +103,7 @@ impl UsernameToken {
         let created = &self.created;
         let password = match self.kind {
             TokenKind::Digest => {
-                let digest = password_digest(&self.nonce, created, self.password.expose_secret())?;
+                let digest = password_digest(&self.nonce, created, self.password.expose_secret());
                 base64_encode(&digest)
             }
             TokenKind::Text => self.password.expose_secret().to_string(),
@@ -158,16 +157,15 @@ impl UsernameToken {
     }
 }
 
-fn password_digest(nonce: &[u8], created: &str, password: &str) -> OnvifResult<[u8; 32]> {
-    let mut mac = Hmac::<Sha256>::new_from_slice(password.as_bytes())
-        .map_err(|e| OnvifError::Security(e.to_string()))?;
-    mac.update(nonce);
-    mac.update(created.as_bytes());
-    let result = mac.finalize();
-    let bytes = result.into_bytes();
-    let mut out = [0u8; 32];
-    out.copy_from_slice(&bytes);
-    Ok(out)
+fn password_digest(nonce: &[u8], created: &str, password: &str) -> [u8; 20] {
+    let mut hasher = Sha1::new();
+    hasher.update(nonce);
+    hasher.update(created.as_bytes());
+    hasher.update(password.as_bytes());
+    let result = hasher.finalize();
+    let mut out = [0u8; 20];
+    out.copy_from_slice(&result);
+    out
 }
 
 fn base64_encode(input: &[u8]) -> String {
@@ -208,6 +206,8 @@ mod tests {
         assert!(xml.contains("PasswordDigest"));
         assert!(xml.contains("<wsse:Nonce"));
         assert!(xml.contains("<wsu:Created>"));
+        // Standard PasswordDigest = Base64(SHA1(nonce_bytes + created + password))
+        assert!(xml.contains(">/On4elqsNyvH1HVvpEVBb36lTmQ=<"));
     }
 
     #[test]

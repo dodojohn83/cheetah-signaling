@@ -4,7 +4,7 @@
 //! provides policy helpers that the driver can call before fetching a URL.
 
 use crate::error::{OnvifError, OnvifResult};
-use url::Url;
+use url::{Host, Url};
 
 /// SSRF policy for discovered transport addresses.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -66,61 +66,76 @@ impl XAddrPolicy {
             return Err(OnvifError::SsrfRejected("userinfo not allowed".to_string()));
         }
 
-        if let Some(segments) = url.path_segments() {
-            for segment in segments {
-                if segment.is_empty() {
-                    return Err(OnvifError::SsrfRejected(
-                        "empty path segment not allowed".to_string(),
-                    ));
-                }
-            }
-        }
-
-        let host = url
-            .host_str()
-            .ok_or_else(|| OnvifError::InvalidXAddr(url.to_string()))?;
-
-        if host == "localhost" && !self.allow_loopback {
+        // Reject internal/leading double slashes (e.g. `/onvif//service`) while
+        // still allowing root paths (`/`) and trailing slashes (`/onvif/`).
+        if url.path().contains("//") {
             return Err(OnvifError::SsrfRejected(
-                "localhost not allowed".to_string(),
+                "empty path segment not allowed".to_string(),
             ));
         }
 
-        if let Ok(ip) = host.parse::<std::net::IpAddr>() {
-            if !self.allow_unspecified && ip.is_unspecified() {
-                return Err(OnvifError::SsrfRejected(
-                    "unspecified address not allowed".to_string(),
-                ));
+        let host = url
+            .host()
+            .ok_or_else(|| OnvifError::InvalidXAddr(url.to_string()))?;
+
+        match host {
+            Host::Domain(domain) => {
+                if domain == "localhost" && !self.allow_loopback {
+                    return Err(OnvifError::SsrfRejected(
+                        "localhost not allowed".to_string(),
+                    ));
+                }
+                if let Ok(ip) = domain.parse::<std::net::IpAddr>() {
+                    self.check_ip(ip)?;
+                }
             }
-            if !self.allow_loopback && ip.is_loopback() {
-                return Err(OnvifError::SsrfRejected(
-                    "loopback address not allowed".to_string(),
-                ));
-            }
-            if !self.allow_link_local && is_link_local(ip) {
-                return Err(OnvifError::SsrfRejected(
-                    "link-local address not allowed".to_string(),
-                ));
-            }
-            if !self.allow_private && is_private(ip) {
-                return Err(OnvifError::SsrfRejected(
-                    "private address not allowed".to_string(),
-                ));
-            }
+            Host::Ipv4(v4) => self.check_ip(std::net::IpAddr::V4(v4))?,
+            Host::Ipv6(v6) => self.check_ip(std::net::IpAddr::V6(v6))?,
         }
 
         Ok(())
     }
 
+    fn check_ip(&self, ip: std::net::IpAddr) -> OnvifResult<()> {
+        let (loopback, link_local, private, unspecified) = classify(ip);
+        if !self.allow_unspecified && unspecified {
+            return Err(OnvifError::SsrfRejected(
+                "unspecified address not allowed".to_string(),
+            ));
+        }
+        if !self.allow_loopback && loopback {
+            return Err(OnvifError::SsrfRejected(
+                "loopback address not allowed".to_string(),
+            ));
+        }
+        if !self.allow_link_local && link_local {
+            return Err(OnvifError::SsrfRejected(
+                "link-local address not allowed".to_string(),
+            ));
+        }
+        if !self.allow_private && private {
+            return Err(OnvifError::SsrfRejected(
+                "private address not allowed".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Filters a list of XAddrs, returning only those that pass this policy.
-    pub fn filter(&self, xaddrs: &[String]) -> OnvifResult<Vec<String>> {
+    ///
+    /// Malformed or rejected addresses are skipped rather than failing the
+    /// entire list, so a device that advertises a mix of usable and blocked
+    /// XAddrs is not discarded outright.
+    pub fn filter(&self, xaddrs: &[String]) -> Vec<String> {
         let mut out = Vec::with_capacity(xaddrs.len());
         for addr in xaddrs {
-            let url = Url::parse(addr).map_err(OnvifError::from)?;
-            self.validate(&url)?;
-            out.push(addr.clone());
+            if let Ok(url) = Url::parse(addr)
+                && self.validate(&url).is_ok()
+            {
+                out.push(addr.clone());
+            }
         }
-        Ok(out)
+        out
     }
 
     /// Validates a redirect target relative to the original request URL.
@@ -136,7 +151,7 @@ impl XAddrPolicy {
             ));
         }
 
-        if original.host_str() != target.host_str() || original.port() != target.port() {
+        if original.host() != target.host() || original.port() != target.port() {
             return Err(OnvifError::SsrfRejected(
                 "redirect to different authority not allowed".to_string(),
             ));
@@ -146,17 +161,23 @@ impl XAddrPolicy {
     }
 }
 
-fn is_link_local(ip: std::net::IpAddr) -> bool {
+fn classify(ip: std::net::IpAddr) -> (bool, bool, bool, bool) {
     match ip {
-        std::net::IpAddr::V4(v4) => v4.is_link_local(),
-        std::net::IpAddr::V6(v6) => v6.is_unicast_link_local(),
-    }
-}
-
-fn is_private(ip: std::net::IpAddr) -> bool {
-    match ip {
-        std::net::IpAddr::V4(v4) => v4.is_private(),
-        std::net::IpAddr::V6(_) => false,
+        std::net::IpAddr::V4(v4) => (
+            v4.is_loopback(),
+            v4.is_link_local(),
+            v4.is_private(),
+            v4.is_unspecified(),
+        ),
+        std::net::IpAddr::V6(v6) => {
+            let mapped = v6.to_ipv4_mapped();
+            (
+                v6.is_loopback() || mapped.is_some_and(|v4| v4.is_loopback()),
+                v6.is_unicast_link_local() || mapped.is_some_and(|v4| v4.is_link_local()),
+                v6.is_unique_local() || mapped.is_some_and(|v4| v4.is_private()),
+                v6.is_unspecified() || mapped.is_some_and(|v4| v4.is_unspecified()),
+            )
+        }
     }
 }
 
@@ -164,7 +185,7 @@ fn is_private(ip: std::net::IpAddr) -> bool {
 /// the supplied private-address setting. When `allow_private` is true,
 /// loopback, link-local and unspecified addresses are also allowed so that
 /// the flag matches the broad meaning used in earlier code.
-pub fn filter_xaddrs(xaddrs: &[String], allow_private: bool) -> OnvifResult<Vec<String>> {
+pub fn filter_xaddrs(xaddrs: &[String], allow_private: bool) -> Vec<String> {
     let policy = XAddrPolicy {
         allow_private,
         allow_loopback: allow_private,
@@ -248,6 +269,61 @@ mod tests {
             policy
                 .validate(&Url::parse("http://example.com//admin").unwrap())
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn allows_root_and_trailing_slash() {
+        let policy = XAddrPolicy::default();
+        assert!(
+            policy
+                .validate(&Url::parse("http://example.com/").unwrap())
+                .is_ok()
+        );
+        assert!(
+            policy
+                .validate(&Url::parse("http://example.com/onvif/").unwrap())
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn rejects_ipv4_mapped_private() {
+        let policy = XAddrPolicy::default();
+        assert!(
+            policy
+                .validate(&Url::parse("http://[::ffff:192.168.1.1]/onvif").unwrap())
+                .is_err()
+        );
+        assert!(
+            policy
+                .validate(&Url::parse("http://[::ffff:169.254.169.254]/onvif").unwrap())
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn rejects_ipv6_unique_local() {
+        let policy = XAddrPolicy::default();
+        assert!(
+            policy
+                .validate(&Url::parse("http://[fc00::1]/onvif").unwrap())
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn filter_skips_rejected_addresses() {
+        let policy = XAddrPolicy::default();
+        let addrs = vec![
+            "http://192.0.2.1/onvif".to_string(),
+            "http://127.0.0.1/onvif".to_string(),
+            "http://[::ffff:192.168.1.1]/onvif".to_string(),
+            "ftp://192.0.2.1/onvif".to_string(),
+        ];
+        assert_eq!(
+            policy.filter(&addrs),
+            vec!["http://192.0.2.1/onvif".to_string()]
         );
     }
 

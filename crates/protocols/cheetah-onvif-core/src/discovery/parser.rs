@@ -12,6 +12,7 @@ use quick_xml::events::Event;
 const WSD_PROBE_MATCH: &str = "ProbeMatch";
 const WSD_RESOLVE_MATCH: &str = "ResolveMatch";
 const WSA_ENDPOINT_REFERENCE: &str = "EndpointReference";
+const WSA_ADDRESS: &str = "Address";
 const WSD_TYPES: &str = "Types";
 const WSD_SCOPES: &str = "Scopes";
 const WSD_X_ADDRS: &str = "XAddrs";
@@ -35,16 +36,22 @@ pub fn parse_probe_matches(
     let mut matches: Vec<ProbeMatch> = Vec::new();
 
     let mut current: Option<ProbeMatchBuilder> = None;
-    let mut current_tag = String::new();
+    let mut in_epr = false;
+    let mut epr_text: Option<String> = None;
     let mut text = String::new();
 
     loop {
         match reader.read_event() {
             Ok(Event::Start(e)) => {
                 tracker.start()?;
-                current_tag = local_name(&e.name());
-                if current_tag == WSD_PROBE_MATCH {
+                let name = local_name(&e.name());
+                if name == WSD_PROBE_MATCH {
                     current = Some(ProbeMatchBuilder::default());
+                    in_epr = false;
+                    epr_text = None;
+                } else if name == WSA_ENDPOINT_REFERENCE && current.is_some() {
+                    in_epr = true;
+                    epr_text = None;
                 }
                 text.clear();
             }
@@ -53,8 +60,15 @@ pub fn parse_probe_matches(
                 let name = local_name(&e.name());
                 if name == WSD_PROBE_MATCH {
                     current = Some(ProbeMatchBuilder::default());
+                    in_epr = false;
+                    epr_text = None;
+                } else if name == WSA_ENDPOINT_REFERENCE && current.is_some() {
+                    in_epr = true;
+                    epr_text = None;
+                } else if name == WSA_ADDRESS && in_epr {
+                    // Empty <Address/> inside EndpointReference: explicit empty EPR.
+                    epr_text = Some(String::new());
                 }
-                current_tag = name;
                 text.clear();
             }
             Ok(Event::Text(e)) => {
@@ -63,20 +77,31 @@ pub fn parse_probe_matches(
             Ok(Event::End(e)) => {
                 tracker.end();
                 let name = local_name(&e.name());
-                if name == WSD_PROBE_MATCH {
+
+                if name == WSA_ADDRESS && in_epr {
+                    epr_text = Some(text.trim().to_string());
+                } else if name == WSA_ENDPOINT_REFERENCE {
+                    if let Some(ref mut b) = current {
+                        let epr = epr_text.take().unwrap_or_else(|| text.trim().to_string());
+                        b.set_endpoint_reference(&epr)?;
+                    }
+                    in_epr = false;
+                } else if name == WSD_PROBE_MATCH {
                     if let Some(builder) = current.take() {
                         if matches.len() >= limits.max_matches {
                             return Err(OnvifError::LimitExceeded("max probe matches".to_string()));
                         }
                         matches.push(builder.build(discovered_at)?);
                     }
+                    in_epr = false;
+                    epr_text = None;
                 } else if name == WSA_RELATES_TO {
                     relates_to = Some(text.trim().to_string());
                 } else if let Some(ref mut b) = current {
-                    b.apply(&name, &text)?;
+                    b.apply(&name, &text);
                 }
+
                 text.clear();
-                current_tag.clear();
             }
             Ok(Event::Eof) => break,
             Err(e) => return Err(OnvifError::Xml(e.to_string())),
@@ -103,6 +128,8 @@ pub fn parse_hello_bye(
     let mut tracker = LimitTracker::new(*limits);
     let mut kind: Option<&'static str> = None;
     let mut builder = HelloByeBuilder::default();
+    let mut in_epr = false;
+    let mut epr_text: Option<String> = None;
     let mut text = String::new();
 
     loop {
@@ -112,6 +139,9 @@ pub fn parse_hello_bye(
                 let name = local_name(&e.name());
                 if kind.is_none() && (name == WSD_HELLO || name == WSD_BYE) {
                     kind = Some(if name == WSD_HELLO { "hello" } else { "bye" });
+                } else if name == WSA_ENDPOINT_REFERENCE {
+                    in_epr = true;
+                    epr_text = None;
                 }
                 text.clear();
             }
@@ -120,7 +150,13 @@ pub fn parse_hello_bye(
                 let name = local_name(&e.name());
                 if kind.is_none() && (name == WSD_HELLO || name == WSD_BYE) {
                     kind = Some(if name == WSD_HELLO { "hello" } else { "bye" });
+                } else if name == WSA_ENDPOINT_REFERENCE {
+                    in_epr = true;
+                    epr_text = None;
+                } else if name == WSA_ADDRESS && in_epr {
+                    epr_text = Some(String::new());
                 }
+                text.clear();
             }
             Ok(Event::Text(e)) => {
                 text.push_str(&e.xml10_content().unwrap_or_default());
@@ -128,10 +164,21 @@ pub fn parse_hello_bye(
             Ok(Event::End(e)) => {
                 tracker.end();
                 let name = local_name(&e.name());
+
                 if name == WSD_HELLO || name == WSD_BYE {
                     break;
                 }
-                builder.apply(&name, &text)?;
+
+                if name == WSA_ADDRESS && in_epr {
+                    epr_text = Some(text.trim().to_string());
+                } else if name == WSA_ENDPOINT_REFERENCE {
+                    let epr = epr_text.take().unwrap_or_else(|| text.trim().to_string());
+                    builder.set_endpoint_reference(&epr)?;
+                    in_epr = false;
+                } else {
+                    builder.apply(&name, &text);
+                }
+
                 text.clear();
             }
             Ok(Event::Eof) => break,
@@ -166,6 +213,8 @@ pub fn parse_resolve_matches(
     let mut matches: Vec<ResolveMatch> = Vec::new();
 
     let mut current: Option<ResolveMatchBuilder> = None;
+    let mut in_epr = false;
+    let mut epr_text: Option<String> = None;
     let mut text = String::new();
 
     loop {
@@ -175,6 +224,11 @@ pub fn parse_resolve_matches(
                 let name = local_name(&e.name());
                 if name == WSD_RESOLVE_MATCH {
                     current = Some(ResolveMatchBuilder::default());
+                    in_epr = false;
+                    epr_text = None;
+                } else if name == WSA_ENDPOINT_REFERENCE && current.is_some() {
+                    in_epr = true;
+                    epr_text = None;
                 }
                 text.clear();
             }
@@ -183,6 +237,13 @@ pub fn parse_resolve_matches(
                 let name = local_name(&e.name());
                 if name == WSD_RESOLVE_MATCH {
                     current = Some(ResolveMatchBuilder::default());
+                    in_epr = false;
+                    epr_text = None;
+                } else if name == WSA_ENDPOINT_REFERENCE && current.is_some() {
+                    in_epr = true;
+                    epr_text = None;
+                } else if name == WSA_ADDRESS && in_epr {
+                    epr_text = Some(String::new());
                 }
                 text.clear();
             }
@@ -192,7 +253,16 @@ pub fn parse_resolve_matches(
             Ok(Event::End(e)) => {
                 tracker.end();
                 let name = local_name(&e.name());
-                if name == WSD_RESOLVE_MATCH {
+
+                if name == WSA_ADDRESS && in_epr {
+                    epr_text = Some(text.trim().to_string());
+                } else if name == WSA_ENDPOINT_REFERENCE {
+                    if let Some(ref mut b) = current {
+                        let epr = epr_text.take().unwrap_or_else(|| text.trim().to_string());
+                        b.set_endpoint_reference(&epr)?;
+                    }
+                    in_epr = false;
+                } else if name == WSD_RESOLVE_MATCH {
                     if let Some(builder) = current.take() {
                         if matches.len() >= limits.max_matches {
                             return Err(OnvifError::LimitExceeded(
@@ -201,11 +271,14 @@ pub fn parse_resolve_matches(
                         }
                         matches.push(builder.build(discovered_at)?);
                     }
+                    in_epr = false;
+                    epr_text = None;
                 } else if name == WSA_RELATES_TO {
                     relates_to = Some(text.trim().to_string());
                 } else if let Some(ref mut b) = current {
-                    b.apply(&name, &text)?;
+                    b.apply(&name, &text);
                 }
+
                 text.clear();
             }
             Ok(Event::Eof) => break,
@@ -234,9 +307,13 @@ struct ProbeMatchBuilder {
 }
 
 impl ProbeMatchBuilder {
-    fn apply(&mut self, name: &str, text: &str) -> OnvifResult<()> {
+    fn set_endpoint_reference(&mut self, epr: &str) -> OnvifResult<()> {
+        self.endpoint_reference = Some(validate_epr(epr)?);
+        Ok(())
+    }
+
+    fn apply(&mut self, name: &str, text: &str) {
         match name {
-            WSA_ENDPOINT_REFERENCE => self.endpoint_reference = Some(validate_epr(text)?),
             WSD_TYPES => self.types = text.split_whitespace().map(|s| s.to_string()).collect(),
             WSD_SCOPES => self.scopes = Some(text.to_string()),
             WSD_X_ADDRS => self.x_addrs = Some(text.to_string()),
@@ -245,7 +322,6 @@ impl ProbeMatchBuilder {
             }
             _ => {}
         }
-        Ok(())
     }
 
     fn build(self, discovered_at: u64) -> OnvifResult<ProbeMatch> {
@@ -274,9 +350,13 @@ struct HelloByeBuilder {
 }
 
 impl HelloByeBuilder {
-    fn apply(&mut self, name: &str, text: &str) -> OnvifResult<()> {
+    fn set_endpoint_reference(&mut self, epr: &str) -> OnvifResult<()> {
+        self.endpoint_reference = Some(validate_epr(epr)?);
+        Ok(())
+    }
+
+    fn apply(&mut self, name: &str, text: &str) {
         match name {
-            WSA_ENDPOINT_REFERENCE => self.endpoint_reference = Some(validate_epr(text)?),
             WSD_TYPES => self.types = text.split_whitespace().map(|s| s.to_string()).collect(),
             WSD_SCOPES => self.scopes = Some(text.to_string()),
             WSD_X_ADDRS => self.x_addrs = Some(text.to_string()),
@@ -285,7 +365,6 @@ impl HelloByeBuilder {
             }
             _ => {}
         }
-        Ok(())
     }
 
     fn build_hello(self, discovered_at: u64) -> OnvifResult<Hello> {
@@ -320,16 +399,19 @@ struct ResolveMatchBuilder {
 }
 
 impl ResolveMatchBuilder {
-    fn apply(&mut self, name: &str, text: &str) -> OnvifResult<()> {
+    fn set_endpoint_reference(&mut self, epr: &str) -> OnvifResult<()> {
+        self.endpoint_reference = Some(validate_epr(epr)?);
+        Ok(())
+    }
+
+    fn apply(&mut self, name: &str, text: &str) {
         match name {
-            WSA_ENDPOINT_REFERENCE => self.endpoint_reference = Some(validate_epr(text)?),
             WSD_X_ADDRS => self.x_addrs = Some(text.to_string()),
             WSD_METADATA_VERSION => {
                 self.metadata_version = text.trim().parse().ok();
             }
             _ => {}
         }
-        Ok(())
     }
 
     fn build(self, discovered_at: u64) -> OnvifResult<ResolveMatch> {

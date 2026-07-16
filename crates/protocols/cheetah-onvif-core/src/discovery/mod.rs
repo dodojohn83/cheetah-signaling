@@ -253,12 +253,41 @@ mod tests {
     }
 
     #[test]
+    fn probe_matches_parses_nested_endpoint_reference() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope" xmlns:a="http://schemas.xmlsoap.org/ws/2004/08/addressing" xmlns:d="http://schemas.xmlsoap.org/ws/2005/04/discovery">
+  <s:Header>
+    <a:RelatesTo>urn:uuid:probe</a:RelatesTo>
+  </s:Header>
+  <s:Body>
+    <d:ProbeMatches>
+      <d:ProbeMatch>
+        <a:EndpointReference>
+          <a:Address>urn:uuid:nested-device</a:Address>
+        </a:EndpointReference>
+        <d:Types>dp0:NetworkVideoTransmitter</d:Types>
+        <d:XAddrs>http://192.168.1.10/onvif/device_service</d:XAddrs>
+        <d:MetadataVersion>1</d:MetadataVersion>
+      </d:ProbeMatch>
+    </d:ProbeMatches>
+  </s:Body>
+</s:Envelope>"#;
+        let matches = parse_probe_matches(xml, 42).unwrap();
+        assert_eq!(
+            matches.matches[0].endpoint_reference.0,
+            "urn:uuid:nested-device"
+        );
+    }
+
+    #[test]
     fn hello_bye_parsing() {
         let hello = r#"<?xml version="1.0"?>
 <s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope" xmlns:a="http://schemas.xmlsoap.org/ws/2004/08/addressing" xmlns:d="http://schemas.xmlsoap.org/ws/2005/04/discovery">
   <s:Body>
     <d:Hello>
-      <a:EndpointReference>urn:uuid:hello-device</a:EndpointReference>
+      <a:EndpointReference>
+        <a:Address>urn:uuid:hello-device</a:Address>
+      </a:EndpointReference>
       <d:XAddrs>http://10.0.0.1/onvif</d:XAddrs>
       <d:MetadataVersion>5</d:MetadataVersion>
     </d:Hello>
@@ -277,13 +306,24 @@ mod tests {
     #[test]
     fn filter_xaddrs_rejects_loopback() {
         let addrs = vec!["http://127.0.0.1/onvif".to_string()];
-        assert!(filter_xaddrs(&addrs, false).is_err());
-        assert!(filter_xaddrs(&addrs, true).is_ok());
+        assert!(filter_xaddrs(&addrs, false).is_empty());
+        assert_eq!(filter_xaddrs(&addrs, true).len(), 1);
     }
 
     #[test]
     fn filter_xaddrs_rejects_non_http_scheme() {
         let addrs = vec!["ftp://192.168.1.1/onvif".to_string()];
-        assert!(filter_xaddrs(&addrs, true).is_err());
+        assert!(filter_xaddrs(&addrs, true).is_empty());
+    }
+
+    #[test]
+    fn filter_xaddrs_keeps_usable_addresses() {
+        let addrs = vec![
+            "http://192.0.2.1/onvif".to_string(),
+            "http://127.0.0.1/onvif".to_string(),
+            "http://192.168.1.1/onvif".to_string(),
+        ];
+        let filtered = filter_xaddrs(&addrs, false);
+        assert_eq!(filtered, vec!["http://192.0.2.1/onvif".to_string()]);
     }
 }

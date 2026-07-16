@@ -629,6 +629,7 @@ dependencies = [
  "md5",
  "quick-xml",
  "secrecy",
+ "sha1",
  "sha2",
  "thiserror",
  "time",

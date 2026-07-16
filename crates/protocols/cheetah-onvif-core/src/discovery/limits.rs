@@ -76,12 +76,19 @@ impl DiscoveryRateLimiter {
     /// `now` is a monotonic or wall-clock second timestamp supplied by the driver.
     pub fn check(&mut self, source: IpAddr, now: u64) -> bool {
         let cutoff = now.saturating_sub(self.config.window_seconds);
+        let max_per_source = self.config.max_per_source as usize;
 
-        if let Some(bucket) = self.buckets.get_mut(&source) {
+        // Prune expired entries and remove buckets that became empty so the
+        // `max_sources` capacity reflects currently active sources.
+        self.buckets.retain(|_, bucket| {
             while bucket.front().is_some_and(|&t| t < cutoff) {
                 bucket.pop_front();
             }
-            if bucket.len() >= self.config.max_per_source as usize {
+            !bucket.is_empty()
+        });
+
+        if let Some(bucket) = self.buckets.get_mut(&source) {
+            if bucket.len() >= max_per_source {
                 return false;
             }
             bucket.push_back(now);
@@ -90,7 +97,7 @@ impl DiscoveryRateLimiter {
             if self.buckets.len() >= self.config.max_sources {
                 return false;
             }
-            let mut bucket = VecDeque::with_capacity(self.config.max_per_source as usize);
+            let mut bucket = VecDeque::with_capacity(max_per_source);
             bucket.push_back(now);
             self.buckets.insert(source, bucket);
             true
@@ -195,6 +202,20 @@ mod tests {
         let b = "192.168.1.2".parse().unwrap();
         assert!(rl.check(a, 0));
         assert!(!rl.check(b, 0));
+    }
+
+    #[test]
+    fn rate_limiter_evicts_empty_buckets() {
+        let mut rl = DiscoveryRateLimiter::new(RateLimitConfig {
+            window_seconds: 10,
+            max_per_source: 1,
+            max_sources: 1,
+        });
+        let a = "192.168.1.1".parse().unwrap();
+        let b = "192.168.1.2".parse().unwrap();
+        assert!(rl.check(a, 0));
+        // Advance past the window, so the bucket for `a` becomes empty and removable.
+        assert!(rl.check(b, 20));
     }
 
     #[test]
