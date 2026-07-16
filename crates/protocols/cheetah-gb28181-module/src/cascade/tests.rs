@@ -429,3 +429,43 @@ fn short_expiry_uses_proportional_refresh_margin() {
     assert_eq!(outputs.len(), 1);
     assert!(matches!(outputs[0], CascadeOutput::SendRequest(_)));
 }
+
+#[test]
+fn redirect_response_is_treated_as_failure() {
+    let mut cfg = config();
+    cfg.max_retries = 0;
+    let mut cascade = Gb28181Cascade::new(cfg, password_provider());
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 1000,
+            event: CascadeEvent::Register,
+        })
+        .unwrap();
+    let (call_id, cseq) = request_call_id_cseq(&outputs);
+
+    let mut headers = SipHeaders::new();
+    headers.append(HeaderName::CallId, HeaderValue::new(call_id));
+    headers.append(HeaderName::CSeq, HeaderValue::new(cseq));
+    let response_302 = SipMessage::Response {
+        line: StatusLine::new(302, "Moved Temporarily"),
+        headers,
+        body: Vec::new(),
+    };
+
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 1001,
+            event: CascadeEvent::Response(Box::new(response_302)),
+        })
+        .unwrap();
+
+    // Should emit a failure/disconnect event, not a connected event.
+    assert!(outputs.iter().any(|o| matches!(
+        o,
+        CascadeOutput::EmitEvent(crate::events::Gb28181Event::CascadePlatformDisconnected { .. })
+    )));
+    assert!(!outputs.iter().any(|o| matches!(
+        o,
+        CascadeOutput::EmitEvent(crate::events::Gb28181Event::CascadePlatformConnected { .. })
+    )));
+}

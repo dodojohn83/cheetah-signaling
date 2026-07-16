@@ -202,7 +202,12 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
             return Ok(self.fail_or_retry(now, reg.attempt, false, reason));
         }
 
-        if status.code >= 200 {
+        if status.code >= 300 {
+            let reason = format!("REGISTER redirected with {} {}", status.code, status.reason);
+            return Ok(self.fail_or_retry(now, reg.attempt, false, reason));
+        }
+
+        if (200..300).contains(&status.code) {
             let expires = parse_expires(&msg, self.config.register_interval_seconds);
             if expires == 0 {
                 // The upstream removed the binding; do not schedule a refresh.
@@ -292,7 +297,21 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
             )]);
         }
 
-        if status.code >= 200 {
+        if status.code >= 300 {
+            self.state = State::Idle;
+            return Ok(vec![CascadeOutput::EmitEvent(
+                Gb28181Event::CascadePlatformDisconnected {
+                    domain_id: self.config.domain_id.clone(),
+                    platform_id: self.platform_id().to_string(),
+                    reason: format!(
+                        "deregister redirected with {} {}",
+                        status.code, status.reason
+                    ),
+                },
+            )]);
+        }
+
+        if (200..300).contains(&status.code) {
             self.state = State::Idle;
             return Ok(vec![CascadeOutput::EmitEvent(
                 Gb28181Event::CascadePlatformDisconnected {
