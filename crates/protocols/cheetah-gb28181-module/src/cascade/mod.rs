@@ -202,7 +202,10 @@ impl CascadeConfig {
             catalog_max_query_pages: 1000,
             media_bridge_max_sessions: 1000,
             media_bridge_transaction_timeout_seconds: 60,
-            media_bridge_active_timeout_seconds: 0,
+            // A generous safety deadline (7 days) so a stuck active bridge is
+            // eventually reclaimed even if BYE/stop signals are lost. Set to 0
+            // to disable active-timeout cleanup explicitly.
+            media_bridge_active_timeout_seconds: 604_800,
             catalog_filter: CatalogFilter::default(),
             user_agent: None,
             catalog_inbound_digest_credential_ref: None,
