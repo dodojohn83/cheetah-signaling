@@ -1,5 +1,8 @@
 //! SIP header names and ordered multi-value storage.
 
+use super::error::{SipError, SipErrorKind};
+use super::message::Method;
+use super::uri::SipUri;
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 
@@ -28,6 +31,68 @@ impl std::fmt::Display for HeaderValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
     }
+}
+
+impl HeaderValue {
+    /// Builds a `Via` header value of the form
+    /// `SIP/2.0/{transport} {host}:{port};branch={branch}`.
+    pub fn via(transport: &str, host: &str, port: u16, branch: &str) -> Result<Self, SipError> {
+        if host.is_empty() {
+            return Err(SipError::new(
+                SipErrorKind::InvalidHeader,
+                None,
+                "Via host must not be empty",
+            ));
+        }
+        validate_token(transport, "Via transport")?;
+        validate_token(branch, "Via branch")?;
+        Ok(Self(format!(
+            "SIP/2.0/{transport} {host}:{port};branch={branch}"
+        )))
+    }
+
+    /// Builds a `From` header value of the form `<{uri}>;tag={tag}`.
+    pub fn from_uri(uri: &SipUri, tag: &str) -> Result<Self, SipError> {
+        validate_token(tag, "From tag")?;
+        Ok(Self(format!("<{}>;tag={tag}", uri.encode())))
+    }
+
+    /// Builds a `To` header value of the form `<{uri}>`.
+    pub fn to_uri(uri: &SipUri) -> Self {
+        Self(format!("<{}>", uri.encode()))
+    }
+
+    /// Builds a `Contact` header value of the form `<{uri}>`.
+    pub fn contact_uri(uri: &SipUri) -> Self {
+        Self(format!("<{}>", uri.encode()))
+    }
+
+    /// Builds a `CSeq` header value of the form `{seq} {method}`.
+    pub fn cseq(seq: u32, method: Method) -> Self {
+        Self(format!("{seq} {method}"))
+    }
+}
+
+fn validate_token(value: &str, what: &str) -> Result<(), SipError> {
+    if value.is_empty() || !value.bytes().all(is_token_char) {
+        return Err(SipError::new(
+            SipErrorKind::InvalidHeader,
+            None,
+            format!("{what} is not a valid SIP token"),
+        ));
+    }
+    Ok(())
+}
+
+fn is_token_char(b: u8) -> bool {
+    matches!(
+        b,
+        b'a'..=b'z'
+        | b'A'..=b'Z'
+        | b'0'..=b'9'
+        | b'-' | b'.' | b'!' | b'%' | b'*' | b'_'
+        | b'+' | b'`' | b'\'' | b'~' | b'(' | b')'
+    )
 }
 
 /// Well-known SIP header names.
@@ -285,5 +350,43 @@ impl SipHeaders {
             out.push_str("\r\n");
         }
         out
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn via_rejects_invalid_branch_token() {
+        let result = HeaderValue::via("UDP", "example.com", 5060, "branch;bad");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn from_uri_rejects_invalid_tag() {
+        let uri = SipUri::parse("sip:alice@example.com:5060").unwrap();
+        let result = HeaderValue::from_uri(&uri, "tag bad");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn structured_headers_encode_correctly() {
+        let uri = SipUri::parse("sip:alice@example.com:5060").unwrap();
+        let via = HeaderValue::via("UDP", "example.com", 5060, "z9hG4bKabc").unwrap();
+        let from = HeaderValue::from_uri(&uri, "abc123").unwrap();
+        let to = HeaderValue::to_uri(&uri);
+        let contact = HeaderValue::contact_uri(&uri);
+        let cseq = HeaderValue::cseq(42, Method::Register);
+
+        assert_eq!(
+            via.as_str(),
+            "SIP/2.0/UDP example.com:5060;branch=z9hG4bKabc"
+        );
+        assert_eq!(from.as_str(), "<sip:alice@example.com:5060>;tag=abc123");
+        assert_eq!(to.as_str(), "<sip:alice@example.com:5060>");
+        assert_eq!(contact.as_str(), "<sip:alice@example.com:5060>");
+        assert_eq!(cseq.as_str(), "42 REGISTER");
     }
 }

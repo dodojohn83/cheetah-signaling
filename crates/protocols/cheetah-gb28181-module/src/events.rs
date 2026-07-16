@@ -231,6 +231,26 @@ pub enum Gb28181Event {
         /// Remote address that was used for the session.
         source: SocketAddr,
     },
+    /// An upstream GB28181 cascade platform registered or refreshed.
+    CascadePlatformConnected {
+        /// Logical domain.
+        domain_id: DomainId,
+        /// Upstream platform identifier.
+        platform_id: String,
+        /// Upstream SIP URI that accepted the registration.
+        upstream: String,
+        /// Granted expiry in seconds.
+        expires: u32,
+    },
+    /// An upstream GB28181 cascade platform explicitly unregistered or failed.
+    CascadePlatformDisconnected {
+        /// Logical domain.
+        domain_id: DomainId,
+        /// Upstream platform identifier.
+        platform_id: String,
+        /// Stable reason for the disconnection.
+        reason: String,
+    },
     /// A media session establishment or operation failed.
     MediaSessionFailed {
         /// Logical domain the device belongs to.

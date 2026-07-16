@@ -17,8 +17,8 @@ pub use sdp::{
 
 pub use sip::dialog::{Dialog, DialogEvent, DialogId, DialogOutput, DialogRole, DialogState};
 pub use sip::digest::{
-    DigestAlgorithm, DigestChallenge, DigestContext, DigestError, DigestQop, DigestReplayCache,
-    DigestResponse,
+    DigestAlgorithm, DigestChallenge, DigestClient, DigestContext, DigestError, DigestQop,
+    DigestReplayCache, DigestResponse,
 };
 pub use sip::encoder::encode_message;
 pub use sip::error::{SipError, SipErrorKind};
