@@ -413,6 +413,21 @@ fn bridge_cancel_while_invited_sends_487() {
         })
         .unwrap();
 
+    let mut saw_ok_without_empty_tag = false;
+    for output in &outputs {
+        if let CascadeOutput::SendResponse(SipMessage::Response { line, headers, .. }) = output
+            && line.code == 200
+        {
+            let to = headers
+                .get(&HeaderName::To)
+                .map(|v| v.as_str())
+                .unwrap_or("");
+            assert!(!to.ends_with(";tag="), "To tag must not be empty");
+            saw_ok_without_empty_tag = true;
+        }
+    }
+    assert!(saw_ok_without_empty_tag);
+
     let codes: Vec<u16> = outputs
         .iter()
         .filter_map(|o| match o {

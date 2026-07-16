@@ -183,7 +183,7 @@ pub(crate) fn build_response(
         let has_tag = to_str
             .split(';')
             .any(|param| param.trim().starts_with("tag="));
-        if has_tag {
+        if has_tag || response_tag.is_empty() {
             response_headers.append(HeaderName::To, to.clone());
         } else {
             response_headers.append(
