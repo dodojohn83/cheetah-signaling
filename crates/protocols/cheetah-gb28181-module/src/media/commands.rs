@@ -308,7 +308,10 @@ fn do_stop(
         return Ok(vec![MediaOutput::SendMessage(cancel)]);
     }
 
-    let next_cseq = session.cseq + 1;
+    let next_cseq = session
+        .cseq
+        .checked_add(1)
+        .ok_or_else(|| MediaError::InvalidState("CSeq overflow".to_string()))?;
     let branch = format!("{}-bye", session.branch);
     let target = session.remote_target.as_ref().unwrap_or(&session.target);
     let bye = build_bye(
@@ -340,7 +343,10 @@ fn do_control_playback(
         return Err(MediaError::InvalidState(format!("{:?}", session.state)));
     }
 
-    let next_cseq = session.cseq + 1;
+    let next_cseq = session
+        .cseq
+        .checked_add(1)
+        .ok_or_else(|| MediaError::InvalidState("CSeq overflow".to_string()))?;
     let branch = format!(
         "{}-{}-info-{next_cseq}",
         session.branch,

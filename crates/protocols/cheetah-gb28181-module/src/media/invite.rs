@@ -402,6 +402,9 @@ pub fn first_contact_uri(msg: &SipMessage) -> Result<SipUri, super::MediaError> 
             let token = token.trim();
             let inner = if let Some(start) = token.find('<') {
                 let end = token.find('>')?;
+                if end <= start {
+                    return None;
+                }
                 &token[start + 1..end]
             } else {
                 token

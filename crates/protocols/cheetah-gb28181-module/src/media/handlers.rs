@@ -128,7 +128,10 @@ fn on_invite_success(
             );
             outputs.push(MediaOutput::SendMessage(ack));
 
-            session.cseq += 1;
+            session.cseq = session
+                .cseq
+                .checked_add(1)
+                .ok_or_else(|| MediaError::InvalidState("CSeq overflow".to_string()))?;
             let bye_branch = format!("{}-bye-late", session.branch);
             let bye = build_bye(
                 &media.config.local_sip_uri,

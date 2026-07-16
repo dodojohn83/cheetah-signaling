@@ -17,7 +17,7 @@ fn config() -> MediaConfig {
     }
 }
 
-fn start_live(media_session_id: MediaSessionId) -> MediaCommand {
+fn start_live_with_cseq(media_session_id: MediaSessionId, cseq: u32) -> MediaCommand {
     MediaCommand::StartLive {
         media_session_id,
         channel_id: ChannelId::generate(),
@@ -25,7 +25,7 @@ fn start_live(media_session_id: MediaSessionId) -> MediaCommand {
         target: SipUri::parse("sip:34020000001320000001@192.168.1.20:5060").unwrap(),
         call_id: "call-1".to_string(),
         local_tag: "tag-local".to_string(),
-        cseq: 1,
+        cseq,
         branch: "z9hG4bK1234".to_string(),
         subject_session: "0200000000".to_string(),
         media_address: "192.168.1.100".to_string(),
@@ -33,6 +33,10 @@ fn start_live(media_session_id: MediaSessionId) -> MediaCommand {
         ssrc: "0200000000".to_string(),
         transport: MediaTransport::TcpPassive,
     }
+}
+
+fn start_live(media_session_id: MediaSessionId) -> MediaCommand {
+    start_live_with_cseq(media_session_id, 1)
 }
 
 #[test]
@@ -167,7 +171,7 @@ fn device_bye_is_acknowledged_and_stops_session() {
     ));
 }
 
-fn build_test_200_ok() -> SipMessage {
+fn build_test_200_ok_with(cseq: u32, contact: &str) -> SipMessage {
     let sdp = "v=0\r\n\
               o=- 0 0 IN IP4 0.0.0.0\r\n\
               s=Play\r\n\
@@ -192,11 +196,8 @@ fn build_test_200_ok() -> SipMessage {
         HeaderValue::new("<sip:34020000001320000001@192.168.1.20:5060>;tag=tag-remote"),
     );
     headers.append(HeaderName::CallId, HeaderValue::new("call-1"));
-    headers.append(HeaderName::CSeq, HeaderValue::new("1 INVITE"));
-    headers.append(
-        HeaderName::Contact,
-        HeaderValue::new("<sip:34020000001320000001@192.168.1.20:5061>"),
-    );
+    headers.append(HeaderName::CSeq, HeaderValue::new(format!("{cseq} INVITE")));
+    headers.append(HeaderName::Contact, HeaderValue::new(contact));
     headers.append(HeaderName::ContentType, HeaderValue::new("application/sdp"));
     headers.append(
         HeaderName::ContentLength,
@@ -207,6 +208,10 @@ fn build_test_200_ok() -> SipMessage {
         headers,
         body: sdp.as_bytes().to_vec(),
     }
+}
+
+fn build_test_200_ok() -> SipMessage {
+    build_test_200_ok_with(1, "<sip:34020000001320000001@192.168.1.20:5061>")
 }
 
 #[test]
@@ -661,4 +666,50 @@ fn sdp_encoder_rejects_crlf_injection() {
     };
     let result = cheetah_gb28181_core::encode_sdp(&session);
     assert!(result.is_err());
+}
+
+#[test]
+fn malformed_contact_header_does_not_panic() {
+    let mut media = Gb28181Media::new(config());
+    let sid = MediaSessionId::generate();
+    media.process(MediaInput::Command(start_live(sid))).unwrap();
+
+    let ok = build_test_200_ok_with(1, ">garbage<sip:x@y>");
+    let result = media.process(MediaInput::Message(ok));
+    assert!(matches!(result, Err(MediaError::MalformedSip(_))));
+}
+
+#[test]
+fn stop_active_session_rejects_cseq_overflow() {
+    let mut media = Gb28181Media::new(config());
+    let sid = MediaSessionId::generate();
+    media
+        .process(MediaInput::Command(start_live_with_cseq(sid, u32::MAX)))
+        .unwrap();
+    let ok = build_test_200_ok_with(u32::MAX, "<sip:34020000001320000001@192.168.1.20:5061>");
+    media.process(MediaInput::Message(ok)).unwrap();
+
+    let result = media.process(MediaInput::Command(MediaCommand::StopMediaSession {
+        media_session_id: sid,
+    }));
+    assert!(matches!(result, Err(MediaError::InvalidState(_))));
+}
+
+#[test]
+fn control_playback_rejects_cseq_overflow() {
+    let mut media = Gb28181Media::new(config());
+    let sid = MediaSessionId::generate();
+    media
+        .process(MediaInput::Command(start_live_with_cseq(sid, u32::MAX)))
+        .unwrap();
+    let ok = build_test_200_ok_with(u32::MAX, "<sip:34020000001320000001@192.168.1.20:5061>");
+    media.process(MediaInput::Message(ok)).unwrap();
+
+    let result = media.process(MediaInput::Command(MediaCommand::ControlPlayback {
+        media_session_id: sid,
+        action: PlaybackAction::Play,
+        scale: None,
+        range: None,
+    }));
+    assert!(matches!(result, Err(MediaError::InvalidState(_))));
 }
