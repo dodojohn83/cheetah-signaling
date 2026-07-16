@@ -1,16 +1,24 @@
 //! Sans-I/O GB28181 cascade upstream registration state machine.
 
+mod catalog;
 mod keepalive;
 mod machine;
 mod registration;
+mod request_handler;
+
+pub use catalog::{CatalogError, CatalogFilter, CatalogPage, CatalogProvider, CatalogQuery};
 
 use crate::events::Gb28181Event;
 use crate::types::DomainId;
-use cheetah_gb28181_core::{DigestChallenge, DigestClient, DigestError, SipMessage, SipUri};
+use cheetah_gb28181_core::{
+    DigestChallenge, DigestClient, DigestContext, DigestError, DigestReplayCache, SipMessage,
+    SipUri,
+};
 use cheetah_signal_types::is_internal_ip;
-use secrecy::SecretString;
+use secrecy::{SecretBox, SecretString};
 use std::net::IpAddr;
 use std::str::FromStr;
+use std::sync::{Arc, Mutex};
 
 /// Provider for upstream platform credentials.
 pub trait CascadeCredentialProvider: Send + Sync {
@@ -81,8 +89,25 @@ pub struct CascadeConfig {
     /// Maximum consecutive keepalive failures before marking the platform
     /// disconnected.
     pub keepalive_max_failures: u32,
+    /// Maximum number of catalog items per SIP packet.
+    pub catalog_max_items_per_packet: u32,
+    /// Maximum number of catalog response packets emitted for one upstream
+    /// query. This bounds both memory and transaction state for large catalogs.
+    pub catalog_max_query_pages: u32,
+    /// Filter controlling which resources may be shared with the upstream
+    /// platform.
+    pub catalog_filter: CatalogFilter,
     /// Optional `User-Agent` header value.
     pub user_agent: Option<String>,
+    /// Optional credential reference used to look up the password for
+    /// validating SIP Digest `Authorization` headers on incoming `Catalog`
+    /// `MESSAGE` requests. If omitted, `credential_ref` is used as a fallback.
+    pub catalog_inbound_digest_credential_ref: Option<String>,
+    /// Optional HMAC server secret for generating nonces when challenging
+    /// incoming `Catalog` `MESSAGE` requests with `401`. Must be at least 32
+    /// bytes when provided. Wrapped in `Arc` so the secret is shared rather
+    /// than copied when the configuration is cloned.
+    pub catalog_inbound_digest_server_secret: Option<Arc<SecretBox<[u8]>>>,
 }
 
 impl CascadeConfig {
@@ -163,8 +188,35 @@ impl CascadeConfig {
             keepalive_interval_seconds: 30,
             keepalive_timeout_seconds: 10,
             keepalive_max_failures: 3,
+            catalog_max_items_per_packet: 100,
+            catalog_max_query_pages: 1000,
+            catalog_filter: CatalogFilter::default(),
             user_agent: None,
+            catalog_inbound_digest_credential_ref: None,
+            catalog_inbound_digest_server_secret: None,
         })
+    }
+
+    /// Enables SIP Digest authentication for incoming `Catalog` `MESSAGE`
+    /// requests using the supplied credential reference and server secret.
+    ///
+    /// `server_secret` must be at least 32 bytes.
+    pub fn with_catalog_inbound_digest(
+        mut self,
+        credential_ref: impl Into<String>,
+        server_secret: impl AsRef<[u8]>,
+    ) -> Result<Self, CascadeError> {
+        let credential_ref = credential_ref.into();
+        validate_token(&credential_ref)?;
+        if server_secret.as_ref().len() < 32 {
+            return Err(CascadeError::Internal(
+                "catalog inbound digest server secret must be at least 32 bytes".to_string(),
+            ));
+        }
+        let boxed: Box<[u8]> = Box::from(server_secret.as_ref());
+        self.catalog_inbound_digest_credential_ref = Some(credential_ref);
+        self.catalog_inbound_digest_server_secret = Some(Arc::new(SecretBox::new(boxed)));
+        Ok(self)
     }
 }
 
@@ -175,6 +227,8 @@ pub enum CascadeEvent {
     Register,
     /// Unregister from the upstream platform.
     Deregister,
+    /// A SIP request received from the network.
+    Request(Box<SipMessage>),
     /// A SIP response received from the network.
     Response(Box<SipMessage>),
     /// A periodic tick for refresh, retry and transaction timeout processing.
@@ -195,6 +249,8 @@ pub struct CascadeInput {
 pub enum CascadeOutput {
     /// A SIP request that the transport should send.
     SendRequest(SipMessage),
+    /// A SIP response that the transport should send.
+    SendResponse(SipMessage),
     /// A domain event for downstream consumers.
     EmitEvent(Gb28181Event),
 }
@@ -228,6 +284,12 @@ impl From<DigestError> for CascadeError {
 impl From<cheetah_gb28181_core::SipError> for CascadeError {
     fn from(e: cheetah_gb28181_core::SipError) -> Self {
         CascadeError::MalformedSip(e.to_string())
+    }
+}
+
+impl From<CatalogError> for CascadeError {
+    fn from(e: CatalogError) -> Self {
+        CascadeError::Internal(e.to_string())
     }
 }
 
@@ -297,14 +359,45 @@ struct AuthorizationContext {
     client: DigestClient,
 }
 
+/// Server-side digest context for authenticating incoming `Catalog` `MESSAGE`
+/// requests from the upstream platform.
+struct InboundAuthContext {
+    digest: DigestContext,
+    replay: Mutex<DigestReplayCache>,
+}
+
+impl std::fmt::Debug for InboundAuthContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InboundAuthContext")
+            .field("digest", &"[REDACTED]")
+            .field("replay", &"[REDACTED]")
+            .finish()
+    }
+}
+
 /// Sans-I/O state machine for an upstream GB28181 cascade platform.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Gb28181Cascade<P: CascadeCredentialProvider> {
     config: CascadeConfig,
     provider: P,
     state: State,
     request_counter: u64,
     auth: Option<AuthorizationContext>,
+    catalog_provider: Option<Arc<dyn CatalogProvider>>,
+    inbound_auth: Option<Arc<InboundAuthContext>>,
+}
+
+impl<P: CascadeCredentialProvider> std::fmt::Debug for Gb28181Cascade<P> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Gb28181Cascade")
+            .field("config", &self.config)
+            .field("state", &self.state)
+            .field("request_counter", &self.request_counter)
+            .field("auth", &self.auth.is_some())
+            .field("catalog_provider", &self.catalog_provider.is_some())
+            .field("inbound_auth", &self.inbound_auth.is_some())
+            .finish()
+    }
 }
 
 #[cfg(test)]

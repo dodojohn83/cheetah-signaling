@@ -1,29 +1,52 @@
 //! `Gb28181Cascade` state machine implementation.
 
-use cheetah_gb28181_core::{
-    DigestChallenge, DigestClient, DigestResponse, HeaderName, Method, SipMessage,
-};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use std::sync::{Arc, Mutex};
+
+use secrecy::ExposeSecret;
+
+use cheetah_gb28181_core::{
+    DigestChallenge, DigestClient, DigestContext, DigestReplayCache, DigestResponse, HeaderName,
+    Method, SipMessage,
+};
 
 use super::keepalive::build_keepalive_message;
 use super::registration::build_register_request;
 use super::{
     AuthorizationContext, CascadeConfig, CascadeCredentialProvider, CascadeError, CascadeEvent,
-    CascadeInput, CascadeOutput, Gb28181Cascade, Keepalive, Registered, Registering, State,
+    CascadeInput, CascadeOutput, CatalogProvider, Gb28181Cascade, InboundAuthContext, Keepalive,
+    Registered, Registering, State,
 };
 use crate::events::Gb28181Event;
 
 impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
     /// Creates a new cascade state machine.
-    pub fn new(config: CascadeConfig, provider: P) -> Self {
-        Self {
+    pub fn new(config: CascadeConfig, provider: P) -> Result<Self, CascadeError> {
+        let inbound_auth = if let Some(secret) = &config.catalog_inbound_digest_server_secret {
+            let digest = DigestContext::new(config.realm.clone(), secret.expose_secret())?;
+            Some(Arc::new(InboundAuthContext {
+                digest,
+                replay: Mutex::new(DigestReplayCache::new(1024)),
+            }))
+        } else {
+            None
+        };
+        Ok(Self {
             config,
             provider,
             state: State::Idle,
             request_counter: 0,
             auth: None,
-        }
+            catalog_provider: None,
+            inbound_auth,
+        })
+    }
+
+    /// Attaches a catalog provider for handling upstream `Catalog` queries.
+    pub fn with_catalog_provider(mut self, catalog_provider: Arc<dyn CatalogProvider>) -> Self {
+        self.catalog_provider = Some(catalog_provider);
+        self
     }
 
     /// Processes a single input and returns ordered outputs.
@@ -31,6 +54,7 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
         match input.event {
             CascadeEvent::Register => self.on_register(input.now),
             CascadeEvent::Deregister => self.on_deregister(input.now),
+            CascadeEvent::Request(msg) => Ok(self.on_request(input.now, *msg)),
             CascadeEvent::Response(msg) => self.on_response(input.now, *msg),
             CascadeEvent::Tick => self.on_tick(input.now),
         }
@@ -236,6 +260,10 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
             },
             _ => Ok(Vec::new()),
         }
+    }
+
+    fn on_request(&mut self, now: u64, msg: SipMessage) -> Vec<CascadeOutput> {
+        super::request_handler::handle_request(self, now, msg)
     }
 
     fn handle_register_response(
@@ -670,7 +698,7 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
         format!("{}-{now}-{}", self.platform_id(), self.request_counter)
     }
 
-    fn next_local_tag(&mut self, now: u64) -> String {
+    pub(super) fn next_local_tag(&mut self, now: u64) -> String {
         self.request_counter += 1;
         format!("{}-{now}-{}", self.platform_id(), self.request_counter)
     }
@@ -680,7 +708,7 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
         format!("z9hG4bK-{}-{cseq}-{}", call_id, self.request_counter)
     }
 
-    fn platform_id(&self) -> &str {
+    pub(super) fn platform_id(&self) -> &str {
         self.config
             .local_uri
             .user()

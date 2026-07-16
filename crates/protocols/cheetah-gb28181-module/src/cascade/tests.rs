@@ -57,6 +57,21 @@ fn request_call_id_cseq(outputs: &[CascadeOutput]) -> (String, String) {
     extract_call_id_cseq(msg)
 }
 
+fn extract_from_tag(msg: &SipMessage) -> String {
+    let headers = msg.headers();
+    let Some(from) = headers.get(&HeaderName::From) else {
+        panic!("From header");
+    };
+    let Some(tag) = from
+        .as_str()
+        .split(';')
+        .find_map(|param| param.trim().strip_prefix("tag="))
+    else {
+        panic!("From tag");
+    };
+    tag.trim().to_string()
+}
+
 fn build_401(challenge: &str, call_id: &str, cseq: &str) -> SipMessage {
     let mut headers = SipHeaders::new();
     headers.append(HeaderName::CallId, HeaderValue::new(call_id.to_string()));
@@ -96,9 +111,40 @@ fn challenge_ctx() -> DigestContext {
     .unwrap()
 }
 
+pub(crate) fn register_to_connected(
+    cascade: &mut Gb28181Cascade<impl CascadeCredentialProvider>,
+) -> (String, String) {
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 1000,
+            event: CascadeEvent::Register,
+        })
+        .unwrap();
+    let (call_id, cseq) = request_call_id_cseq(&outputs);
+    let Some(register_request) = outputs.iter().find_map(|o| match o {
+        CascadeOutput::SendRequest(msg) => Some(msg),
+        _ => None,
+    }) else {
+        panic!("register request");
+    };
+    let local_tag = extract_from_tag(register_request);
+
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 1001,
+            event: CascadeEvent::Response(Box::new(build_200(3600, &call_id, &cseq))),
+        })
+        .unwrap();
+    assert!(matches!(
+        outputs[0],
+        CascadeOutput::EmitEvent(crate::events::Gb28181Event::CascadePlatformConnected { .. })
+    ));
+    (call_id, local_tag)
+}
+
 #[test]
 fn register_from_idle_sends_register_without_authorization() {
-    let mut cascade = Gb28181Cascade::new(config(), password_provider());
+    let mut cascade = Gb28181Cascade::new(config(), password_provider()).unwrap();
     let outputs = cascade
         .process(CascadeInput {
             now: 1000,
@@ -118,7 +164,7 @@ fn register_from_idle_sends_register_without_authorization() {
 
 #[test]
 fn unauthorized_response_triggers_authenticated_register() {
-    let mut cascade = Gb28181Cascade::new(config(), password_provider());
+    let mut cascade = Gb28181Cascade::new(config(), password_provider()).unwrap();
     let outputs = cascade
         .process(CascadeInput {
             now: 1000,
@@ -146,7 +192,7 @@ fn unauthorized_response_triggers_authenticated_register() {
 
 #[test]
 fn ok_response_emits_connected_and_registered_state() {
-    let mut cascade = Gb28181Cascade::new(config(), password_provider());
+    let mut cascade = Gb28181Cascade::new(config(), password_provider()).unwrap();
     let outputs = cascade
         .process(CascadeInput {
             now: 1000,
@@ -184,7 +230,7 @@ fn ok_response_emits_connected_and_registered_state() {
 
 #[test]
 fn tick_after_refresh_sends_new_register() {
-    let mut cascade = Gb28181Cascade::new(config(), password_provider());
+    let mut cascade = Gb28181Cascade::new(config(), password_provider()).unwrap();
     let outputs = cascade
         .process(CascadeInput {
             now: 1000,
@@ -219,7 +265,7 @@ fn tick_after_refresh_sends_new_register() {
 
 #[test]
 fn deregister_sends_expires_zero() {
-    let mut cascade = Gb28181Cascade::new(config(), password_provider());
+    let mut cascade = Gb28181Cascade::new(config(), password_provider()).unwrap();
     let outputs = cascade
         .process(CascadeInput {
             now: 1000,
@@ -289,7 +335,7 @@ fn failure_backoff_eventually_disconnects() {
     cfg.max_retries = 1;
     cfg.base_backoff_ms = 0;
     cfg.jitter_ms = 0;
-    let mut cascade = Gb28181Cascade::new(cfg, password_provider());
+    let mut cascade = Gb28181Cascade::new(cfg, password_provider()).unwrap();
     let mut outputs = cascade
         .process(CascadeInput {
             now: 1000,
@@ -340,7 +386,7 @@ fn failure_backoff_eventually_disconnects() {
 
 #[test]
 fn transaction_timeout_triggers_retry() {
-    let mut cascade = Gb28181Cascade::new(config(), password_provider());
+    let mut cascade = Gb28181Cascade::new(config(), password_provider()).unwrap();
     cascade
         .process(CascadeInput {
             now: 1000,
@@ -363,7 +409,7 @@ fn transaction_timeout_triggers_retry() {
 
 #[test]
 fn zero_expiry_disconnects_and_does_not_schedule_refresh() {
-    let mut cascade = Gb28181Cascade::new(config(), password_provider());
+    let mut cascade = Gb28181Cascade::new(config(), password_provider()).unwrap();
     let outputs = cascade
         .process(CascadeInput {
             now: 1000,
@@ -387,7 +433,7 @@ fn zero_expiry_disconnects_and_does_not_schedule_refresh() {
 
 #[test]
 fn short_expiry_uses_proportional_refresh_margin() {
-    let mut cascade = Gb28181Cascade::new(config(), password_provider());
+    let mut cascade = Gb28181Cascade::new(config(), password_provider()).unwrap();
     let outputs = cascade
         .process(CascadeInput {
             now: 1000,
@@ -434,7 +480,7 @@ fn short_expiry_uses_proportional_refresh_margin() {
 fn redirect_response_is_treated_as_failure() {
     let mut cfg = config();
     cfg.max_retries = 0;
-    let mut cascade = Gb28181Cascade::new(cfg, password_provider());
+    let mut cascade = Gb28181Cascade::new(cfg, password_provider()).unwrap();
     let outputs = cascade
         .process(CascadeInput {
             now: 1000,
@@ -470,4 +516,6 @@ fn redirect_response_is_treated_as_failure() {
     )));
 }
 
+mod catalog;
+mod catalog_security;
 mod tests_keepalive;

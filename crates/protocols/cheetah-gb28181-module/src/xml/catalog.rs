@@ -1,8 +1,11 @@
-//! GB28181 Catalog response parsing.
+//! GB28181 Catalog response/query parsing and encoding.
+
+use std::collections::HashMap;
 
 use super::element::XmlElement;
 use super::limits::XmlLimits;
 use super::reader::parse_xml;
+use super::writer::encode_xml;
 use crate::error::AccessError;
 
 /// Parsed content of a GB28181 `Catalog` response.
@@ -134,6 +137,104 @@ fn parse_item(item: &XmlElement) -> CatalogItem {
     }
 }
 
+/// Parsed content of a GB28181 `Catalog` query from an upstream platform.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CatalogQuery {
+    /// Sequence number from the `<SN>` element.
+    pub sn: String,
+    /// Device identifier from the `<DeviceID>` element.
+    pub device_id: String,
+}
+
+/// Parses a `Catalog` query body.
+pub fn parse_catalog_query(body: &[u8]) -> Result<CatalogQuery, AccessError> {
+    let root = parse_xml(body, &XmlLimits::default())?;
+    if root.name != "Query" {
+        return Err(AccessError::InvalidXml(format!(
+            "expected Query root, got {}",
+            root.name
+        )));
+    }
+    let cmd_type = root
+        .child_text("CmdType")
+        .ok_or_else(|| AccessError::InvalidXml("missing CmdType".to_string()))?;
+    if cmd_type != "Catalog" {
+        return Err(AccessError::UnsupportedCmdType(cmd_type));
+    }
+    let device_id = root
+        .child_text("DeviceID")
+        .ok_or_else(|| AccessError::InvalidXml("missing DeviceID".to_string()))?;
+    Ok(CatalogQuery {
+        sn: root.child_text("SN").unwrap_or_default(),
+        device_id,
+    })
+}
+
+fn child_element(name: &str, text: &str) -> XmlElement {
+    XmlElement {
+        name: name.to_string(),
+        attributes: HashMap::new(),
+        text: text.to_string(),
+        children: Vec::new(),
+    }
+}
+
+fn add_optional_child(parent: &mut XmlElement, name: &str, value: &Option<String>) {
+    if let Some(value) = value {
+        parent.children.push(child_element(name, value));
+    }
+}
+
+/// Builds a `Catalog` response XML payload for one fragment.
+pub fn build_catalog_response(
+    sn: &str,
+    device_id: &str,
+    sum_num: u32,
+    items: &[CatalogItem],
+) -> Result<String, AccessError> {
+    let mut root = child_element("Response", "");
+    root.children.push(child_element("CmdType", "Catalog"));
+    root.children.push(child_element("SN", sn));
+    root.children.push(child_element("DeviceID", device_id));
+    root.children
+        .push(child_element("SumNum", &sum_num.to_string()));
+
+    let mut device_list = child_element("DeviceList", "");
+    device_list
+        .attributes
+        .insert("Num".to_string(), items.len().to_string());
+    for item in items {
+        let mut item_el = child_element("Item", "");
+        item_el
+            .children
+            .push(child_element("DeviceID", &item.device_id));
+        add_optional_child(&mut item_el, "Name", &item.name);
+        add_optional_child(&mut item_el, "Manufacturer", &item.manufacturer);
+        add_optional_child(&mut item_el, "Model", &item.model);
+        add_optional_child(&mut item_el, "Owner", &item.owner);
+        add_optional_child(&mut item_el, "CivilCode", &item.civil_code);
+        add_optional_child(&mut item_el, "Block", &item.block);
+        add_optional_child(&mut item_el, "Address", &item.address);
+        add_optional_child(&mut item_el, "Parental", &item.parental);
+        add_optional_child(&mut item_el, "ParentID", &item.parent_id);
+        add_optional_child(&mut item_el, "SafetyWay", &item.safety_way);
+        add_optional_child(&mut item_el, "RegisterWay", &item.register_way);
+        add_optional_child(&mut item_el, "CertNum", &item.cert_num);
+        add_optional_child(&mut item_el, "Certifiable", &item.certifiable);
+        add_optional_child(&mut item_el, "ErrCode", &item.err_code);
+        add_optional_child(&mut item_el, "EndTime", &item.end_time);
+        add_optional_child(&mut item_el, "Secrecy", &item.secrecy);
+        add_optional_child(&mut item_el, "IPAddress", &item.ip_address);
+        add_optional_child(&mut item_el, "Port", &item.port);
+        add_optional_child(&mut item_el, "Status", &item.status);
+        add_optional_child(&mut item_el, "Longitude", &item.longitude);
+        add_optional_child(&mut item_el, "Latitude", &item.latitude);
+        device_list.children.push(item_el);
+    }
+    root.children.push(device_list);
+    encode_xml(&root, true)
+}
+
 fn parse_u32(value: &str) -> u32 {
     value.trim().parse().unwrap_or(0)
 }
@@ -169,5 +270,58 @@ mod tests {
         assert_eq!(catalog.items[0].device_id, "34020000001320000001");
         assert_eq!(catalog.items[0].name.as_deref(), Some("Camera 1"));
         assert_eq!(catalog.items[0].status.as_deref(), Some("ON"));
+    }
+
+    #[test]
+    fn parse_valid_catalog_query() {
+        let body = br#"<?xml version="1.0"?>
+<Query>
+    <CmdType>Catalog</CmdType>
+    <SN>7</SN>
+    <DeviceID>34020000001320000001</DeviceID>
+</Query>"#;
+        let query = parse_catalog_query(body).unwrap();
+        assert_eq!(query.sn, "7");
+        assert_eq!(query.device_id, "34020000001320000001");
+    }
+
+    #[test]
+    fn parse_catalog_query_rejects_non_catalog() {
+        let body = br#"<?xml version="1.0"?>
+<Query>
+    <CmdType>DeviceInfo</CmdType>
+    <SN>1</SN>
+    <DeviceID>34020000001320000001</DeviceID>
+</Query>"#;
+        assert!(parse_catalog_query(body).is_err());
+    }
+
+    #[test]
+    fn build_catalog_response_round_trips() {
+        let items = vec![CatalogItem {
+            device_id: "34020000001320000001".to_string(),
+            name: Some("Camera 1".to_string()),
+            status: Some("ON".to_string()),
+            ..Default::default()
+        }];
+        let xml = build_catalog_response("3", "34020000001320000001", 1, &items).unwrap();
+        let parsed = parse_catalog(xml.as_bytes()).unwrap();
+        assert_eq!(parsed.sn, "3");
+        assert_eq!(parsed.device_id, "34020000001320000001");
+        assert_eq!(parsed.sum_num, 1);
+        assert_eq!(parsed.num, 1);
+        assert_eq!(parsed.items.len(), 1);
+        assert_eq!(parsed.items[0].device_id, "34020000001320000001");
+        assert_eq!(parsed.items[0].name.as_deref(), Some("Camera 1"));
+        assert_eq!(parsed.items[0].status.as_deref(), Some("ON"));
+    }
+
+    #[test]
+    fn build_empty_catalog_response_has_zero_sum() {
+        let xml = build_catalog_response("1", "34020000001320000001", 0, &[]).unwrap();
+        let parsed = parse_catalog(xml.as_bytes()).unwrap();
+        assert_eq!(parsed.sum_num, 0);
+        assert_eq!(parsed.num, 0);
+        assert!(parsed.items.is_empty());
     }
 }
