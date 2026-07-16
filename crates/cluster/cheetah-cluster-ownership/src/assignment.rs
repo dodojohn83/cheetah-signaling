@@ -62,7 +62,7 @@ impl DeviceAssignmentService {
             let owner_repo = self.owner_repository.lock().await;
             owner_repo.get(tenant_id, device_id).await?
         };
-        if let Some(owner) = maybe_owner
+        if let Some(owner) = maybe_owner.clone()
             && owner.lease_until.is_none_or(|lease| lease > now)
             && let Some(node) = self.get_node(owner.owner_node_id).await?
             && is_owner_alive(&node, protocol, now)
@@ -75,13 +75,15 @@ impl DeviceAssignmentService {
             .select_node(tenant_id, device_id, protocol, preferred_zone, now)
             .await?;
 
-        // Enforce per-node and global assignment rate limits.
+        let now_mono = self.clock.now_monotonic();
+
+        // Reject early if the assignment budget is exhausted. The actual slot
+        // is only recorded after a successful ownership change.
         {
             let mut limiter = self.rate_limiter.lock().map_err(|e| {
                 StorageError::internal(format!("assignment rate limiter poisoned: {e}"))
             })?;
-            let now_mono = self.clock.now_monotonic();
-            if !limiter.check_and_record(now_mono, candidate.node_id) {
+            if !limiter.allow(now_mono, candidate.node_id) {
                 return Err(DeviceAssignmentError::RateLimited);
             }
         }
@@ -94,6 +96,18 @@ impl DeviceAssignmentService {
             .await
         {
             Ok(owner) => {
+                // Only consume rate-limit budget when the owner actually
+                // changed; renewals and lost races must not burn slots.
+                let changed = maybe_owner.as_ref().is_none_or(|previous| {
+                    previous.owner_node_id != owner.owner_node_id
+                        || previous.owner_epoch != owner.owner_epoch
+                });
+                if changed {
+                    let mut limiter = self.rate_limiter.lock().map_err(|e| {
+                        StorageError::internal(format!("assignment rate limiter poisoned: {e}"))
+                    })?;
+                    limiter.record(now_mono, candidate.node_id);
+                }
                 info!(
                     tenant_id = %tenant_id.as_uuid(),
                     device_id = %device_id.as_uuid(),
@@ -239,7 +253,6 @@ impl SlidingWindow {
     }
 
     fn allow(&mut self, now: DurationMs) -> bool {
-        self.last_used = Some(now);
         self.prune(now);
         self.events.len() < self.max_per_window as usize
     }
@@ -271,23 +284,26 @@ impl RateLimiter {
         }
     }
 
-    fn check_and_record(&mut self, now: DurationMs, node_id: NodeId) -> bool {
+    fn allow(&mut self, now: DurationMs, node_id: NodeId) -> bool {
         if !self.global.allow(now) {
             return false;
         }
+        match self.per_node.get_mut(&node_id) {
+            Some(window) => window.allow(now),
+            None => true,
+        }
+    }
+
+    fn record(&mut self, now: DurationMs, node_id: NodeId) {
+        self.global.record(now);
         let node_window = self.per_node.entry(node_id).or_insert_with(|| {
             SlidingWindow::new(
                 self.config.per_node_per_second,
                 DurationMs::from_millis(1_000),
             )
         });
-        if !node_window.allow(now) {
-            return false;
-        }
-        self.global.record(now);
         node_window.record(now);
         self.trim_per_node(now);
-        true
     }
 
     fn trim_per_node(&mut self, now: DurationMs) {
