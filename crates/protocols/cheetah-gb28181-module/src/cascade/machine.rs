@@ -10,7 +10,7 @@ use cheetah_gb28181_core::{
 
 use super::catalog::{
     CatalogProvider, CatalogQuery, build_bad_request_response, build_catalog_pages,
-    build_ok_response,
+    build_ok_response, build_response,
 };
 use super::keepalive::build_keepalive_message;
 use super::registration::build_register_request;
@@ -45,7 +45,7 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
         match input.event {
             CascadeEvent::Register => self.on_register(input.now),
             CascadeEvent::Deregister => self.on_deregister(input.now),
-            CascadeEvent::Request(msg) => self.on_request(input.now, *msg),
+            CascadeEvent::Request(msg) => Ok(self.on_request(input.now, *msg)),
             CascadeEvent::Response(msg) => self.on_response(input.now, *msg),
             CascadeEvent::Tick => self.on_tick(input.now),
         }
@@ -253,13 +253,9 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
         }
     }
 
-    fn on_request(
-        &mut self,
-        now: u64,
-        msg: SipMessage,
-    ) -> Result<Vec<CascadeOutput>, CascadeError> {
+    fn on_request(&mut self, now: u64, msg: SipMessage) -> Vec<CascadeOutput> {
         let Some(provider) = self.catalog_provider.clone() else {
-            return Ok(Vec::new());
+            return Vec::new();
         };
 
         let SipMessage::Request {
@@ -269,27 +265,28 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
             ..
         } = &msg
         else {
-            return Ok(Vec::new());
+            return Vec::new();
         };
 
         if line.method != Method::Message {
-            return Ok(Vec::new());
+            return Vec::new();
         }
 
         let Some(content_type) = headers.get(&HeaderName::ContentType) else {
-            return Ok(vec![CascadeOutput::SendResponse(build_ok_response(&msg))]);
+            return vec![CascadeOutput::SendResponse(build_ok_response(&msg))];
         };
 
         if !content_type.as_str().contains("MANSCDP") && !content_type.as_str().contains("xml") {
-            return Ok(vec![CascadeOutput::SendResponse(build_ok_response(&msg))]);
+            return vec![CascadeOutput::SendResponse(build_ok_response(&msg))];
         }
 
         let query = match parse_catalog_query(body) {
             Ok(q) => q,
             Err(_) => {
-                return Ok(vec![CascadeOutput::SendResponse(
-                    build_bad_request_response(&msg, "Bad Request"),
-                )]);
+                return vec![CascadeOutput::SendResponse(build_bad_request_response(
+                    &msg,
+                    "Bad Request",
+                ))];
             }
         };
 
@@ -301,7 +298,7 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
 
         let max_per_packet = self.config.catalog_max_items_per_packet as usize;
         let platform_id = self.platform_id().to_string();
-        let messages = build_catalog_pages(
+        match build_catalog_pages(
             &self.config,
             &provider,
             &catalog_query,
@@ -309,14 +306,22 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
             now,
             &mut self.request_counter,
             &platform_id,
-        )?;
-
-        let mut outputs = Vec::with_capacity(messages.len() + 1);
-        outputs.push(CascadeOutput::SendResponse(build_ok_response(&msg)));
-        for message in messages {
-            outputs.push(CascadeOutput::SendRequest(message));
+        ) {
+            Ok(messages) => {
+                let mut outputs = Vec::with_capacity(messages.len() + 1);
+                outputs.push(CascadeOutput::SendResponse(build_ok_response(&msg)));
+                for message in messages {
+                    outputs.push(CascadeOutput::SendRequest(message));
+                }
+                outputs
+            }
+            Err(_) => vec![CascadeOutput::SendResponse(build_response(
+                &msg,
+                500,
+                "Server Internal Error",
+                Vec::new(),
+            ))],
         }
-        Ok(outputs)
     }
 
     fn handle_register_response(

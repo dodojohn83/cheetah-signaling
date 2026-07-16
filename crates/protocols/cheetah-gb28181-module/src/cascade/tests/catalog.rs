@@ -507,6 +507,48 @@ impl CatalogProvider for StuckCatalogProvider {
     }
 }
 
+struct FailingCatalogProvider;
+
+impl CatalogProvider for FailingCatalogProvider {
+    fn query_page(
+        &self,
+        _query: &CatalogQuery,
+        _offset: usize,
+        _limit: usize,
+    ) -> Result<CatalogPage, CatalogError> {
+        Err(CatalogError::Internal("database unavailable".to_string()))
+    }
+}
+
+#[test]
+fn catalog_provider_error_returns_500() {
+    let provider = Arc::new(FailingCatalogProvider);
+    let mut cfg = config();
+    cfg.catalog_max_items_per_packet = 100;
+    let mut cascade = Gb28181Cascade::new(cfg, password_provider()).with_catalog_provider(provider);
+
+    let msg = catalog_query_message("1", "34020000001320000001");
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 100,
+            event: CascadeEvent::Request(Box::new(msg)),
+        })
+        .unwrap();
+
+    assert_eq!(outputs.len(), 1);
+    let CascadeOutput::SendResponse(resp) = &outputs[0] else {
+        panic!("expected SendResponse");
+    };
+    assert!(resp.body().is_empty());
+    let cseq = resp.cseq().unwrap();
+    assert_eq!(cseq.0, 1);
+    assert_eq!(cseq.1, Method::Message);
+    match resp {
+        SipMessage::Response { line, .. } => assert_eq!(line.code, 500),
+        _ => panic!("expected a response"),
+    }
+}
+
 #[test]
 fn catalog_query_does_not_loop_forever_on_inconsistent_provider() {
     let provider = Arc::new(StuckCatalogProvider);

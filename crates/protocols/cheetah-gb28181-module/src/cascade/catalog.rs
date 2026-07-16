@@ -87,7 +87,12 @@ pub(crate) fn build_bad_request_response(request: &SipMessage, reason: &str) -> 
     build_response(request, 400, reason, Vec::new())
 }
 
-fn build_response(request: &SipMessage, code: u16, reason: &str, body: Body) -> SipMessage {
+pub(crate) fn build_response(
+    request: &SipMessage,
+    code: u16,
+    reason: &str,
+    body: Body,
+) -> SipMessage {
     let SipMessage::Request { headers, .. } = request else {
         unreachable!("caller ensures a request");
     };
