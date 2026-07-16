@@ -431,6 +431,7 @@ pub struct Gb28181Cascade<P: CascadeCredentialProvider> {
     bridges: BTreeMap<String, bridge::Bridge>,
     report_queue: std::collections::VecDeque<report::PendingReport>,
     report_state: std::collections::HashMap<String, report::PendingReport>,
+    report_state_order: std::collections::VecDeque<String>,
 }
 
 impl<P: CascadeCredentialProvider> std::fmt::Debug for Gb28181Cascade<P> {

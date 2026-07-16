@@ -83,6 +83,7 @@ pub(crate) fn enqueue<P: super::CascadeCredentialProvider>(
         }
         Gb28181Event::AlarmReceived {
             device_id,
+            sn,
             priority,
             method,
             alarm_type,
@@ -91,7 +92,6 @@ pub(crate) fn enqueue<P: super::CascadeCredentialProvider>(
             ..
         } => {
             let device_id = device_id.to_string();
-            let sn = next_sn(cascade);
             let idempotency_key = Some(format!(
                 "{}-{}-{}-{}",
                 device_id,
@@ -165,23 +165,28 @@ pub(crate) fn flush<P: super::CascadeCredentialProvider>(
     cascade: &mut Gb28181Cascade<P>,
     now: u64,
 ) -> Result<Vec<super::CascadeOutput>, CascadeError> {
+    prune_expired(cascade, now);
     if !matches!(cascade.state, State::Registered(_)) {
-        prune_expired(cascade, now);
         return Ok(Vec::new());
     }
 
-    // Move merged state snapshots into the flush queue, then expire any old
-    // queued reports.
-    let state_reports: Vec<PendingReport> = cascade
-        .report_state
-        .drain()
-        .filter(|(_, r)| now < r.expires_at)
-        .map(|(_, r)| r)
-        .collect();
-    for report in state_reports {
-        push_to_queue(cascade, report);
+    // Move merged state snapshots into the flush queue one at a time. If the
+    // queue is full, the snapshot stays in the merge map so the latest state is
+    // not lost until capacity becomes available.
+    let mut retained_order = std::collections::VecDeque::new();
+    while let Some(key) = cascade.report_state_order.pop_front() {
+        if let Some(report) = cascade.report_state.remove(&key) {
+            if now < report.expires_at && push_to_queue(cascade, &report) {
+                continue;
+            }
+            // Re-insert and remember the key; the entry was either expired or
+            // could not be queued yet.
+            cascade.report_state.insert(key.clone(), report);
+            retained_order.push_back(key);
+        }
     }
-    prune_expired(cascade, now);
+    cascade.report_state_order = retained_order;
+    enforce_bounds(cascade);
 
     let mut outputs = Vec::new();
     while let Some(report) = cascade.report_queue.pop_front() {
@@ -198,39 +203,70 @@ fn enqueue_report<P: super::CascadeCredentialProvider>(
     match report.kind {
         ReportKind::Presence | ReportKind::MobilePosition => {
             // State-style reports overwrite the previous snapshot for the same
-            // device and event kind.
+            // device and event kind. Keep an LRU-style order list so we can
+            // evict the oldest snapshot when the merge map is bounded.
             let key = report.merge_key();
-            cascade.report_state.insert(key, report);
+            if cascade.report_state.insert(key.clone(), report).is_some()
+                && let Some(pos) = cascade.report_state_order.iter().position(|k| k == &key)
+            {
+                let mut rest = cascade.report_state_order.split_off(pos + 1);
+                cascade.report_state_order.pop_back();
+                cascade.report_state_order.append(&mut rest);
+            }
+            cascade.report_state_order.push_back(key);
         }
-        ReportKind::Alarm => push_to_queue(cascade, report),
+        ReportKind::Alarm => {
+            let _ = push_to_queue(cascade, &report);
+        }
     }
     enforce_bounds(cascade);
 }
 
+/// Attempts to append `report` to the flush queue, evicting the oldest
+/// non-critical entries to make room for a critical alarm. Returns `true` if
+/// the report was enqueued.
 fn push_to_queue<P: super::CascadeCredentialProvider>(
     cascade: &mut Gb28181Cascade<P>,
-    report: PendingReport,
-) {
+    report: &PendingReport,
+) -> bool {
+    let max = cascade.config.report_max_queue_size as usize;
     if report.is_critical {
         // Drop oldest non-critical items to make room for a critical alarm.
-        while cascade.report_queue.len() >= cascade.config.report_max_queue_size as usize
+        while cascade.report_queue.len() >= max
             && !cascade.report_queue.is_empty()
             && !cascade.report_queue.front().is_some_and(|r| r.is_critical)
         {
             cascade.report_queue.pop_front();
         }
     }
-    if cascade.report_queue.len() < cascade.config.report_max_queue_size as usize {
-        cascade.report_queue.push_back(report);
+    if cascade.report_queue.len() < max {
+        cascade.report_queue.push_back(report.clone());
+        true
     } else if report.is_critical {
         // Queue is full of critical alarms; drop the oldest one.
         cascade.report_queue.pop_front();
-        cascade.report_queue.push_back(report);
+        cascade.report_queue.push_back(report.clone());
+        true
+    } else {
+        false
     }
 }
 
 fn enforce_bounds<P: super::CascadeCredentialProvider>(cascade: &mut Gb28181Cascade<P>) {
-    while cascade.report_queue.len() > cascade.config.report_max_queue_size as usize {
+    let max = cascade.config.report_max_queue_size as usize;
+    // The configured limit bounds the total of queued reports plus merged state
+    // snapshots. Evict the oldest state snapshots first to preserve critical
+    // alarms already in the queue.
+    while cascade.report_state.len() + cascade.report_queue.len() > max
+        && !cascade.report_state.is_empty()
+    {
+        if let Some(key) = cascade.report_state_order.pop_front() {
+            cascade.report_state.remove(&key);
+        } else {
+            break;
+        }
+    }
+    while cascade.report_queue.len() > max {
         cascade.report_queue.pop_front();
     }
 }

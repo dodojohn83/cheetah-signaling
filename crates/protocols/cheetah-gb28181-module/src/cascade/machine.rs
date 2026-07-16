@@ -45,6 +45,7 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
             bridges: std::collections::BTreeMap::new(),
             report_queue: std::collections::VecDeque::new(),
             report_state: std::collections::HashMap::new(),
+            report_state_order: std::collections::VecDeque::new(),
         })
     }
 
