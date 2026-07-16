@@ -85,9 +85,12 @@ impl OperationReconciler {
                     if let Some(deadline) = operation.deadline()
                         && deadline.is_elapsed(now)
                     {
-                        let event = operation
-                            .timeout(OperationError::timeout(), self.clock.as_ref())
-                            .map_err(crate::SignalError::from)?;
+                        let event = if status == OperationStatus::Pending {
+                            operation.expire(self.clock.as_ref())
+                        } else {
+                            operation.timeout(OperationError::timeout(), self.clock.as_ref())
+                        }
+                        .map_err(crate::SignalError::from)?;
                         uow.operation_repository().save(&operation).await?;
                         let event = wrap_event(
                             self.id_generator.as_ref(),

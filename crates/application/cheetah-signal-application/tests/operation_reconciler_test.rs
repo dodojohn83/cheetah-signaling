@@ -62,7 +62,74 @@ async fn operation_reconciler_times_out_expired_pending_operation() {
         .unwrap()
         .expect("operation should exist");
     assert_eq!(stored.status(), OperationStatus::TimedOut);
+    assert_eq!(stored.error().unwrap().code(), "expired_before_dispatch");
     assert!(stored.deadline().unwrap().is_elapsed(ctx.clock.now_wall()));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn operation_reconciler_times_out_expired_running_operation() {
+    let mut ctx = setup();
+    let context = request_context(&ctx);
+    let device = register_device_and_channel(&mut ctx).await;
+
+    let now = ctx.clock.now_wall();
+    let deadline = Deadline::from_now(now, DurationMs::from_millis(100)).unwrap();
+
+    let target = ResourceRef {
+        tenant_id: ctx.tenant_id,
+        kind: ResourceKind::Device,
+        id: ResourceId::Device(device.device_id),
+    };
+    let request = SubmitOperationRequest {
+        device_id: device.device_id,
+        target,
+        payload: CommandPayload::Ptz {
+            channel_id: ctx.channel_id,
+            direction: PtzDirection::Right,
+            speed: 0.5,
+        },
+        idempotency_key: "ptz-running-timeout".to_string(),
+        deadline: Some(deadline),
+        expected_owner_epoch: OwnerEpoch::default(),
+    };
+
+    let operation = ctx
+        .operation_service
+        .submit_operation(&context, &mut ctx.uow, request)
+        .await
+        .unwrap();
+
+    {
+        let mut op = ctx
+            .uow
+            .operation_repository()
+            .get(ctx.tenant_id, operation.operation_id)
+            .await
+            .unwrap()
+            .expect("operation should exist");
+        op.start(ctx.clock.as_ref()).unwrap();
+        ctx.uow.operation_repository().save(&op).await.unwrap();
+    }
+
+    ctx.clock.advance(DurationMs::from_millis(250));
+
+    let reconciler =
+        OperationReconciler::new(ctx.clock.clone(), ctx.id_generator.clone(), 100, 1000);
+    let report = reconciler.reconcile(&context, &mut ctx.uow).await.unwrap();
+    ctx.uow.commit().await.unwrap();
+
+    assert_eq!(report.scanned, 1);
+    assert_eq!(report.timed_out, 1);
+
+    let stored = ctx
+        .uow
+        .operation_repository()
+        .get(ctx.tenant_id, operation.operation_id)
+        .await
+        .unwrap()
+        .expect("operation should exist");
+    assert_eq!(stored.status(), OperationStatus::TimedOut);
+    assert_eq!(stored.error().unwrap().code(), "timeout");
 }
 
 #[tokio::test(flavor = "current_thread")]
