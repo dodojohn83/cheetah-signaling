@@ -19,8 +19,6 @@ pub struct SdpSession {
     pub media: Vec<SdpMedia>,
     /// Session-level attributes.
     pub attributes: Vec<SdpAttribute>,
-    /// Session-level subject used by GB28181 (`s=Play`, `s=Playback`, ...).
-    pub subject: Option<String>,
 }
 
 /// SDP origin (`o=` line).

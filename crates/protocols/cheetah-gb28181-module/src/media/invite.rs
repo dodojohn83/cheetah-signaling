@@ -147,7 +147,7 @@ pub fn build_invite(
 pub fn build_ack(
     local_uri: &SipUri,
     session: &Session,
-    remote_tag: &str,
+    remote_tag: Option<&str>,
     target: &SipUri,
     branch: &str,
 ) -> SipMessage {
@@ -168,10 +168,12 @@ pub fn build_ack(
             session.local_tag
         )),
     );
-    headers.append(
-        HeaderName::To,
-        HeaderValue::new(format!("<{}>;tag={}", session.target.encode(), remote_tag)),
-    );
+    let to = if let Some(tag) = remote_tag {
+        format!("<{}>;tag={tag}", session.target.encode())
+    } else {
+        format!("<{}>", session.target.encode())
+    };
+    headers.append(HeaderName::To, HeaderValue::new(to));
     headers.append(
         HeaderName::CallId,
         HeaderValue::new(session.call_id.clone()),

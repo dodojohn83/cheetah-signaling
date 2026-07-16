@@ -44,9 +44,6 @@ fn validate_session(session: &SdpSession) -> Result<(), SdpError> {
     if let Some(info) = &session.info {
         validate_no_crlf(info)?;
     }
-    if let Some(subject) = &session.subject {
-        validate_no_crlf(subject)?;
-    }
     if let Some(conn) = &session.connection {
         validate_no_crlf(&conn.nettype)?;
         validate_no_crlf(&conn.addrtype)?;

@@ -4,8 +4,18 @@ use super::invite::{build_ack, build_bye, build_ok_response, first_contact_uri, 
 use super::session::{SessionState, failed_event, socket_addr, stopped_event};
 use super::{Gb28181Media, MediaError, MediaOutput};
 use crate::events::Gb28181Event;
-use cheetah_gb28181_core::{HeaderName, Method, SipMessage};
+use cheetah_gb28181_core::{HeaderName, Method, SdpParserConfig, SipMessage};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
+/// Conservative SDP parser limits for bodies received from remote devices.
+const REMOTE_SDP_CONFIG: SdpParserConfig = SdpParserConfig {
+    max_lines: 256,
+    max_line_len: 1024,
+    max_size: 16 * 1024,
+    max_media: 4,
+    max_attributes: 64,
+    max_unknown_attributes: 32,
+};
 
 pub(super) fn on_message(
     media: &mut Gb28181Media,
@@ -115,17 +125,18 @@ fn on_invite_success(
 
     if state == SessionState::Active {
         // Retransmitted 200 OK for an already-active session: just re-ACK.
-        let remote_tag = remote_tag
-            .ok_or_else(|| MediaError::MalformedSip("missing To tag in 200 OK".to_string()))?;
+        // A retransmitted 200 OK may omit the tag or be malformed; fall back to the
+        // tag/Contact we already recorded when the dialog became active.
         let session = media
             .sessions
             .get(&sid)
             .ok_or(MediaError::SessionNotFound)?;
+        let remote_tag = remote_tag.as_deref().or(session.remote_tag.as_deref());
         let target = session.remote_target.as_ref().unwrap_or(&session.target);
         let ack = build_ack(
             &media.config.local_sip_uri,
             session,
-            &remote_tag,
+            remote_tag,
             target,
             &format!("{}-ack", session.branch),
         );
@@ -133,43 +144,65 @@ fn on_invite_success(
     }
 
     // If we already asked to stop/cancel the pending INVITE, acknowledge the 200 OK
-    // and tear down the accidental dialog before reporting failure.
+    // (RFC 3261 requires this even if the response is malformed) and tear down the
+    // accidental dialog before reporting failure.
     if state != SessionState::Inviting {
         let mut outputs = Vec::new();
-        if let (Some(remote_tag), Ok(contact)) = (remote_tag, contact) {
-            let session_ref = media
-                .sessions
-                .get(&sid)
-                .ok_or(MediaError::SessionNotFound)?;
-            let mut session = session_ref.clone();
-            session.remote_tag = Some(remote_tag.clone());
-            session.remote_target = Some(contact.clone());
 
-            let ack_branch = format!("{}-ack-late", session.branch);
-            let ack = build_ack(
-                &media.config.local_sip_uri,
-                &session,
-                &remote_tag,
-                &contact,
-                &ack_branch,
-            );
-            outputs.push(MediaOutput::SendMessage(ack));
+        let session_ref = media
+            .sessions
+            .get(&sid)
+            .ok_or(MediaError::SessionNotFound)?;
+        let mut session = session_ref.clone();
 
+        let remote_tag = remote_tag
+            .or_else(|| session.remote_tag.clone())
+            .unwrap_or_default();
+        let contact = match contact {
+            Ok(c) => c,
+            Err(_) => session
+                .remote_target
+                .clone()
+                .unwrap_or_else(|| session.target.clone()),
+        };
+
+        let ack_branch = format!("{}-ack-late", session.branch);
+        let ack = build_ack(
+            &media.config.local_sip_uri,
+            &session,
+            if remote_tag.is_empty() {
+                None
+            } else {
+                Some(&remote_tag)
+            },
+            &contact,
+            &ack_branch,
+        );
+        outputs.push(MediaOutput::SendMessage(ack));
+
+        if !remote_tag.is_empty() {
+            session.remote_tag = Some(remote_tag);
+            session.remote_target = Some(contact);
             session.cseq = session
                 .cseq
                 .checked_add(1)
                 .ok_or_else(|| MediaError::InvalidState("CSeq overflow".to_string()))?;
             let bye_branch = format!("{}-bye-late", session.branch);
-            let bye = build_bye(
-                &media.config.local_sip_uri,
-                &session,
-                session.cseq,
-                &bye_branch,
-                &contact,
-            )
-            .map_err(|e| MediaError::MalformedSip(e.to_string()))?;
+            let bye = if let Some(target) = session.remote_target.as_ref() {
+                build_bye(
+                    &media.config.local_sip_uri,
+                    &session,
+                    session.cseq,
+                    &bye_branch,
+                    target,
+                )
+                .map_err(|e| MediaError::MalformedSip(e.to_string()))
+            } else {
+                unreachable!("remote_target was just populated")
+            }?;
             outputs.push(MediaOutput::SendMessage(bye));
         }
+
         let session = media
             .remove_session(sid)
             .ok_or(MediaError::SessionNotFound)?;
@@ -189,7 +222,7 @@ fn on_invite_success(
         .ok_or_else(|| MediaError::MalformedSip("missing To tag in 200 OK".to_string()))?;
     let contact = contact?;
 
-    let parsed_remote_sdp = cheetah_gb28181_core::parse_sdp(msg.body(), &Default::default())
+    let parsed_remote_sdp = cheetah_gb28181_core::parse_sdp(msg.body(), &REMOTE_SDP_CONFIG)
         .map_err(|e| MediaError::MalformedSdp(e.to_string()))?;
     let remote_sdp_text = String::from_utf8_lossy(msg.body()).to_string();
 
@@ -222,7 +255,7 @@ fn on_invite_success(
     let ack = build_ack(
         &media.config.local_sip_uri,
         session,
-        &remote_tag,
+        Some(&remote_tag),
         &contact,
         &ack_branch,
     );
