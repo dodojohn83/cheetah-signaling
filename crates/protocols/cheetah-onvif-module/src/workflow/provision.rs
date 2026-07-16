@@ -156,6 +156,11 @@ impl Provisioner {
                 if xaddrs.is_empty() {
                     return Err(ProvisionerError::NoXAddr);
                 }
+                if let Some(state) = self.states.get_mut(&(tenant_id, device_id)) {
+                    state.xaddrs = xaddrs;
+                    state.endpoint_reference = endpoint_reference;
+                    return Ok(vec![]);
+                }
                 let state = ProvisioningState {
                     stage: ProvisioningStage::PendingApproval,
                     xaddrs,
@@ -409,6 +414,36 @@ mod tests {
                 ..
             }
         )));
+        Ok(())
+    }
+
+    #[test]
+    fn rediscovered_preserves_existing_state() -> Result<(), ProvisionerError> {
+        let mut p = Provisioner::new();
+        let id_gen = generator();
+        let tid = id_gen.generate_tenant_id();
+        let did = id_gen.generate_device_id();
+        p.process(
+            &*id_gen,
+            ProvisioningInput::Discovered {
+                tenant_id: tid,
+                device_id: did,
+                endpoint_reference: "urn:uuid:cam".to_string(),
+                xaddrs: vec!["http://192.0.2.1/onvif".to_string()],
+            },
+        )?;
+        p.start(&*id_gen, tid, did)?;
+        let out = p.process(
+            &*id_gen,
+            ProvisioningInput::Discovered {
+                tenant_id: tid,
+                device_id: did,
+                endpoint_reference: "urn:uuid:cam2".to_string(),
+                xaddrs: vec!["http://192.0.2.2/onvif".to_string()],
+            },
+        )?;
+        assert!(out.is_empty());
+        assert!(p.stage(tid, did) == Some(ProvisioningStage::Probing));
         Ok(())
     }
 
