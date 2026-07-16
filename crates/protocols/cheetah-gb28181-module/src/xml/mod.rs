@@ -14,7 +14,10 @@ pub mod record_info;
 pub mod writer;
 
 pub use alarm::{AlarmInfo, parse_alarm};
-pub use catalog::{CatalogItem, CatalogResponse, parse_catalog};
+pub use catalog::{
+    CatalogItem, CatalogQuery, CatalogResponse, build_catalog_response, parse_catalog,
+    parse_catalog_query,
+};
 pub use device_control::{
     DeviceControlKind, DeviceControlRequest, DeviceControlResponse, PresetAction, PresetCommand,
     PtzCommand, parse_device_control_response,

@@ -1,0 +1,453 @@
+//! Tests for GB28181 cascade catalog sharing.
+
+use std::sync::Arc;
+
+use crate::cascade::catalog::{
+    CatalogError, CatalogFilter, CatalogPage, CatalogProvider, CatalogQuery,
+};
+use crate::cascade::{CascadeEvent, CascadeInput, CascadeOutput, Gb28181Cascade};
+use crate::xml::catalog::{CatalogItem, parse_catalog};
+use cheetah_gb28181_core::{
+    Body, HeaderName, HeaderValue, Method, RequestLine, SipHeaders, SipMessage,
+};
+
+use super::{config, local_uri, password_provider, upstream_uri};
+
+fn catalog_query_message(sn: &str, device_id: &str) -> SipMessage {
+    let body = format!(
+        r#"<?xml version="1.0"?>
+<Query>
+    <CmdType>Catalog</CmdType>
+    <SN>{sn}</SN>
+    <DeviceID>{device_id}</DeviceID>
+</Query>"#
+    );
+    let body_bytes: Body = body.into_bytes();
+
+    let mut headers = SipHeaders::new();
+    headers.append(
+        HeaderName::Via,
+        HeaderValue::via("UDP", "upstream.example.com", 5060, "z9hG4bK-abc").unwrap(),
+    );
+    headers.append(
+        HeaderName::From,
+        HeaderValue::from_uri(&upstream_uri(), "upstream-tag").unwrap(),
+    );
+    headers.append(HeaderName::To, HeaderValue::to_uri(&local_uri()));
+    headers.append(HeaderName::CallId, HeaderValue::new("call-catalog-1"));
+    headers.append(HeaderName::CSeq, HeaderValue::cseq(1, Method::Message));
+    headers.append(
+        HeaderName::ContentType,
+        HeaderValue::new("Application/MANSCDP+xml"),
+    );
+    headers.append(
+        HeaderName::ContentLength,
+        HeaderValue::new(body_bytes.len().to_string()),
+    );
+    headers.append(HeaderName::MaxForwards, HeaderValue::new("70"));
+
+    SipMessage::Request {
+        line: RequestLine::new(Method::Message, local_uri()),
+        headers,
+        body: body_bytes,
+    }
+}
+
+struct TestItem {
+    item: CatalogItem,
+    tenant_id: String,
+    tags: Vec<String>,
+    org_path: String,
+}
+
+struct TestCatalogProvider {
+    all: Vec<TestItem>,
+}
+
+impl CatalogProvider for TestCatalogProvider {
+    fn query_page(
+        &self,
+        query: &CatalogQuery,
+        offset: usize,
+        limit: usize,
+    ) -> Result<CatalogPage, CatalogError> {
+        let filtered: Vec<CatalogItem> = self
+            .all
+            .iter()
+            .filter(|i| {
+                if let Some(tenant) = &query.filter.tenant_id
+                    && i.tenant_id != *tenant
+                {
+                    return false;
+                }
+                if !query.filter.whitelisted_device_ids.is_empty()
+                    && !query
+                        .filter
+                        .whitelisted_device_ids
+                        .contains(&i.item.device_id)
+                {
+                    return false;
+                }
+                if !query.filter.tags.is_empty()
+                    && !query.filter.tags.iter().any(|t| i.tags.contains(t))
+                {
+                    return false;
+                }
+                if let Some(prefix) = &query.filter.org_path_prefix
+                    && !i.org_path.starts_with(prefix)
+                {
+                    return false;
+                }
+                true
+            })
+            .map(|i| i.item.clone())
+            .collect();
+        let total = filtered.len();
+        let items = filtered.into_iter().skip(offset).take(limit).collect();
+        Ok(CatalogPage { items, total })
+    }
+}
+
+fn make_item(device_id: &str, tenant: &str, tag: &str, org: &str) -> TestItem {
+    TestItem {
+        item: CatalogItem {
+            device_id: device_id.to_string(),
+            name: Some(format!("Camera {device_id}")),
+            status: Some("ON".to_string()),
+            ..Default::default()
+        },
+        tenant_id: tenant.to_string(),
+        tags: vec![tag.to_string()],
+        org_path: org.to_string(),
+    }
+}
+
+fn setup_provider() -> Arc<TestCatalogProvider> {
+    Arc::new(TestCatalogProvider {
+        all: vec![
+            make_item("34020000001320000001", "t1", "outdoor", "/t1/floor1"),
+            make_item("34020000001320000002", "t1", "indoor", "/t1/floor1"),
+            make_item("34020000001320000003", "t2", "outdoor", "/t2/floor1"),
+            make_item("34020000001320000004", "t1", "outdoor", "/t1/floor2"),
+            make_item("34020000001320000005", "t1", "outdoor", "/t1/floor2"),
+        ],
+    })
+}
+
+fn catalog_response_bodies(outputs: &[CascadeOutput]) -> Vec<String> {
+    outputs
+        .iter()
+        .filter_map(|o| match o {
+            CascadeOutput::SendRequest(msg) => Some(msg),
+            _ => None,
+        })
+        .map(|msg| String::from_utf8_lossy(msg.body()).to_string())
+        .collect()
+}
+
+#[test]
+fn catalog_query_without_provider_is_ignored() {
+    let mut cascade = Gb28181Cascade::new(config(), password_provider());
+    let msg = catalog_query_message("1", "34020000001320000001");
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 100,
+            event: CascadeEvent::Request(Box::new(msg)),
+        })
+        .unwrap();
+    assert!(outputs.is_empty());
+}
+
+#[test]
+fn non_message_request_is_ignored() {
+    let provider = setup_provider();
+    let mut cfg = config();
+    cfg.catalog_max_items_per_packet = 2;
+    let mut cascade = Gb28181Cascade::new(cfg, password_provider()).with_catalog_provider(provider);
+
+    let mut headers = SipHeaders::new();
+    headers.append(
+        HeaderName::Via,
+        HeaderValue::via("UDP", "upstream.example.com", 5060, "z9hG4bK-abc").unwrap(),
+    );
+    headers.append(HeaderName::CallId, HeaderValue::new("call-1"));
+    let msg = SipMessage::Request {
+        line: RequestLine::new(Method::Register, local_uri()),
+        headers,
+        body: Vec::new(),
+    };
+
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 100,
+            event: CascadeEvent::Request(Box::new(msg)),
+        })
+        .unwrap();
+    assert!(outputs.is_empty());
+}
+
+#[test]
+fn catalog_query_returns_ok_and_paginated_messages() {
+    let provider = setup_provider();
+    let mut cfg = config();
+    cfg.catalog_max_items_per_packet = 2;
+    let mut cascade = Gb28181Cascade::new(cfg, password_provider()).with_catalog_provider(provider);
+
+    let msg = catalog_query_message("7", "34020000001320000001");
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 100,
+            event: CascadeEvent::Request(Box::new(msg)),
+        })
+        .unwrap();
+
+    assert!(!outputs.is_empty());
+    assert!(matches!(outputs[0], CascadeOutput::SendResponse(_)));
+    let CascadeOutput::SendResponse(resp) = &outputs[0] else {
+        panic!();
+    };
+    assert_eq!(resp.body().len(), 0);
+    assert!(resp.call_id().is_some());
+
+    let bodies = catalog_response_bodies(&outputs);
+    assert_eq!(bodies.len(), 3);
+
+    let first = parse_catalog(bodies[0].as_bytes()).unwrap();
+    assert_eq!(first.sn, "7");
+    assert_eq!(first.device_id, "34020000001320000001");
+    assert_eq!(first.sum_num, 5);
+    assert_eq!(first.num, 2);
+    assert_eq!(first.items.len(), 2);
+
+    let second = parse_catalog(bodies[1].as_bytes()).unwrap();
+    assert_eq!(second.sum_num, 5);
+    assert_eq!(second.num, 2);
+    assert_eq!(second.items.len(), 2);
+
+    let third = parse_catalog(bodies[2].as_bytes()).unwrap();
+    assert_eq!(third.sum_num, 5);
+    assert_eq!(third.num, 1);
+    assert_eq!(third.items.len(), 1);
+}
+
+#[test]
+fn catalog_filter_respects_tenant_and_whitelist() {
+    let provider = setup_provider();
+    let mut cfg = config();
+    cfg.catalog_max_items_per_packet = 100;
+    cfg.catalog_filter = CatalogFilter {
+        tenant_id: Some("t1".to_string()),
+        whitelisted_device_ids: vec![
+            "34020000001320000001".to_string(),
+            "34020000001320000002".to_string(),
+            "34020000001320000005".to_string(),
+        ],
+        ..Default::default()
+    };
+    let mut cascade = Gb28181Cascade::new(cfg, password_provider()).with_catalog_provider(provider);
+
+    let msg = catalog_query_message("1", "34020000001320000001");
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 100,
+            event: CascadeEvent::Request(Box::new(msg)),
+        })
+        .unwrap();
+
+    let bodies = catalog_response_bodies(&outputs);
+    assert_eq!(bodies.len(), 1);
+    let parsed = parse_catalog(bodies[0].as_bytes()).unwrap();
+    assert_eq!(parsed.sum_num, 3);
+    assert_eq!(parsed.items.len(), 3);
+    assert!(
+        parsed
+            .items
+            .iter()
+            .all(|i| i.device_id.starts_with("3402000000132000000"))
+    );
+}
+
+#[test]
+fn catalog_filter_respects_tags_and_org_prefix() {
+    let provider = setup_provider();
+    let mut cfg = config();
+    cfg.catalog_max_items_per_packet = 100;
+    cfg.catalog_filter = CatalogFilter {
+        tags: vec!["outdoor".to_string()],
+        org_path_prefix: Some("/t1".to_string()),
+        ..Default::default()
+    };
+    let mut cascade = Gb28181Cascade::new(cfg, password_provider()).with_catalog_provider(provider);
+
+    let msg = catalog_query_message("1", "34020000001320000001");
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 100,
+            event: CascadeEvent::Request(Box::new(msg)),
+        })
+        .unwrap();
+
+    let bodies = catalog_response_bodies(&outputs);
+    assert_eq!(bodies.len(), 1);
+    let parsed = parse_catalog(bodies[0].as_bytes()).unwrap();
+    assert_eq!(parsed.sum_num, 3);
+    assert_eq!(parsed.items.len(), 3);
+    assert!(parsed.items.iter().all(|i| {
+        [
+            "34020000001320000001",
+            "34020000001320000004",
+            "34020000001320000005",
+        ]
+        .contains(&i.device_id.as_str())
+    }));
+}
+
+#[test]
+fn catalog_empty_result_emits_single_message_with_sum_zero() {
+    let provider = Arc::new(TestCatalogProvider { all: vec![] });
+    let mut cfg = config();
+    cfg.catalog_max_items_per_packet = 100;
+    let mut cascade = Gb28181Cascade::new(cfg, password_provider()).with_catalog_provider(provider);
+
+    let msg = catalog_query_message("1", "34020000001320000001");
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 100,
+            event: CascadeEvent::Request(Box::new(msg)),
+        })
+        .unwrap();
+
+    let bodies = catalog_response_bodies(&outputs);
+    assert_eq!(bodies.len(), 1);
+    let parsed = parse_catalog(bodies[0].as_bytes()).unwrap();
+    assert_eq!(parsed.sum_num, 0);
+    assert_eq!(parsed.num, 0);
+    assert!(parsed.items.is_empty());
+}
+
+#[test]
+fn malformed_catalog_body_returns_bad_request() {
+    let provider = setup_provider();
+    let mut cfg = config();
+    cfg.catalog_max_items_per_packet = 100;
+    let mut cascade = Gb28181Cascade::new(cfg, password_provider()).with_catalog_provider(provider);
+
+    let mut msg = catalog_query_message("1", "34020000001320000001");
+    if let SipMessage::Request { body, .. } = &mut msg {
+        *body = b"not xml".to_vec();
+    }
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 100,
+            event: CascadeEvent::Request(Box::new(msg)),
+        })
+        .unwrap();
+
+    assert_eq!(outputs.len(), 1);
+    let CascadeOutput::SendResponse(resp) = &outputs[0] else {
+        panic!("expected SendResponse");
+    };
+    assert_eq!(resp.body().len(), 0);
+}
+
+#[test]
+fn non_catalog_query_returns_bad_request() {
+    let provider = setup_provider();
+    let mut cfg = config();
+    cfg.catalog_max_items_per_packet = 100;
+    let mut cascade = Gb28181Cascade::new(cfg, password_provider()).with_catalog_provider(provider);
+
+    let body = br#"<?xml version="1.0"?>
+<Query>
+    <CmdType>DeviceInfo</CmdType>
+    <SN>1</SN>
+    <DeviceID>34020000001320000001</DeviceID>
+</Query>"#;
+    let mut msg = catalog_query_message("1", "34020000001320000001");
+    if let SipMessage::Request { body: req_body, .. } = &mut msg {
+        *req_body = body.to_vec();
+    }
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 100,
+            event: CascadeEvent::Request(Box::new(msg)),
+        })
+        .unwrap();
+
+    assert_eq!(outputs.len(), 1);
+    let CascadeOutput::SendResponse(resp) = &outputs[0] else {
+        panic!("expected SendResponse");
+    };
+    assert_eq!(resp.body().len(), 0);
+}
+
+#[test]
+fn catalog_message_preserves_response_headers() {
+    let provider = setup_provider();
+    let mut cfg = config();
+    cfg.catalog_max_items_per_packet = 2;
+    let mut cascade = Gb28181Cascade::new(cfg, password_provider()).with_catalog_provider(provider);
+
+    let msg = catalog_query_message("1", "34020000001320000001");
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 100,
+            event: CascadeEvent::Request(Box::new(msg)),
+        })
+        .unwrap();
+
+    let CascadeOutput::SendResponse(resp) = &outputs[0] else {
+        panic!("expected first output to be SendResponse");
+    };
+    let cseq = resp.cseq().unwrap();
+    assert_eq!(cseq.0, 1);
+    assert_eq!(cseq.1, Method::Message);
+    assert!(resp.call_id().is_some());
+    assert!(resp.headers().get(&HeaderName::Via).is_some());
+}
+
+fn plain_message_request() -> SipMessage {
+    let body: Body = b"plain text body".to_vec();
+    let mut headers = SipHeaders::new();
+    headers.append(
+        HeaderName::Via,
+        HeaderValue::via("UDP", "upstream.example.com", 5060, "z9hG4bK-abc").unwrap(),
+    );
+    headers.append(
+        HeaderName::From,
+        HeaderValue::from_uri(&upstream_uri(), "upstream-tag").unwrap(),
+    );
+    headers.append(HeaderName::To, HeaderValue::to_uri(&local_uri()));
+    headers.append(HeaderName::CallId, HeaderValue::new("call-plain-1"));
+    headers.append(HeaderName::CSeq, HeaderValue::cseq(1, Method::Message));
+    headers.append(HeaderName::ContentType, HeaderValue::new("text/plain"));
+    headers.append(
+        HeaderName::ContentLength,
+        HeaderValue::new(body.len().to_string()),
+    );
+
+    SipMessage::Request {
+        line: RequestLine::new(Method::Message, local_uri()),
+        headers,
+        body,
+    }
+}
+
+#[test]
+fn message_without_manscdp_content_type_returns_ok_and_no_catalog() {
+    let provider = setup_provider();
+    let mut cfg = config();
+    cfg.catalog_max_items_per_packet = 100;
+    let mut cascade = Gb28181Cascade::new(cfg, password_provider()).with_catalog_provider(provider);
+
+    let msg = plain_message_request();
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 100,
+            event: CascadeEvent::Request(Box::new(msg)),
+        })
+        .unwrap();
+
+    assert_eq!(outputs.len(), 1);
+    assert!(matches!(outputs[0], CascadeOutput::SendResponse(_)));
+}

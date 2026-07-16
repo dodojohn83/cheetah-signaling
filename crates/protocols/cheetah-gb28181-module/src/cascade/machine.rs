@@ -1,11 +1,17 @@
 //! `Gb28181Cascade` state machine implementation.
 
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use std::sync::Arc;
+
 use cheetah_gb28181_core::{
     DigestChallenge, DigestClient, DigestResponse, HeaderName, Method, SipMessage,
 };
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 
+use super::catalog::{
+    CatalogProvider, CatalogQuery, build_bad_request_response, build_catalog_pages,
+    build_ok_response,
+};
 use super::keepalive::build_keepalive_message;
 use super::registration::build_register_request;
 use super::{
@@ -13,6 +19,7 @@ use super::{
     CascadeInput, CascadeOutput, Gb28181Cascade, Keepalive, Registered, Registering, State,
 };
 use crate::events::Gb28181Event;
+use crate::xml::catalog::parse_catalog_query;
 
 impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
     /// Creates a new cascade state machine.
@@ -23,7 +30,14 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
             state: State::Idle,
             request_counter: 0,
             auth: None,
+            catalog_provider: None,
         }
+    }
+
+    /// Attaches a catalog provider for handling upstream `Catalog` queries.
+    pub fn with_catalog_provider(mut self, catalog_provider: Arc<dyn CatalogProvider>) -> Self {
+        self.catalog_provider = Some(catalog_provider);
+        self
     }
 
     /// Processes a single input and returns ordered outputs.
@@ -31,6 +45,7 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
         match input.event {
             CascadeEvent::Register => self.on_register(input.now),
             CascadeEvent::Deregister => self.on_deregister(input.now),
+            CascadeEvent::Request(msg) => self.on_request(input.now, *msg),
             CascadeEvent::Response(msg) => self.on_response(input.now, *msg),
             CascadeEvent::Tick => self.on_tick(input.now),
         }
@@ -236,6 +251,72 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
             },
             _ => Ok(Vec::new()),
         }
+    }
+
+    fn on_request(
+        &mut self,
+        now: u64,
+        msg: SipMessage,
+    ) -> Result<Vec<CascadeOutput>, CascadeError> {
+        let Some(provider) = self.catalog_provider.clone() else {
+            return Ok(Vec::new());
+        };
+
+        let SipMessage::Request {
+            line,
+            headers,
+            body,
+            ..
+        } = &msg
+        else {
+            return Ok(Vec::new());
+        };
+
+        if line.method != Method::Message {
+            return Ok(Vec::new());
+        }
+
+        let Some(content_type) = headers.get(&HeaderName::ContentType) else {
+            return Ok(vec![CascadeOutput::SendResponse(build_ok_response(&msg))]);
+        };
+
+        if !content_type.as_str().contains("MANSCDP") && !content_type.as_str().contains("xml") {
+            return Ok(vec![CascadeOutput::SendResponse(build_ok_response(&msg))]);
+        }
+
+        let query = match parse_catalog_query(body) {
+            Ok(q) => q,
+            Err(_) => {
+                return Ok(vec![CascadeOutput::SendResponse(
+                    build_bad_request_response(&msg, "Bad Request"),
+                )]);
+            }
+        };
+
+        let catalog_query = CatalogQuery {
+            sn: query.sn,
+            device_id: query.device_id,
+            filter: self.config.catalog_filter.clone(),
+        };
+
+        let max_per_packet = self.config.catalog_max_items_per_packet as usize;
+        let platform_id = self.platform_id().to_string();
+        let messages = build_catalog_pages(
+            &self.config,
+            &provider,
+            &catalog_query,
+            max_per_packet,
+            now,
+            &mut self.request_counter,
+            &platform_id,
+        )?;
+
+        let mut outputs = Vec::with_capacity(messages.len() + 1);
+        outputs.push(CascadeOutput::SendResponse(build_ok_response(&msg)));
+        for message in messages {
+            outputs.push(CascadeOutput::SendRequest(message));
+        }
+        Ok(outputs)
     }
 
     fn handle_register_response(
