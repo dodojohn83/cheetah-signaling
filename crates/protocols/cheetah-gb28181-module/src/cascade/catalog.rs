@@ -88,9 +88,10 @@ pub(crate) fn request_from_matches_upstream(request: &SipMessage, upstream: &Sip
     };
     let from_str = from.as_str().trim();
     let uri_str = if let Some(start) = from_str.find('<') {
-        let Some(end) = from_str.find('>') else {
+        let Some(end_rel) = from_str[start + 1..].find('>') else {
             return false;
         };
+        let end = start + 1 + end_rel;
         &from_str[start + 1..end]
     } else if let Some(semi) = from_str.find(';') {
         &from_str[..semi]

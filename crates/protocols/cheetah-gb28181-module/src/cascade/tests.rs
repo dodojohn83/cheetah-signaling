@@ -517,4 +517,5 @@ fn redirect_response_is_treated_as_failure() {
 }
 
 mod catalog;
+mod catalog_security;
 mod tests_keepalive;
