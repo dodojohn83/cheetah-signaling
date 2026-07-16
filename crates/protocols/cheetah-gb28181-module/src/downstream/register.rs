@@ -1,9 +1,8 @@
 //! Registration handling for lower GB28181 platforms.
 
 use crate::access::{
-    build_challenge_response, build_message_response, build_success_response,
-    device_id_from_request, parse_authorization, parse_contact_header, parse_expires_header,
-    resolve_expires,
+    build_challenge_response, build_success_response, device_id_from_request, parse_authorization,
+    parse_contact_header, parse_expires_header, resolve_expires,
 };
 use crate::config::AuthPolicy;
 use crate::downstream::link::{LinkTable, PlatformLink};
@@ -134,7 +133,7 @@ fn register_accepted(
 ) -> Result<Vec<DownstreamOutput>, DownstreamError> {
     if expires == 0 {
         links.remove(&platform_id);
-        let response = build_message_response(&message, local_tag);
+        let response = build_success_response(&message, contact, expires, local_tag);
         return Ok(vec![
             DownstreamOutput::SendResponse(response),
             DownstreamOutput::EmitEvent(Gb28181Event::DeviceUnregistered {
