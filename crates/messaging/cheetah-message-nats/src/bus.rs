@@ -7,9 +7,11 @@ use cheetah_message_api::{
     AckHandle, BusError, CommandEnvelope, Delivery, EventEnvelope, RawCommandBus, RawEventBus,
     Subscription, command_subject, encode_command, encode_event, event_subject,
 };
-use cheetah_signal_types::{Event, NodeId};
+use cheetah_signal_types::config::{MessagingConfig, NatsAuth};
+use cheetah_signal_types::{Event, NodeId, SecretStore};
 use futures::StreamExt;
 use prost::Message;
+use secrecy::ExposeSecret;
 use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
@@ -56,6 +58,8 @@ pub struct NatsBus {
     owner_resolver: Arc<dyn DeviceOwnerResolver>,
     this_node: NodeId,
     operation_timeout: Duration,
+    publish_allow: Vec<String>,
+    subscribe_allow: Vec<String>,
 }
 
 impl fmt::Debug for NatsBus {
@@ -72,22 +76,55 @@ impl NatsBus {
     /// `connect_timeout` bounds the initial TCP/TLS handshake and stream
     /// creation. `operation_timeout` bounds every subsequent publish, subscribe
     /// and ack operation. TLS is required for all cluster communication.
+    ///
+    /// When `config.nats_auth` is set, the referenced secrets are resolved from
+    /// `secret_store` and used to authenticate the client. Subject permissions
+    /// are enforced in-process before any publish or subscribe, defaulting to the
+    /// command/event subjects required by this node.
     pub async fn connect(
-        url: impl Into<String>,
+        config: &MessagingConfig,
         this_node: NodeId,
         owner_resolver: Arc<dyn DeviceOwnerResolver>,
+        secret_store: Option<Arc<dyn SecretStore>>,
         connect_timeout: Duration,
         operation_timeout: Duration,
     ) -> Result<Self, BusError> {
-        let url = url.into();
-        let scheme = url.split("://").next().unwrap_or(&url).to_lowercase();
+        let url = &config.nats_url;
+        let scheme = url.split("://").next().unwrap_or(url).to_lowercase();
         if !matches!(scheme.as_str(), "tls" | "wss") {
             return Err(nats_error_to_bus(format!(
                 "NATS URL must use tls:// or wss:// scheme, got: {url}"
             )));
         }
 
-        let options = async_nats::ConnectOptions::new().require_tls(true);
+        let mut options = async_nats::ConnectOptions::new().require_tls(true);
+
+        if let Some(auth) = config.nats_auth.as_ref() {
+            let secret_store = secret_store.ok_or_else(|| {
+                BusError::InvalidPayload(
+                    "NATS authentication configured but no secret store provided".to_string(),
+                )
+            })?;
+            options = match auth {
+                NatsAuth::Token { token_ref } => {
+                    let token = secret_store.get(token_ref).map_err(|e| {
+                        BusError::InvalidPayload(format!("failed to load NATS token: {e}"))
+                    })?;
+                    options.token(token.expose_secret().to_string())
+                }
+                NatsAuth::UserAndPassword {
+                    username,
+                    password_ref,
+                } => {
+                    let password = secret_store.get(password_ref).map_err(|e| {
+                        BusError::InvalidPayload(format!("failed to load NATS password: {e}"))
+                    })?;
+                    options
+                        .user_and_password(username.clone(), password.expose_secret().to_string())
+                }
+            };
+        }
+
         let client = with_timeout(
             connect_timeout,
             "NATS connect",
@@ -122,13 +159,85 @@ impl NatsBus {
 
         info!("NATS streams created: {COMMANDS_STREAM}, {EVENTS_STREAM}");
 
+        let (publish_allow, subscribe_allow) =
+            Self::resolve_permissions(config.nats_permissions.as_ref(), &this_node);
+
         Ok(Self {
             client,
             jetstream,
             owner_resolver,
             this_node,
             operation_timeout,
+            publish_allow,
+            subscribe_allow,
         })
+    }
+
+    /// Resolve effective publish/subscribe allow-lists.
+    ///
+    /// If the configuration does not specify permissions, a least-privilege
+    /// default is derived from this node's identity.
+    fn resolve_permissions(
+        configured: Option<&cheetah_signal_types::config::NatsPermissions>,
+        this_node: &NodeId,
+    ) -> (Vec<String>, Vec<String>) {
+        if let Some(p) = configured {
+            let publish = if p.publish_allow.is_empty() {
+                Self::default_publish_patterns()
+            } else {
+                p.publish_allow.clone()
+            };
+            let subscribe = if p.subscribe_allow.is_empty() {
+                Self::default_subscribe_patterns(this_node)
+            } else {
+                p.subscribe_allow.clone()
+            };
+            (publish, subscribe)
+        } else {
+            (
+                Self::default_publish_patterns(),
+                Self::default_subscribe_patterns(this_node),
+            )
+        }
+    }
+
+    fn default_publish_patterns() -> Vec<String> {
+        vec!["sig.v1.command.>".to_string(), "sig.v1.event.>".to_string()]
+    }
+
+    fn default_subscribe_patterns(this_node: &NodeId) -> Vec<String> {
+        vec![
+            format!("sig.v1.command.*.{this_node}"),
+            "sig.v1.event.>".to_string(),
+        ]
+    }
+
+    /// Checks whether `subject` is allowed by any of `patterns`.
+    ///
+    /// Supports NATS subject wildcards: `*` matches a single token and `>`
+    /// matches zero or more remaining tokens at the end of a pattern.
+    fn subject_matches(subject: &str, pattern: &str) -> bool {
+        let subject_tokens: Vec<&str> = subject.split('.').collect();
+        let pattern_tokens: Vec<&str> = pattern.split('.').collect();
+
+        for (idx, pat) in pattern_tokens.iter().enumerate() {
+            if *pat == ">" {
+                return idx == pattern_tokens.len() - 1;
+            }
+            if let Some(sub) = subject_tokens.get(idx) {
+                if *pat != "*" && *pat != *sub {
+                    return false;
+                }
+            } else {
+                return false;
+            }
+        }
+
+        subject_tokens.len() == pattern_tokens.len()
+    }
+
+    fn is_subject_allowed(subject: &str, patterns: &[String]) -> bool {
+        patterns.iter().any(|p| Self::subject_matches(subject, p))
     }
 
     /// Returns the NATS client.
@@ -142,6 +251,12 @@ impl NatsBus {
         payload: Vec<u8>,
         message_id: &str,
     ) -> Result<(), BusError> {
+        if !Self::is_subject_allowed(subject, &self.publish_allow) {
+            return Err(BusError::InvalidPayload(format!(
+                "publish subject {subject} is not in the allowed list"
+            )));
+        }
+
         let mut headers = async_nats::HeaderMap::new();
         if !message_id.is_empty() {
             headers.insert("NATS-Msg-Id", message_id);
@@ -182,6 +297,12 @@ impl NatsBus {
     where
         E: Message + Send + Default + 'static,
     {
+        if !Self::is_subject_allowed(subject, &self.subscribe_allow) {
+            return Err(BusError::InvalidPayload(format!(
+                "subscribe subject {subject} is not in the allowed list"
+            )));
+        }
+
         let stream_config = async_nats::jetstream::stream::Config {
             name: stream_name.to_string(),
             subjects: Self::stream_subjects(stream_name),
@@ -392,5 +513,78 @@ where
             }
             Err(e) => Err(nats_error_to_bus(e)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn subject_match_exact() {
+        assert!(NatsBus::subject_matches(
+            "sig.v1.command.3f.node-1",
+            "sig.v1.command.3f.node-1"
+        ));
+    }
+
+    #[test]
+    fn subject_match_single_wildcard() {
+        assert!(NatsBus::subject_matches(
+            "sig.v1.command.3f.node-1",
+            "sig.v1.command.*.node-1"
+        ));
+        assert!(!NatsBus::subject_matches(
+            "sig.v1.command.3f.extra.node-1",
+            "sig.v1.command.*.node-1"
+        ));
+    }
+
+    #[test]
+    fn subject_match_multi_wildcard() {
+        assert!(NatsBus::subject_matches(
+            "sig.v1.command.3f.node-1",
+            "sig.v1.command.>"
+        ));
+        assert!(NatsBus::subject_matches(
+            "sig.v1.command.3f.node-1.extra",
+            "sig.v1.command.>"
+        ));
+        assert!(NatsBus::subject_matches(
+            "sig.v1.event.3f.domain_event",
+            "sig.v1.event.>"
+        ));
+    }
+
+    #[test]
+    fn subject_match_rejects_mismatch() {
+        assert!(!NatsBus::subject_matches(
+            "sig.v1.event.3f.domain_event",
+            "sig.v1.command.>"
+        ));
+        assert!(!NatsBus::subject_matches(
+            "sig.v1.command.3f.node-1",
+            "sig.v1.command.*"
+        ));
+    }
+
+    #[test]
+    fn is_subject_allowed_any_pattern() {
+        let patterns = vec![
+            "sig.v1.command.>".to_string(),
+            "sig.v1.event.*.*".to_string(),
+        ];
+        assert!(NatsBus::is_subject_allowed(
+            "sig.v1.command.3f.node-1",
+            &patterns
+        ));
+        assert!(NatsBus::is_subject_allowed(
+            "sig.v1.event.3f.domain_event",
+            &patterns
+        ));
+        assert!(!NatsBus::is_subject_allowed(
+            "unauthorized.subject",
+            &patterns
+        ));
     }
 }
