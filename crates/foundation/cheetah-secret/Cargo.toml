@@ -1,0 +1,24 @@
+[package]
+name = "cheetah-secret"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+description = "Secret provider implementations for Cheetah Signaling."
+
+[dependencies]
+cheetah-signal-types = { path = "../cheetah-signal-types" }
+secrecy = { workspace = true }
+uuid = { workspace = true, features = ["v4"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

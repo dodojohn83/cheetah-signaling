@@ -764,6 +764,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "cheetah-secret"
+version = "0.1.0"
+dependencies = [
+ "cheetah-signal-types",
+ "libc",
+ "secrecy",
+ "tempfile",
+ "uuid",
+]
+
+[[package]]
 name = "cheetah-signal-application"
 version = "0.1.0"
 dependencies = [
