@@ -231,22 +231,7 @@ impl Migration for SqliteMigration {
     async fn status(&self) -> Result<MigrationInfo, StorageError> {
         self.init_state_tables().await?;
         let applied = self.applied_startup_versions().await?;
-        let last_applied = applied.iter().map(|(v, _)| *v).max();
-        let latest_startup = self.runner.latest_startup_version();
-        let status = match last_applied {
-            Some(last) if last == latest_startup => MigrationStatus::Current,
-            Some(last) if last < latest_startup => MigrationStatus::Behind {
-                current: last,
-                target: latest_startup,
-            },
-            Some(last) => MigrationStatus::Diverged {
-                applied: last,
-                known: latest_startup,
-            },
-            None if latest_startup == 0 => MigrationStatus::Current,
-            None => MigrationStatus::Empty,
-        };
-        Ok(MigrationInfo::new(last_applied, latest_startup, status))
+        Ok(self.runner.status_info(&applied))
     }
 
     async fn validate(&self) -> Result<(), StorageError> {

@@ -16,8 +16,9 @@
 //! taken from the first underscore-delimited segment of the description. Files
 //! with no recognised phase are treated as `Baseline` (legacy full-schema DDL).
 
-use crate::{BackfillJob, MigrationPhase, StorageError};
+use crate::{BackfillJob, MigrationInfo, MigrationPhase, MigrationStatus, StorageError};
 use std::collections::HashSet;
+use std::time::{Duration, Instant, SystemTime};
 
 /// An embedded migration split by phase.
 #[derive(Clone, Debug)]
@@ -194,6 +195,10 @@ pub trait PhaseMigrationBackend: Send + Sync {
     async fn save_backfill_job(&self, job: &BackfillJob) -> Result<(), StorageError>;
 }
 
+/// Safety bounds for operator-driven backfill loops.
+const MAX_BACKFILL_BATCHES: u64 = 10_000;
+const MAX_BACKFILL_DURATION: Duration = Duration::from_secs(600);
+
 /// Executor that applies a planned set of phase migrations through a backend.
 #[derive(Clone, Debug)]
 pub struct PhaseMigrationRunner {
@@ -211,6 +216,11 @@ impl PhaseMigrationRunner {
         self.planner.all()
     }
 
+    /// Returns the startup-safe migrations in execution order.
+    pub fn startup_migrations(&self) -> Vec<VersionedMigration> {
+        self.planner.startup_migrations()
+    }
+
     /// Highest version among startup-safe phases.
     pub fn latest_startup_version(&self) -> i64 {
         self.planner.latest_startup_version()
@@ -219,6 +229,37 @@ impl PhaseMigrationRunner {
     /// Highest version across all phases.
     pub fn latest_version(&self) -> i64 {
         self.planner.latest_version()
+    }
+
+    /// Computes migration status from the set of applied startup phases.
+    pub fn status_info(&self, applied: &[(i64, MigrationPhase)]) -> MigrationInfo {
+        let startup = self.startup_migrations();
+        let pending = PhaseMigrationPlanner::pending(applied.iter().copied(), &startup);
+        let last_applied = applied.iter().map(|(v, _)| *v).max();
+        let latest_startup = self.latest_startup_version();
+
+        let status = if !pending.is_empty() {
+            MigrationStatus::Behind {
+                current: last_applied.unwrap_or(0),
+                target: latest_startup,
+            }
+        } else if latest_startup == 0 {
+            MigrationStatus::Current
+        } else {
+            match last_applied {
+                Some(last) if last == latest_startup => MigrationStatus::Current,
+                Some(last) if last < latest_startup => MigrationStatus::Behind {
+                    current: last,
+                    target: latest_startup,
+                },
+                Some(last) => MigrationStatus::Diverged {
+                    applied: last,
+                    known: latest_startup,
+                },
+                None => MigrationStatus::Empty,
+            }
+        };
+        MigrationInfo::new(last_applied, latest_startup, status)
     }
 
     /// Runs all startup phases (expand, migrate and baseline).
@@ -247,19 +288,35 @@ impl PhaseMigrationRunner {
     }
 
     /// Resumes backfill jobs until all backfill migrations report no remaining rows.
+    ///
+    /// Each backfill is bounded by `MAX_BACKFILL_BATCHES` and `MAX_BACKFILL_DURATION`
+    /// to prevent runaway scripts from blocking the operator call indefinitely.
     pub async fn run_backfills(
         &self,
         backend: &dyn PhaseMigrationBackend,
         batch_size: u64,
     ) -> Result<(), StorageError> {
         let backfills = self.planner.phase_migrations(MigrationPhase::Backfill);
+        let start = Instant::now();
         for m in backfills {
-            loop {
+            for batch in 0..MAX_BACKFILL_BATCHES {
+                if start.elapsed() > MAX_BACKFILL_DURATION {
+                    return Err(StorageError::migration(
+                        m.version,
+                        "backfill exceeded maximum duration",
+                    ));
+                }
                 let rows = self
                     .run_backfill_step(backend, m.version, batch_size)
                     .await?;
                 if rows == 0 {
                     break;
+                }
+                if batch == MAX_BACKFILL_BATCHES - 1 {
+                    return Err(StorageError::migration(
+                        m.version,
+                        "backfill exceeded maximum batch count",
+                    ));
                 }
             }
         }
@@ -301,9 +358,18 @@ impl PhaseMigrationRunner {
 
         if rows == 0 {
             job.finished = true;
+            job.updated_at = SystemTime::now();
+            backend
+                .record_applied(
+                    m.version,
+                    MigrationPhase::Backfill,
+                    m.description,
+                    m.checksum,
+                )
+                .await?;
         } else {
             job.processed_rows += rows;
-            job.updated_at = std::time::SystemTime::now();
+            job.updated_at = SystemTime::now();
         }
         backend.save_backfill_job(&job).await?;
         Ok(rows)
