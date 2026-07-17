@@ -111,7 +111,12 @@ spec:
               readOnly: true
       volumes:
         - name: data
+          {{- if and .Values.persistence.enabled (eq .Values.config.storage.backend "sqlite") }}
+          persistentVolumeClaim:
+            claimName: {{ include "cheetah-signaling.fullname" . }}-data
+          {{- else }}
           emptyDir: {}
+          {{- end }}
         - name: tmp
           emptyDir: {}
         - name: config

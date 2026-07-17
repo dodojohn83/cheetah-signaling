@@ -88,10 +88,19 @@ terminationGracePeriodSeconds: 60
 # chart's selector labels. Set extraScheduling to override or extend them.
 extraScheduling: {}
 
-# PodDisruptionBudget requires at least one replica available during disruptions.
+# PodDisruptionBudget allows one replica to be unavailable (supports single
+# replica drains and rolling updates with HA).
 pdb:
   enabled: true
-  minAvailable: 1
+  maxUnavailable: 1
+
+# Persistence for the SQLite data directory. Required for durable single-replica
+# installs; ignored when using Postgres storage.
+persistence:
+  enabled: true
+  storageClass: ""
+  accessMode: ReadWriteOnce
+  size: 10Gi
 
 # NetworkPolicy restricts ingress/egress to the required ports and peers.
 networkPolicy:
