@@ -913,6 +913,7 @@ dependencies = [
  "cheetah-signal-types",
  "serde",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]

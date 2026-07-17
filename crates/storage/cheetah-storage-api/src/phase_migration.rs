@@ -346,11 +346,20 @@ impl PhaseMigrationRunner {
     }
 
     /// Runs all pending migrations for a specific phase.
+    ///
+    /// Backfill migrations are not supported here because they require
+    /// resumable batched execution with a `/*BATCH_SIZE*/` placeholder.
+    /// Use [`Self::run_backfills`] or [`Self::run_backfill_step`] instead.
     pub async fn run_phase(
         &self,
         backend: &dyn PhaseMigrationBackend,
         phase: MigrationPhase,
     ) -> Result<(), StorageError> {
+        if phase == MigrationPhase::Backfill {
+            return Err(StorageError::invalid_argument(
+                "backfill phase must be run through run_backfills, not run_phase",
+            ));
+        }
         backend.init_state_tables().await?;
         backend.acquire_migration_lock().await?;
         let result = self
@@ -481,9 +490,66 @@ impl PhaseMigrationRunner {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
 
     fn vm(version: i64, description: &'static str) -> VersionedMigration {
         VersionedMigration::new(version, description, "", &[])
+    }
+
+    struct DummyBackend;
+
+    #[async_trait]
+    impl PhaseMigrationBackend for DummyBackend {
+        async fn init_state_tables(&self) -> Result<(), StorageError> {
+            Ok(())
+        }
+
+        async fn list_applied(&self) -> Result<Vec<AppliedMigration>, StorageError> {
+            Ok(Vec::new())
+        }
+
+        async fn record_applied(
+            &self,
+            _version: i64,
+            _phase: MigrationPhase,
+            _description: &str,
+            _checksum: &[u8],
+        ) -> Result<(), StorageError> {
+            Ok(())
+        }
+
+        async fn execute_migration_sql(&self, _sql: &str) -> Result<u64, StorageError> {
+            Ok(0)
+        }
+
+        async fn load_backfill_job(
+            &self,
+            _version: i64,
+        ) -> Result<Option<BackfillJob>, StorageError> {
+            Ok(None)
+        }
+
+        async fn save_backfill_job(&self, _job: &BackfillJob) -> Result<(), StorageError> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn run_phase_rejects_backfill_phase() {
+        let planner = PhaseMigrationPlanner::new(vec![VersionedMigration::new(
+            1,
+            "backfill data",
+            "SELECT 1 LIMIT /*BATCH_SIZE*/",
+            &[],
+        )]);
+        let runner = PhaseMigrationRunner::new(planner);
+        let outcome = runner
+            .run_phase(&DummyBackend, MigrationPhase::Backfill)
+            .await;
+        assert!(
+            matches!(outcome, Err(StorageError::InvalidArgument { .. })),
+            "run_phase(Backfill) must require the batched runner, got {outcome:?}"
+        );
     }
 
     #[test]

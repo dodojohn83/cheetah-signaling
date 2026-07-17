@@ -6,7 +6,7 @@ use crate::mappers::{
 };
 use crate::model::{EntityType, OldRecord};
 use crate::source::RecordSource;
-use cheetah_domain::{Channel, Device, DomainEvent};
+use cheetah_domain::{Channel, Device, DomainError, DomainEvent};
 use cheetah_signal_types::{Clock, Event, ResourceId, ResourceKind};
 use cheetah_storage_api::Storage;
 use std::collections::{BTreeMap, HashSet};
@@ -219,7 +219,7 @@ impl Importer {
                     .await?;
                 match existing {
                     Some(mut existing) if !options.skip_existing => {
-                        let domain_event = existing.update(
+                        let domain_event = match existing.update(
                             self.clock.as_ref(),
                             Some(device.name().to_string()),
                             Some(device.kind()),
@@ -228,8 +228,25 @@ impl Importer {
                             Some(device.authority().to_string()),
                             Some(device.capabilities().to_vec()),
                             Some(device.metadata().clone()),
-                        )?;
-                        uow.device_repository().save(&existing).await?;
+                        ) {
+                            Ok(ev) => ev,
+                            Err(
+                                DomainError::ConcurrentModification { .. }
+                                | DomainError::InvalidTransition { .. },
+                            ) => {
+                                result.records_conflicting += 1;
+                                continue;
+                            }
+                            Err(e) => return Err(e.into()),
+                        };
+                        match uow.device_repository().save(&existing).await {
+                            Ok(()) => {}
+                            Err(DomainError::ConcurrentModification { .. }) => {
+                                result.records_conflicting += 1;
+                                continue;
+                            }
+                            Err(e) => return Err(e.into()),
+                        }
                         uow.outbox()
                             .append(event_for(
                                 self.clock.as_ref(),
@@ -246,7 +263,14 @@ impl Importer {
                         result.records_skipped_existing += 1;
                     }
                     None => {
-                        uow.device_repository().save(device).await?;
+                        match uow.device_repository().save(device).await {
+                            Ok(()) => {}
+                            Err(DomainError::ConcurrentModification { .. }) => {
+                                result.records_conflicting += 1;
+                                continue;
+                            }
+                            Err(e) => return Err(e.into()),
+                        }
                         uow.outbox().append(event.clone()).await?;
                         written += 1;
                     }
@@ -284,7 +308,7 @@ impl Importer {
                     .await?;
                 match existing {
                     Some(mut existing) if !options.skip_existing => {
-                        let domain_event = existing.update(
+                        let domain_event = match existing.update(
                             self.clock.as_ref(),
                             Some(channel.kind()),
                             Some(channel.name().to_string()),
@@ -293,8 +317,25 @@ impl Importer {
                             Some(channel.stream_profiles().to_vec()),
                             Some(channel.ptz_capabilities().clone()),
                             Some(channel.metadata().clone()),
-                        )?;
-                        uow.channel_repository().save(&existing).await?;
+                        ) {
+                            Ok(ev) => ev,
+                            Err(
+                                DomainError::ConcurrentModification { .. }
+                                | DomainError::InvalidTransition { .. },
+                            ) => {
+                                result.records_conflicting += 1;
+                                continue;
+                            }
+                            Err(e) => return Err(e.into()),
+                        };
+                        match uow.channel_repository().save(&existing).await {
+                            Ok(()) => {}
+                            Err(DomainError::ConcurrentModification { .. }) => {
+                                result.records_conflicting += 1;
+                                continue;
+                            }
+                            Err(e) => return Err(e.into()),
+                        }
                         uow.outbox()
                             .append(event_for(
                                 self.clock.as_ref(),
@@ -311,7 +352,14 @@ impl Importer {
                         result.records_skipped_existing += 1;
                     }
                     None => {
-                        uow.channel_repository().save(channel).await?;
+                        match uow.channel_repository().save(channel).await {
+                            Ok(()) => {}
+                            Err(DomainError::ConcurrentModification { .. }) => {
+                                result.records_conflicting += 1;
+                                continue;
+                            }
+                            Err(e) => return Err(e.into()),
+                        }
                         uow.outbox().append(event.clone()).await?;
                         written += 1;
                     }
