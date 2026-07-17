@@ -32,6 +32,12 @@ pub struct ProtocolEvent {
     pub tenant_id: Option<TenantId>,
 }
 
+/// A monotonic second counter used by drivers for timeouts and replay windows.
+///
+/// Drivers must not read the system clock directly; the host provides this
+/// value through [`DriverContext::monotonic_now`].
+pub type MonotonicSeconds = u64;
+
 /// Sink for protocol events emitted by a driver.
 #[async_trait]
 pub trait DeviceSink: Send + Sync {
@@ -55,6 +61,10 @@ pub trait DriverContext: Send + Sync {
     fn config(&self) -> &serde_json::Value;
     /// Resource budget the host has granted.
     fn budget(&self) -> &ResourceBudget;
+    /// Monotonic second counter from the host clock.
+    ///
+    /// Drivers must use this instead of reading the system clock themselves.
+    fn monotonic_now(&self) -> MonotonicSeconds;
     /// Event sink for this driver instance.
     fn device_sink(&self) -> &dyn DeviceSink;
     /// Command source for this driver instance.

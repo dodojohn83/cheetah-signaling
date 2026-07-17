@@ -16,6 +16,7 @@
 pub mod access;
 pub mod cascade;
 pub mod config;
+pub mod driver;
 pub mod error;
 pub mod events;
 pub mod media;
@@ -30,6 +31,7 @@ pub use cascade::{
     CascadeOutput, Gb28181Cascade,
 };
 pub use config::{AuthPolicy, CharsetPolicy, Gb28181DomainConfig};
+pub use driver::{Gb28181DriverFactory, Gb28181ProtocolDriver};
 pub use error::AccessError;
 pub use events::{DevicePresence, Gb28181Event};
 pub use media::{
