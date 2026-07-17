@@ -1,4 +1,6 @@
-replicaCount: 2
+# Default to one replica with the embedded SQLite/local-bus backend.
+# Set replicaCount > 1 only when using shared Postgres + NATS storage/messaging.
+replicaCount: 1
 
 autoscaling:
   enabled: false
@@ -19,9 +21,9 @@ serviceAccount:
   automount: true
   annotations: {}
 
-# Name of an existing Secret holding values for config.toml keys, mounted at
-# /etc/cheetah/secrets. The chart still creates the ConfigMap for non-secret
-# configuration.
+# Name of an existing Secret whose keys are injected as CHEETAH_* environment
+# variables (e.g. CHEETAH_STORAGE__POSTGRES_URL). The chart still creates the
+# ConfigMap for non-secret configuration.
 existingSecret: ""
 
 podAnnotations: {}
@@ -107,7 +109,5 @@ config:
   storage:
     backend: "sqlite"
     sqlite_path: "/var/lib/cheetah/cheetah.db"
-    postgres_url: ""
   messaging:
     backend: "local"
-    nats_url: ""

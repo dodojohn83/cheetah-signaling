@@ -96,6 +96,11 @@ spec:
           {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+          {{- if .Values.existingSecret }}
+          envFrom:
+            - secretRef:
+                name: {{ .Values.existingSecret }}
+          {{- end }}
           volumeMounts:
             - name: data
               mountPath: /var/lib/cheetah
@@ -104,11 +109,6 @@ spec:
             - name: config
               mountPath: /etc/cheetah
               readOnly: true
-            {{- if .Values.existingSecret }}
-            - name: secrets
-              mountPath: /etc/cheetah/secrets
-              readOnly: true
-            {{- end }}
       volumes:
         - name: data
           emptyDir: {}
@@ -117,11 +117,6 @@ spec:
         - name: config
           configMap:
             name: {{ include "cheetah-signaling.fullname" . }}-config
-        {{- if .Values.existingSecret }}
-        - name: secrets
-          secret:
-            secretName: {{ .Values.existingSecret }}
-        {{- end }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
