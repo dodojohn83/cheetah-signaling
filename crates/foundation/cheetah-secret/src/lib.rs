@@ -330,23 +330,34 @@ impl CompositeSecretStore {
 
 impl SecretStore for CompositeSecretStore {
     fn get(&self, key: &str) -> Result<SecretString> {
-        let mut last_err = None;
-        let mut retryable_idx = None;
-        for (i, store) in self.stores.iter().enumerate() {
+        fn error_priority(err: &SignalError) -> u8 {
+            if err.is_retryable() {
+                2
+            } else if matches!(
+                err.kind(),
+                SignalErrorKind::NotFound | SignalErrorKind::Unsupported
+            ) {
+                0
+            } else {
+                1
+            }
+        }
+
+        let mut selected = None;
+        for store in &self.stores {
             match store.get(key) {
                 Ok(value) => return Ok(value),
                 Err(err) => {
-                    if retryable_idx.is_none() && err.is_retryable() {
-                        retryable_idx = Some(i);
+                    if selected
+                        .as_ref()
+                        .is_none_or(|s: &SignalError| error_priority(&err) > error_priority(s))
+                    {
+                        selected = Some(err);
                     }
-                    last_err = Some(err);
                 }
             }
         }
-        if let Some(idx) = retryable_idx {
-            return self.stores[idx].get(key);
-        }
-        Err(last_err
+        Err(selected
             .unwrap_or_else(|| SignalError::new(SignalErrorKind::NotFound, "secret not found")))
     }
 
