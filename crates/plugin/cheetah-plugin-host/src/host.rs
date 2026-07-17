@@ -10,10 +10,29 @@ use cheetah_plugin_sdk::{
     ResourceBudget,
 };
 use cheetah_signal_types::{DurationMs, PluginId, UtcTimestamp};
+use secrecy::SecretString;
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 use tokio::time::timeout;
+
+/// Source for tenant-scoped secrets referenced by drivers.
+#[async_trait]
+pub trait SecretProvider: Send + Sync {
+    /// Returns the named secret if it exists and access is allowed.
+    async fn get_secret(&self, name: &str) -> Result<Option<SecretString>, PluginError>;
+}
+
+/// A secret provider that never returns a secret.
+#[derive(Debug)]
+pub struct NoopSecretProvider;
+
+#[async_trait]
+impl SecretProvider for NoopSecretProvider {
+    async fn get_secret(&self, _name: &str) -> Result<Option<SecretString>, PluginError> {
+        Ok(None)
+    }
+}
 
 /// A running plugin instance.
 struct DriverInstance {
@@ -31,6 +50,7 @@ pub struct HostDriverContext {
     budget: ResourceBudget,
     sink: Arc<dyn DeviceSink>,
     source: Arc<dyn CommandSource>,
+    secret_provider: Arc<dyn SecretProvider>,
 }
 
 impl HostDriverContext {
@@ -42,12 +62,32 @@ impl HostDriverContext {
         sink: Arc<dyn DeviceSink>,
         source: Arc<dyn CommandSource>,
     ) -> Self {
+        Self::with_secret_provider(
+            plugin_name,
+            config,
+            budget,
+            sink,
+            source,
+            Arc::new(NoopSecretProvider),
+        )
+    }
+
+    /// Creates a host context with a secret provider for driver lookups.
+    pub fn with_secret_provider(
+        plugin_name: PluginName,
+        config: serde_json::Value,
+        budget: ResourceBudget,
+        sink: Arc<dyn DeviceSink>,
+        source: Arc<dyn CommandSource>,
+        secret_provider: Arc<dyn SecretProvider>,
+    ) -> Self {
         Self {
             plugin_name,
             config,
             budget,
             sink,
             source,
+            secret_provider,
         }
     }
 }
@@ -74,8 +114,8 @@ impl DriverContext for HostDriverContext {
         self.source.as_ref()
     }
 
-    async fn secret(&self, _name: &str) -> Result<Option<secrecy::SecretString>, PluginError> {
-        Ok(None)
+    async fn secret(&self, name: &str) -> Result<Option<SecretString>, PluginError> {
+        self.secret_provider.get_secret(name).await
     }
 
     async fn request_media_session(
@@ -107,6 +147,7 @@ impl fmt::Debug for HostDriverContext {
             .field("budget", &self.budget)
             .field("sink", &"<dyn DeviceSink>")
             .field("source", &"<dyn CommandSource>")
+            .field("secret_provider", &"<dyn SecretProvider>")
             .finish()
     }
 }
@@ -117,6 +158,7 @@ pub struct PluginHost {
     registry: BuiltInRegistry,
     instances: HashMap<PluginId, DriverInstance>,
     default_timeout: DurationMs,
+    secret_provider: Arc<dyn SecretProvider>,
 }
 
 /// Minimum driver operation timeout. Non-positive explicit timeouts are
@@ -124,8 +166,22 @@ pub struct PluginHost {
 const MIN_DRIVER_TIMEOUT: DurationMs = DurationMs::from_millis(1_000);
 
 impl PluginHost {
-    /// Creates a new plugin host for the given SDK version.
+    /// Creates a new plugin host for the given SDK version and a default
+    /// no-op secret provider.
     pub fn new(host_sdk_version: semver::Version, default_timeout: DurationMs) -> Self {
+        Self::with_secret_provider(
+            host_sdk_version,
+            default_timeout,
+            Arc::new(NoopSecretProvider),
+        )
+    }
+
+    /// Creates a new plugin host with the given secret provider.
+    pub fn with_secret_provider(
+        host_sdk_version: semver::Version,
+        default_timeout: DurationMs,
+        secret_provider: Arc<dyn SecretProvider>,
+    ) -> Self {
         let default_timeout = if default_timeout.as_millis() <= 0 {
             MIN_DRIVER_TIMEOUT
         } else {
@@ -136,6 +192,7 @@ impl PluginHost {
             registry: BuiltInRegistry::new(),
             instances: HashMap::new(),
             default_timeout,
+            secret_provider,
         }
     }
 
@@ -185,12 +242,13 @@ impl PluginHost {
                 .ok_or_else(|| PluginHostError::NotFound(manifest.name.to_string()))?;
             factory.create(config.clone()).await?
         };
-        let ctx = HostDriverContext::new(
+        let ctx = HostDriverContext::with_secret_provider(
             manifest.name.clone(),
             config,
             manifest.resource_budget,
             sink,
             source,
+            Arc::clone(&self.secret_provider),
         );
 
         let deadline = timeout.unwrap_or(self.default_timeout);
@@ -339,12 +397,13 @@ impl fmt::Debug for PluginHost {
 
 impl PluginHost {
     fn no_op_context(&self, name: &PluginName) -> HostDriverContext {
-        HostDriverContext::new(
+        HostDriverContext::with_secret_provider(
             name.clone(),
             serde_json::Value::Null,
             ResourceBudget::default(),
             Arc::new(NoOpSink),
             Arc::new(NoOpSource),
+            Arc::clone(&self.secret_provider),
         )
     }
 }

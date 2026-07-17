@@ -20,7 +20,7 @@ use cheetah_plugin_sdk::{
     ProtocolEvent,
 };
 use cheetah_signal_types::DurationMs;
-use secrecy::{SecretSlice, SecretString};
+use secrecy::{ExposeSecret, SecretSlice, SecretString};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -74,7 +74,7 @@ impl Default for Gb28181ProtocolDriver {
 #[async_trait]
 impl ProtocolDriver for Gb28181ProtocolDriver {
     async fn start(&self, ctx: &dyn DriverContext) -> Result<(), PluginError> {
-        let config = load_domain_config(ctx.config())?;
+        let config = load_domain_config(ctx).await?;
         let access = Gb28181Access::new(config, NoopCredentialProvider)
             .map_err(|e| PluginError::Driver(e.to_string()))?;
         let mut guard = self.inner.lock().await;
@@ -192,24 +192,31 @@ impl ProtocolDriverFactory for Gb28181DriverFactory {
 }
 
 /// Parses the driver configuration JSON into a [`Gb28181DomainConfig`].
-fn load_domain_config(config: &serde_json::Value) -> Result<Gb28181DomainConfig, PluginError> {
-    let cfg: DriverConfig = serde_json::from_value(config.clone())
+///
+/// The digest secret is read from the host secret provider using the
+/// `digest_secret_name` reference; it is never stored in the driver config.
+async fn load_domain_config(ctx: &dyn DriverContext) -> Result<Gb28181DomainConfig, PluginError> {
+    let cfg: DriverConfig = serde_json::from_value(ctx.config().clone())
         .map_err(|e| PluginError::Driver(format!("invalid GB28181 config: {e}")))?;
 
-    let digest_bytes = hex::decode(&cfg.digest_secret)
-        .map_err(|e| PluginError::Driver(format!("digest_secret is not valid hex: {e}")))?;
-    if digest_bytes.len() < 32 {
+    let secret = ctx.secret(&cfg.digest_secret_name).await?.ok_or_else(|| {
+        PluginError::Driver(format!("missing digest secret: {}", cfg.digest_secret_name))
+    })?;
+
+    let digest_bytes = hex::decode(secret.expose_secret())
+        .map_err(|e| PluginError::Driver(format!("digest secret is not valid hex: {e}")))?;
+    let digest_secret = SecretSlice::from(digest_bytes);
+    if digest_secret.expose_secret().len() < 32 {
         return Err(PluginError::Driver(
             "digest_secret must be at least 32 bytes".to_string(),
         ));
     }
 
-    let domain_config =
-        Gb28181DomainConfig::new(&cfg.domain_id, &cfg.realm, SecretSlice::from(digest_bytes))
-            .map_err(|e| PluginError::Driver(format!("GB28181 domain config: {e}")))?
-            .with_auth_policy(AuthPolicy::ChallengeOptional)
-            .with_allow_md5(cfg.allow_md5.unwrap_or(false))
-            .with_preferred_algorithm(parse_algorithm(&cfg.preferred_algorithm)?);
+    let domain_config = Gb28181DomainConfig::new(&cfg.domain_id, &cfg.realm, digest_secret)
+        .map_err(|e| PluginError::Driver(format!("GB28181 domain config: {e}")))?
+        .with_auth_policy(AuthPolicy::ChallengeOptional)
+        .with_allow_md5(cfg.allow_md5.unwrap_or(false))
+        .with_preferred_algorithm(parse_algorithm(&cfg.preferred_algorithm)?);
 
     Ok(domain_config)
 }
@@ -231,7 +238,7 @@ fn parse_algorithm(
 struct DriverConfig {
     domain_id: String,
     realm: String,
-    digest_secret: String,
+    digest_secret_name: String,
     #[serde(default)]
     allow_md5: Option<bool>,
     #[serde(default)]

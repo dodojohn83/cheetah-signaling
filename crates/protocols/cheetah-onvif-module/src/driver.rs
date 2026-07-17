@@ -83,8 +83,8 @@ impl ProtocolDriver for OnvifProtocolDriver {
         _timeout: DurationMs,
     ) -> Result<HealthReport, PluginError> {
         Ok(HealthReport {
-            status: HealthStatus::Healthy,
-            message: "ONVIF driver placeholder is healthy".to_string(),
+            status: HealthStatus::Degraded,
+            message: "ONVIF implementation is not yet available".to_string(),
             metrics: HashMap::new(),
         })
     }

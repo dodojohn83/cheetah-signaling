@@ -13,6 +13,6 @@ pub mod loader;
 pub mod registry;
 
 pub use error::PluginHostError;
-pub use host::{HostDriverContext, PluginHost};
+pub use host::{HostDriverContext, NoopSecretProvider, PluginHost, SecretProvider};
 pub use loader::ManifestLoader;
 pub use registry::BuiltInRegistry;
