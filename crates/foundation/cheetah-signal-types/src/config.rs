@@ -87,6 +87,18 @@ impl SignalConfig {
                 "grpc.port must not be zero",
             ));
         }
+        if self.http.tls_cert_ref.is_some() != self.http.tls_key_ref.is_some() {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                "http.tls_cert_ref and http.tls_key_ref must both be set or both be unset",
+            ));
+        }
+        if self.grpc.tls_cert_ref.is_some() != self.grpc.tls_key_ref.is_some() {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                "grpc.tls_cert_ref and grpc.tls_key_ref must both be set or both be unset",
+            ));
+        }
         if self.http.read_timeout_ms.as_millis() <= 0 {
             return Err(SignalError::new(
                 SignalErrorKind::InvalidArgument,

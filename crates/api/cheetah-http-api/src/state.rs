@@ -12,6 +12,7 @@ use cheetah_signal_application::{
 use cheetah_signal_types::config::SecurityConfig;
 use cheetah_signal_types::{Clock, NodeId, SecretStore, SignalConfig};
 use cheetah_storage_api::Storage;
+use secrecy::ExposeSecret;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
@@ -37,6 +38,10 @@ pub struct ApiConfig {
     pub webhook_delivery_interval_ms: u64,
     /// Process node identifier.
     pub node_id: NodeId,
+    /// Optional secret reference for the TLS certificate chain (PEM).
+    pub tls_cert_ref: Option<String>,
+    /// Optional secret reference for the TLS private key (PEM).
+    pub tls_key_ref: Option<String>,
     /// Security settings.
     pub security: SecurityConfig,
 }
@@ -53,6 +58,8 @@ impl From<&SignalConfig> for ApiConfig {
             rate_limit_burst: config.http.rate_limit_burst,
             webhook_delivery_interval_ms: 5000,
             node_id: config.system.node_id.unwrap_or_default(),
+            tls_cert_ref: config.http.tls_cert_ref.clone(),
+            tls_key_ref: config.http.tls_key_ref.clone(),
             security: config.security.clone(),
         }
     }
@@ -87,6 +94,8 @@ pub struct ApiState {
     pub rate_limiter: RateLimiter,
     /// Cancellation token for graceful shutdown.
     pub cancel: CancellationToken,
+    /// Optional secret store for TLS certificate and webhook HMAC secrets.
+    pub secret_store: Option<Arc<dyn SecretStore>>,
 }
 
 impl std::fmt::Debug for ApiState {
@@ -136,7 +145,14 @@ impl ApiState {
             metrics: Arc::new(RequestMetrics::default()),
             rate_limiter,
             cancel: CancellationToken::new(),
+            secret_store: None,
         }
+    }
+
+    /// Sets the secret store used for TLS certificates and webhook HMAC secrets.
+    pub fn with_secret_store(mut self, secret_store: Arc<dyn SecretStore>) -> Self {
+        self.secret_store = Some(secret_store);
+        self
     }
 
     /// Enables the webhook service by wiring a secret store and HTTP client.
@@ -148,13 +164,14 @@ impl ApiState {
     ) -> Self {
         let service = WebhookService::new(
             self.storage.clone(),
-            secret_store,
+            secret_store.clone(),
             self.clock.clone(),
             self.id_generator.clone(),
             http_client,
             config,
         );
         self.webhook_service = Some(service);
+        self.secret_store = Some(secret_store);
         self
     }
 
@@ -232,25 +249,100 @@ impl ApiServer {
         let addr: SocketAddr = format!("{}:{}", state.config.listen_addr, state.config.port)
             .parse()
             .map_err(|e| crate::HttpError::Internal(format!("invalid listen address: {e}")))?;
-        let listener = tokio::net::TcpListener::bind(addr).await.map_err(|e| {
-            crate::HttpError::Internal(format!("failed to bind HTTP listener: {e}"))
-        })?;
-        let local_addr = listener
-            .local_addr()
-            .map_err(|e| crate::HttpError::Internal(format!("failed to get local address: {e}")))?;
+
         let (tx, rx) = tokio::sync::oneshot::channel();
-        let server = axum::serve(
-            listener,
-            router.into_make_service_with_connect_info::<SocketAddr>(),
-        )
-        .with_graceful_shutdown(async {
-            let _ = rx.await;
-        });
-        tokio::spawn(async move {
-            if let Err(e) = server.await {
-                tracing::error!("HTTP server error: {e}");
+
+        let local_addr = match (
+            state.config.tls_cert_ref.as_ref(),
+            state.config.tls_key_ref.as_ref(),
+        ) {
+            (Some(_), None) | (None, Some(_)) => {
+                return Err(crate::HttpError::Internal(
+                    "http.tls_cert_ref and http.tls_key_ref must both be set or both be unset"
+                        .to_string(),
+                ));
             }
-        });
+            (Some(cert_ref), Some(key_ref)) => {
+                let secret_store = state.secret_store.clone().ok_or_else(|| {
+                    crate::HttpError::Internal(
+                        "TLS certificate references require a secret store".to_string(),
+                    )
+                })?;
+                let cert_pem = secret_store.get(cert_ref).map_err(|e| {
+                    crate::HttpError::Internal(format!("failed to load TLS certificate: {e}"))
+                })?;
+                let key_pem = secret_store.get(key_ref).map_err(|e| {
+                    crate::HttpError::Internal(format!("failed to load TLS private key: {e}"))
+                })?;
+
+                let cert = cert_pem.expose_secret().as_bytes().to_vec();
+                let key = key_pem.expose_secret().as_bytes().to_vec();
+
+                if rustls::crypto::CryptoProvider::get_default().is_none() {
+                    let _ = rustls::crypto::ring::default_provider().install_default();
+                }
+
+                let rustls_config = axum_server::tls_rustls::RustlsConfig::from_pem(cert, key)
+                    .await
+                    .map_err(|e| crate::HttpError::Internal(format!("invalid TLS PEM: {e}")))?;
+
+                let std_listener = std::net::TcpListener::bind(addr).map_err(|e| {
+                    crate::HttpError::Internal(format!("failed to bind HTTPS listener: {e}"))
+                })?;
+                std_listener.set_nonblocking(true).map_err(|e| {
+                    crate::HttpError::Internal(format!("failed to set non-blocking: {e}"))
+                })?;
+                let local_addr = std_listener.local_addr().map_err(|e| {
+                    crate::HttpError::Internal(format!("failed to get local address: {e}"))
+                })?;
+
+                let shutdown_cancel = cancel.clone();
+                let handle = axum_server::Handle::<SocketAddr>::new();
+                let shutdown_handle = handle.clone();
+                tokio::spawn(async move {
+                    tokio::select! {
+                        _ = rx => {},
+                        _ = shutdown_cancel.cancelled() => {},
+                    }
+                    shutdown_handle.graceful_shutdown(None);
+                });
+
+                let server = axum_server::from_tcp_rustls(std_listener, rustls_config)
+                    .map_err(|e| {
+                        crate::HttpError::Internal(format!("failed to create HTTPS server: {e}"))
+                    })?
+                    .handle(handle)
+                    .serve(router.into_make_service_with_connect_info::<SocketAddr>());
+                tokio::spawn(async move {
+                    if let Err(e) = server.await {
+                        tracing::error!("HTTPS server error: {e}");
+                    }
+                });
+                local_addr
+            }
+            (None, None) => {
+                let listener = tokio::net::TcpListener::bind(addr).await.map_err(|e| {
+                    crate::HttpError::Internal(format!("failed to bind HTTP listener: {e}"))
+                })?;
+                let local_addr = listener.local_addr().map_err(|e| {
+                    crate::HttpError::Internal(format!("failed to get local address: {e}"))
+                })?;
+                let server = axum::serve(
+                    listener,
+                    router.into_make_service_with_connect_info::<SocketAddr>(),
+                )
+                .with_graceful_shutdown(async {
+                    let _ = rx.await;
+                });
+                tokio::spawn(async move {
+                    if let Err(e) = server.await {
+                        tracing::error!("HTTP server error: {e}");
+                    }
+                });
+                local_addr
+            }
+        };
+
         Ok(Self {
             local_addr,
             shutdown: tx,
