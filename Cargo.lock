@@ -821,6 +821,7 @@ dependencies = [
 name = "cheetah-signaling"
 version = "0.1.0"
 dependencies = [
+ "cheetah-config",
  "cheetah-runtime-api",
  "cheetah-runtime-tokio",
  "cheetah-signal-application",

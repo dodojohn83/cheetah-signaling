@@ -33,13 +33,21 @@ impl LayeredConfigSource {
     }
 
     /// Loads the configuration using the configured sources.
+    ///
+    /// If no explicit path is set, the `CHEETAH_CONFIG_PATH` environment
+    /// variable is honored as a fallback.
     fn load(&self) -> Result<SignalConfig> {
+        let config_path = self
+            .config_path
+            .clone()
+            .or_else(|| std::env::var("CHEETAH_CONFIG_PATH").ok().map(PathBuf::from));
+
         let default_toml = SignalConfig::example_toml()?;
 
         let mut builder =
             Config::builder().add_source(File::from_str(&default_toml, FileFormat::Toml));
 
-        if let Some(path) = &self.config_path {
+        if let Some(path) = config_path {
             let path_str = path.to_str().ok_or_else(|| {
                 SignalError::new(
                     SignalErrorKind::InvalidArgument,

@@ -11,6 +11,7 @@ publish = false
 [dependencies]
 cheetah-signal-types = { path = "../../crates/foundation/cheetah-signal-types" }
 cheetah-signal-contracts = { path = "../../crates/foundation/cheetah-signal-contracts" }
+cheetah-config = { path = "../../crates/foundation/cheetah-config" }
 cheetah-runtime-api = { path = "../../crates/runtime/cheetah-runtime-api" }
 cheetah-runtime-tokio = { path = "../../crates/runtime/cheetah-runtime-tokio" }
 cheetah-signal-application = { path = "../../crates/application/cheetah-signal-application" }
