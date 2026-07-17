@@ -289,6 +289,7 @@ async fn process_sip(
             AccessOutput::SendResponse(message) => ProtocolEvent {
                 event_type: "gb28181.sip.response".to_string(),
                 payload: serde_json::json!({
+                    "destination": source.to_string(),
                     "message_hex": hex::encode(encode_message(&message)),
                 }),
                 tenant_id: None,
