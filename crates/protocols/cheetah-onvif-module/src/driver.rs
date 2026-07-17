@@ -13,7 +13,6 @@ use cheetah_plugin_sdk::{
 };
 use cheetah_signal_types::DurationMs;
 use std::collections::HashMap;
-use std::net::SocketAddr;
 
 /// Built-in ONVIF protocol driver placeholder.
 #[derive(Debug)]
@@ -73,17 +72,12 @@ impl ProtocolDriver for OnvifProtocolDriver {
     async fn probe(
         &self,
         _ctx: &dyn DriverContext,
-        target: &str,
+        _target: &str,
         _timeout: DurationMs,
     ) -> Result<CapabilityDescriptor, PluginError> {
-        let _ = target
-            .parse::<SocketAddr>()
-            .map_err(|e| PluginError::Driver(format!("invalid target address: {e}")))?;
-        Ok(CapabilityDescriptor {
-            protocol: "onvif".to_string(),
-            direction: ProtocolDirection::Outbound,
-            metadata: HashMap::new(),
-        })
+        Err(PluginError::Unsupported(
+            "ONVIF probe is not yet implemented".to_string(),
+        ))
     }
 
     async fn health(
