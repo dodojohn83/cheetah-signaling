@@ -61,7 +61,12 @@ impl LayeredConfigSource {
         // Build the environment source from a filtered snapshot of the process
         // environment. `CHEETAH_CONFIG_PATH` is used to locate the file above
         // and must not leak into the configuration map as a top-level key.
-        let env_vars: HashMap<String, String> = std::env::vars()
+        let env_vars: HashMap<String, String> = std::env::vars_os()
+            .filter_map(|(k, v)| {
+                let key = k.into_string().ok()?;
+                let value = v.into_string().ok()?;
+                Some((key, value))
+            })
             .filter(|(k, _)| k != "CHEETAH_CONFIG_PATH")
             .collect();
 

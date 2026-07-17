@@ -40,7 +40,7 @@ struct Args {
     #[arg(long, default_value = "100")]
     checkpoint_every: usize,
     /// Skip records that already exist in the target database.
-    #[arg(long, default_value = "true")]
+    #[arg(long, action = clap::ArgAction::Set, default_value_t = true)]
     skip_existing: bool,
 }
 
@@ -81,6 +81,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             )))?;
         }
     };
+
+    storage.migration().run().await?;
 
     let source = FileSource::new(&args.source, args.format.map(|f| f.parse()).transpose()?)?;
 
