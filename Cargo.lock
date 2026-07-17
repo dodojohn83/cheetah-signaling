@@ -650,14 +650,21 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "cheetah-plugin-sdk",
+ "cheetah-signal-contracts",
  "cheetah-signal-types",
+ "futures",
+ "prost",
  "secrecy",
  "semver",
+ "serde",
  "serde_json",
  "thiserror",
  "time",
  "tokio",
+ "tokio-stream",
+ "tonic",
  "tracing",
+ "uuid",
 ]
 
 [[package]]

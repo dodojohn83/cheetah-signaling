@@ -118,3 +118,72 @@ message PluginError {
   string error_code = 1;
   string error_message = 2;
 }
+
+// Runtime service exposed by an out-of-process plugin. The host opens a
+// connection to the plugin process and uses unary RPCs for lifecycle,
+// commands, probes and health checks. A bidirectional stream is provided for
+// plugin-initiated events and heartbeat frames.
+service PluginRuntime {
+  // Executes a driver method. Synchronous request/response for start, drain,
+  // shutdown, handle_command, probe and health.
+  rpc CallDriver(PluginRuntimeCallDriverRequest) returns (PluginRuntimeCallDriverResponse);
+
+  // Bidirectional stream used for plugin-initiated frames (events, heartbeat,
+  // credits) while the driver is active.
+  rpc Stream(stream PluginRuntimeStreamRequest) returns (stream PluginRuntimeStreamResponse);
+}
+
+// Generic request sent from the host to an out-of-process plugin driver.
+message PluginRuntimeCallDriverRequest {
+  // Stable correlation ID used to match host requests with plugin responses.
+  string correlation_id = 1;
+
+  // Driver method to invoke. One of: start, drain, shutdown, handle_command,
+  // probe, health.
+  string method = 2;
+
+  // Opaque payload encoding negotiated in the hello exchange. For the built-in
+  // JSON encoding this is a UTF-8 JSON document.
+  bytes payload = 3;
+
+  // Deadline for the operation, in milliseconds.
+  uint64 timeout_ms = 4;
+}
+
+// Generic response returned by an out-of-process plugin driver.
+message PluginRuntimeCallDriverResponse {
+  // Correlation ID from the matching PluginRuntimeCallDriverRequest.
+  string correlation_id = 1;
+
+  // True when the plugin completed the request without error.
+  bool ok = 2;
+
+  // Stable error classification when ok is false. Maps to PluginError
+  // variants: invalid_manifest, incompatible_sdk, invalid_checksum,
+  // unsupported_protocol, resource_budget_exceeded, unsupported, cancelled,
+  // transient, driver.
+  string error_code = 3;
+
+  // Human-readable, non-sensitive error context.
+  string error_message = 4;
+
+  // Opaque response payload. For health this is a JSON HealthReport.
+  bytes payload = 5;
+}
+
+// Messages sent by the host over the bidirectional stream.
+message PluginRuntimeStreamRequest {
+  oneof message {
+    ConnectPlugin connect = 1;
+    HostFrame frame = 2;
+  }
+}
+
+// Messages sent by the plugin runtime over the bidirectional stream.
+message PluginRuntimeStreamResponse {
+  oneof message {
+    PluginConnected connected = 1;
+    PluginFrameReceived frame_received = 2;
+    PluginError error = 3;
+  }
+}

@@ -10,6 +10,7 @@
 pub mod error;
 pub mod host;
 pub mod loader;
+pub mod oob;
 pub mod registry;
 
 pub use error::PluginHostError;
