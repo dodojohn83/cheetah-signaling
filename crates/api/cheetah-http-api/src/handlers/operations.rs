@@ -8,7 +8,7 @@ use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
 };
-use cheetah_signal_types::{DeviceId, OperationId, Page, UtcTimestamp};
+use cheetah_signal_types::{AuditOutcome, DeviceId, OperationId, Page, UtcTimestamp};
 use std::sync::Arc;
 
 pub async fn list_operations(
@@ -83,6 +83,15 @@ pub async fn cancel_operation(
         .cancel_operation(&ctx.0, &mut *uow, operation_id)
         .await
         .map_err(HttpError::from)?;
+    crate::audit::record(
+        &state,
+        &ctx,
+        "operation.cancel",
+        "operation",
+        Some(operation_id.to_string()),
+        None,
+        AuditOutcome::Success,
+    );
     Ok(Json(
         serde_json::to_value(operation).map_err(HttpError::from)?,
     ))

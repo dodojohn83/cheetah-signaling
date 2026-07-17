@@ -12,7 +12,7 @@ use cheetah_signal_application::dto::{
     ControlPlaybackRequest, StartLiveRequest, StartPlaybackRequest, StartTalkRequest,
     StopLiveRequest,
 };
-use cheetah_signal_types::{DeviceId, MediaSessionId, Page, UtcTimestamp};
+use cheetah_signal_types::{AuditOutcome, DeviceId, MediaSessionId, Page, UtcTimestamp};
 use std::sync::Arc;
 
 pub async fn list_sessions(
@@ -103,6 +103,15 @@ pub async fn create_session(
             )));
         }
     };
+    crate::audit::record(
+        &state,
+        &ctx,
+        "media.session.create",
+        "media_session",
+        Some(result.media_session_id.to_string()),
+        None,
+        AuditOutcome::Success,
+    );
     Ok((
         StatusCode::ACCEPTED,
         Json(serde_json::to_value(result).map_err(HttpError::from)?),
@@ -140,6 +149,15 @@ pub async fn stop_session(
         .stop_live(&ctx.0, &mut *uow, request)
         .await
         .map_err(HttpError::from)?;
+    crate::audit::record(
+        &state,
+        &ctx,
+        "media.session.stop",
+        "media_session",
+        Some(result.media_session_id.to_string()),
+        None,
+        AuditOutcome::Success,
+    );
     Ok(Json(serde_json::to_value(result).map_err(HttpError::from)?))
 }
 
@@ -162,5 +180,14 @@ pub async fn control_session(
         .control_playback(&ctx.0, &mut *uow, request)
         .await
         .map_err(HttpError::from)?;
+    crate::audit::record(
+        &state,
+        &ctx,
+        "media.session.control",
+        "media_session",
+        Some(media_session_id.to_string()),
+        Some(result.operation_id.to_string()),
+        AuditOutcome::Success,
+    );
     Ok(Json(serde_json::to_value(result).map_err(HttpError::from)?))
 }

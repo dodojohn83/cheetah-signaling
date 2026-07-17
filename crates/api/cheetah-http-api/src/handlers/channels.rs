@@ -9,7 +9,7 @@ use axum::{
     response::IntoResponse,
 };
 use cheetah_signal_application::dto::ReplaceChannelCatalogRequest;
-use cheetah_signal_types::{DeviceId, Page, UtcTimestamp};
+use cheetah_signal_types::{AuditOutcome, DeviceId, Page, UtcTimestamp};
 use std::sync::Arc;
 
 pub async fn list_channels(
@@ -59,5 +59,14 @@ pub async fn replace_catalog(
         .replace_channel_catalog(&ctx.0, &mut *uow, device_id, request)
         .await
         .map_err(HttpError::from)?;
+    crate::audit::record(
+        &state,
+        &ctx,
+        "device.channel_catalog.replace",
+        "device",
+        Some(result.device_id.to_string()),
+        None,
+        AuditOutcome::Success,
+    );
     Ok(Json(serde_json::to_value(result).map_err(HttpError::from)?))
 }

@@ -13,7 +13,7 @@ use cheetah_signal_application::dto::{
     RegisterDeviceRequest, RegisterDeviceResult, RetireDeviceRequest,
     UpdateDeviceCapabilitiesRequest,
 };
-use cheetah_signal_types::{DeviceId, Page, UtcTimestamp};
+use cheetah_signal_types::{AuditOutcome, DeviceId, Page, UtcTimestamp};
 use std::sync::Arc;
 
 pub async fn list_devices(
@@ -64,6 +64,21 @@ pub async fn create_device(
     } else {
         StatusCode::OK
     };
+    let target_id = Some(device.device_id.to_string());
+    let action = if created {
+        "device.create"
+    } else {
+        "device.update"
+    };
+    crate::audit::record(
+        &state,
+        &ctx,
+        action,
+        "device",
+        target_id,
+        None,
+        AuditOutcome::Success,
+    );
     Ok((
         status,
         Json(serde_json::to_value(device).map_err(HttpError::from)?),
@@ -104,6 +119,15 @@ pub async fn update_device(
         .update_device_capabilities(&ctx.0, &mut *uow, device_id, request)
         .await
         .map_err(HttpError::from)?;
+    crate::audit::record(
+        &state,
+        &ctx,
+        "device.update_capabilities",
+        "device",
+        Some(result.device_id.to_string()),
+        None,
+        AuditOutcome::Success,
+    );
     Ok(Json(serde_json::to_value(result).map_err(HttpError::from)?))
 }
 
@@ -120,5 +144,14 @@ pub async fn retire_device(
         .retire_device(&ctx.0, &mut *uow, device_id, RetireDeviceRequest {})
         .await
         .map_err(HttpError::from)?;
+    crate::audit::record(
+        &state,
+        &ctx,
+        "device.delete",
+        "device",
+        Some(result.device_id.to_string()),
+        None,
+        AuditOutcome::Success,
+    );
     Ok(Json(serde_json::to_value(result).map_err(HttpError::from)?))
 }
