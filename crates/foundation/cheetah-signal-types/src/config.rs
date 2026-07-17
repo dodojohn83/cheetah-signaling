@@ -341,8 +341,9 @@ pub struct StorageConfig {
     pub postgres_url: SecretString,
     /// Connection URL for PostgreSQL migrations.
     ///
-    /// When unset, the runtime URL is used. Production deployments should
-    /// supply a separate role with DDL privileges.
+    /// Required when the PostgreSQL backend is selected. Production deployments
+    /// should supply a separate role with DDL privileges, distinct from the
+    /// runtime role.
     #[serde(
         serialize_with = "serialize_secret_string",
         deserialize_with = "deserialize_secret_string"
