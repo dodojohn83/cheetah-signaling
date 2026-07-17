@@ -64,25 +64,31 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let signal_config = config_source.snapshot()?;
     let storage_config = signal_config.storage;
 
-    let storage: Arc<dyn Storage> = match storage_config.backend {
-        StorageBackend::Sqlite => {
-            let storage = SqliteStorage::new(&storage_config.sqlite_path).await?;
-            Arc::new(storage)
-        }
-        StorageBackend::Postgres => {
-            let url = storage_config.postgres_url.expose_secret();
-            let storage = PostgresStorage::new(url).await?;
-            Arc::new(storage)
-        }
-        _ => {
-            return Err(MigrationError::other(format!(
-                "unsupported storage backend: {:?}",
-                storage_config.backend
-            )))?;
-        }
+    let storage: Option<Arc<dyn Storage>> = if args.dry_run {
+        None
+    } else {
+        Some(match storage_config.backend {
+            StorageBackend::Sqlite => {
+                let storage = SqliteStorage::new(&storage_config.sqlite_path).await?;
+                Arc::new(storage)
+            }
+            StorageBackend::Postgres => {
+                let url = storage_config.postgres_url.expose_secret();
+                let storage = PostgresStorage::new(url).await?;
+                Arc::new(storage)
+            }
+            _ => {
+                return Err(MigrationError::other(format!(
+                    "unsupported storage backend: {:?}",
+                    storage_config.backend
+                )))?;
+            }
+        })
     };
 
-    storage.migration().run().await?;
+    if let Some(storage) = &storage {
+        storage.migration().run().await?;
+    }
 
     let source = FileSource::new(&args.source, args.format.map(|f| f.parse()).transpose()?)?;
 

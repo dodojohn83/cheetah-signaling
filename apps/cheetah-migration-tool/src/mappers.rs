@@ -79,8 +79,8 @@ fn map_device_like(clock: &dyn Clock, record: &OldRecord) -> Result<MappedEntity
     }
 
     let tenant_id = stable_tenant_id(&record.tenant_id);
-    let device_id = stable_device_id(&record.tenant_id, &record.external_id);
     let protocol = parse_protocol(&record.protocol)?;
+    let device_id = stable_device_id(&record.tenant_id, &record.external_id, protocol);
     let external_id = ProtocolIdentity::new(&record.external_id)?;
     let kind = parse_device_kind(&record.kind, record.entity_type);
     let metadata = extract_metadata(record);
@@ -141,11 +141,13 @@ fn map_channel(clock: &dyn Clock, record: &OldRecord) -> Result<MappedEntity, Mi
     }
 
     let tenant_id = stable_tenant_id(&record.tenant_id);
-    let device_id = stable_device_id(&record.tenant_id, &record.parent_device_id);
+    let protocol = parse_protocol(&record.protocol)?;
+    let device_id = stable_device_id(&record.tenant_id, &record.parent_device_id, protocol);
     let channel_id = stable_channel_id(
         &record.tenant_id,
         &record.parent_device_id,
         &record.external_id,
+        protocol,
     );
     let kind = parse_channel_kind(&record.channel_kind);
     let metadata = extract_metadata(record);
@@ -175,19 +177,36 @@ fn stable_tenant_id(name: &str) -> TenantId {
     TenantId::from_uuid(Uuid::new_v5(&MIGRATION_NAMESPACE, name.as_bytes()))
 }
 
-/// Derives a deterministic `DeviceId` from tenant + external identity.
-fn stable_device_id(tenant_id: &str, external_id: &str) -> DeviceId {
-    let input = format!("{tenant_id}:{external_id}");
+fn protocol_name(protocol: Protocol) -> &'static str {
+    match protocol {
+        Protocol::Gb28181 => "gb28181",
+        Protocol::Onvif => "onvif",
+        Protocol::Mqtt => "mqtt",
+        Protocol::Jt808 => "jt808",
+        Protocol::Isup => "isup",
+        Protocol::Plugin => "plugin",
+        Protocol::Unknown => "unknown",
+        _ => "unknown",
+    }
+}
+
+/// Derives a deterministic `DeviceId` from tenant + protocol + external identity.
+fn stable_device_id(tenant_id: &str, external_id: &str, protocol: Protocol) -> DeviceId {
+    let input = format!("{tenant_id}:{external_id}:{}", protocol_name(protocol));
     DeviceId::from_uuid(Uuid::new_v5(&MIGRATION_NAMESPACE, input.as_bytes()))
 }
 
-/// Derives a deterministic `ChannelId` from tenant + device + channel identity.
+/// Derives a deterministic `ChannelId` from tenant + protocol + device + channel identity.
 fn stable_channel_id(
     tenant_id: &str,
     device_external_id: &str,
     channel_external_id: &str,
+    protocol: Protocol,
 ) -> ChannelId {
-    let input = format!("{tenant_id}:{device_external_id}:{channel_external_id}");
+    let input = format!(
+        "{tenant_id}:{device_external_id}:{channel_external_id}:{}",
+        protocol_name(protocol)
+    );
     ChannelId::from_uuid(Uuid::new_v5(&MIGRATION_NAMESPACE, input.as_bytes()))
 }
 

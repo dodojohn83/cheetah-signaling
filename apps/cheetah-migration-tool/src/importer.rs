@@ -56,7 +56,7 @@ pub struct ImportResult {
 
 /// Migrates data from an old system into Cheetah Signaling storage.
 pub struct Importer {
-    storage: Arc<dyn Storage>,
+    storage: Option<Arc<dyn Storage>>,
     clock: Arc<dyn Clock>,
 }
 
@@ -68,7 +68,9 @@ impl std::fmt::Debug for Importer {
 
 impl Importer {
     /// Creates a new importer backed by the given storage and clock.
-    pub fn new(storage: Arc<dyn Storage>, clock: Arc<dyn Clock>) -> Self {
+    /// `storage` may be `None` when `ImportOptions::dry_run` is `true`, in which
+    /// case no database access occurs.
+    pub fn new(storage: Option<Arc<dyn Storage>>, clock: Arc<dyn Clock>) -> Self {
         Self { storage, clock }
     }
 
@@ -132,8 +134,13 @@ impl Importer {
         if options.dry_run {
             result.records_imported = devices.len() + channels.len();
         } else {
-            self.flush_devices(&devices, options, &mut result).await?;
-            self.flush_channels(&channels, options, &mut result).await?;
+            let storage = self.storage.as_ref().ok_or_else(|| {
+                MigrationError::other("storage is required for non-dry-run import")
+            })?;
+            self.flush_devices(storage, &devices, options, &mut result)
+                .await?;
+            self.flush_channels(storage, &channels, options, &mut result)
+                .await?;
         }
 
         Ok(result)
@@ -158,12 +165,13 @@ impl Importer {
 
     async fn flush_devices(
         &self,
+        storage: &Arc<dyn Storage>,
         devices: &[Device],
         options: &ImportOptions,
         result: &mut ImportResult,
     ) -> Result<(), MigrationError> {
         for chunk in devices.chunks(options.checkpoint_every) {
-            let mut uow = self.storage.begin().await?;
+            let mut uow = storage.begin().await?;
             let mut written: usize = 0;
             {
                 let repo = uow.device_repository();
@@ -195,12 +203,13 @@ impl Importer {
 
     async fn flush_channels(
         &self,
+        storage: &Arc<dyn Storage>,
         channels: &[Channel],
         options: &ImportOptions,
         result: &mut ImportResult,
     ) -> Result<(), MigrationError> {
         for chunk in channels.chunks(options.checkpoint_every) {
-            let mut uow = self.storage.begin().await?;
+            let mut uow = storage.begin().await?;
             let mut written: usize = 0;
             {
                 let repo = uow.channel_repository();
@@ -280,7 +289,7 @@ mod tests {
     #[tokio::test]
     async fn dry_run_reports_imported_count() -> Result<(), Box<dyn std::error::Error>> {
         let (storage, _dir) = sqlite_storage().await?;
-        let storage = Arc::new(storage);
+        let storage: Option<Arc<dyn Storage>> = Some(Arc::new(storage));
         let clock = Arc::new(SystemClock::new());
         let importer = Importer::new(storage, clock);
         let source = VecSource(vec![device_record("cam-01", "tenant-a")]);
@@ -298,7 +307,7 @@ mod tests {
     #[tokio::test]
     async fn checkpoint_zero_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
         let (storage, _dir) = sqlite_storage().await?;
-        let storage = Arc::new(storage);
+        let storage: Option<Arc<dyn Storage>> = Some(Arc::new(storage));
         let clock = Arc::new(SystemClock::new());
         let importer = Importer::new(storage, clock);
         let source = VecSource(Vec::new());
