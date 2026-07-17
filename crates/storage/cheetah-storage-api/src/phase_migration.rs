@@ -130,6 +130,20 @@ impl PhaseMigrationPlanner {
             .cloned()
             .collect()
     }
+
+    /// Highest version among startup-safe phases (baseline, expand, migrate).
+    pub fn latest_startup_version(&self) -> i64 {
+        self.startup_migrations()
+            .iter()
+            .map(|m| m.version)
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// Highest version across all phases.
+    pub fn latest_version(&self) -> i64 {
+        self.migrations.iter().map(|m| m.version).max().unwrap_or(0)
+    }
 }
 
 /// Backend operations required to execute phase migrations.
@@ -153,6 +167,18 @@ pub trait PhaseMigrationBackend: Send + Sync {
     /// Executes arbitrary DDL/DML for a migration.
     async fn execute_migration_sql(&self, sql: &str) -> Result<u64, StorageError>;
 
+    /// Executes a migration and records it as applied in a single transaction.
+    ///
+    /// The default implementation runs the migration SQL and then records the
+    /// applied row separately; backends should override this when they can
+    /// provide an atomic DDL transaction.
+    async fn apply_migration(&self, m: &VersionedMigration) -> Result<(), StorageError> {
+        self.execute_migration_sql(m.sql).await?;
+        self.record_applied(m.version, m.phase, m.description, m.checksum)
+            .await?;
+        Ok(())
+    }
+
     /// Loads a backfill job for the given version, or `None`.
     async fn load_backfill_job(&self, version: i64) -> Result<Option<BackfillJob>, StorageError>;
 
@@ -175,6 +201,16 @@ impl PhaseMigrationRunner {
     /// All known migrations.
     pub fn all(&self) -> &[VersionedMigration] {
         self.planner.all()
+    }
+
+    /// Highest version among startup-safe phases.
+    pub fn latest_startup_version(&self) -> i64 {
+        self.planner.latest_startup_version()
+    }
+
+    /// Highest version across all phases.
+    pub fn latest_version(&self) -> i64 {
+        self.planner.latest_version()
     }
 
     /// Runs all startup phases (expand, migrate and baseline).
@@ -271,10 +307,7 @@ impl PhaseMigrationRunner {
         pending: &[VersionedMigration],
     ) -> Result<(), StorageError> {
         for m in pending {
-            backend.execute_migration_sql(m.sql).await?;
-            backend
-                .record_applied(m.version, m.phase, m.description, m.checksum)
-                .await?;
+            backend.apply_migration(m).await?;
         }
         Ok(())
     }

@@ -39,13 +39,39 @@ impl PostgresMigration {
         }
     }
 
-    fn latest_known(&self) -> i64 {
-        self.runner
-            .all()
-            .iter()
-            .map(|m| m.version)
-            .max()
-            .unwrap_or(0)
+    async fn seed_from_sqlx_migrations(&self) -> Result<(), StorageError> {
+        let table_exists: (bool,) = sqlx::query_as(
+            "SELECT EXISTS (
+                SELECT 1 FROM information_schema.tables
+                WHERE table_name = '_sqlx_migrations'
+            )",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| StorageError::backend(e.to_string()))?;
+
+        if !table_exists.0 {
+            return Ok(());
+        }
+
+        let cheetah_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM _cheetah_migrations")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| StorageError::backend(e.to_string()))?;
+
+        if cheetah_count.0 == 0 {
+            sqlx::query(
+                "INSERT INTO _cheetah_migrations (version, phase, description, checksum, applied_at)
+                 SELECT version, 'baseline' AS phase, description, checksum, installed_on
+                 FROM _sqlx_migrations
+                 WHERE success = true
+                 ON CONFLICT (version, phase) DO NOTHING",
+            )
+            .execute(&self.pool)
+            .await
+            .map_err(|e| StorageError::backend(e.to_string()))?;
+        }
+        Ok(())
     }
 
     async fn applied_startup_versions(&self) -> Result<Vec<(i64, MigrationPhase)>, StorageError> {
@@ -96,6 +122,7 @@ impl PhaseMigrationBackend for PostgresMigration {
         .await
         .map_err(|e| StorageError::backend(e.to_string()))?;
 
+        self.seed_from_sqlx_migrations().await?;
         Ok(())
     }
 
@@ -146,6 +173,15 @@ impl PhaseMigrationBackend for PostgresMigration {
             .await
             .map_err(|e| StorageError::migration(0, e.to_string()))?;
         Ok(result.rows_affected())
+    }
+
+    async fn apply_migration(&self, m: &VersionedMigration) -> Result<(), StorageError> {
+        let sql = build_atomic_migration_sql(m);
+        sqlx::raw_sql(&sql)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| StorageError::migration(m.version, e.to_string()))?;
+        Ok(())
     }
 
     async fn load_backfill_job(&self, version: i64) -> Result<Option<BackfillJob>, StorageError> {
@@ -209,21 +245,21 @@ impl Migration for PostgresMigration {
         self.init_state_tables().await?;
         let applied = self.applied_startup_versions().await?;
         let last_applied = applied.iter().map(|(v, _)| *v).max();
-        let latest_known = self.latest_known();
+        let latest_startup = self.runner.latest_startup_version();
         let status = match last_applied {
-            Some(last) if last == latest_known => MigrationStatus::Current,
-            Some(last) if last < latest_known => MigrationStatus::Behind {
+            Some(last) if last == latest_startup => MigrationStatus::Current,
+            Some(last) if last < latest_startup => MigrationStatus::Behind {
                 current: last,
-                target: latest_known,
+                target: latest_startup,
             },
             Some(last) => MigrationStatus::Diverged {
                 applied: last,
-                known: latest_known,
+                known: latest_startup,
             },
-            None if latest_known == 0 => MigrationStatus::Current,
+            None if latest_startup == 0 => MigrationStatus::Current,
             None => MigrationStatus::Empty,
         };
-        Ok(MigrationInfo::new(last_applied, latest_known, status))
+        Ok(MigrationInfo::new(last_applied, latest_startup, status))
     }
 
     async fn validate(&self) -> Result<(), StorageError> {
@@ -271,6 +307,33 @@ impl BackfillJobRow {
         job.updated_at = UNIX_EPOCH + Duration::from_secs(self.updated_at.unix_timestamp() as u64);
         job
     }
+}
+
+fn build_atomic_migration_sql(m: &VersionedMigration) -> String {
+    let mut body = m.sql.trim().to_string();
+    if !body.ends_with(';') {
+        body.push(';');
+    }
+    let escaped_desc = m.description.replace('\'', "''");
+    let checksum_hex = m
+        .checksum
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect::<String>();
+    format!(
+        "BEGIN;\n{}\nINSERT INTO _cheetah_migrations \
+         (version, phase, description, checksum, applied_at) \
+         VALUES ({}, '{}', '{}', '\\x{}'::bytea, now()) \
+         ON CONFLICT (version, phase) DO UPDATE SET \
+             description = EXCLUDED.description, \
+             checksum = EXCLUDED.checksum, \
+             applied_at = EXCLUDED.applied_at;\nCOMMIT;",
+        body,
+        m.version,
+        m.phase.as_str(),
+        escaped_desc,
+        checksum_hex,
+    )
 }
 
 fn system_time_to_offset(t: SystemTime) -> OffsetDateTime {
