@@ -111,6 +111,24 @@ impl SignalConfig {
                 "http.read_timeout_ms must be greater than zero",
             ));
         }
+        if self.http.max_request_headers == 0 {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                "http.max_request_headers must be greater than zero",
+            ));
+        }
+        if self.http.max_request_uri_length == 0 {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                "http.max_request_uri_length must be greater than zero",
+            ));
+        }
+        if self.http.request_body_limit_bytes == 0 {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                "http.request_body_limit_bytes must be greater than zero",
+            ));
+        }
         let static_key = self.security.static_api_key.expose_secret();
         if !static_key.is_empty() && static_key.len() < 32 {
             return Err(SignalError::new(
@@ -289,6 +307,12 @@ pub struct HttpConfig {
     pub rate_limit_requests_per_second: u32,
     /// Rate limit burst capacity.
     pub rate_limit_burst: u32,
+    /// Maximum number of request headers.
+    pub max_request_headers: usize,
+    /// Maximum length of the request URI (path + query) in bytes.
+    pub max_request_uri_length: usize,
+    /// Maximum request body size in bytes.
+    pub request_body_limit_bytes: usize,
 }
 
 impl Default for HttpConfig {
@@ -302,6 +326,9 @@ impl Default for HttpConfig {
             cors_allowed_origins: Vec::new(),
             rate_limit_requests_per_second: 100,
             rate_limit_burst: 200,
+            max_request_headers: 64,
+            max_request_uri_length: 4096,
+            request_body_limit_bytes: 1024 * 1024,
         }
     }
 }

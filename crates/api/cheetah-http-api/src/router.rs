@@ -5,6 +5,7 @@ use crate::handlers::{
     channels, devices, events, health, media, nodes, operations, tenants, webhooks,
 };
 use crate::rate_limit::rate_limit_middleware;
+use crate::request_limits::request_limits_middleware;
 use axum::{
     Router,
     extract::DefaultBodyLimit,
@@ -90,7 +91,11 @@ pub fn build_router(state: ApiState) -> Router {
         .route("/api/v1/openapi.yaml", get(crate::openapi::serve_yaml))
         .fallback(fallback)
         .with_state(shared_state.clone())
-        .layer(from_fn_with_state(shared_state, rate_limit_middleware));
+        .layer(from_fn_with_state(
+            shared_state.clone(),
+            rate_limit_middleware,
+        ))
+        .layer(from_fn_with_state(shared_state, request_limits_middleware));
 
     api.layer(
         ServiceBuilder::new()

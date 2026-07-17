@@ -65,6 +65,9 @@ pub enum HttpError {
     /// The request exceeded its rate limit.
     #[error("rate limit exceeded: {0}")]
     RateLimited(String),
+    /// The request exceeded a size or length limit.
+    #[error("payload too large: {0}")]
+    PayloadTooLarge(String),
     /// A generic internal error.
     #[error("internal error: {0}")]
     Internal(String),
@@ -81,6 +84,7 @@ impl HttpError {
             Self::PermissionDenied(_) => StatusCode::FORBIDDEN,
             Self::NotImplemented(_) => StatusCode::NOT_IMPLEMENTED,
             Self::RateLimited(_) => StatusCode::TOO_MANY_REQUESTS,
+            Self::PayloadTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -94,6 +98,7 @@ impl HttpError {
             Self::PermissionDenied(_) => "PERMISSION_DENIED",
             Self::NotImplemented(_) => "NOT_IMPLEMENTED",
             Self::RateLimited(_) => "RATE_LIMITED",
+            Self::PayloadTooLarge(_) => "PAYLOAD_TOO_LARGE",
             Self::Internal(_) => "INTERNAL",
         }
     }
@@ -111,6 +116,7 @@ impl HttpError {
         let message = match self {
             Self::Internal(_) => "internal server error".to_string(),
             Self::RateLimited(_) => "rate limit exceeded".to_string(),
+            Self::PayloadTooLarge(_) => "payload too large".to_string(),
             _ => self.to_string(),
         };
         ProblemDetails {
