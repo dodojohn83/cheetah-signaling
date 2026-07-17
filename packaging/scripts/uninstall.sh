@@ -16,7 +16,6 @@ if command -v systemctl >/dev/null 2>&1; then
 fi
 
 rm -f /usr/bin/cheetah-signaling
-rm -f /usr/bin/cheetah-ctl
 rm -f /usr/lib/cheetah/cheetah-signaling-preflight
 rm -f /usr/lib/systemd/system/cheetah-signaling.service
 rmdir /usr/lib/cheetah 2>/dev/null || true

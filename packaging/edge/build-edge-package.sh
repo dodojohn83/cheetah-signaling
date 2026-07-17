@@ -21,16 +21,14 @@ trap cleanup EXIT
 cd "$REPO_ROOT"
 
 # Build release binaries.
-cargo build --release --target "$TARGET" --bin cheetah-signaling --bin cheetah-ctl
+cargo build --release --target "$TARGET" --bin cheetah-signaling
 
 # Assemble package contents.
 install -d -m 755 "$STAGING/$PKG_NAME/bin"
 install -d -m 755 "$STAGING/$PKG_NAME/lib"
 install -d -m 755 "$STAGING/$PKG_NAME/config"
-install -d -m 755 "$STAGING/$PKG_NAME/scripts"
 
 install -m 755 "target/${TARGET}/release/cheetah-signaling" "$STAGING/$PKG_NAME/bin/"
-install -m 755 "target/${TARGET}/release/cheetah-ctl" "$STAGING/$PKG_NAME/bin/"
 install -m 755 "packaging/scripts/cheetah-signaling-preflight" "$STAGING/$PKG_NAME/lib/"
 install -m 644 "packaging/systemd/cheetah-signaling.service" "$STAGING/$PKG_NAME/"
 install -m 644 "config.example.toml" "$STAGING/$PKG_NAME/config/"

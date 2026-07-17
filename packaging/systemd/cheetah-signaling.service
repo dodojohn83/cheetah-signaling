@@ -3,6 +3,8 @@ Description=Cheetah Signaling control plane
 Documentation=https://github.com/dodojohn83/cheetah-signaling
 After=network.target
 Wants=network.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
 
 [Service]
 Type=simple
@@ -15,8 +17,6 @@ ExecStartPre=/usr/lib/cheetah/cheetah-signaling-preflight /var/lib/cheetah
 ExecStart=/usr/bin/cheetah-signaling
 Restart=on-failure
 RestartSec=5
-StartLimitInterval=60
-StartLimitBurst=3
 
 # Hardening
 NoNewPrivileges=true

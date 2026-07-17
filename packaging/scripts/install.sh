@@ -2,6 +2,7 @@
 # Install Cheetah Signaling on an edge host.
 # Usage: install.sh [version]
 # Does not delete existing data in /var/lib/cheetah.
+# This script expects to run from the root of an extracted package tarball.
 
 set -eu
 
@@ -30,18 +31,17 @@ fi
 # Create directories without overwriting existing data.
 install -d -m 755 "$BIN_DIR"
 install -d -m 750 -o cheetah -g cheetah "$DATA_DIR"
-install -d -m 755 "$LOG_DIR"
+install -d -m 750 -o cheetah -g cheetah "$LOG_DIR"
 install -d -m 755 "$CONFIG_DIR"
 install -d -m 755 "$LIB_DIR"
 
 # Install binary and helper scripts.
-install -m 755 "cheetah-signaling" "$BIN_DIR/cheetah-signaling"
-install -m 755 "cheetah-ctl" "$BIN_DIR/cheetah-ctl"
-install -m 755 "cheetah-signaling-preflight" "$LIB_DIR/cheetah-signaling-preflight"
+install -m 755 "bin/cheetah-signaling" "$BIN_DIR/cheetah-signaling"
+install -m 755 "lib/cheetah-signaling-preflight" "$LIB_DIR/cheetah-signaling-preflight"
 
 # Install config only if it does not already exist.
 if [ ! -f "$CONFIG_DIR/config.toml" ]; then
-    install -m 640 "config.example.toml" "$CONFIG_DIR/config.toml"
+    install -m 640 "config/config.example.toml" "$CONFIG_DIR/config.toml"
     chown root:cheetah "$CONFIG_DIR/config.toml"
 fi
 
