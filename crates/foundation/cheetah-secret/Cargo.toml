@@ -14,6 +14,9 @@ cheetah-signal-types = { path = "../cheetah-signal-types" }
 secrecy = { workspace = true }
 uuid = { workspace = true, features = ["v4"] }
 
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
 [dev-dependencies]
 tempfile = { workspace = true }
 

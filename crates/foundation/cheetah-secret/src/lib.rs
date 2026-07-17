@@ -181,10 +181,13 @@ impl FileSecretStore {
     }
 
     fn secret_path(&self, key: &str) -> Result<PathBuf> {
-        if key.contains('/') || key.contains('\\') || key.contains("..") {
+        if key.is_empty()
+            || key.chars().any(std::path::is_separator)
+            || key.split(['/', '\\']).any(|c| c == ".." || c == ".")
+        {
             return Err(SignalError::new(
                 SignalErrorKind::InvalidArgument,
-                "secret key contains path separators",
+                "secret key contains path separators or traversal components",
             ));
         }
         Ok(self.base_dir.join(key))
@@ -197,9 +200,7 @@ impl SecretStore for FileSecretStore {
         #[cfg(unix)]
         {
             match read_secret_file(&path) {
-                Ok(value) => Ok(SecretString::from(
-                    value.trim_end_matches(['\n', '\r']).to_string(),
-                )),
+                Ok(value) => Ok(SecretString::from(value)),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(SignalError::new(
                     SignalErrorKind::NotFound,
                     format!("secret {key} not found"),
@@ -214,9 +215,7 @@ impl SecretStore for FileSecretStore {
         #[cfg(not(unix))]
         {
             match std::fs::read_to_string(&path) {
-                Ok(value) => Ok(SecretString::from(
-                    value.trim_end_matches(['\n', '\r']).to_string(),
-                )),
+                Ok(value) => Ok(SecretString::from(value)),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(SignalError::new(
                     SignalErrorKind::NotFound,
                     format!("secret {key} not found"),
@@ -279,6 +278,7 @@ impl SecretStore for FileSecretStore {
     fn rotate(&self, key: &str) -> Result<SecretString> {
         #[cfg(not(unix))]
         {
+            let _ = key;
             return Err(SignalError::new(
                 SignalErrorKind::Unsupported,
                 "file secret store requires Unix for owner-only permissions",
@@ -305,8 +305,9 @@ impl SecretStore for FileSecretStore {
 /// Composite store that layers multiple [`SecretStore`] implementations.
 ///
 /// `get` tries each store in order and returns the first successful lookup.
-/// Mutating operations (`put`, `delete`, `rotate`) try each store in order and
-/// succeed with the first store that accepts the operation.
+/// `put` and `rotate` succeed with the first store that accepts the operation.
+/// `delete` removes the key from every layered store that holds it, so that no
+/// readable copy remains once the call returns `Ok`.
 #[derive(Clone)]
 pub struct CompositeSecretStore {
     stores: Vec<Arc<dyn SecretStore>>,
@@ -330,11 +331,20 @@ impl CompositeSecretStore {
 impl SecretStore for CompositeSecretStore {
     fn get(&self, key: &str) -> Result<SecretString> {
         let mut last_err = None;
-        for store in &self.stores {
+        let mut retryable_idx = None;
+        for (i, store) in self.stores.iter().enumerate() {
             match store.get(key) {
                 Ok(value) => return Ok(value),
-                Err(err) => last_err = Some(err),
+                Err(err) => {
+                    if retryable_idx.is_none() && err.is_retryable() {
+                        retryable_idx = Some(i);
+                    }
+                    last_err = Some(err);
+                }
             }
+        }
+        if let Some(idx) = retryable_idx {
+            return self.stores[idx].get(key);
         }
         Err(last_err
             .unwrap_or_else(|| SignalError::new(SignalErrorKind::NotFound, "secret not found")))
@@ -359,20 +369,24 @@ impl SecretStore for CompositeSecretStore {
 
     fn delete(&self, key: &str) -> Result<()> {
         let mut deleted = false;
-        let mut last_err = None;
+        let mut not_found_err = None;
         for store in &self.stores {
             match store.delete(key) {
                 Ok(()) => deleted = true,
-                Err(err) if err.kind() == SignalErrorKind::NotFound => last_err = Some(err),
+                Err(err) if err.kind() == SignalErrorKind::NotFound => not_found_err = Some(err),
                 Err(err) if err.kind() == SignalErrorKind::Unsupported => continue,
                 Err(err) => return Err(err),
             }
         }
         if deleted {
             Ok(())
+        } else if let Some(err) = not_found_err {
+            Err(err)
         } else {
-            Err(last_err
-                .unwrap_or_else(|| SignalError::new(SignalErrorKind::NotFound, "secret not found")))
+            Err(SignalError::new(
+                SignalErrorKind::Unsupported,
+                "no writable secret store accepted the operation",
+            ))
         }
     }
 
@@ -393,21 +407,18 @@ impl SecretStore for CompositeSecretStore {
 }
 
 /// Creates `dir` and any missing ancestors with owner-only (`0o700`) permissions.
-/// `DirBuilder` sets the mode at creation time, avoiding a world-readable window.
+/// Existing directories are left untouched, so shared parent directories are not
+/// modified. Any newly created directories receive `0o700` at creation time.
 #[cfg(unix)]
 fn create_secret_dir(dir: &Path) -> std::io::Result<()> {
     use std::fs::DirBuilder;
-    use std::fs::Permissions;
-    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+    use std::os::unix::fs::DirBuilderExt;
 
     let mut builder = DirBuilder::new();
     builder.recursive(true).mode(0o700);
     match builder.create(dir) {
         Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-            std::fs::set_permissions(dir, Permissions::from_mode(0o700))?;
-            Ok(())
-        }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
         Err(e) => Err(e),
     }
 }
@@ -418,11 +429,9 @@ fn read_secret_file(path: &Path) -> std::io::Result<String> {
     use std::io::Read;
     use std::os::unix::fs::OpenOptionsExt;
 
-    const O_NOFOLLOW: i32 = 0o400000;
-
     let mut file = std::fs::OpenOptions::new()
         .read(true)
-        .custom_flags(O_NOFOLLOW)
+        .custom_flags(libc::O_NOFOLLOW)
         .open(path)?;
     let mut value = String::new();
     file.read_to_string(&mut value)?;
@@ -435,14 +444,12 @@ fn write_secret_file(path: &Path, contents: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
-    const O_NOFOLLOW: i32 = 0o400000;
-
     let mut file = std::fs::OpenOptions::new()
         .create(true)
         .truncate(true)
         .write(true)
         .mode(0o600)
-        .custom_flags(O_NOFOLLOW)
+        .custom_flags(libc::O_NOFOLLOW)
         .open(path)?;
     file.write_all(contents)?;
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;

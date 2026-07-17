@@ -17,6 +17,7 @@ None.
 
 - `cheetah-signal-types`
 - `secrecy`, `uuid`
+- `libc` on Unix targets only, for portable `O_NOFOLLOW`
 
 ## Prohibited dependencies
 
@@ -29,6 +30,10 @@ helper.
 All implementations use `secrecy::SecretString` to prevent accidental `Debug`
 leaks. `EnvSecretStore` normalizes keys to upper case and replaces
 non-alphanumeric characters with `_`. `FileSecretStore` stores one secret per
-plain-text file under a configured directory and rejects keys that contain path
-separators. `CompositeSecretStore` layers sources: `get` returns the first match
-while mutating operations succeed with the first writable store that accepts.
+plain-text file under a configured directory, rejects keys that contain path
+separators or traversal components, and reads/writes the exact file bytes. Files
+created through the store are created without following symlinks and with
+owner-only (`0o600`) permissions on Unix. `CompositeSecretStore` layers sources:
+`get` returns the first match, `put`/`rotate` succeed with the first writable
+store that accepts, and `delete` removes the key from every layer so that no
+readable copy remains.
