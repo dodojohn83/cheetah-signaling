@@ -129,9 +129,14 @@ pub fn metrics_response(metrics: Arc<RequestMetrics>) -> Response {
             "cheetah_http_response_duration_seconds_bucket{{le=\"+Inf\"}} {inf_count}\n"
         ));
     }
+    let observation_count = metrics
+        .response_duration_buckets
+        .last()
+        .map(|b| b.load(Ordering::Relaxed))
+        .unwrap_or(0);
     body.push_str(&format!(
         "cheetah_http_response_duration_seconds_sum {sum_seconds}\n\
-         cheetah_http_response_duration_seconds_count {requests_total}\n"
+         cheetah_http_response_duration_seconds_count {observation_count}\n"
     ));
 
     ([("content-type", "text/plain; version=0.0.4")], body).into_response()
