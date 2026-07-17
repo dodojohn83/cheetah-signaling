@@ -24,6 +24,7 @@ tracing = { workspace = true }
 tonic = { workspace = true, features = ["tls-ring"] }
 prost = { workspace = true }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+x509-parser = "0.18.1"
 futures = { workspace = true }
 uuid = { workspace = true }
 

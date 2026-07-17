@@ -25,15 +25,17 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 mod log_forward;
+mod tls_verifier;
 
 use log_forward::forward_logs;
+use tls_verifier::build_plugin_identity_verifier;
 
 use tokio::fs;
 use tokio::net::TcpStream;
 use tokio::process::{Child, Command};
 use tokio::sync::{Mutex, oneshot};
 use tokio::time::sleep;
-use tonic::transport::{Certificate, Channel, ClientTlsConfig, Identity};
+use tonic::transport::{Channel, ClientTlsConfig, Identity};
 use tracing::{debug, warn};
 use uuid::Uuid;
 
@@ -160,13 +162,14 @@ impl ProtocolDriverFactory for OutOfProcessFactory {
         &self,
         config: serde_json::Value,
     ) -> Result<Box<dyn ProtocolDriver>, PluginError> {
-        let driver = OutOfProcessDriver::spawn(self.config.clone(), config).await?;
+        let driver =
+            OutOfProcessDriver::spawn(self.config.clone(), config, self.name.clone()).await?;
         Ok(Box::new(driver))
     }
 }
 
 struct ProcessState {
-    child: Child,
+    child: Option<Child>,
     _shutdown_tx: oneshot::Sender<()>,
     listen_address: String,
 }
@@ -174,7 +177,7 @@ struct ProcessState {
 impl fmt::Debug for ProcessState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ProcessState")
-            .field("child_id", &self.child.id())
+            .field("child_id", &self.child.as_ref().map(|c| c.id()))
             .field("listen_address", &self.listen_address)
             .finish_non_exhaustive()
     }
@@ -199,6 +202,7 @@ impl OutOfProcessDriver {
     async fn spawn(
         runtime: OutOfProcessConfig,
         _config: serde_json::Value,
+        plugin_name: PluginName,
     ) -> Result<Self, PluginError> {
         if runtime.listen_address.is_empty() {
             return Err(PluginError::InvalidManifest(
@@ -215,42 +219,7 @@ impl OutOfProcessDriver {
             ));
         }
 
-        let mut cmd = Command::new(&runtime.command);
-        cmd.args(&runtime.args)
-            .envs(&runtime.env)
-            .env("CHEETAH_PLUGIN_LISTEN_ADDRESS", &runtime.listen_address)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
-
-        let mut child = cmd
-            .spawn()
-            .map_err(|e| PluginError::Driver(format!("failed to spawn plugin: {e}")))?;
-
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| PluginError::Driver("plugin stdout was not captured".to_string()))?;
-        let stderr = child
-            .stderr
-            .take()
-            .ok_or_else(|| PluginError::Driver("plugin stderr was not captured".to_string()))?;
-
-        let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
-        let plugin_name = runtime.command.display().to_string();
-        let max_log_line_len = runtime.max_log_line_len;
-        tokio::spawn(async move {
-            let _ = forward_logs(plugin_name, stdout, stderr, shutdown_rx, max_log_line_len).await;
-        });
-
-        wait_for_ready(
-            &runtime.listen_address,
-            runtime.startup_timeout,
-            runtime.startup_poll_interval,
-        )
-        .await?;
-
-        let tls = runtime.tls.ok_or_else(|| {
+        let tls = runtime.tls.as_ref().ok_or_else(|| {
             PluginError::InvalidManifest(
                 "out-of-process plugin communication requires TLS/mTLS".to_string(),
             )
@@ -278,17 +247,58 @@ impl OutOfProcessDriver {
             ))
         })?;
 
-        let ca = Certificate::from_pem(ca_pem);
+        let verifier = build_plugin_identity_verifier(&ca_pem, plugin_name.as_ref())?;
         let identity = Identity::from_pem(client_cert_pem, client_key_pem);
-        let tls_config = ClientTlsConfig::new()
-            .ca_certificate(ca)
+        let client_tls_config = ClientTlsConfig::new()
             .identity(identity)
             .domain_name(tls.server_name.clone());
+
+        let mut cmd = Command::new(&runtime.command);
+        cmd.args(&runtime.args)
+            .envs(&runtime.env)
+            .env("CHEETAH_PLUGIN_LISTEN_ADDRESS", &runtime.listen_address)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| PluginError::Driver(format!("failed to spawn plugin: {e}")))?;
+
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| PluginError::Driver("plugin stdout was not captured".to_string()))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| PluginError::Driver("plugin stderr was not captured".to_string()))?;
+
+        let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+        let log_plugin_name = runtime.command.display().to_string();
+        let max_log_line_len = runtime.max_log_line_len;
+        tokio::spawn(async move {
+            let _ = forward_logs(
+                log_plugin_name,
+                stdout,
+                stderr,
+                shutdown_rx,
+                max_log_line_len,
+            )
+            .await;
+        });
+
+        wait_for_ready(
+            &runtime.listen_address,
+            runtime.startup_timeout,
+            runtime.startup_poll_interval,
+        )
+        .await?;
 
         let endpoint = format!("https://{}", runtime.listen_address);
         let channel = Channel::from_shared(endpoint.clone())
             .map_err(|e| PluginError::Driver(format!("invalid plugin endpoint {endpoint}: {e}")))?
-            .tls_config(tls_config)
+            .tls_config_with_verifier(client_tls_config, verifier)
             .map_err(|e| PluginError::Driver(format!("invalid TLS config: {e}")))?
             .connect_timeout(Duration::from_millis(
                 runtime.connect_timeout.as_millis().max(0) as u64,
@@ -310,7 +320,7 @@ impl OutOfProcessDriver {
         Ok(Self {
             client: Mutex::new(client),
             process: Mutex::new(ProcessState {
-                child,
+                child: Some(child),
                 _shutdown_tx: shutdown_tx,
                 listen_address: runtime.listen_address,
             }),
@@ -377,11 +387,16 @@ impl ProtocolDriver for OutOfProcessDriver {
         let payload = serde_json::json!({});
         let _ = self.call_method("shutdown", payload, timeout).await;
 
-        let mut process = self.process.lock().await;
-        if let Err(e) = process.child.start_kill() {
-            warn!(error = %e, "failed to send kill signal to plugin process");
+        let child = {
+            let mut process = self.process.lock().await;
+            process.child.take()
+        };
+        if let Some(mut child) = child {
+            if let Err(e) = child.start_kill() {
+                warn!(error = %e, "failed to send kill signal to plugin process");
+            }
+            let _ = child.wait().await;
         }
-        let _ = process.child.wait().await;
         Ok(())
     }
 
@@ -701,7 +716,7 @@ mod tests {
         Ok(OutOfProcessDriver {
             client: Mutex::new(client),
             process: Mutex::new(ProcessState {
-                child,
+                child: Some(child),
                 _shutdown_tx: shutdown_tx,
                 listen_address: format!("127.0.0.1:{port}"),
             }),

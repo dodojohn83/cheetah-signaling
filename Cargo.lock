@@ -715,6 +715,7 @@ dependencies = [
  "tonic",
  "tracing",
  "uuid",
+ "x509-parser",
 ]
 
 [[package]]
