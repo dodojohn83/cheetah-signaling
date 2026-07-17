@@ -13,29 +13,30 @@ spec:
     - Ingress
     - Egress
   ingress:
-    # HTTP API and gRPC from any in-cluster source.
+    # HTTP API and gRPC from pods in the same namespace.
     - from:
-        - namespaceSelector: {}
+        - podSelector: {}
       ports:
         - protocol: TCP
           port: {{ .Values.service.httpPort }}
         - protocol: TCP
           port: {{ .Values.service.grpcPort }}
-    # Device protocol ports are left open to cluster nodes; narrow by CIDR in
-    # production with .Values.networkPolicy.additionalIngress.
+    # Additional ingress rules (e.g. device protocol CIDRs) supplied by the operator.
     {{- with .Values.networkPolicy.additionalIngress }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
   egress:
-    # DNS
+    # DNS (UDP and TCP) is allowed to the cluster DNS service.
     - to:
         - namespaceSelector: {}
       ports:
         - protocol: UDP
           port: 53
-    # Same-namespace and configured database/NATS peers.
+        - protocol: TCP
+          port: 53
+    # Postgres, NATS, and internal HTTP/gRPC peers in the same namespace.
     - to:
-        - namespaceSelector: {}
+        - podSelector: {}
       ports:
         - protocol: TCP
           port: 5432

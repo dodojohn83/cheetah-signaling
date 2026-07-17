@@ -28,12 +28,27 @@ spec:
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
-      {{- with .Values.affinity }}
+      {{- $selectorLabels := include "cheetah-signaling.selectorLabels" . | fromYaml }}
       affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    {{- $selectorLabels | toYaml | nindent 20 }}
+                topologyKey: kubernetes.io/hostname
+        {{- with .Values.extraScheduling.affinity }}
         {{- toYaml . | nindent 8 }}
-      {{- end }}
-      {{- with .Values.topologySpreadConstraints }}
+        {{- end }}
       topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- $selectorLabels | toYaml | nindent 14 }}
+      {{- with .Values.extraScheduling.topologySpreadConstraints }}
         {{- toYaml . | nindent 8 }}
       {{- end }}
       containers:
