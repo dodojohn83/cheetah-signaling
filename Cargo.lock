@@ -738,6 +738,33 @@ dependencies = [
 [[package]]
 name = "cheetah-plugin-testkit"
 version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "cheetah-plugin-sdk",
+ "cheetah-signal-contracts",
+ "cheetah-signal-types",
+ "rcgen",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+ "tracing",
+]
+
+[[package]]
+name = "cheetah-protocol-plugin-example"
+version = "0.1.0"
+dependencies = [
+ "cheetah-plugin-sdk",
+ "cheetah-plugin-testkit",
+ "cheetah-signal-contracts",
+ "tempfile",
+ "tokio",
+ "tonic",
+ "tracing",
+]
 
 [[package]]
 name = "cheetah-runtime-api"

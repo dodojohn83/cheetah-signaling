@@ -1,0 +1,21 @@
+[package]
+name = "cheetah-protocol-plugin-example"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+cheetah-plugin-testkit = { path = "../../crates/plugin/cheetah-plugin-testkit" }
+cheetah-plugin-sdk = { path = "../../crates/plugin/cheetah-plugin-sdk" }
+cheetah-signal-contracts = { path = "../../crates/foundation/cheetah-signal-contracts" }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal", "fs"] }
+tonic = { workspace = true, features = ["tls-ring"] }
+tracing = { workspace = true }
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

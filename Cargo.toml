@@ -13,6 +13,7 @@ members = [
     "crates/plugin/*",
     "crates/protocols/*",
     "crates/testing/*",
+    "examples/protocol-plugin",
 ]
 resolver = "3"
 
@@ -63,6 +64,8 @@ quick-xml = "0.41.0"
 encoding_rs = "0.8.35"
 futures = "0.3.28"
 sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-native-roots", "sqlite", "postgres", "migrate", "macros", "time", "uuid", "json"] }
+rcgen = "0.14.8"
+tempfile = "3.27.0"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
