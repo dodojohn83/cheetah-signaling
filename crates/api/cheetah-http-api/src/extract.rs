@@ -52,6 +52,11 @@ impl FromRequestParts<Arc<ApiState>> for ApiRequestContext {
     ) -> Result<Self, Self::Rejection> {
         let auth = AuthContext::from_request_parts(parts, state).await?;
 
+        let source_ip = parts
+            .extensions
+            .get::<ConnectInfo<SocketAddr>>()
+            .map(|c| c.0.ip().to_string());
+
         let tenant_id = resolve_tenant_id(parts, &auth)?;
 
         let message_id: MessageId = if let Some(header) = parts.headers.get("x-request-id") {
@@ -96,6 +101,7 @@ impl FromRequestParts<Arc<ApiState>> for ApiRequestContext {
             tracestate,
             deadline: Some(deadline),
             node_id: Some(state.config.node_id),
+            source_ip,
         }))
     }
 }

@@ -83,6 +83,7 @@ pub async fn cancel_operation(
         .cancel_operation(&ctx.0, &mut *uow, operation_id)
         .await
         .map_err(HttpError::from)?;
+    let body = serde_json::to_value(operation).map_err(HttpError::from)?;
     crate::audit::record(
         &state,
         &ctx,
@@ -92,7 +93,5 @@ pub async fn cancel_operation(
         None,
         AuditOutcome::Success,
     );
-    Ok(Json(
-        serde_json::to_value(operation).map_err(HttpError::from)?,
-    ))
+    Ok(Json(body))
 }

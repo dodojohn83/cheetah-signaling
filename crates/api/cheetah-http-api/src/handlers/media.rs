@@ -103,19 +103,18 @@ pub async fn create_session(
             )));
         }
     };
+    let session_id = result.media_session_id.to_string();
+    let body = serde_json::to_value(result).map_err(HttpError::from)?;
     crate::audit::record(
         &state,
         &ctx,
         "media.session.create",
         "media_session",
-        Some(result.media_session_id.to_string()),
+        Some(session_id),
         None,
         AuditOutcome::Success,
     );
-    Ok((
-        StatusCode::ACCEPTED,
-        Json(serde_json::to_value(result).map_err(HttpError::from)?),
-    ))
+    Ok((StatusCode::ACCEPTED, Json(body)))
 }
 
 pub async fn get_session(
@@ -149,16 +148,18 @@ pub async fn stop_session(
         .stop_live(&ctx.0, &mut *uow, request)
         .await
         .map_err(HttpError::from)?;
+    let session_id = result.media_session_id.to_string();
+    let body = serde_json::to_value(result).map_err(HttpError::from)?;
     crate::audit::record(
         &state,
         &ctx,
         "media.session.stop",
         "media_session",
-        Some(result.media_session_id.to_string()),
+        Some(session_id),
         None,
         AuditOutcome::Success,
     );
-    Ok(Json(serde_json::to_value(result).map_err(HttpError::from)?))
+    Ok(Json(body))
 }
 
 pub async fn control_session(
@@ -180,14 +181,16 @@ pub async fn control_session(
         .control_playback(&ctx.0, &mut *uow, request)
         .await
         .map_err(HttpError::from)?;
+    let operation_id = result.operation_id.to_string();
+    let body = serde_json::to_value(result).map_err(HttpError::from)?;
     crate::audit::record(
         &state,
         &ctx,
         "media.session.control",
         "media_session",
         Some(media_session_id.to_string()),
-        Some(result.operation_id.to_string()),
+        Some(operation_id),
         AuditOutcome::Success,
     );
-    Ok(Json(serde_json::to_value(result).map_err(HttpError::from)?))
+    Ok(Json(body))
 }

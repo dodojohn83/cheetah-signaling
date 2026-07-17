@@ -64,7 +64,7 @@ pub fn record(
         outcome,
         request_id: ctx.message_id.to_string(),
         correlation_id: Some(ctx.correlation_id.to_string()),
-        source_ip: None,
+        source_ip: ctx.source_ip.clone(),
         node_id: ctx.node_id.unwrap_or(state.config.node_id),
         details,
     };
