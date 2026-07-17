@@ -133,6 +133,25 @@ impl SignalConfig {
                 "storage.max_connections must be greater than zero",
             ));
         }
+        if self.storage.backend == StorageBackend::Postgres {
+            if self.storage.postgres_url.expose_secret().is_empty() {
+                return Err(SignalError::new(
+                    SignalErrorKind::InvalidArgument,
+                    "storage.postgres_url must be configured when backend is postgres",
+                ));
+            }
+            if self
+                .storage
+                .postgres_migration_url
+                .expose_secret()
+                .is_empty()
+            {
+                return Err(SignalError::new(
+                    SignalErrorKind::InvalidArgument,
+                    "storage.postgres_migration_url must be configured when backend is postgres",
+                ));
+            }
+        }
         if self.media.default_invite_timeout_ms.as_millis() <= 0 {
             return Err(SignalError::new(
                 SignalErrorKind::InvalidArgument,
@@ -264,12 +283,21 @@ pub struct StorageConfig {
     pub backend: StorageBackend,
     /// Path for the SQLite database.
     pub sqlite_path: String,
-    /// Connection URL for PostgreSQL.
+    /// Connection URL for PostgreSQL runtime traffic.
     #[serde(
         serialize_with = "serialize_secret_string",
         deserialize_with = "deserialize_secret_string"
     )]
     pub postgres_url: SecretString,
+    /// Connection URL for PostgreSQL migrations.
+    ///
+    /// When unset, the runtime URL is used. Production deployments should
+    /// supply a separate role with DDL privileges.
+    #[serde(
+        serialize_with = "serialize_secret_string",
+        deserialize_with = "deserialize_secret_string"
+    )]
+    pub postgres_migration_url: SecretString,
     /// Maximum connection pool size.
     pub max_connections: u32,
     /// Connection acquisition timeout.
@@ -282,6 +310,7 @@ impl Default for StorageConfig {
             backend: StorageBackend::Sqlite,
             sqlite_path: "/var/lib/cheetah/cheetah.db".to_string(),
             postgres_url: SecretString::default(),
+            postgres_migration_url: SecretString::default(),
             max_connections: 10,
             connection_timeout_ms: DurationMs::from_seconds(5),
         }
@@ -312,6 +341,45 @@ pub struct MessagingConfig {
     pub jetstream_domain: String,
     /// Maximum pending messages per consumer.
     pub max_pending: usize,
+    /// Optional NATS authentication configuration.
+    pub nats_auth: Option<NatsAuth>,
+    /// Optional NATS subject permissions for this process.
+    pub nats_permissions: Option<NatsPermissions>,
+}
+
+/// NATS authentication method.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum NatsAuth {
+    /// Token authentication. The `token_ref` is resolved through the secret store.
+    Token {
+        /// Secret reference to the NATS authentication token.
+        token_ref: String,
+    },
+    /// Username and password authentication. The password is resolved through
+    /// the secret store.
+    UserAndPassword {
+        /// NATS username.
+        username: String,
+        /// Secret reference to the NATS password.
+        password_ref: String,
+    },
+    /// JWT credentials authentication. The credential file content is resolved
+    /// through the secret store.
+    Credentials {
+        /// Secret reference to the NATS credentials file content.
+        credentials_ref: String,
+    },
+}
+
+/// NATS subject permissions for the process.
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct NatsPermissions {
+    /// Allowed publish subject patterns.
+    pub publish_allow: Vec<String>,
+    /// Allowed subscribe subject patterns.
+    pub subscribe_allow: Vec<String>,
 }
 
 /// Supported messaging backends.
