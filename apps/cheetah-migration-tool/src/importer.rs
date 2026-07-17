@@ -1,16 +1,15 @@
 //! Core migration orchestrator.
 
 use crate::error::MigrationError;
+use crate::importer::parents::{ParentDeviceResolver, build_parent_protocols};
 use crate::mappers::{
-    MappedAggregate, ParentProtocols, event_for, map_channel, map_record, parse_protocol,
-    stable_device_id, stable_tenant_id,
+    MappedAggregate, event_for, map_channel, map_record, parse_protocol, stable_device_id,
+    stable_tenant_id,
 };
 use crate::model::{EntityType, OldRecord};
 use crate::source::RecordSource;
-use cheetah_domain::{Device, DeviceRepository, DomainError, DomainEvent, Protocol};
-use cheetah_signal_types::{
-    Clock, DeviceId, Event, ProtocolIdentity, ResourceId, ResourceKind, TenantId,
-};
+use cheetah_domain::{Device, DomainError, DomainEvent, Protocol};
+use cheetah_signal_types::{Clock, DeviceId, Event, ProtocolIdentity, ResourceId, ResourceKind};
 use cheetah_storage_api::Storage;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
@@ -157,12 +156,58 @@ impl Importer {
 
         if options.dry_run {
             result.records_imported = devices.len();
+            let local_parent_ids: HashSet<DeviceId> =
+                devices.iter().map(|d| d.device_id()).collect();
+            let mut uow = match self.storage.as_ref() {
+                Some(storage) => Some(storage.begin().await?),
+                None => None,
+            };
+            let mut resolver = ParentDeviceResolver::new();
+
             for (record, parent_protocol) in &channel_records {
-                let parent_device_id = stable_device_id(
+                let tenant_id = stable_tenant_id(&record.tenant_id);
+                let parent_external_id = match ProtocolIdentity::new(&record.parent_device_id) {
+                    Ok(id) => id,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "skipping channel with invalid parent id");
+                        result.records_invalid += 1;
+                        continue;
+                    }
+                };
+
+                let resolved_db = if let Some(uow) = uow.as_mut() {
+                    resolver
+                        .resolve(
+                            uow.device_repository(),
+                            tenant_id,
+                            *parent_protocol,
+                            &parent_external_id,
+                        )
+                        .await?
+                } else {
+                    None
+                };
+
+                let stable_parent_id = stable_device_id(
                     &record.tenant_id,
                     &record.parent_device_id,
                     *parent_protocol,
                 );
+
+                let parent_device_id = match resolved_db {
+                    Some(id) => id,
+                    None if local_parent_ids.contains(&stable_parent_id) => stable_parent_id,
+                    None => {
+                        tracing::warn!(
+                            tenant_id = %tenant_id,
+                            parent_external_id = %parent_external_id,
+                            "skipping channel with missing parent device",
+                        );
+                        result.records_invalid += 1;
+                        continue;
+                    }
+                };
+
                 match map_channel(
                     self.clock.as_ref(),
                     record,
@@ -177,7 +222,7 @@ impl Importer {
                         }
                     }
                     Err(e) => {
-                        tracing::warn!(row = 0, error = %e, "skipping invalid channel");
+                        tracing::warn!(error = %e, "skipping invalid channel");
                         result.records_invalid += 1;
                     }
                 }
@@ -432,57 +477,7 @@ impl Importer {
     }
 }
 
-/// Caches lookups from `(tenant, protocol, external_id)` to the actual
-/// persisted device id so a parent device referenced by many channels is
-/// only queried once per import run.
-struct ParentDeviceResolver {
-    cache: std::collections::HashMap<(TenantId, Protocol, String), Option<DeviceId>>,
-}
-
-impl ParentDeviceResolver {
-    fn new() -> Self {
-        Self {
-            cache: std::collections::HashMap::new(),
-        }
-    }
-
-    async fn resolve(
-        &mut self,
-        repo: &mut dyn DeviceRepository,
-        tenant_id: TenantId,
-        protocol: Protocol,
-        external_id: &ProtocolIdentity,
-    ) -> Result<Option<DeviceId>, MigrationError> {
-        let key = (tenant_id, protocol, external_id.as_str().to_string());
-        if let Some(cached) = self.cache.get(&key) {
-            return Ok(*cached);
-        }
-
-        let device = repo
-            .get_by_external_id(tenant_id, protocol, external_id.clone())
-            .await?;
-        let id = device.map(|d| d.device_id());
-        self.cache.insert(key, id);
-        Ok(id)
-    }
-}
-
-fn build_parent_protocols(records: &[OldRecord]) -> ParentProtocols {
-    let mut map = ParentProtocols::new();
-    for record in records {
-        if matches!(
-            record.entity_type,
-            EntityType::Device | EntityType::Gb28181Platform | EntityType::OnvifEndpoint
-        ) && let Ok(protocol) = parse_protocol(&record.protocol)
-        {
-            map.insert(
-                (record.tenant_id.clone(), record.external_id.clone()),
-                protocol,
-            );
-        }
-    }
-    map
-}
+mod parents;
 
 #[cfg(test)]
 mod tests;

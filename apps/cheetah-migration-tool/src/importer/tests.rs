@@ -342,3 +342,106 @@ async fn import_channel_uses_existing_parent_device_id() -> Result<(), Box<dyn s
     assert_eq!(channels[0].device_id(), runtime_device_id);
     Ok(())
 }
+
+#[tokio::test]
+async fn dry_run_counts_missing_channel_parent_as_invalid() -> Result<(), Box<dyn std::error::Error>>
+{
+    let clock = Arc::new(SystemClock::new());
+    let importer = Importer::new(None, clock);
+    let source = VecSource(vec![channel_record("ch-01", "missing-cam", "tenant-a")]);
+    let result = importer
+        .import(
+            &source,
+            &ImportOptions {
+                dry_run: true,
+                checkpoint_every: 10,
+                ..Default::default()
+            },
+        )
+        .await?;
+    assert_eq!(result.records_read, 1);
+    assert_eq!(result.records_imported, 0);
+    assert_eq!(result.records_invalid, 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn dry_run_uses_local_parent_device_in_same_batch() -> Result<(), Box<dyn std::error::Error>>
+{
+    let clock = Arc::new(SystemClock::new());
+    let importer = Importer::new(None, clock);
+    let source = VecSource(vec![
+        device_record("cam-01", "tenant-a"),
+        channel_record("ch-01", "cam-01", "tenant-a"),
+    ]);
+    let result = importer
+        .import(
+            &source,
+            &ImportOptions {
+                dry_run: true,
+                checkpoint_every: 10,
+                ..Default::default()
+            },
+        )
+        .await?;
+    assert_eq!(result.records_read, 2);
+    assert_eq!(result.records_imported, 2);
+    assert_eq!(result.records_invalid, 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn dry_run_queries_database_when_storage_available() -> Result<(), Box<dyn std::error::Error>>
+{
+    let (storage, _dir) = sqlite_storage().await?;
+    storage.migration().run().await?;
+    let storage: Arc<dyn Storage> = Arc::new(storage);
+    let clock = Arc::new(SystemClock::new());
+
+    let tenant_id = stable_tenant_id("tenant-a");
+    let external_id = ProtocolIdentity::new("runtime-cam")?;
+    let runtime_device_id = DeviceId::generate();
+    let (runtime_device, registered) = cheetah_domain::Device::new(
+        clock.as_ref(),
+        tenant_id,
+        runtime_device_id,
+        Protocol::Gb28181,
+        external_id,
+        "192.0.2.1:5060",
+        "Runtime",
+        DeviceKind::Camera,
+        Vec::new(),
+        BTreeMap::new(),
+    )?;
+
+    let mut uow = storage.begin().await?;
+    uow.device_repository().save(&runtime_device).await?;
+    uow.outbox()
+        .append(event_for(
+            clock.as_ref(),
+            tenant_id,
+            ResourceKind::Device,
+            ResourceId::Device(runtime_device_id),
+            registered,
+            0,
+        ))
+        .await?;
+    uow.commit().await?;
+
+    let importer = Importer::new(Some(storage), clock.clone());
+    let source = VecSource(vec![channel_record("ch-01", "runtime-cam", "tenant-a")]);
+    let result = importer
+        .import(
+            &source,
+            &ImportOptions {
+                dry_run: true,
+                checkpoint_every: 10,
+                ..Default::default()
+            },
+        )
+        .await?;
+    assert_eq!(result.records_read, 1);
+    assert_eq!(result.records_imported, 1);
+    assert_eq!(result.records_invalid, 0);
+    Ok(())
+}
