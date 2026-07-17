@@ -1,12 +1,14 @@
 //! SQLite migration runner with expand / migrate / backfill / switch / contract phases.
 
 use cheetah_storage_api::{
-    BackfillJob, BackfillProgress, Migration, MigrationInfo, MigrationPhase, MigrationStatus,
-    PhaseMigrationBackend, PhaseMigrationPlanner, PhaseMigrationRunner, StorageError,
-    VersionedMigration,
+    AppliedMigration, BackfillJob, BackfillProgress, Migration, MigrationInfo, MigrationPhase,
+    MigrationStatus, PhaseMigrationBackend, PhaseMigrationPlanner, PhaseMigrationRunner,
+    StorageError, VersionedMigration, split_sql_statements,
 };
 use sqlx::{SqlitePool, migrate::Migration as SqlxMigration};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use time::OffsetDateTime;
+use time::format_description::well_known::Rfc3339;
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("../../../migrations/sqlite");
 
@@ -70,18 +72,22 @@ impl SqliteMigration {
         Ok(())
     }
 
-    async fn applied_startup_versions(&self) -> Result<Vec<(i64, MigrationPhase)>, StorageError> {
-        let rows: Vec<(i64, String)> = sqlx::query_as(
-            "SELECT version, phase FROM _cheetah_migrations WHERE phase IN ('baseline', 'expand', 'migrate')",
+    async fn applied_startup_versions(&self) -> Result<Vec<AppliedMigration>, StorageError> {
+        let rows: Vec<(i64, String, Vec<u8>)> = sqlx::query_as(
+            "SELECT version, phase, checksum FROM _cheetah_migrations WHERE phase IN ('baseline', 'expand', 'migrate')",
         )
         .fetch_all(&self.pool)
         .await
         .map_err(|e| StorageError::backend(e.to_string()))?;
 
         rows.into_iter()
-            .map(|(v, p)| {
+            .map(|(v, p, checksum)| {
                 p.parse::<MigrationPhase>()
-                    .map(|phase| (v, phase))
+                    .map(|phase| AppliedMigration {
+                        version: v,
+                        phase,
+                        checksum,
+                    })
                     .map_err(|e| StorageError::migration(v, e))
             })
             .collect()
@@ -122,17 +128,21 @@ impl PhaseMigrationBackend for SqliteMigration {
         Ok(())
     }
 
-    async fn list_applied(&self) -> Result<Vec<(i64, MigrationPhase)>, StorageError> {
-        let rows: Vec<(i64, String)> =
-            sqlx::query_as("SELECT version, phase FROM _cheetah_migrations")
+    async fn list_applied(&self) -> Result<Vec<AppliedMigration>, StorageError> {
+        let rows: Vec<(i64, String, Vec<u8>)> =
+            sqlx::query_as("SELECT version, phase, checksum FROM _cheetah_migrations")
                 .fetch_all(&self.pool)
                 .await
                 .map_err(|e| StorageError::backend(e.to_string()))?;
 
         rows.into_iter()
-            .map(|(v, p)| {
+            .map(|(v, p, checksum)| {
                 p.parse::<MigrationPhase>()
-                    .map(|phase| (v, phase))
+                    .map(|phase| AppliedMigration {
+                        version: v,
+                        phase,
+                        checksum,
+                    })
                     .map_err(|e| StorageError::migration(v, e))
             })
             .collect()
@@ -168,11 +178,38 @@ impl PhaseMigrationBackend for SqliteMigration {
     }
 
     async fn apply_migration(&self, m: &VersionedMigration) -> Result<(), StorageError> {
-        let sql = build_atomic_migration_sql(m);
-        sqlx::raw_sql(&sql)
-            .execute(&self.pool)
+        let mut tx = self
+            .pool
+            .begin()
             .await
-            .map_err(|e| StorageError::migration(m.version, e.to_string()))?;
+            .map_err(|e| StorageError::backend(e.to_string()))?;
+
+        for stmt in split_sql_statements(m.sql) {
+            if stmt.is_empty() {
+                continue;
+            }
+            sqlx::query(stmt)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| StorageError::migration(m.version, e.to_string()))?;
+        }
+
+        sqlx::query(
+            "INSERT OR REPLACE INTO _cheetah_migrations \
+             (version, phase, description, checksum, applied_at) \
+             VALUES (?, ?, ?, ?, datetime('now'))",
+        )
+        .bind(m.version)
+        .bind(m.phase.as_str())
+        .bind(m.description)
+        .bind(m.checksum)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| StorageError::migration(m.version, e.to_string()))?;
+
+        tx.commit()
+            .await
+            .map_err(|e| StorageError::backend(e.to_string()))?;
         Ok(())
     }
 
@@ -229,13 +266,11 @@ impl Migration for SqliteMigration {
     }
 
     async fn status(&self) -> Result<MigrationInfo, StorageError> {
-        self.init_state_tables().await?;
         let applied = self.applied_startup_versions().await?;
         Ok(self.runner.status_info(&applied))
     }
 
     async fn validate(&self) -> Result<(), StorageError> {
-        self.init_state_tables().await?;
         let info = self.status().await?;
         if info.status == MigrationStatus::Current {
             Ok(())
@@ -281,35 +316,19 @@ impl BackfillJobRow {
     }
 }
 
-fn build_atomic_migration_sql(m: &VersionedMigration) -> String {
-    let mut body = m.sql.trim().to_string();
-    if !body.ends_with(';') {
-        body.push(';');
-    }
-    let escaped_desc = m.description.replace('\'', "''");
-    let checksum_hex = m
-        .checksum
-        .iter()
-        .map(|b| format!("{:02x}", b))
-        .collect::<String>();
-    format!(
-        "BEGIN;\n{}\nINSERT OR REPLACE INTO _cheetah_migrations \
-         (version, phase, description, checksum, applied_at) \
-         VALUES ({}, '{}', '{}', X'{}', datetime('now'));\nCOMMIT;",
-        body,
-        m.version,
-        m.phase.as_str(),
-        escaped_desc,
-        checksum_hex,
-    )
-}
-
 fn humantime_since(t: SystemTime) -> String {
-    let secs = t.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() as i64;
-    format!("{secs}")
+    let nanos = t.duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos() as i128;
+    OffsetDateTime::from_unix_timestamp_nanos(nanos)
+        .unwrap_or(OffsetDateTime::UNIX_EPOCH)
+        .format(&Rfc3339)
+        .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string())
 }
 
 fn parse_humantime(s: &str) -> Option<SystemTime> {
-    let secs: i64 = s.parse().ok()?;
-    Some(UNIX_EPOCH + std::time::Duration::from_secs(secs as u64))
+    let dt = OffsetDateTime::parse(s, &Rfc3339).ok()?;
+    let nanos = dt.unix_timestamp_nanos();
+    if nanos < 0 {
+        return Some(UNIX_EPOCH);
+    }
+    Some(UNIX_EPOCH + Duration::from_nanos(nanos as u64))
 }

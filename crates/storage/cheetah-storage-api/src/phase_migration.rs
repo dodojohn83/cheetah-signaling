@@ -20,6 +20,96 @@ use crate::{BackfillJob, MigrationInfo, MigrationPhase, MigrationStatus, Storage
 use std::collections::HashSet;
 use std::time::{Duration, Instant, SystemTime};
 
+/// Splits a multi-statement SQL script into individual statements at semicolons,
+/// while ignoring `;` inside quoted strings and SQL comments.
+///
+/// This is a minimal lexer for trusted, compile-time migration scripts; it does
+/// not perform any value interpolation.
+pub fn split_sql_statements(sql: &str) -> Vec<&str> {
+    let mut statements = Vec::new();
+    let mut start = 0;
+    let bytes = sql.as_bytes();
+    let mut i = 0;
+    let mut in_string = false;
+    let mut string_quote = b'\'';
+    let mut in_line_comment = false;
+    let mut in_block_comment = false;
+
+    while i < bytes.len() {
+        let c = bytes[i];
+        let next = bytes.get(i + 1).copied();
+
+        if in_line_comment {
+            if c == b'\n' {
+                in_line_comment = false;
+            }
+            i += 1;
+            continue;
+        }
+
+        if in_block_comment {
+            if c == b'*' && next == Some(b'/') {
+                in_block_comment = false;
+                i += 2;
+                continue;
+            }
+            i += 1;
+            continue;
+        }
+
+        if in_string {
+            if c == string_quote {
+                // Check for escaped quote (doubled quote).
+                if next == Some(string_quote) {
+                    i += 2;
+                    continue;
+                }
+                in_string = false;
+            }
+            i += 1;
+            continue;
+        }
+
+        if c == b'\'' || c == b'"' {
+            in_string = true;
+            string_quote = c;
+            i += 1;
+            continue;
+        }
+
+        if c == b'-' && next == Some(b'-') {
+            in_line_comment = true;
+            i += 2;
+            continue;
+        }
+
+        if c == b'/' && next == Some(b'*') {
+            in_block_comment = true;
+            i += 2;
+            continue;
+        }
+
+        if c == b';' {
+            let stmt = &sql[start..i];
+            if !stmt.chars().all(|ch| ch.is_whitespace()) {
+                statements.push(stmt.trim());
+            }
+            start = i + 1;
+        }
+
+        i += 1;
+    }
+
+    if start < sql.len() {
+        let stmt = &sql[start..];
+        if !stmt.chars().all(|ch| ch.is_whitespace()) {
+            statements.push(stmt.trim());
+        }
+    }
+
+    statements
+}
+
 /// An embedded migration split by phase.
 #[derive(Clone, Debug)]
 pub struct VersionedMigration {
@@ -93,8 +183,22 @@ pub struct PhaseMigrationPlanner {
 
 impl PhaseMigrationPlanner {
     /// Creates a planner from a list of migrations.
+    ///
+    /// Panics if more than one backfill migration shares the same version,
+    /// because backfill progress is keyed by `(version)`.
     pub fn new(mut migrations: Vec<VersionedMigration>) -> Self {
         migrations.sort_by_key(|m| (m.version, phase_order(m.phase)));
+
+        let mut seen_backfills = std::collections::HashSet::new();
+        for m in &migrations {
+            if m.phase == MigrationPhase::Backfill && !seen_backfills.insert(m.version) {
+                panic!(
+                    "duplicate backfill version {}: {}",
+                    m.version, m.description
+                );
+            }
+        }
+
         Self { migrations }
     }
 
@@ -140,6 +244,31 @@ impl PhaseMigrationPlanner {
             .collect()
     }
 
+    /// Verifies that already-applied migrations have not changed since they were recorded.
+    pub fn validate_checksums(
+        applied: &[AppliedMigration],
+        known: &[VersionedMigration],
+    ) -> Result<(), StorageError> {
+        let known_by_key: std::collections::HashMap<_, _> = known
+            .iter()
+            .map(|m| ((m.version, m.phase), m.checksum))
+            .collect();
+        for a in applied {
+            if let Some(known_checksum) = known_by_key.get(&(a.version, a.phase))
+                && a.checksum.as_slice() != *known_checksum
+            {
+                return Err(StorageError::migration(
+                    a.version,
+                    format!(
+                        "checksum mismatch for applied migration {} {:?}: file changed",
+                        a.version, a.phase
+                    ),
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Highest version among startup-safe phases (baseline, expand, migrate).
     pub fn latest_startup_version(&self) -> i64 {
         self.startup_migrations()
@@ -155,14 +284,25 @@ impl PhaseMigrationPlanner {
     }
 }
 
+/// A migration already recorded in the tracking table.
+#[derive(Clone, Debug)]
+pub struct AppliedMigration {
+    /// Migration version.
+    pub version: i64,
+    /// Migration phase.
+    pub phase: MigrationPhase,
+    /// Checksum stored at application time.
+    pub checksum: Vec<u8>,
+}
+
 /// Backend operations required to execute phase migrations.
 #[async_trait::async_trait]
 pub trait PhaseMigrationBackend: Send + Sync {
     /// Initialise the migration state tables.
     async fn init_state_tables(&self) -> Result<(), StorageError>;
 
-    /// Returns the set of already applied (version, phase) pairs.
-    async fn list_applied(&self) -> Result<Vec<(i64, MigrationPhase)>, StorageError>;
+    /// Returns the set of already applied migrations, including their checksums.
+    async fn list_applied(&self) -> Result<Vec<AppliedMigration>, StorageError>;
 
     /// Records that a migration phase has been applied.
     async fn record_applied(
@@ -181,6 +321,12 @@ pub trait PhaseMigrationBackend: Send + Sync {
     /// The default implementation runs the migration SQL and then records the
     /// applied row separately; backends should override this when they can
     /// provide an atomic DDL transaction.
+    ///
+    /// Because the migration body and the applied-row insert run in one
+    /// transaction, migration scripts must not contain statements that cannot be
+    /// executed inside a transaction block (e.g. `CREATE INDEX CONCURRENTLY` on
+    /// PostgreSQL). Use `CREATE INDEX IF NOT EXISTS` or perform such operations
+    /// manually outside the migration runner.
     async fn apply_migration(&self, m: &VersionedMigration) -> Result<(), StorageError> {
         self.execute_migration_sql(m.sql).await?;
         self.record_applied(m.version, m.phase, m.description, m.checksum)
@@ -193,6 +339,20 @@ pub trait PhaseMigrationBackend: Send + Sync {
 
     /// Inserts or updates a backfill job.
     async fn save_backfill_job(&self, job: &BackfillJob) -> Result<(), StorageError>;
+
+    /// Acquires a cross-process lock for migration execution.
+    ///
+    /// The default implementation is a no-op; backends that support it (e.g.
+    /// Postgres via `pg_advisory_lock`) should override this to serialize
+    /// multi-node startups and operator-driven phase runs.
+    async fn acquire_migration_lock(&self) -> Result<(), StorageError> {
+        Ok(())
+    }
+
+    /// Releases the lock acquired by `acquire_migration_lock`.
+    async fn release_migration_lock(&self) -> Result<(), StorageError> {
+        Ok(())
+    }
 }
 
 /// Safety bounds for operator-driven backfill loops.
@@ -232,10 +392,11 @@ impl PhaseMigrationRunner {
     }
 
     /// Computes migration status from the set of applied startup phases.
-    pub fn status_info(&self, applied: &[(i64, MigrationPhase)]) -> MigrationInfo {
+    pub fn status_info(&self, applied: &[AppliedMigration]) -> MigrationInfo {
         let startup = self.startup_migrations();
-        let pending = PhaseMigrationPlanner::pending(applied.iter().copied(), &startup);
-        let last_applied = applied.iter().map(|(v, _)| *v).max();
+        let applied_keys = applied.iter().map(|a| (a.version, a.phase));
+        let pending = PhaseMigrationPlanner::pending(applied_keys, &startup);
+        let last_applied = applied.iter().map(|a| a.version).max();
         let latest_startup = self.latest_startup_version();
 
         let status = if !pending.is_empty() {
@@ -268,10 +429,10 @@ impl PhaseMigrationRunner {
         backend: &dyn PhaseMigrationBackend,
     ) -> Result<(), StorageError> {
         backend.init_state_tables().await?;
-        let applied = backend.list_applied().await?;
-        let startup = self.planner.startup_migrations();
-        let pending = PhaseMigrationPlanner::pending(applied, &startup);
-        self.apply_pending(backend, &pending).await
+        backend.acquire_migration_lock().await?;
+        let result = self.apply_locked(backend, |p| p.startup_migrations()).await;
+        let _ = backend.release_migration_lock().await;
+        result
     }
 
     /// Runs all pending migrations for a specific phase.
@@ -281,9 +442,27 @@ impl PhaseMigrationRunner {
         phase: MigrationPhase,
     ) -> Result<(), StorageError> {
         backend.init_state_tables().await?;
+        backend.acquire_migration_lock().await?;
+        let result = self
+            .apply_locked(backend, |p| p.phase_migrations(phase))
+            .await;
+        let _ = backend.release_migration_lock().await;
+        result
+    }
+
+    async fn apply_locked<F>(
+        &self,
+        backend: &dyn PhaseMigrationBackend,
+        select: F,
+    ) -> Result<(), StorageError>
+    where
+        F: FnOnce(&PhaseMigrationPlanner) -> Vec<VersionedMigration>,
+    {
         let applied = backend.list_applied().await?;
-        let candidates = self.planner.phase_migrations(phase);
-        let pending = PhaseMigrationPlanner::pending(applied, &candidates);
+        let candidates = select(&self.planner);
+        PhaseMigrationPlanner::validate_checksums(&applied, &candidates)?;
+        let applied_keys = applied.iter().map(|a| (a.version, a.phase));
+        let pending = PhaseMigrationPlanner::pending(applied_keys, &candidates);
         self.apply_pending(backend, &pending).await
     }
 
@@ -296,6 +475,7 @@ impl PhaseMigrationRunner {
         backend: &dyn PhaseMigrationBackend,
         batch_size: u64,
     ) -> Result<(), StorageError> {
+        backend.init_state_tables().await?;
         let backfills = self.planner.phase_migrations(MigrationPhase::Backfill);
         let start = Instant::now();
         for m in backfills {
@@ -330,6 +510,7 @@ impl PhaseMigrationRunner {
         version: i64,
         batch_size: u64,
     ) -> Result<u64, StorageError> {
+        backend.init_state_tables().await?;
         let candidates: Vec<_> = self
             .planner
             .phase_migrations(MigrationPhase::Backfill)

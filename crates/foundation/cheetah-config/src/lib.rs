@@ -7,6 +7,7 @@
 //! 3. Environment variables with the `CHEETAH_` prefix.
 //! 4. Secret provider overrides applied to the resulting `SignalConfig`.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use cheetah_signal_types::{ConfigSource, Result, SignalConfig, SignalError, SignalErrorKind};
@@ -57,10 +58,18 @@ impl LayeredConfigSource {
             builder = builder.add_source(File::new(path_str, FileFormat::Toml));
         }
 
+        // Build the environment source from a filtered snapshot of the process
+        // environment. `CHEETAH_CONFIG_PATH` is used to locate the file above
+        // and must not leak into the configuration map as a top-level key.
+        let env_vars: HashMap<String, String> = std::env::vars()
+            .filter(|(k, _)| k != "CHEETAH_CONFIG_PATH")
+            .collect();
+
         builder = builder.add_source(
             config::Environment::with_prefix("CHEETAH")
                 .try_parsing(true)
-                .separator("__"),
+                .separator("__")
+                .source(Some(env_vars)),
         );
 
         let cfg = builder.build().map_err(|e| {

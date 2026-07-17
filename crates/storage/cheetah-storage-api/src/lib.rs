@@ -13,7 +13,8 @@ pub use migration::{
     BackfillJob, BackfillProgress, Migration, MigrationInfo, MigrationPhase, MigrationStatus,
 };
 pub use phase_migration::{
-    PhaseMigrationBackend, PhaseMigrationPlanner, PhaseMigrationRunner, VersionedMigration,
+    AppliedMigration, PhaseMigrationBackend, PhaseMigrationPlanner, PhaseMigrationRunner,
+    VersionedMigration, split_sql_statements,
 };
 pub use repository::{OperationStep, OperationStepRepository, OwnerRepository};
 pub use storage::Storage;
