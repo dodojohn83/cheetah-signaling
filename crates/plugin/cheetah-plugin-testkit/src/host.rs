@@ -81,22 +81,55 @@ impl DeviceSink for MockHost {
 #[async_trait]
 impl CommandSource for MockHost {
     async fn next_command(&self) -> Result<Option<DriverCommand>, PluginError> {
-        // Take the receiver out of the mutex so we can await `recv` without
-        // holding an async lock guard across an await point.
-        let mut receiver = {
+        // Take the receiver out of the shared slot and wrap it in a guard that
+        // returns the receiver on drop, so cancellation does not lose it.
+        let receiver = {
             let mut guard = self.command_rx.lock().await;
             guard.take().ok_or_else(|| {
                 PluginError::Driver("mock host command receiver is already in use".to_string())
             })?
         };
 
-        let command = receiver.recv().await;
+        let mut guard = ReceiverGuard {
+            slot: self.command_rx.clone(),
+            receiver: Some(receiver),
+        };
 
-        {
-            let mut guard = self.command_rx.lock().await;
-            *guard = Some(receiver);
-        }
-
+        let command = guard.recv().await;
         Ok(command)
+    }
+}
+
+/// Guard that returns the command receiver to its shared slot when dropped.
+///
+/// This makes `next_command` cancellation-safe: if the future is dropped while
+/// awaiting `recv`, the receiver is still restored.
+struct ReceiverGuard {
+    slot: Arc<TokioMutex<Option<mpsc::Receiver<DriverCommand>>>>,
+    receiver: Option<mpsc::Receiver<DriverCommand>>,
+}
+
+impl ReceiverGuard {
+    async fn recv(&mut self) -> Option<DriverCommand> {
+        if let Some(ref mut rx) = self.receiver {
+            rx.recv().await
+        } else {
+            None
+        }
+    }
+}
+
+impl Drop for ReceiverGuard {
+    fn drop(&mut self) {
+        if let Some(receiver) = self.receiver.take() {
+            // Use a synchronous try-lock; if the async mutex is held by another
+            // task the receiver cannot be restored here, which is acceptable in
+            // a test-only utility.
+            if let Ok(mut guard) = self.slot.try_lock()
+                && guard.is_none()
+            {
+                *guard = Some(receiver);
+            }
+        }
     }
 }
