@@ -166,9 +166,19 @@ fn map_channel(clock: &dyn Clock, record: &OldRecord) -> Result<MappedEntity, Mi
         metadata,
     )?;
 
+    let actions = if record.has_secret() {
+        vec![format!(
+            "channel {} has secrets that must be re-entered: {}",
+            record.external_id,
+            record.secret_field_names().join(", ")
+        )]
+    } else {
+        Vec::new()
+    };
+
     Ok(MappedEntity {
         entity: MappedAggregate::Channel(channel),
-        actions: Vec::new(),
+        actions,
     })
 }
 
@@ -397,5 +407,28 @@ mod tests {
         let mut r = record(EntityType::Channel, "ch-01", "tenant-a");
         r.parent_device_id = String::new();
         assert!(map_record(&clock, &r).is_err());
+    }
+
+    #[test]
+    fn map_channel_with_secret_emits_action_and_excludes_secret() -> Result<(), MigrationError> {
+        let clock = SystemClock::new();
+        let mut r = record(EntityType::Channel, "ch-02", "tenant-a");
+        r.parent_device_id = "cam-01".to_string();
+        r.secret_fields = "stream_key".to_string();
+        r.metadata.insert(
+            "stream_key".to_string(),
+            serde_json::Value::String("topsecret".to_string()),
+        );
+
+        let entity = map_record(&clock, &r)?;
+        match entity.entity {
+            MappedAggregate::Channel(c) => {
+                assert!(c.metadata().get("stream_key").is_none());
+            }
+            _ => panic!("expected channel aggregate"),
+        }
+        assert!(!entity.actions.is_empty());
+        assert!(entity.actions[0].contains("stream_key"));
+        Ok(())
     }
 }
