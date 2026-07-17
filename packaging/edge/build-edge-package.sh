@@ -36,16 +36,18 @@ install -m 755 "packaging/scripts/install.sh" "$STAGING/$PKG_NAME/"
 install -m 755 "packaging/scripts/upgrade.sh" "$STAGING/$PKG_NAME/"
 install -m 755 "packaging/scripts/uninstall.sh" "$STAGING/$PKG_NAME/"
 
-# Generate SBOM and license summary.
+# Generate SBOM and license summary scoped to the packaged target.
 install -d -m 755 "$OUT_DIR"
-cargo tree --prefix none --no-dedupe --format "{p} {l}" > "$STAGING/$PKG_NAME/ThirdPartyLicenses.txt"
-cargo metadata --format-version 1 \
+cargo tree --target "$TARGET" --prefix none --no-dedupe --format "{p} {l}" > "$STAGING/$PKG_NAME/ThirdPartyLicenses.txt"
+cargo metadata --format-version 1 --filter-platform "$TARGET" \
     | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps({"packages":[{"name":p["name"],"version":p["version"],"license":(p.get("license") or ""),"source":(p.get("source") or "")} for p in d["packages"]]}, indent=2))' \
     > "$STAGING/$PKG_NAME/${PKG_NAME}.sbom.json"
 
-# Create tarball and checksum.
+# Create tarball and checksum, and also emit standalone SBOM/license files.
 install -d -m 755 "$OUT_DIR"
 tar -czf "$OUT_DIR/${PKG_NAME}.tar.gz" -C "$STAGING" "$PKG_NAME"
+cp "$STAGING/$PKG_NAME/ThirdPartyLicenses.txt" "$OUT_DIR/ThirdPartyLicenses.txt"
+cp "$STAGING/$PKG_NAME/${PKG_NAME}.sbom.json" "$OUT_DIR/${PKG_NAME}.sbom.json"
 cd "$OUT_DIR"
 sha256sum "${PKG_NAME}.tar.gz" > "${PKG_NAME}.tar.gz.sha256"
 
