@@ -10,6 +10,25 @@ It demonstrates:
 - Exposing the `PluginRuntime` service using `cheetah-plugin-testkit`.
 - Graceful shutdown on `SIGINT`/`SIGTERM`.
 
+## Public entry point
+
+- `src/main.rs` — the `protocol-plugin-example` binary.
+
+## Features
+
+None.
+
+## Allowed dependencies
+
+- `cheetah-plugin-testkit`, `cheetah-plugin-sdk`, `cheetah-signal-contracts`
+- `tokio`, `tonic`, `tracing`, `tempfile`
+
+## Prohibited dependencies
+
+No real device SDKs, no `unsafe` FFI, and no production secrets, databases,
+NATS clients, or media clients. This example is only for local testing and
+integration against the plugin gRPC contract.
+
 ## Run
 
 ```bash
