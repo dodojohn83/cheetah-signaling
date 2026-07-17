@@ -26,6 +26,10 @@ struct Cli {
     #[arg(long, short, env = "CHEETAH_API_KEY")]
     api_key: Option<String>,
 
+    /// Tenant identifier. Required for `device-diagnostics` and sent as `x-tenant-id`.
+    #[arg(long, short, env = "CHEETAH_TENANT_ID")]
+    tenant: Option<String>,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -70,6 +74,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         Command::OutboxReplay => admin_post(&cli, "/api/v1/admin/outbox-replay").await,
         Command::Reconcile => admin_post(&cli, "/api/v1/admin/reconcile").await,
         Command::DeviceDiagnostics { ref id } => {
+            if cli.tenant.is_none() {
+                eprintln!(
+                    "{}",
+                    serde_json::json!({"error": "--tenant is required for device-diagnostics"})
+                );
+                std::process::exit(2);
+            }
             let path = format!("/api/v1/admin/devices/{id}/diagnostics");
             admin_get(&cli, &path).await
         }
@@ -101,6 +112,11 @@ fn build_client(cli: &Cli) -> reqwest::Client {
         && let Ok(value) = reqwest::header::HeaderValue::from_str(key)
     {
         headers.insert("X-Api-Key", value);
+    }
+    if let Some(tenant) = &cli.tenant
+        && let Ok(value) = reqwest::header::HeaderValue::from_str(tenant)
+    {
+        headers.insert("x-tenant-id", value);
     }
     reqwest::Client::builder()
         .default_headers(headers)
