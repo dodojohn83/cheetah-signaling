@@ -24,14 +24,17 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
+mod log_forward;
+
+use log_forward::forward_logs;
+
 use tokio::fs;
-use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::process::{Child, Command};
 use tokio::sync::{Mutex, oneshot};
 use tokio::time::sleep;
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Identity};
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 use uuid::Uuid;
 
 /// Configuration for spawning and connecting to an out-of-process plugin.
@@ -55,6 +58,8 @@ pub struct OutOfProcessConfig {
     pub connect_timeout: DurationMs,
     /// Maximum gRPC request/response payload size in bytes.
     pub max_message_size: usize,
+    /// Maximum bytes to read for a single plugin stdout/stderr line.
+    pub max_log_line_len: usize,
     /// TLS configuration for the gRPC channel. Required for out-of-process plugins.
     pub tls: Option<TlsConfig>,
 }
@@ -100,6 +105,7 @@ impl Default for OutOfProcessConfig {
             startup_poll_interval: DurationMs::from_millis(250),
             connect_timeout: DurationMs::from_seconds(10),
             max_message_size: 4 * 1024 * 1024,
+            max_log_line_len: 8 * 1024,
             tls: None,
         }
     }
@@ -232,8 +238,9 @@ impl OutOfProcessDriver {
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
         let plugin_name = runtime.command.display().to_string();
+        let max_log_line_len = runtime.max_log_line_len;
         tokio::spawn(async move {
-            let _ = forward_logs(plugin_name, stdout, stderr, shutdown_rx).await;
+            let _ = forward_logs(plugin_name, stdout, stderr, shutdown_rx, max_log_line_len).await;
         });
 
         wait_for_ready(
@@ -431,43 +438,6 @@ impl ProtocolDriver for OutOfProcessDriver {
         let response = self.call_method("health", payload, timeout).await?;
         serde_json::from_value(response)
             .map_err(|e| PluginError::Driver(format!("health response malformed: {e}")))
-    }
-}
-
-async fn forward_logs(
-    plugin_name: String,
-    stdout: tokio::process::ChildStdout,
-    stderr: tokio::process::ChildStderr,
-    mut shutdown: oneshot::Receiver<()>,
-) {
-    let mut stdout_reader = BufReader::new(stdout).lines();
-    let mut stderr_reader = BufReader::new(stderr).lines();
-    let mut stdout_done = false;
-    let mut stderr_done = false;
-
-    loop {
-        if stdout_done && stderr_done {
-            break;
-        }
-        tokio::select! {
-            _ = &mut shutdown => break,
-            line = stdout_reader.next_line(), if !stdout_done => match line {
-                Ok(Some(line)) => info!(plugin = %plugin_name, stream = "stdout", "{line}"),
-                Ok(None) => stdout_done = true,
-                Err(e) => {
-                    warn!(plugin = %plugin_name, stream = "stdout", error = %e, "log read failed");
-                    stdout_done = true;
-                }
-            },
-            line = stderr_reader.next_line(), if !stderr_done => match line {
-                Ok(Some(line)) => warn!(plugin = %plugin_name, stream = "stderr", "{line}"),
-                Ok(None) => stderr_done = true,
-                Err(e) => {
-                    warn!(plugin = %plugin_name, stream = "stderr", error = %e, "log read failed");
-                    stderr_done = true;
-                }
-            },
-        }
     }
 }
 
