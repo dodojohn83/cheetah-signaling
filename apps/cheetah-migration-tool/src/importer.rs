@@ -1,7 +1,10 @@
 //! Core migration orchestrator.
 
 use crate::error::MigrationError;
-use crate::mappers::{MappedAggregate, MappedEntity, event_for, map_record};
+use crate::mappers::{
+    MappedAggregate, MappedEntity, ParentProtocols, event_for, map_record, parse_protocol,
+};
+use crate::model::{EntityType, OldRecord};
 use crate::source::RecordSource;
 use cheetah_domain::{Channel, Device, DomainEvent};
 use cheetah_signal_types::{Clock, Event, ResourceId, ResourceKind};
@@ -96,6 +99,8 @@ impl Importer {
         let mut channel_events: Vec<Event<DomainEvent>> = Vec::new();
         let mut pending: Vec<MappedEntity> = Vec::new();
 
+        let parent_protocols = build_parent_protocols(&records);
+
         for (row, record) in records.iter().enumerate() {
             if !options.cutover_ids.is_empty() && !options.cutover_ids.contains(&record.external_id)
             {
@@ -103,7 +108,7 @@ impl Importer {
                 continue;
             }
 
-            let entity = match map_record(self.clock.as_ref(), record) {
+            let entity = match map_record(self.clock.as_ref(), record, &parent_protocols) {
                 Ok(entity) => entity,
                 Err(e) => {
                     tracing::warn!(row = row + 1, error = %e, "skipping invalid record");
@@ -315,6 +320,23 @@ impl Importer {
         }
         Ok(())
     }
+}
+
+fn build_parent_protocols(records: &[OldRecord]) -> ParentProtocols {
+    let mut map = ParentProtocols::new();
+    for record in records {
+        if matches!(
+            record.entity_type,
+            EntityType::Device | EntityType::Gb28181Platform | EntityType::OnvifEndpoint
+        ) && let Ok(protocol) = parse_protocol(&record.protocol)
+        {
+            map.insert(
+                (record.tenant_id.clone(), record.external_id.clone()),
+                protocol,
+            );
+        }
+    }
+    map
 }
 
 #[cfg(test)]

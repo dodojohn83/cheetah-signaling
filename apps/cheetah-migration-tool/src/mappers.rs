@@ -9,8 +9,11 @@ use cheetah_signal_types::{
     ChannelId, Clock, CorrelationId, DeviceId, Event, EventId, MessageId, NodeId, ProtocolIdentity,
     ResourceId, ResourceKind, ResourceRef, TenantId,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use uuid::Uuid;
+
+/// Map from (tenant_id, external_id) to the protocol used by the parent device.
+pub(crate) type ParentProtocols = HashMap<(String, String), Protocol>;
 
 /// Namespace used for deterministic v5 UUIDs derived from old-system identifiers.
 const MIGRATION_NAMESPACE: Uuid = Uuid::from_bytes([
@@ -48,7 +51,11 @@ pub enum MappedAggregate {
 }
 
 /// Maps a source record into a domain aggregate.
-pub fn map_record(clock: &dyn Clock, record: &OldRecord) -> Result<MappedEntity, MigrationError> {
+pub fn map_record(
+    clock: &dyn Clock,
+    record: &OldRecord,
+    parent_protocols: &ParentProtocols,
+) -> Result<MappedEntity, MigrationError> {
     match record.entity_type {
         EntityType::Tenant => Ok(MappedEntity {
             entity: MappedAggregate::Tenant,
@@ -58,7 +65,7 @@ pub fn map_record(clock: &dyn Clock, record: &OldRecord) -> Result<MappedEntity,
         EntityType::Device | EntityType::Gb28181Platform | EntityType::OnvifEndpoint => {
             map_device_like(clock, record)
         }
-        EntityType::Channel => map_channel(clock, record),
+        EntityType::Channel => map_channel(clock, record, parent_protocols),
         EntityType::SecretReference => Ok(MappedEntity {
             entity: MappedAggregate::SecretReference,
             actions: Vec::new(),
@@ -138,7 +145,11 @@ fn map_device_like(clock: &dyn Clock, record: &OldRecord) -> Result<MappedEntity
     })
 }
 
-fn map_channel(clock: &dyn Clock, record: &OldRecord) -> Result<MappedEntity, MigrationError> {
+fn map_channel(
+    clock: &dyn Clock,
+    record: &OldRecord,
+    parent_protocols: &ParentProtocols,
+) -> Result<MappedEntity, MigrationError> {
     if record.external_id.is_empty() {
         return Err(MigrationError::InvalidRecord {
             row: 0,
@@ -159,13 +170,16 @@ fn map_channel(clock: &dyn Clock, record: &OldRecord) -> Result<MappedEntity, Mi
     }
 
     let tenant_id = stable_tenant_id(&record.tenant_id);
-    let protocol = parse_protocol(&record.protocol)?;
-    let device_id = stable_device_id(&record.tenant_id, &record.parent_device_id, protocol);
+    let parent_protocol = parent_protocols
+        .get(&(record.tenant_id.clone(), record.parent_device_id.clone()))
+        .copied()
+        .unwrap_or_else(|| parse_protocol(&record.protocol).unwrap_or(Protocol::Gb28181));
+    let device_id = stable_device_id(&record.tenant_id, &record.parent_device_id, parent_protocol);
     let channel_id = stable_channel_id(
         &record.tenant_id,
         &record.parent_device_id,
         &record.external_id,
-        protocol,
+        parent_protocol,
     );
     let kind = parse_channel_kind(&record.channel_kind);
     let metadata = extract_metadata(record);
@@ -274,7 +288,7 @@ fn stable_channel_id(
     ChannelId::from_uuid(Uuid::new_v5(&MIGRATION_NAMESPACE, input.as_bytes()))
 }
 
-fn parse_protocol(value: &str) -> Result<Protocol, MigrationError> {
+pub(crate) fn parse_protocol(value: &str) -> Result<Protocol, MigrationError> {
     match value.to_lowercase().as_str() {
         "gb28181" => Ok(Protocol::Gb28181),
         "onvif" => Ok(Protocol::Onvif),
@@ -386,7 +400,7 @@ mod tests {
         let clock = SystemClock::new();
         let mut r = record(EntityType::Device, "cam-01", "tenant-a");
         r.parent_device_id = "cam-01".to_string();
-        let entity = map_record(&clock, &r)?;
+        let entity = map_record(&clock, &r, &ParentProtocols::new())?;
         match entity.entity {
             MappedAggregate::Device(d) => {
                 assert_eq!(d.external_id().as_str(), "cam-01");
@@ -398,7 +412,7 @@ mod tests {
                 );
                 // Stable id means the same input always maps to the same UUID.
                 let id = d.device_id();
-                let entity2 = map_record(&clock, &r)?;
+                let entity2 = map_record(&clock, &r, &ParentProtocols::new())?;
                 match entity2.entity {
                     MappedAggregate::Device(d2) => assert_eq!(d2.device_id(), id),
                     _ => panic!("expected device"),
@@ -414,7 +428,7 @@ mod tests {
         let clock = SystemClock::new();
         let mut r = record(EntityType::Device, "cam-02", "tenant-a");
         r.secret_fields = "password,api_key".to_string();
-        let entity = map_record(&clock, &r)?;
+        let entity = map_record(&clock, &r, &ParentProtocols::new())?;
         assert!(!entity.actions.is_empty());
         assert!(entity.actions[0].contains("password"));
         assert!(entity.actions[0].contains("api_key"));
@@ -440,7 +454,7 @@ mod tests {
             serde_json::Value::String("keep me".to_string()),
         );
 
-        let entity = map_record(&clock, &r)?;
+        let entity = map_record(&clock, &r, &ParentProtocols::new())?;
         match entity.entity {
             MappedAggregate::Device(d) => {
                 assert!(d.metadata().get("password").is_none());
@@ -460,7 +474,7 @@ mod tests {
         let clock = SystemClock::new();
         let mut r = record(EntityType::Channel, "ch-01", "tenant-a");
         r.parent_device_id = String::new();
-        assert!(map_record(&clock, &r).is_err());
+        assert!(map_record(&clock, &r, &ParentProtocols::new()).is_err());
     }
 
     #[test]
@@ -474,7 +488,7 @@ mod tests {
             serde_json::Value::String("topsecret".to_string()),
         );
 
-        let entity = map_record(&clock, &r)?;
+        let entity = map_record(&clock, &r, &ParentProtocols::new())?;
         match entity.entity {
             MappedAggregate::Channel(c) => {
                 assert!(c.metadata().get("stream_key").is_none());
@@ -483,6 +497,36 @@ mod tests {
         }
         assert!(!entity.actions.is_empty());
         assert!(entity.actions[0].contains("stream_key"));
+        Ok(())
+    }
+
+    #[test]
+    fn map_channel_uses_parent_device_protocol() -> Result<(), MigrationError> {
+        let clock = SystemClock::new();
+        let mut device = record(EntityType::Device, "cam-01", "tenant-a");
+        device.protocol = "onvif".to_string();
+        device.kind = "camera".to_string();
+
+        let mut parent_protocols = ParentProtocols::new();
+        let device_entity = map_record(&clock, &device, &parent_protocols)?;
+        let parent_device_id = match device_entity.entity {
+            MappedAggregate::Device(d) => d.device_id(),
+            _ => panic!("expected device aggregate"),
+        };
+        parent_protocols.insert(
+            ("tenant-a".to_string(), "cam-01".to_string()),
+            Protocol::Onvif,
+        );
+
+        let mut channel = record(EntityType::Channel, "ch-01", "tenant-a");
+        channel.parent_device_id = "cam-01".to_string();
+        channel.protocol = "".to_string();
+
+        let channel_entity = map_record(&clock, &channel, &parent_protocols)?;
+        match channel_entity.entity {
+            MappedAggregate::Channel(c) => assert_eq!(c.device_id(), parent_device_id),
+            _ => panic!("expected channel aggregate"),
+        }
         Ok(())
     }
 }
