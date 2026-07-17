@@ -27,8 +27,12 @@ metadata:
   name: cheetah-signaling-secrets
 type: Opaque
 stringData:
-  CHEETAH_SECRET_DB_PASSWORD: "..."
+  CHEETAH_STORAGE__POSTGRES_URL: "postgres://user:password@postgres:5432/cheetah"
 ```
+
+## Persistence
+
+The default storage backend is SQLite. The chart creates a PVC for `/var/lib/cheetah` when `persistence.enabled` is true (default). For multi-replica or production deployments, switch to Postgres (`--set config.storage.backend=postgres`) and provide the URL in the secret.
 
 ## Container image
 
