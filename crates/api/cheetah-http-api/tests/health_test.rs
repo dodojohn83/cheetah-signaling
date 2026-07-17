@@ -58,5 +58,7 @@ async fn metrics_returns_counters() {
     let body = metrics.text().await.expect("read metrics body");
     assert!(body.contains("cheetah_http_requests_total"));
     assert!(body.contains("cheetah_http_responses_2xx_total"));
+    assert!(body.contains("cheetah_http_response_duration_seconds_bucket"));
+    assert!(body.contains("cheetah_http_response_duration_seconds_sum"));
     assert!(body.contains("cheetah_http_responses_4xx_total"));
 }

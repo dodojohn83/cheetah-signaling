@@ -52,9 +52,10 @@ pub fn build_router(state: ApiState) -> Router {
             metrics_request.record_request();
         })
         .on_response(
-            move |response: &AxumResponse<_>, _latency: Duration, span: &Span| {
+            move |response: &AxumResponse<_>, latency: Duration, span: &Span| {
                 let status = response.status();
                 metrics_response.record_response(status);
+                metrics_response.record_duration(latency);
                 tracing::info!(
                     parent: span,
                     status = status.as_u16(),
