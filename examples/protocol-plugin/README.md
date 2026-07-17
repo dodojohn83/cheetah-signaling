@@ -35,8 +35,9 @@ integration against the plugin gRPC contract.
 cargo run -p protocol-plugin-example
 ```
 
-Set `CHEETAH_PLUGIN_LISTEN_ADDRESS` to bind to a specific address, and
-`CHEETAH_PLUGIN_NAME` to match the configured plugin identity.
+Set `CHEETAH_PLUGIN_LISTEN_ADDRESS` to bind to a specific address (defaults to
+`127.0.0.1:51009`), and `CHEETAH_PLUGIN_NAME` to match the configured plugin
+identity.
 
 This example is for integration testing and local development; it does not
 connect to real devices.

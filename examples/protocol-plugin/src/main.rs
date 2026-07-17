@@ -12,7 +12,7 @@ use cheetah_plugin_testkit::{FakePluginRuntime, TestCerts};
 use std::net::SocketAddr;
 use tonic::transport::{Certificate, Identity, ServerTlsConfig};
 
-const DEFAULT_LISTEN_ADDRESS: &str = "127.0.0.1:0";
+const DEFAULT_LISTEN_ADDRESS: &str = "127.0.0.1:51009";
 const DEFAULT_PLUGIN_NAME: &str = "examples/protocol-plugin";
 
 #[tokio::main]
