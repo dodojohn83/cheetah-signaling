@@ -209,7 +209,7 @@ jobs:
       - name: Scan image for vulnerabilities
         uses: anchore/scan-action@v4
         with:
-          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name || inputs.version }}
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-push.outputs.digest }}
           fail-build: false
 
   release:
@@ -243,8 +243,8 @@ jobs:
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name || inputs.version }}
-          name: Release ${{ github.ref_name || inputs.version }}
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+          name: Release ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
           generate_release_notes: true
           files: |
             artifacts/*.tar.gz
