@@ -1,4 +1,4 @@
-# protocol-plugin-example
+# cheetah-protocol-plugin-example
 
 A minimal out-of-process protocol plugin that Cheetah hosts can load through the
 `PluginRuntime` gRPC bridge.
@@ -12,7 +12,7 @@ It demonstrates:
 
 ## Public entry point
 
-- `src/main.rs` — the `protocol-plugin-example` binary.
+- `src/main.rs` — the `cheetah-protocol-plugin-example` binary.
 
 ## Features
 
@@ -32,7 +32,7 @@ integration against the plugin gRPC contract.
 ## Run
 
 ```bash
-cargo run -p protocol-plugin-example
+cargo run -p cheetah-protocol-plugin-example
 ```
 
 Set `CHEETAH_PLUGIN_LISTEN_ADDRESS` to bind to a specific address (defaults to

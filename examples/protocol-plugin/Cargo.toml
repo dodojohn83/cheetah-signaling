@@ -1,5 +1,5 @@
 [package]
-name = "protocol-plugin-example"
+name = "cheetah-protocol-plugin-example"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
