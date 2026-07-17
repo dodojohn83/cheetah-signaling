@@ -347,6 +347,7 @@ fn map_scheduler_error(e: crate::error::SchedulerError) -> DomainError {
         crate::error::SchedulerError::InvalidArgument(_)
         | crate::error::SchedulerError::IdentityMismatch { .. }
         | crate::error::SchedulerError::Tls(_) => DomainError::invalid_argument(e.to_string()),
+        crate::error::SchedulerError::Transport(_) => DomainError::unavailable(e.to_string()),
     }
 }
 

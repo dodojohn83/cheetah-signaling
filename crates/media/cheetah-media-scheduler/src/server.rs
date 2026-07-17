@@ -43,7 +43,7 @@ impl GrpcServer {
     {
         let addr: SocketAddr = format!("{}:{}", config.listen_addr, config.port)
             .parse()
-            .map_err(|e| SchedulerError::Tls(format!("invalid listen address: {e}")))?;
+            .map_err(|e| SchedulerError::Transport(format!("invalid listen address: {e}")))?;
 
         let service = MediaClusterRegistryServer::with_interceptor(registry, mtls_interceptor);
 
@@ -101,10 +101,10 @@ impl GrpcServer {
 
         let (tx, rx) = tokio::sync::oneshot::channel();
         let incoming = TcpIncoming::bind(addr)
-            .map_err(|e| SchedulerError::Tls(format!("failed to bind gRPC listener: {e}")))?;
-        let local_addr = incoming
-            .local_addr()
-            .map_err(|e| SchedulerError::Tls(format!("failed to get gRPC local address: {e}")))?;
+            .map_err(|e| SchedulerError::Transport(format!("failed to bind gRPC listener: {e}")))?;
+        let local_addr = incoming.local_addr().map_err(|e| {
+            SchedulerError::Transport(format!("failed to get gRPC local address: {e}"))
+        })?;
         let router = server.add_service(service);
 
         tokio::spawn(async move {

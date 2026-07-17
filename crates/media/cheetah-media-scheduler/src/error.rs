@@ -34,4 +34,7 @@ pub enum SchedulerError {
     /// TLS configuration or termination error.
     #[error("TLS error: {0}")]
     Tls(String),
+    /// TCP listener bind or transport error.
+    #[error("transport error: {0}")]
+    Transport(String),
 }
