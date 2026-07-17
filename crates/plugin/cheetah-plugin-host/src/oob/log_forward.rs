@@ -68,7 +68,9 @@ pub async fn forward_logs(
 fn redact(line: &str, in_pem_block: &mut bool) -> String {
     let trimmed = line.trim_start();
     if trimmed.starts_with("-----BEGIN") {
-        *in_pem_block = true;
+        // A PEM block may be printed on a single line; only stay in
+        // multi-line redaction mode if the END marker is not on this line.
+        *in_pem_block = !trimmed.contains("-----END");
         return "[REDACTED PEM]".to_string();
     }
     if *in_pem_block {
