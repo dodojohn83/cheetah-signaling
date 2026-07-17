@@ -240,10 +240,12 @@ fn parse_channel_kind(value: &str) -> ChannelKind {
 }
 
 fn extract_metadata(record: &OldRecord) -> BTreeMap<String, String> {
+    let secret_names: std::collections::HashSet<&str> =
+        record.secret_field_names().into_iter().collect();
     record
         .metadata
         .iter()
-        .filter(|(k, _)| !is_core_field(k))
+        .filter(|(k, _)| !is_core_field(k) && !secret_names.contains(k.as_str()))
         .map(|(k, v)| {
             let s = v.as_str().map_or_else(|| v.to_string(), String::from);
             (k.clone(), s)
@@ -333,6 +335,40 @@ mod tests {
         assert!(!entity.actions.is_empty());
         assert!(entity.actions[0].contains("password"));
         assert!(entity.actions[0].contains("api_key"));
+        Ok(())
+    }
+
+    #[test]
+    fn map_device_with_secret_excludes_secret_from_metadata() -> Result<(), MigrationError> {
+        let clock = SystemClock::new();
+        let mut r = record(EntityType::Device, "cam-02", "tenant-a");
+        r.parent_device_id = "cam-02".to_string();
+        r.secret_fields = "password,api_key".to_string();
+        r.metadata.insert(
+            "password".to_string(),
+            serde_json::Value::String("hunter2".to_string()),
+        );
+        r.metadata.insert(
+            "api_key".to_string(),
+            serde_json::Value::String("abc".to_string()),
+        );
+        r.metadata.insert(
+            "note".to_string(),
+            serde_json::Value::String("keep me".to_string()),
+        );
+
+        let entity = map_record(&clock, &r)?;
+        match entity.entity {
+            MappedAggregate::Device(d) => {
+                assert!(d.metadata().get("password").is_none());
+                assert!(d.metadata().get("api_key").is_none());
+                assert_eq!(
+                    d.metadata().get("note").map(String::as_str),
+                    Some("keep me")
+                );
+            }
+            _ => panic!("expected device aggregate"),
+        }
         Ok(())
     }
 
