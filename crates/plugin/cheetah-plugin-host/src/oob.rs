@@ -261,7 +261,8 @@ impl OutOfProcessDriver {
             .domain_name(tls.server_name.clone());
 
         let mut cmd = Command::new(&runtime.command);
-        cmd.args(&runtime.args)
+        cmd.env_clear()
+            .args(&runtime.args)
             .envs(&runtime.env)
             .env("CHEETAH_PLUGIN_LISTEN_ADDRESS", &runtime.listen_address)
             .stdout(Stdio::piped())
@@ -473,10 +474,16 @@ async fn wait_for_ready(
     let poll = Duration::from_millis(poll_interval.as_millis().max(0) as u64);
 
     while std::time::Instant::now() < deadline {
-        match TcpStream::connect(address).await {
-            Ok(_stream) => return Ok(()),
-            Err(e) => {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        let connect = tokio::time::timeout(remaining, TcpStream::connect(address));
+        match connect.await {
+            Ok(Ok(_stream)) => return Ok(()),
+            Ok(Err(e)) => {
                 debug!(address = %address, error = %e, "plugin not ready yet");
+                sleep(poll).await;
+            }
+            Err(_) => {
+                debug!(address = %address, "plugin readiness probe timed out");
                 sleep(poll).await;
             }
         }
