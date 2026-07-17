@@ -127,16 +127,21 @@ pub struct HealthReport {
 #[async_trait]
 pub trait ProtocolDriver: Send + Sync {
     /// Starts the driver. Called after successful load and negotiation.
-    async fn start(&self, ctx: &dyn DriverContext) -> Result<(), PluginError>;
+    async fn start(&self, ctx: &dyn DriverContext, timeout: DurationMs) -> Result<(), PluginError>;
     /// Stops accepting new work and drains in-flight commands.
     async fn drain(&self, ctx: &dyn DriverContext, timeout: DurationMs) -> Result<(), PluginError>;
     /// Shuts the driver down.
-    async fn shutdown(&self, ctx: &dyn DriverContext) -> Result<(), PluginError>;
+    async fn shutdown(
+        &self,
+        ctx: &dyn DriverContext,
+        timeout: DurationMs,
+    ) -> Result<(), PluginError>;
     /// Handles a single command.
     async fn handle_command(
         &self,
         ctx: &dyn DriverContext,
         command: DriverCommand,
+        timeout: DurationMs,
     ) -> Result<(), PluginError>;
     /// Probes a target (e.g. a device address) and returns its capabilities.
     async fn probe(
@@ -160,6 +165,14 @@ pub trait ProtocolDriverFactory: Send + Sync {
     fn name(&self) -> PluginName;
     /// Capabilities advertised by drivers from this factory.
     fn capabilities(&self) -> Vec<ProtocolCapability>;
+    /// Returns the maximum time the host should allow for `create` to finish.
+    ///
+    /// Built-in factories that create in-process drivers can keep the default
+    /// (5 seconds). Out-of-process factories should return a budget that covers
+    /// process startup and the first gRPC connection.
+    fn creation_timeout(&self) -> DurationMs {
+        DurationMs::from_seconds(5)
+    }
     /// Creates a new driver instance with the given configuration.
     async fn create(
         &self,
