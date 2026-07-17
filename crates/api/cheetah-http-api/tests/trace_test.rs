@@ -20,11 +20,17 @@ async fn trace_context_is_echoed_in_response() {
 
     assert_eq!(response.status(), reqwest::StatusCode::OK);
     assert_eq!(
-        response.headers().get("traceparent").expect("traceparent header"),
+        response
+            .headers()
+            .get("traceparent")
+            .expect("traceparent header"),
         traceparent
     );
     assert_eq!(
-        response.headers().get("tracestate").expect("tracestate header"),
+        response
+            .headers()
+            .get("tracestate")
+            .expect("tracestate header"),
         tracestate
     );
 }
