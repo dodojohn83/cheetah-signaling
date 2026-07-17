@@ -65,7 +65,15 @@ pub fn map_record(
         EntityType::Device | EntityType::Gb28181Platform | EntityType::OnvifEndpoint => {
             map_device_like(clock, record)
         }
-        EntityType::Channel => map_channel(clock, record, parent_protocols),
+        EntityType::Channel => {
+            let parent_protocol = parent_protocols
+                .get(&(record.tenant_id.clone(), record.parent_device_id.clone()))
+                .copied()
+                .unwrap_or_else(|| parse_protocol(&record.protocol).unwrap_or(Protocol::Gb28181));
+            let parent_device_id =
+                stable_device_id(&record.tenant_id, &record.parent_device_id, parent_protocol);
+            map_channel(clock, record, parent_protocol, parent_device_id)
+        }
         EntityType::SecretReference => Ok(MappedEntity {
             entity: MappedAggregate::SecretReference,
             actions: Vec::new(),
@@ -145,10 +153,12 @@ fn map_device_like(clock: &dyn Clock, record: &OldRecord) -> Result<MappedEntity
     })
 }
 
-fn map_channel(
+/// Maps a channel record using the resolved parent device identifier.
+pub(crate) fn map_channel(
     clock: &dyn Clock,
     record: &OldRecord,
-    parent_protocols: &ParentProtocols,
+    parent_protocol: Protocol,
+    parent_device_id: DeviceId,
 ) -> Result<MappedEntity, MigrationError> {
     if record.external_id.is_empty() {
         return Err(MigrationError::InvalidRecord {
@@ -170,11 +180,6 @@ fn map_channel(
     }
 
     let tenant_id = stable_tenant_id(&record.tenant_id);
-    let parent_protocol = parent_protocols
-        .get(&(record.tenant_id.clone(), record.parent_device_id.clone()))
-        .copied()
-        .unwrap_or_else(|| parse_protocol(&record.protocol).unwrap_or(Protocol::Gb28181));
-    let device_id = stable_device_id(&record.tenant_id, &record.parent_device_id, parent_protocol);
     let channel_id = stable_channel_id(
         &record.tenant_id,
         &record.parent_device_id,
@@ -187,7 +192,7 @@ fn map_channel(
     let (channel, domain_event) = Channel::new(
         clock,
         tenant_id,
-        device_id,
+        parent_device_id,
         channel_id,
         kind,
         record.name.clone(),
@@ -269,7 +274,7 @@ fn protocol_name(protocol: Protocol) -> &'static str {
 }
 
 /// Derives a deterministic `DeviceId` from tenant + protocol + external identity.
-fn stable_device_id(tenant_id: &str, external_id: &str, protocol: Protocol) -> DeviceId {
+pub(crate) fn stable_device_id(tenant_id: &str, external_id: &str, protocol: Protocol) -> DeviceId {
     let input = format!("{tenant_id}:{external_id}:{}", protocol_name(protocol));
     DeviceId::from_uuid(Uuid::new_v5(&MIGRATION_NAMESPACE, input.as_bytes()))
 }

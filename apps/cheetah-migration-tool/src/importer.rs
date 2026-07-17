@@ -2,12 +2,15 @@
 
 use crate::error::MigrationError;
 use crate::mappers::{
-    MappedAggregate, MappedEntity, ParentProtocols, event_for, map_record, parse_protocol,
+    MappedAggregate, ParentProtocols, event_for, map_channel, map_record, parse_protocol,
+    stable_device_id, stable_tenant_id,
 };
 use crate::model::{EntityType, OldRecord};
 use crate::source::RecordSource;
-use cheetah_domain::{Channel, Device, DomainError, DomainEvent};
-use cheetah_signal_types::{Clock, Event, ResourceId, ResourceKind};
+use cheetah_domain::{Device, DeviceRepository, DomainError, DomainEvent, Protocol};
+use cheetah_signal_types::{
+    Clock, DeviceId, Event, ProtocolIdentity, ResourceId, ResourceKind, TenantId,
+};
 use cheetah_storage_api::Storage;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
@@ -97,9 +100,7 @@ impl Importer {
 
         let mut devices: Vec<Device> = Vec::new();
         let mut device_events: Vec<Event<DomainEvent>> = Vec::new();
-        let mut channels: Vec<Channel> = Vec::new();
-        let mut channel_events: Vec<Event<DomainEvent>> = Vec::new();
-        let mut pending: Vec<MappedEntity> = Vec::new();
+        let mut channel_records: Vec<(OldRecord, Protocol)> = Vec::new();
 
         let parent_protocols = build_parent_protocols(&records);
 
@@ -110,87 +111,88 @@ impl Importer {
                 continue;
             }
 
-            let entity = match map_record(self.clock.as_ref(), record, &parent_protocols) {
-                Ok(entity) => entity,
-                Err(e) => {
-                    tracing::warn!(row = row + 1, error = %e, "skipping invalid record");
-                    result.records_invalid += 1;
-                    continue;
-                }
-            };
-
-            if record.has_secret() {
-                result.records_with_secrets += 1;
-                result.action_items.extend(entity.actions.clone());
-            }
-
             *result
                 .counts_by_kind
                 .entry(format!("{:?}", record.entity_type))
                 .or_insert(0) += 1;
 
-            pending.push(entity);
+            match record.entity_type {
+                EntityType::Device | EntityType::Gb28181Platform | EntityType::OnvifEndpoint => {
+                    let entity = match map_record(self.clock.as_ref(), record, &parent_protocols) {
+                        Ok(entity) => entity,
+                        Err(e) => {
+                            tracing::warn!(row = row + 1, error = %e, "skipping invalid record");
+                            result.records_invalid += 1;
+                            continue;
+                        }
+                    };
 
-            if pending.len() >= options.checkpoint_every {
-                self.drain(
-                    pending.drain(..),
-                    &mut devices,
-                    &mut device_events,
-                    &mut channels,
-                    &mut channel_events,
-                );
+                    if record.has_secret() {
+                        result.records_with_secrets += 1;
+                        result.action_items.extend(entity.actions.clone());
+                    }
+
+                    match entity.entity {
+                        MappedAggregate::Device(d)
+                        | MappedAggregate::Gb28181Platform(d)
+                        | MappedAggregate::OnvifEndpoint(d) => {
+                            devices.push(d);
+                            device_events.extend(entity.events);
+                        }
+                        _ => {}
+                    }
+                }
+                EntityType::Channel => {
+                    let parent_protocol = parent_protocols
+                        .get(&(record.tenant_id.clone(), record.parent_device_id.clone()))
+                        .copied()
+                        .unwrap_or_else(|| {
+                            parse_protocol(&record.protocol).unwrap_or(Protocol::Gb28181)
+                        });
+                    channel_records.push((record.clone(), parent_protocol));
+                }
+                EntityType::SecretReference | EntityType::Tenant | EntityType::Unknown => {}
             }
         }
 
-        if !pending.is_empty() {
-            self.drain(
-                pending.drain(..),
-                &mut devices,
-                &mut device_events,
-                &mut channels,
-                &mut channel_events,
-            );
-        }
-
         if options.dry_run {
-            result.records_imported = devices.len() + channels.len();
+            result.records_imported = devices.len();
+            for (record, parent_protocol) in &channel_records {
+                let parent_device_id = stable_device_id(
+                    &record.tenant_id,
+                    &record.parent_device_id,
+                    *parent_protocol,
+                );
+                match map_channel(
+                    self.clock.as_ref(),
+                    record,
+                    *parent_protocol,
+                    parent_device_id,
+                ) {
+                    Ok(entity) => {
+                        result.records_imported += 1;
+                        if record.has_secret() {
+                            result.records_with_secrets += 1;
+                            result.action_items.extend(entity.actions);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(row = 0, error = %e, "skipping invalid channel");
+                        result.records_invalid += 1;
+                    }
+                }
+            }
         } else {
             let storage = self.storage.as_ref().ok_or_else(|| {
                 MigrationError::other("storage is required for non-dry-run import")
             })?;
             self.flush_devices(storage, &devices, &device_events, options, &mut result)
                 .await?;
-            self.flush_channels(storage, &channels, &channel_events, options, &mut result)
+            self.flush_channels(storage, &channel_records, options, &mut result)
                 .await?;
         }
 
         Ok(result)
-    }
-
-    fn drain(
-        &self,
-        entities: impl Iterator<Item = MappedEntity>,
-        devices: &mut Vec<Device>,
-        device_events: &mut Vec<Event<DomainEvent>>,
-        channels: &mut Vec<Channel>,
-        channel_events: &mut Vec<Event<DomainEvent>>,
-    ) {
-        for entity in entities {
-            let events = entity.events;
-            match entity.entity {
-                MappedAggregate::Device(d)
-                | MappedAggregate::Gb28181Platform(d)
-                | MappedAggregate::OnvifEndpoint(d) => {
-                    devices.push(d);
-                    device_events.extend(events);
-                }
-                MappedAggregate::Channel(c) => {
-                    channels.push(c);
-                    channel_events.extend(events);
-                }
-                _ => {}
-            }
-        }
     }
 
     async fn flush_devices(
@@ -285,19 +287,77 @@ impl Importer {
     async fn flush_channels(
         &self,
         storage: &Arc<dyn Storage>,
-        channels: &[Channel],
-        channel_events: &[Event<DomainEvent>],
+        channel_records: &[(OldRecord, Protocol)],
         options: &ImportOptions,
         result: &mut ImportResult,
     ) -> Result<(), MigrationError> {
-        let mut event_offset: usize = 0;
-        for chunk in channels.chunks(options.checkpoint_every) {
-            let events_chunk = &channel_events[event_offset..event_offset + chunk.len()];
-            event_offset += chunk.len();
+        let mut resolver = ParentDeviceResolver::new();
 
+        for chunk in channel_records.chunks(options.checkpoint_every) {
             let mut uow = storage.begin().await?;
             let mut written: usize = 0;
-            for (channel, event) in chunk.iter().zip(events_chunk.iter()) {
+
+            for (record, parent_protocol) in chunk {
+                let tenant_id = stable_tenant_id(&record.tenant_id);
+                let parent_external_id = match ProtocolIdentity::new(&record.parent_device_id) {
+                    Ok(id) => id,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "skipping channel with invalid parent id");
+                        result.records_invalid += 1;
+                        continue;
+                    }
+                };
+
+                let parent_device_id = match resolver
+                    .resolve(
+                        uow.device_repository(),
+                        tenant_id,
+                        *parent_protocol,
+                        &parent_external_id,
+                    )
+                    .await?
+                {
+                    Some(id) => id,
+                    None => {
+                        tracing::warn!(
+                            tenant_id = %tenant_id,
+                            parent_external_id = %parent_external_id,
+                            "skipping channel with missing parent device",
+                        );
+                        result.records_invalid += 1;
+                        continue;
+                    }
+                };
+
+                let mapped = match map_channel(
+                    self.clock.as_ref(),
+                    record,
+                    *parent_protocol,
+                    parent_device_id,
+                ) {
+                    Ok(entity) => entity,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "skipping invalid channel");
+                        result.records_invalid += 1;
+                        continue;
+                    }
+                };
+
+                if record.has_secret() {
+                    result.records_with_secrets += 1;
+                    result.action_items.extend(mapped.actions.clone());
+                }
+
+                let channel = match mapped.entity {
+                    MappedAggregate::Channel(c) => c,
+                    _ => continue,
+                };
+                let event = mapped
+                    .events
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| MigrationError::other("map_channel produced no events"))?;
+
                 let existing = uow
                     .channel_repository()
                     .get(
@@ -352,7 +412,7 @@ impl Importer {
                         result.records_skipped_existing += 1;
                     }
                     None => {
-                        match uow.channel_repository().save(channel).await {
+                        match uow.channel_repository().save(&channel).await {
                             Ok(()) => {}
                             Err(DomainError::ConcurrentModification { .. }) => {
                                 result.records_conflicting += 1;
@@ -360,7 +420,7 @@ impl Importer {
                             }
                             Err(e) => return Err(e.into()),
                         }
-                        uow.outbox().append(event.clone()).await?;
+                        uow.outbox().append(event).await?;
                         written += 1;
                     }
                 }
@@ -369,6 +429,41 @@ impl Importer {
             result.records_imported += written;
         }
         Ok(())
+    }
+}
+
+/// Caches lookups from `(tenant, protocol, external_id)` to the actual
+/// persisted device id so a parent device referenced by many channels is
+/// only queried once per import run.
+struct ParentDeviceResolver {
+    cache: std::collections::HashMap<(TenantId, Protocol, String), Option<DeviceId>>,
+}
+
+impl ParentDeviceResolver {
+    fn new() -> Self {
+        Self {
+            cache: std::collections::HashMap::new(),
+        }
+    }
+
+    async fn resolve(
+        &mut self,
+        repo: &mut dyn DeviceRepository,
+        tenant_id: TenantId,
+        protocol: Protocol,
+        external_id: &ProtocolIdentity,
+    ) -> Result<Option<DeviceId>, MigrationError> {
+        let key = (tenant_id, protocol, external_id.as_str().to_string());
+        if let Some(cached) = self.cache.get(&key) {
+            return Ok(*cached);
+        }
+
+        let device = repo
+            .get_by_external_id(tenant_id, protocol, external_id.clone())
+            .await?;
+        let id = device.map(|d| d.device_id());
+        self.cache.insert(key, id);
+        Ok(id)
     }
 }
 
@@ -390,268 +485,4 @@ fn build_parent_protocols(records: &[OldRecord]) -> ParentProtocols {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::clock::SystemClock;
-    use crate::mappers::{event_for, stable_tenant_id};
-    use crate::model::{EntityType, OldRecord};
-    use cheetah_domain::{DeviceKind, Protocol};
-    use cheetah_signal_types::{DeviceId, ProtocolIdentity, ResourceId, ResourceKind};
-    use cheetah_storage_sqlite::SqliteStorage;
-    use std::collections::BTreeMap;
-
-    fn device_record(external_id: &str, tenant_id: &str) -> OldRecord {
-        let mut metadata = BTreeMap::new();
-        metadata.insert(
-            "location".to_string(),
-            serde_json::Value::String("hallway".to_string()),
-        );
-        OldRecord {
-            entity_type: EntityType::Device,
-            tenant_id: tenant_id.to_string(),
-            external_id: external_id.to_string(),
-            name: "Cam".to_string(),
-            protocol: "gb28181".to_string(),
-            kind: "camera".to_string(),
-            authority: "192.0.2.1:5060".to_string(),
-            parent_device_id: external_id.to_string(),
-            channel_kind: String::new(),
-            enabled: true,
-            metadata,
-            secret_fields: String::new(),
-        }
-    }
-
-    struct VecSource(Vec<OldRecord>);
-
-    #[async_trait::async_trait]
-    impl RecordSource for VecSource {
-        async fn read_records(&self) -> Result<Vec<OldRecord>, MigrationError> {
-            Ok(self.0.clone())
-        }
-    }
-
-    async fn sqlite_storage()
-    -> Result<(SqliteStorage, tempfile::TempDir), Box<dyn std::error::Error>> {
-        let dir = tempfile::tempdir()?;
-        let path = dir.path().join("test.db");
-        Ok((SqliteStorage::new(&path).await?, dir))
-    }
-
-    #[tokio::test]
-    async fn dry_run_reports_imported_count() -> Result<(), Box<dyn std::error::Error>> {
-        let (storage, _dir) = sqlite_storage().await?;
-        let storage: Option<Arc<dyn Storage>> = Some(Arc::new(storage));
-        let clock = Arc::new(SystemClock::new());
-        let importer = Importer::new(storage, clock);
-        let source = VecSource(vec![device_record("cam-01", "tenant-a")]);
-        let options = ImportOptions {
-            dry_run: true,
-            checkpoint_every: 10,
-            ..Default::default()
-        };
-        let result = importer.import(&source, &options).await?;
-        assert_eq!(result.records_read, 1);
-        assert_eq!(result.records_imported, 1);
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn checkpoint_zero_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
-        let (storage, _dir) = sqlite_storage().await?;
-        let storage: Option<Arc<dyn Storage>> = Some(Arc::new(storage));
-        let clock = Arc::new(SystemClock::new());
-        let importer = Importer::new(storage, clock);
-        let source = VecSource(Vec::new());
-        let options = ImportOptions {
-            checkpoint_every: 0,
-            ..Default::default()
-        };
-        let outcome = importer.import(&source, &options).await;
-        assert!(outcome.is_err());
-        match outcome {
-            Err(MigrationError::Other(_)) => {}
-            _ => panic!("expected MigrationError::Other"),
-        }
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn import_appends_domain_events_to_outbox() -> Result<(), Box<dyn std::error::Error>> {
-        let (storage, _dir) = sqlite_storage().await?;
-        storage.migration().run().await?;
-        let storage: Arc<dyn Storage> = Arc::new(storage);
-        let clock = Arc::new(SystemClock::new());
-        let importer = Importer::new(Some(storage.clone()), clock.clone());
-        let source = VecSource(vec![device_record("cam-01", "tenant-a")]);
-        let options = ImportOptions {
-            dry_run: false,
-            checkpoint_every: 10,
-            ..Default::default()
-        };
-        let result = importer.import(&source, &options).await?;
-        assert_eq!(result.records_read, 1);
-        assert_eq!(result.records_imported, 1);
-
-        let mut uow = storage.begin().await?;
-        let events = uow.outbox().pending(clock.now_wall(), 100).await?;
-        uow.commit().await?;
-        assert_eq!(events.len(), 1);
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn import_overwrites_existing_when_skip_existing_false()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let (storage, _dir) = sqlite_storage().await?;
-        storage.migration().run().await?;
-        let storage: Arc<dyn Storage> = Arc::new(storage);
-        let clock = Arc::new(SystemClock::new());
-        let importer = Importer::new(Some(storage.clone()), clock.clone());
-        let mut record = device_record("cam-01", "tenant-a");
-        record.name = "first".to_string();
-        let source = VecSource(vec![record.clone()]);
-        let first = importer
-            .import(
-                &source,
-                &ImportOptions {
-                    dry_run: false,
-                    checkpoint_every: 10,
-                    ..Default::default()
-                },
-            )
-            .await?;
-        assert_eq!(first.records_imported, 1);
-
-        record.name = "second".to_string();
-        let source = VecSource(vec![record]);
-        let second = importer
-            .import(
-                &source,
-                &ImportOptions {
-                    dry_run: false,
-                    skip_existing: false,
-                    checkpoint_every: 10,
-                    ..Default::default()
-                },
-            )
-            .await?;
-        assert_eq!(second.records_imported, 1);
-        assert_eq!(second.records_conflicting, 0);
-
-        let mut uow = storage.begin().await?;
-        let events = uow.outbox().pending(clock.now_wall(), 100).await?;
-        uow.commit().await?;
-        assert_eq!(events.len(), 2);
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn import_skip_existing_counts_skipped_existing() -> Result<(), Box<dyn std::error::Error>>
-    {
-        let (storage, _dir) = sqlite_storage().await?;
-        storage.migration().run().await?;
-        let storage: Arc<dyn Storage> = Arc::new(storage);
-        let clock = Arc::new(SystemClock::new());
-        let importer = Importer::new(Some(storage.clone()), clock.clone());
-        let record = device_record("cam-01", "tenant-a");
-        let source = VecSource(vec![record.clone()]);
-        let first = importer
-            .import(
-                &source,
-                &ImportOptions {
-                    dry_run: false,
-                    checkpoint_every: 10,
-                    ..Default::default()
-                },
-            )
-            .await?;
-        assert_eq!(first.records_imported, 1);
-
-        let source = VecSource(vec![record]);
-        let second = importer
-            .import(
-                &source,
-                &ImportOptions {
-                    dry_run: false,
-                    checkpoint_every: 10,
-                    ..Default::default()
-                },
-            )
-            .await?;
-        assert_eq!(second.records_imported, 0);
-        assert_eq!(second.records_skipped_existing, 1);
-        assert_eq!(second.records_conflicting, 0);
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn import_overwrite_uses_existing_device_id() -> Result<(), Box<dyn std::error::Error>> {
-        let (storage, _dir) = sqlite_storage().await?;
-        storage.migration().run().await?;
-        let storage: Arc<dyn Storage> = Arc::new(storage);
-        let clock = Arc::new(SystemClock::new());
-
-        // Seed a runtime-created device with the same external identity but a
-        // different internal device_id (UUIDv7). Use the stable tenant id the
-        // migration tool will derive from the string "tenant-a".
-        let tenant_id = stable_tenant_id("tenant-a");
-        let external_id = ProtocolIdentity::new("runtime-cam")?;
-        let runtime_device_id = DeviceId::generate();
-        let (runtime_device, registered) = cheetah_domain::Device::new(
-            clock.as_ref(),
-            tenant_id,
-            runtime_device_id,
-            Protocol::Gb28181,
-            external_id,
-            "192.0.2.1:5060",
-            "Runtime",
-            DeviceKind::Camera,
-            Vec::new(),
-            BTreeMap::new(),
-        )?;
-
-        let mut uow = storage.begin().await?;
-        uow.device_repository().save(&runtime_device).await?;
-        uow.outbox()
-            .append(event_for(
-                clock.as_ref(),
-                tenant_id,
-                ResourceKind::Device,
-                ResourceId::Device(runtime_device_id),
-                registered,
-                0,
-            ))
-            .await?;
-        uow.commit().await?;
-
-        // Import a record with the same external identity.
-        let mut record = device_record("runtime-cam", "tenant-a");
-        record.name = "Imported".to_string();
-        let importer = Importer::new(Some(storage.clone()), clock.clone());
-        let result = importer
-            .import(
-                &VecSource(vec![record]),
-                &ImportOptions {
-                    dry_run: false,
-                    skip_existing: false,
-                    checkpoint_every: 10,
-                    ..Default::default()
-                },
-            )
-            .await?;
-        assert_eq!(result.records_imported, 1);
-
-        let mut uow = storage.begin().await?;
-        let events = uow.outbox().pending(clock.now_wall(), 100).await?;
-        uow.commit().await?;
-
-        assert_eq!(events.len(), 2);
-        assert_eq!(
-            events[1].event.aggregate_ref.id,
-            ResourceId::Device(runtime_device_id),
-            "DeviceUpdated must reference the existing runtime device id"
-        );
-        Ok(())
-    }
-}
+mod tests;
