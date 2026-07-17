@@ -693,6 +693,7 @@ dependencies = [
  "cheetah-signal-types",
  "futures",
  "prost",
+ "secrecy",
  "serde",
  "serde_json",
  "testcontainers-modules",

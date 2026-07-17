@@ -17,6 +17,9 @@ NATS JetStream message bus implementation for clustered Cheetah Signaling.
   configurable timeouts.
 - TLS is required for cluster communication; plaintext `nats://` URLs are
   rejected.
+- Optional token or username/password authentication via `SecretStore` references.
+- In-process subject allow-listing before publish and subscribe, defaulting to
+  the command/event subjects required by this node.
 
 ## Subject layout
 
@@ -29,11 +32,17 @@ NATS JetStream message bus implementation for clustered Cheetah Signaling.
 use std::sync::Arc;
 use std::time::Duration;
 use cheetah_message_nats::NatsBus;
+use cheetah_signal_types::config::MessagingConfig;
+
+let mut config = MessagingConfig::default();
+config.backend = cheetah_signal_types::config::MessagingBackend::Nats;
+config.nats_url = "tls://localhost:4222".to_string();
 
 let bus = NatsBus::connect(
-    "tls://localhost:4222",
+    &config,
     node_id,
     resolver,
+    secret_store,
     Duration::from_secs(5),
     Duration::from_secs(5),
 )

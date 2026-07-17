@@ -158,6 +158,56 @@ impl SignalConfig {
                 "media.default_invite_timeout_ms must be greater than zero",
             ));
         }
+        if self.messaging.backend == MessagingBackend::Nats {
+            if self.messaging.nats_url.is_empty() {
+                return Err(SignalError::new(
+                    SignalErrorKind::InvalidArgument,
+                    "messaging.nats_url must be configured when backend is nats",
+                ));
+            }
+            let scheme = self
+                .messaging
+                .nats_url
+                .split("://")
+                .next()
+                .unwrap_or("")
+                .to_lowercase();
+            if !matches!(scheme.as_str(), "tls" | "wss") {
+                return Err(SignalError::new(
+                    SignalErrorKind::InvalidArgument,
+                    "messaging.nats_url must use tls:// or wss:// scheme",
+                ));
+            }
+            if self.messaging.max_pending == 0 {
+                return Err(SignalError::new(
+                    SignalErrorKind::InvalidArgument,
+                    "messaging.max_pending must be greater than zero",
+                ));
+            }
+            if let Some(auth) = self.messaging.nats_auth.as_ref() {
+                match auth {
+                    NatsAuth::Token { token_ref } => {
+                        if token_ref.is_empty() {
+                            return Err(SignalError::new(
+                                SignalErrorKind::InvalidArgument,
+                                "messaging.nats_auth.token_ref must not be empty",
+                            ));
+                        }
+                    }
+                    NatsAuth::UserAndPassword {
+                        username,
+                        password_ref,
+                    } => {
+                        if username.is_empty() || password_ref.is_empty() {
+                            return Err(SignalError::new(
+                                SignalErrorKind::InvalidArgument,
+                                "messaging.nats_auth.username and password_ref must not be empty",
+                            ));
+                        }
+                    }
+                }
+            }
+        }
         Ok(())
     }
 
@@ -330,7 +380,7 @@ pub enum StorageBackend {
 }
 
 /// Messaging backend configuration.
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct MessagingConfig {
     /// Selected messaging backend.
@@ -345,6 +395,19 @@ pub struct MessagingConfig {
     pub nats_auth: Option<NatsAuth>,
     /// Optional NATS subject permissions for this process.
     pub nats_permissions: Option<NatsPermissions>,
+}
+
+impl Default for MessagingConfig {
+    fn default() -> Self {
+        Self {
+            backend: MessagingBackend::default(),
+            nats_url: String::new(),
+            jetstream_domain: String::new(),
+            max_pending: 1000,
+            nats_auth: None,
+            nats_permissions: None,
+        }
+    }
 }
 
 /// NATS authentication method.
@@ -363,12 +426,6 @@ pub enum NatsAuth {
         username: String,
         /// Secret reference to the NATS password.
         password_ref: String,
-    },
-    /// JWT credentials authentication. The credential file content is resolved
-    /// through the secret store.
-    Credentials {
-        /// Secret reference to the NATS credentials file content.
-        credentials_ref: String,
     },
 }
 
