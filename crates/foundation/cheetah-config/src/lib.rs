@@ -82,17 +82,18 @@ impl ConfigSource for LayeredConfigSource {
 /// Builds an environment source from an iterator of `(key, value)` pairs.
 ///
 /// Only keys starting with `CHEETAH_` are considered. Keys that do not contain
-/// the section separator (`__`) are ignored, which prevents stray `CHEETAH_*`
-/// variables (including `CHEETAH_SECRET_*` references used by the secret store)
-/// from being deserialized as unknown top-level config fields.
+/// the section separator (`__`) are ignored, and keys belonging to the secret
+/// store namespace (`CHEETAH_SECRET_*`) are also excluded. This prevents
+/// stray environment variables from being deserialized as unknown top-level
+/// config fields when `#[serde(deny_unknown_fields)]` is enabled.
 fn env_source(vars: impl Iterator<Item = (String, String)>) -> Environment {
     let mut source = config::Map::new();
     for (key, value) in vars {
         if let Some(rest) = key.strip_prefix(CONFIG_ENV_PREFIX) {
             // Require at least one `__` separator so only nested config keys are
-            // forwarded. This excludes CHEETAH_SECRET_* and other single-segment
-            // environment variables.
-            if rest.contains("__") {
+            // forwarded, and explicitly skip secret references, which must never
+            // be interpreted as config fields even if their name contains `__`.
+            if rest.contains("__") && !rest.to_ascii_uppercase().starts_with("SECRET_") {
                 source.insert(key, value);
             }
         }
@@ -179,6 +180,27 @@ unknown_field = true
     fn env_top_level_unknown_keys_are_ignored() {
         let env = vec![
             ("CHEETAH_FOO".to_string(), "bar".to_string()),
+            ("CHEETAH_HTTP__PORT".to_string(), "9090".to_string()),
+        ];
+        let source = env_source(env.into_iter());
+        let cfg = match Config::builder().add_source(source).build() {
+            Ok(c) => c,
+            Err(e) => panic!("config build failed: {e}"),
+        };
+        let config: SignalConfig = match cfg.try_deserialize() {
+            Ok(c) => c,
+            Err(e) => panic!("config deserialize failed: {e}"),
+        };
+        assert_eq!(config.http.port, 9090);
+    }
+
+    #[test]
+    fn env_secret_with_double_underscore_is_ignored() {
+        let env = vec![
+            (
+                "CHEETAH_SECRET_DB__PASSWORD".to_string(),
+                "s3cr3t".to_string(),
+            ),
             ("CHEETAH_HTTP__PORT".to_string(), "9090".to_string()),
         ];
         let source = env_source(env.into_iter());
