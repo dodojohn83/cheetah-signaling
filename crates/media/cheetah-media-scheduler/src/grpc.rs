@@ -16,9 +16,10 @@ use std::str::FromStr;
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
 
-/// Peer identity extracted from the TLS layer and inserted into request extensions.
+/// Peer identity candidates extracted from the TLS layer and inserted into request
+/// extensions.
 #[derive(Clone, Debug)]
-pub struct PeerIdentity(pub String);
+pub struct PeerIdentity(pub Vec<String>);
 
 /// gRPC service for media node lifecycle.
 pub struct MediaClusterRegistryService {
@@ -209,10 +210,14 @@ fn check_identity(
         return Ok(());
     }
     match identity {
-        Some(PeerIdentity(found)) if found == expected => Ok(()),
+        Some(PeerIdentity(candidates)) if candidates.iter().any(|id| id == expected) => Ok(()),
         found => Err(Status::permission_denied(format!(
             "mTLS identity mismatch: expected {expected}, found {}",
-            found.as_ref().map(|p| p.0.as_str()).unwrap_or("none")
+            found
+                .as_ref()
+                .and_then(|p| p.0.first())
+                .map(String::as_str)
+                .unwrap_or("none")
         ))),
     }
 }

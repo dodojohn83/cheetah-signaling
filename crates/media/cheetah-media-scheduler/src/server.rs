@@ -36,8 +36,8 @@ impl GrpcServer {
     ///
     /// When `grpc.tls_cert_ref` and `grpc.tls_key_ref` are present the server serves
     /// over TLS. If `grpc.tls_client_ca_ref` is also present, clients must present a
-    /// certificate signed by that CA. The first DNS SAN (or subject common name) of
-    /// the peer certificate is inserted as [`PeerIdentity`] for mTLS node
+    /// certificate signed by that CA. The DNS SANs and subject common names of the
+    /// peer certificate are collected into a [`PeerIdentity`] for mTLS node
     /// verification.
     pub async fn start<R>(
         config: &GrpcConfig,
@@ -165,18 +165,25 @@ fn mtls_interceptor(mut request: Request<()>) -> Result<Request<()>, Status> {
 
 fn extract_peer_identity(cert_der: &[u8]) -> Option<PeerIdentity> {
     let (_, cert) = x509_parser::parse_x509_certificate(cert_der).ok()?;
+    let mut identities: Vec<String> = Vec::new();
 
     if let Some(san) = cert.subject_alternative_name().ok().flatten() {
         for name in san.value.general_names.iter() {
             if let GeneralName::DNSName(dns) = name {
-                return Some(PeerIdentity(dns.to_string()));
+                identities.push(dns.to_string());
             }
         }
     }
 
-    cert.subject()
-        .iter_common_name()
-        .next()
-        .and_then(|cn| cn.as_str().ok())
-        .map(|cn| PeerIdentity(cn.to_string()))
+    for cn in cert.subject().iter_common_name() {
+        if let Ok(value) = cn.as_str() {
+            identities.push(value.to_string());
+        }
+    }
+
+    if identities.is_empty() {
+        None
+    } else {
+        Some(PeerIdentity(identities))
+    }
 }
