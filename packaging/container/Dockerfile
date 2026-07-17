@@ -6,6 +6,11 @@ FROM rust:1.96.1-slim-bookworm@sha256:39decc9f9f4a87e03db5069b2424c0ee13c3d7e411
 WORKDIR /build
 COPY . .
 
+# Install the protobuf compiler required by tonic-prost-build/prost-build.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends protobuf-compiler \
+    && rm -rf /var/lib/apt/lists/*
+
 # Build the signaling binary. SQLx query macros use offline mode by default in
 # this repository; if metadata needs to be regenerated, use `cargo sqlx prepare`.
 RUN cargo build --release --locked --bin cheetah-signaling
