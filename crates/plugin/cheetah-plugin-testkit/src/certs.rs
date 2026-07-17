@@ -9,6 +9,7 @@ use rcgen::{
     BasicConstraints, CertificateParams, DistinguishedName, DnType, IsCa, Issuer, KeyPair,
     KeyUsagePurpose, SanType,
 };
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::{Path, PathBuf};
 
 /// PEM-encoded certificates and keys used to stand up a fake plugin server.
@@ -67,6 +68,12 @@ impl TestCerts {
         server_params
             .subject_alt_names
             .push(SanType::URI(plugin_uri));
+        server_params
+            .subject_alt_names
+            .push(SanType::IpAddress(IpAddr::V4(Ipv4Addr::LOCALHOST)));
+        server_params
+            .subject_alt_names
+            .push(SanType::IpAddress(IpAddr::V6(Ipv6Addr::LOCALHOST)));
 
         let server_cert = server_params.signed_by(&server_key_pair, &ca_issuer)?;
 
