@@ -7,6 +7,7 @@
 
 #![doc = include_str!("../README.md")]
 
+pub mod audit;
 pub mod config;
 pub mod context;
 pub mod error;
@@ -17,6 +18,7 @@ pub mod pagination;
 pub mod ports;
 pub mod time;
 
+pub use audit::{AuditEvent, AuditLog, AuditOutcome, NoOpAuditLog};
 pub use config::{ConfigSource, SignalConfig};
 pub use context::{
     Principal, PrincipalKind, RequestContext, ResourceId, ResourceKind, ResourceRef,

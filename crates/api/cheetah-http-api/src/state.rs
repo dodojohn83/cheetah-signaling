@@ -1,5 +1,6 @@
 //! Shared application state and server entrypoint.
 
+use crate::audit::TracingAuditLog;
 use crate::event_cache::EventCache;
 use crate::metrics::RequestMetrics;
 use crate::rate_limit::RateLimiter;
@@ -10,7 +11,7 @@ use cheetah_signal_application::{
     WebhookService,
 };
 use cheetah_signal_types::config::SecurityConfig;
-use cheetah_signal_types::{Clock, NodeId, SecretStore, SignalConfig};
+use cheetah_signal_types::{AuditLog, Clock, NodeId, SecretStore, SignalConfig};
 use cheetah_storage_api::Storage;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -85,6 +86,8 @@ pub struct ApiState {
     pub metrics: Arc<RequestMetrics>,
     /// Per-key request rate limiter.
     pub rate_limiter: RateLimiter,
+    /// Audit sink for security-relevant events.
+    pub audit: Arc<dyn AuditLog>,
     /// Cancellation token for graceful shutdown.
     pub cancel: CancellationToken,
 }
@@ -135,8 +138,15 @@ impl ApiState {
             config,
             metrics: Arc::new(RequestMetrics::default()),
             rate_limiter,
+            audit: Arc::new(TracingAuditLog),
             cancel: CancellationToken::new(),
         }
+    }
+
+    /// Sets the audit sink.
+    pub fn with_audit(mut self, audit: Arc<dyn AuditLog>) -> Self {
+        self.audit = audit;
+        self
     }
 
     /// Enables the webhook service by wiring a secret store and HTTP client.

@@ -1,11 +1,15 @@
 //! Authentication and RBAC for the HTTP API.
 
 use crate::{ApiState, HttpError};
-use axum::{extract::FromRequestParts, http::request::Parts};
-use cheetah_signal_types::{Principal, PrincipalKind, TenantId};
+use axum::{
+    extract::{ConnectInfo, FromRequestParts},
+    http::request::Parts,
+};
+use cheetah_signal_types::{AuditEvent, AuditOutcome, Principal, PrincipalKind, TenantId};
 use jsonwebtoken::{Algorithm, DecodingKey, TokenData, Validation, decode};
 use secrecy::ExposeSecret;
 use serde::Deserialize;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use subtle::ConstantTimeEq;
 
@@ -48,21 +52,30 @@ impl FromRequestParts<Arc<ApiState>> for AuthContext {
             .get("authorization")
             .and_then(|v| v.to_str().ok());
 
-        if let Some(header) = auth_header {
+        let result = if let Some(header) = auth_header {
             let (scheme, token) = split_auth_header(header);
             let scheme = scheme.to_lowercase();
             if scheme == "bearer" {
-                return authenticate_bearer(&state.config.security, token).await;
+                authenticate_bearer(&state.config.security, token).await
+            } else if scheme == "basic" {
+                Err(HttpError::Unauthenticated(
+                    "basic authentication is not supported".to_string(),
+                ))
+            } else {
+                Err(HttpError::Unauthenticated(format!(
+                    "unsupported authorization scheme: {scheme}"
+                )))
             }
-        }
+        } else if let Some(api_key) = parts.headers.get("x-api-key").and_then(|v| v.to_str().ok()) {
+            authenticate_static_key(&state.config.security, api_key)
+        } else {
+            Err(HttpError::Unauthenticated(
+                "missing Authorization or X-Api-Key header".to_string(),
+            ))
+        };
 
-        if let Some(api_key) = parts.headers.get("x-api-key").and_then(|v| v.to_str().ok()) {
-            return authenticate_static_key(&state.config.security, api_key);
-        }
-
-        Err(HttpError::Unauthenticated(
-            "missing Authorization or X-Api-Key header".to_string(),
-        ))
+        record_auth_audit(parts, state, &result);
+        result
     }
 }
 
@@ -172,4 +185,55 @@ async fn authenticate_bearer(
         },
         tenant_id,
     })
+}
+
+fn record_auth_audit(parts: &Parts, state: &ApiState, result: &Result<AuthContext, HttpError>) {
+    let request_id = parts
+        .headers
+        .get("x-request-id")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| state.id_generator.generate_message_id().to_string());
+    let correlation_id = parts
+        .headers
+        .get("x-correlation-id")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    let source_ip = parts
+        .extensions
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|c| c.0.ip().to_string());
+
+    let (actor, tenant_id, outcome, details) = match result {
+        Ok(ctx) => (
+            ctx.principal.id.clone(),
+            ctx.tenant_id,
+            AuditOutcome::Success,
+            None,
+        ),
+        Err(err) => (
+            "anonymous".to_string(),
+            None,
+            AuditOutcome::Failure {
+                reason: err.code().to_string(),
+            },
+            Some(err.to_string()),
+        ),
+    };
+
+    let event = AuditEvent {
+        timestamp: state.clock.now_wall(),
+        action: "auth.authenticate".to_string(),
+        actor,
+        tenant_id,
+        target_type: "session".to_string(),
+        target_id: None,
+        outcome,
+        request_id,
+        correlation_id,
+        source_ip,
+        node_id: state.config.node_id,
+        details,
+    };
+    state.audit.record(event);
 }

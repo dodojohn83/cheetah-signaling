@@ -1,6 +1,7 @@
 //! Northbound HTTP API for Cheetah Signaling.
 #![doc = include_str!("../README.md")]
 
+pub mod audit;
 pub mod auth;
 pub mod error;
 pub mod event_cache;
