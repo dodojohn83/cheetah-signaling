@@ -62,7 +62,10 @@ async fn wait_for_shutdown_signal() {
         let mut terminate =
             match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
                 Ok(stream) => stream,
-                Err(_) => return,
+                Err(_) => {
+                    let _ = ctrl_c.await;
+                    return;
+                }
             };
         tokio::select! {
             _ = ctrl_c => {}
