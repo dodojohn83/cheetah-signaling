@@ -13,7 +13,7 @@
 use cheetah_signal_types::{Result, SecretStore, SignalError, SignalErrorKind};
 use secrecy::{ExposeSecret, SecretString};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 /// In-memory secret store for tests and development.
@@ -211,14 +211,14 @@ impl SecretStore for FileSecretStore {
 
     fn put(&self, key: &str, value: SecretString) -> Result<()> {
         let path = self.secret_path(key)?;
-        std::fs::create_dir_all(&self.base_dir).map_err(|e| {
+        create_secret_dir(&self.base_dir).map_err(|e| {
             SignalError::new(
                 SignalErrorKind::Internal,
                 "failed to create secret directory",
             )
             .with_source(e)
         })?;
-        std::fs::write(&path, value.expose_secret().as_bytes()).map_err(|e| {
+        write_secret_file(&path, value.expose_secret().as_bytes()).map_err(|e| {
             SignalError::new(
                 SignalErrorKind::Internal,
                 format!("failed to write secret {key}"),
@@ -248,7 +248,7 @@ impl SecretStore for FileSecretStore {
         let _path = self.secret_path(key)?;
         let previous = self.get(key)?;
         let rotated = SecretString::from(uuid::Uuid::new_v4().to_string());
-        std::fs::write(self.secret_path(key)?, rotated.expose_secret().as_bytes()).map_err(
+        write_secret_file(&self.secret_path(key)?, rotated.expose_secret().as_bytes()).map_err(
             |e| {
                 SignalError::new(
                     SignalErrorKind::Internal,
@@ -300,32 +300,34 @@ impl SecretStore for CompositeSecretStore {
     }
 
     fn put(&self, key: &str, value: SecretString) -> Result<()> {
+        let mut last_err = None;
         for store in &self.stores {
-            if store.put(key, value.clone()).is_ok() {
-                return Ok(());
+            match store.put(key, value.clone()) {
+                Ok(()) => return Ok(()),
+                Err(err) if err.kind() == SignalErrorKind::Unsupported => last_err = Some(err),
+                Err(err) => return Err(err),
             }
         }
-        Err(SignalError::new(
-            SignalErrorKind::Unsupported,
-            "no writable secret store accepted the operation",
-        ))
+        Err(last_err.unwrap_or_else(|| {
+            SignalError::new(
+                SignalErrorKind::Unsupported,
+                "no writable secret store accepted the operation",
+            )
+        }))
     }
 
     fn delete(&self, key: &str) -> Result<()> {
-        let mut deleted = false;
         let mut last_err = None;
         for store in &self.stores {
             match store.delete(key) {
-                Ok(()) => deleted = true,
-                Err(err) => last_err = Some(err),
+                Ok(()) => return Ok(()),
+                Err(err) if err.kind() == SignalErrorKind::NotFound => last_err = Some(err),
+                Err(err) if err.kind() == SignalErrorKind::Unsupported => continue,
+                Err(err) => return Err(err),
             }
         }
-        if deleted {
-            Ok(())
-        } else {
-            Err(last_err
-                .unwrap_or_else(|| SignalError::new(SignalErrorKind::NotFound, "secret not found")))
-        }
+        Err(last_err
+            .unwrap_or_else(|| SignalError::new(SignalErrorKind::NotFound, "secret not found")))
     }
 
     fn rotate(&self, key: &str) -> Result<SecretString> {
@@ -342,6 +344,42 @@ impl SecretStore for CompositeSecretStore {
             "secret not found",
         ))
     }
+}
+
+/// Creates `dir` and sets its permissions so only the owner can access it.
+#[cfg(unix)]
+fn create_secret_dir(dir: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::create_dir_all(dir)?;
+    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn create_secret_dir(dir: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dir)
+}
+
+/// Writes `contents` to `path` with owner-only permissions.
+#[cfg(unix)]
+fn write_secret_file(path: &Path, contents: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .mode(0o600)
+        .open(path)?;
+    file.write_all(contents)?;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn write_secret_file(path: &Path, contents: &[u8]) -> std::io::Result<()> {
+    std::fs::write(path, contents)
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
