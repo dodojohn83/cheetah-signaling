@@ -229,7 +229,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref }}
-        with:
           fetch-depth: 0
 
       - name: Download artifacts
