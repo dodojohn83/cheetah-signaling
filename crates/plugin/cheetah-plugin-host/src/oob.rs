@@ -42,9 +42,9 @@ pub struct OutOfProcessConfig {
     pub args: Vec<String>,
     /// Extra environment variables passed to the plugin.
     pub env: HashMap<String, String>,
-    /// Address the plugin is expected to listen on, e.g. `127.0.0.1:0` for an
-    /// ephemeral port. The host waits for a TCP connection here before issuing
-    /// any RPC.
+    /// Address the plugin is expected to listen on, e.g. `127.0.0.1:50051`.
+    /// The host waits for a TCP connection here before issuing any RPC.
+    /// Port 0 is not supported because the host cannot discover the bound port.
     pub listen_address: String,
     /// Maximum time to wait for the plugin to become reachable.
     pub startup_timeout: DurationMs,
@@ -60,7 +60,7 @@ impl Default for OutOfProcessConfig {
             command: PathBuf::new(),
             args: Vec::new(),
             env: HashMap::new(),
-            listen_address: "127.0.0.1:0".to_string(),
+            listen_address: String::new(),
             startup_timeout: DurationMs::from_seconds(30),
             startup_poll_interval: DurationMs::from_millis(250),
             max_message_size: 4 * 1024 * 1024,
@@ -157,6 +157,21 @@ impl OutOfProcessDriver {
         runtime: OutOfProcessConfig,
         _config: serde_json::Value,
     ) -> Result<Self, PluginError> {
+        if runtime.listen_address.is_empty() {
+            return Err(PluginError::InvalidManifest(
+                "listen_address must be configured".to_string(),
+            ));
+        }
+        let socket_addr = runtime
+            .listen_address
+            .parse::<std::net::SocketAddr>()
+            .map_err(|e| PluginError::InvalidManifest(format!("invalid listen_address: {e}")))?;
+        if socket_addr.port() == 0 {
+            return Err(PluginError::InvalidManifest(
+                "listen_address port 0 is not supported; configure a concrete port".to_string(),
+            ));
+        }
+
         let mut cmd = Command::new(&runtime.command);
         cmd.args(&runtime.args)
             .envs(&runtime.env)
@@ -295,10 +310,12 @@ impl ProtocolDriver for OutOfProcessDriver {
             .call_method("handle_command", payload, DurationMs::from_seconds(30))
             .await?;
 
-        let events: Vec<ProtocolEvent> = response
-            .get("events")
-            .and_then(|v| serde_json::from_value(v.clone()).ok())
-            .unwrap_or_default();
+        let events: Vec<ProtocolEvent> = match response.get("events") {
+            Some(v) => serde_json::from_value(v.clone()).map_err(|e| {
+                PluginError::Driver(format!("handle_command events malformed: {e}"))
+            })?,
+            None => Vec::new(),
+        };
 
         for event in events {
             ctx.device_sink()
