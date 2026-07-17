@@ -5,9 +5,12 @@ use cheetah_storage_api::{
     MigrationStatus, PhaseMigrationBackend, PhaseMigrationPlanner, PhaseMigrationRunner,
     StorageError, VersionedMigration, split_sql_statements,
 };
+use sqlx::pool::PoolConnection;
 use sqlx::types::time::OffsetDateTime;
-use sqlx::{PgPool, migrate::Migration as SqlxMigration};
+use sqlx::{PgPool, Postgres, migrate::Migration as SqlxMigration};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tokio::sync::Mutex;
 
 /// Postgres advisory lock key for migration serialization.
 /// Chosen as a stable 64-bit constant derived from "CHEETAH".
@@ -20,6 +23,9 @@ static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("../../../migrations/p
 pub struct PostgresMigration {
     pool: PgPool,
     runner: PhaseMigrationRunner,
+    /// Dedicated connection used to hold the migration advisory lock across
+    /// `acquire`/`release` calls.
+    lock_conn: Arc<Mutex<Option<PoolConnection<Postgres>>>>,
 }
 
 impl PostgresMigration {
@@ -40,6 +46,7 @@ impl PostgresMigration {
         Self {
             pool,
             runner: PhaseMigrationRunner::new(planner),
+            lock_conn: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -228,20 +235,29 @@ impl PhaseMigrationBackend for PostgresMigration {
     }
 
     async fn acquire_migration_lock(&self) -> Result<(), StorageError> {
-        sqlx::query("SELECT pg_advisory_lock($1)")
-            .bind(MIGRATION_LOCK_ID)
-            .fetch_one(&self.pool)
+        let mut conn = self
+            .pool
+            .acquire()
             .await
             .map_err(|e| StorageError::backend(e.to_string()))?;
+        sqlx::query("SELECT pg_advisory_lock($1)")
+            .bind(MIGRATION_LOCK_ID)
+            .fetch_one(&mut *conn)
+            .await
+            .map_err(|e| StorageError::backend(e.to_string()))?;
+        let mut guard = self.lock_conn.lock().await;
+        *guard = Some(conn);
         Ok(())
     }
 
     async fn release_migration_lock(&self) -> Result<(), StorageError> {
-        sqlx::query("SELECT pg_advisory_unlock($1)")
-            .bind(MIGRATION_LOCK_ID)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(|e| StorageError::backend(e.to_string()))?;
+        let mut guard = self.lock_conn.lock().await;
+        if let Some(mut conn) = guard.take() {
+            let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
+                .bind(MIGRATION_LOCK_ID)
+                .fetch_one(&mut *conn)
+                .await;
+        }
         Ok(())
     }
 
