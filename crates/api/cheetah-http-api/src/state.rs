@@ -28,6 +28,10 @@ pub struct ApiConfig {
     pub read_timeout_ms: u64,
     /// Maximum request body size in bytes.
     pub request_body_limit_bytes: usize,
+    /// Maximum number of request headers.
+    pub max_request_headers: usize,
+    /// Maximum length of the request URI (path + query) in bytes.
+    pub max_request_uri_length: usize,
     /// Allowed CORS origins. Empty disables cross-origin requests.
     pub cors_allowed_origins: Vec<String>,
     /// Rate limit requests per second per (source, tenant, protocol, node).
@@ -52,7 +56,9 @@ impl From<&SignalConfig> for ApiConfig {
             listen_addr: config.http.listen_addr.clone(),
             port: config.http.port,
             read_timeout_ms: u64::try_from(config.http.read_timeout_ms.as_millis()).unwrap_or(5000),
-            request_body_limit_bytes: 1024 * 1024,
+            request_body_limit_bytes: config.http.request_body_limit_bytes,
+            max_request_headers: config.http.max_request_headers,
+            max_request_uri_length: config.http.max_request_uri_length,
             cors_allowed_origins: config.http.cors_allowed_origins.clone(),
             rate_limit_requests_per_second: config.http.rate_limit_requests_per_second,
             rate_limit_burst: config.http.rate_limit_burst,
