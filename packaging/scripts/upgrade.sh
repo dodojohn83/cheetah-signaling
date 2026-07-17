@@ -18,6 +18,11 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
+# Stop the service first so the data directory is quiescent before backup.
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl stop cheetah-signaling.service || true
+fi
+
 # Back up data and config before touching binaries.
 log "creating backup at $BACKUP_DIR"
 install -d -m 700 "$BACKUP_DIR"
@@ -26,11 +31,6 @@ if [ -d "$DATA_DIR" ]; then
 fi
 if [ -f "$CONFIG_DIR/config.toml" ]; then
     cp -a "$CONFIG_DIR/config.toml" "$BACKUP_DIR/config.toml"
-fi
-
-# Stop the service before replacing files.
-if command -v systemctl >/dev/null 2>&1; then
-    systemctl stop cheetah-signaling.service || true
 fi
 
 # Run the install script; it will not overwrite config or data.

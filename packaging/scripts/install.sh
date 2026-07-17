@@ -46,6 +46,7 @@ if [ ! -f "$CONFIG_DIR/config.toml" ]; then
 fi
 
 # Install systemd unit.
+install -d -m 755 "${PREFIX}/usr/lib/systemd/system"
 install -m 644 "cheetah-signaling.service" "${PREFIX}/usr/lib/systemd/system/cheetah-signaling.service"
 
 # Reload systemd and enable service.
