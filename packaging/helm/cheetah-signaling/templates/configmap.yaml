@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "cheetah-signaling.fullname" . }}-config
+  labels:
+    {{- include "cheetah-signaling.labels" . | nindent 4 }}
+data:
+  config.toml: |
+    [system]
+    node_name = "{{ include "cheetah-signaling.fullname" . }}"
+    data_dir = "/var/lib/cheetah"
+    log_level = "info"
+
+    [runtime]
+    worker_threads = 4
+
+    [http]
+    bind = "{{ .Values.config.http.bind }}"
+    port = {{ .Values.config.http.port }}
+
+    [grpc]
+    bind = "{{ .Values.config.grpc.bind }}"
+    port = {{ .Values.config.grpc.port }}
+
+    [storage]
+    url = "{{ .Values.config.storage.url }}"
+
+    [messaging]
+    kind = "{{ .Values.config.messaging.kind }}"

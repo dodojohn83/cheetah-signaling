@@ -1,0 +1,13 @@
+{{- if .Values.pdb.enabled -}}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "cheetah-signaling.fullname" . }}
+  labels:
+    {{- include "cheetah-signaling.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.pdb.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "cheetah-signaling.selectorLabels" . | nindent 6 }}
+{{- end }}

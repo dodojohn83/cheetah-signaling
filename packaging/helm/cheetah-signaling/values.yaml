@@ -1,0 +1,123 @@
+replicaCount: 2
+
+image:
+  repository: ghcr.io/dodojohn83/cheetah-signaling
+  pullPolicy: IfNotPresent
+  tag: "v0.1.0"
+  # digest overrides tag when set.
+  digest: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  automount: true
+  annotations: {}
+
+# Name of an existing Secret holding values for config.toml keys, mounted at
+# /etc/cheetah/secrets. The chart still creates the ConfigMap for non-secret
+# configuration.
+existingSecret: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+  seccompProfile:
+    type: RuntimeDefault
+
+service:
+  type: ClusterIP
+  httpPort: 8080
+  grpcPort: 9090
+
+resources:
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+  requests:
+    cpu: 250m
+    memory: 256Mi
+
+# readiness/liveness/startup probes share the same HTTP endpoint.
+probes:
+  enabled: true
+  port: 8080
+  path: /api/v1/health
+  liveness:
+    initialDelaySeconds: 60
+    periodSeconds: 15
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readiness:
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+  startup:
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 30
+
+# Anti-affinity places replicas on different nodes; topology spread adds zone
+# distribution.
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - cheetah-signaling
+          topologyKey: kubernetes.io/hostname
+
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: ScheduleAnyway
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/name: cheetah-signaling
+
+# Separate termination grace period so active requests and reconcilers can drain.
+terminationGracePeriodSeconds: 60
+
+# PodDisruptionBudget requires at least one replica available during disruptions.
+pdb:
+  enabled: true
+  minAvailable: 1
+
+# NetworkPolicy restricts ingress/egress to the required ports and peers.
+networkPolicy:
+  enabled: true
+  additionalIngress: []
+  additionalEgress: []
+
+config:
+  http:
+    port: 8080
+    bind: "0.0.0.0"
+  grpc:
+    port: 9090
+    bind: "0.0.0.0"
+  storage:
+    url: "sqlite:///var/lib/cheetah/cheetah.db"
+  messaging:
+    kind: "local"
