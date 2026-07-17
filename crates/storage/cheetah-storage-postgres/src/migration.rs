@@ -3,7 +3,7 @@
 use cheetah_storage_api::{
     AppliedMigration, BackfillJob, BackfillProgress, Migration, MigrationInfo, MigrationPhase,
     MigrationStatus, PhaseMigrationBackend, PhaseMigrationPlanner, PhaseMigrationRunner,
-    StorageError, VersionedMigration, split_sql_statements,
+    StorageError, VersionedMigration,
 };
 use sqlx::pool::PoolConnection;
 use sqlx::types::time::OffsetDateTime;
@@ -17,6 +17,21 @@ use tokio::sync::Mutex;
 const MIGRATION_LOCK_ID: i64 = 0x43484545544148;
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("../../../migrations/postgres");
+
+/// Executes a raw, trusted SQL script (which may contain multiple statements
+/// or trigger bodies) as a single batch inside the given connection.
+fn execute_raw_sql<'c>(
+    conn: &'c mut sqlx::PgConnection,
+    sql: &'static str,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<u64, StorageError>> + Send + 'c>> {
+    use sqlx::Executor;
+    Box::pin(async move {
+        conn.execute(sqlx::raw_sql(sql))
+            .await
+            .map(|res| res.rows_affected())
+            .map_err(|e| StorageError::backend(e.to_string()))
+    })
+}
 
 /// PostgreSQL migration runner.
 #[derive(Debug, Clone)]
@@ -201,15 +216,9 @@ impl PhaseMigrationBackend for PostgresMigration {
             .await
             .map_err(|e| StorageError::backend(e.to_string()))?;
 
-        for stmt in split_sql_statements(m.sql) {
-            if stmt.is_empty() {
-                continue;
-            }
-            sqlx::query(stmt)
-                .execute(&mut *tx)
-                .await
-                .map_err(|e| StorageError::migration(m.version, e.to_string()))?;
-        }
+        execute_raw_sql(&mut tx, m.sql)
+            .await
+            .map_err(|e| StorageError::migration(m.version, e.to_string()))?;
 
         sqlx::query(
             "INSERT INTO _cheetah_migrations \

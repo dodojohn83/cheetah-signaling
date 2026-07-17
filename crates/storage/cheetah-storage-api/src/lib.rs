@@ -14,7 +14,7 @@ pub use migration::{
 };
 pub use phase_migration::{
     AppliedMigration, PhaseMigrationBackend, PhaseMigrationPlanner, PhaseMigrationRunner,
-    VersionedMigration, split_sql_statements,
+    VersionedMigration,
 };
 pub use repository::{OperationStep, OperationStepRepository, OwnerRepository};
 pub use storage::Storage;

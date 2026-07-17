@@ -3,14 +3,30 @@
 use cheetah_storage_api::{
     AppliedMigration, BackfillJob, BackfillProgress, Migration, MigrationInfo, MigrationPhase,
     MigrationStatus, PhaseMigrationBackend, PhaseMigrationPlanner, PhaseMigrationRunner,
-    StorageError, VersionedMigration, split_sql_statements,
+    StorageError, VersionedMigration,
 };
 use sqlx::{SqlitePool, migrate::Migration as SqlxMigration};
+use std::pin::Pin;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("../../../migrations/sqlite");
+
+/// Executes a raw, trusted SQL script (which may contain multiple statements
+/// or trigger bodies) as a single batch inside the given connection.
+fn execute_raw_sql<'c>(
+    conn: &'c mut sqlx::SqliteConnection,
+    sql: &'static str,
+) -> Pin<Box<dyn std::future::Future<Output = Result<u64, StorageError>> + Send + 'c>> {
+    use sqlx::Executor;
+    Box::pin(async move {
+        conn.execute(sqlx::raw_sql(sql))
+            .await
+            .map(|res| res.rows_affected())
+            .map_err(|e| StorageError::backend(e.to_string()))
+    })
+}
 
 /// SQLite migration runner.
 #[derive(Debug, Clone)]
@@ -184,15 +200,9 @@ impl PhaseMigrationBackend for SqliteMigration {
             .await
             .map_err(|e| StorageError::backend(e.to_string()))?;
 
-        for stmt in split_sql_statements(m.sql) {
-            if stmt.is_empty() {
-                continue;
-            }
-            sqlx::query(stmt)
-                .execute(&mut *tx)
-                .await
-                .map_err(|e| StorageError::migration(m.version, e.to_string()))?;
-        }
+        execute_raw_sql(&mut tx, m.sql)
+            .await
+            .map_err(|e| StorageError::migration(m.version, e.to_string()))?;
 
         sqlx::query(
             "INSERT OR REPLACE INTO _cheetah_migrations \
