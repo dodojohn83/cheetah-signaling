@@ -7,8 +7,11 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
+use cheetah_domain::{DomainError, DomainEvent, EventPublisher};
 use cheetah_signal_application::dto::{DeviceDto, MediaSessionDto, OperationDto};
-use cheetah_signal_types::{DeviceId, PageRequest, SignalConfig, SignalError, SignalErrorKind};
+use cheetah_signal_types::{
+    DeviceId, Event, PageRequest, SignalConfig, SignalError, SignalErrorKind,
+};
 use std::sync::Arc;
 
 /// Validates a submitted configuration without applying it.
@@ -94,7 +97,7 @@ pub async fn device_diagnostics(
             ))
         })?;
 
-    let page = PageRequest::new(100).map_err(HttpError::Signal)?;
+    let page = PageRequest::new(1000).map_err(HttpError::Signal)?;
     let channels = uow
         .channel_repository()
         .list(tenant_id, device_id, None, None, None, page.clone())
@@ -115,14 +118,47 @@ pub async fn device_diagnostics(
         StatusCode::OK,
         Json(serde_json::json!({
             "device": DeviceDto::from(&device),
-            "channel_count": channels.items.len(),
-            "channels": channels.items.iter().take(20).map(|c| c.name().to_string()).collect::<Vec<_>>(),
-            "operation_count": operations.items.len(),
-            "operations": operations.items.iter().take(20).map(OperationDto::from).collect::<Vec<_>>(),
-            "media_session_count": sessions.items.len(),
-            "media_sessions": sessions.items.iter().take(20).map(MediaSessionDto::from).collect::<Vec<_>>(),
+            "channel_sample_count": channels.items.len(),
+            "channel_total": channels.total,
+            "channel_next_cursor": channels.next_cursor,
+            "channel_sample": channels.items.iter().take(20).map(|c| c.name().to_string()).collect::<Vec<_>>(),
+            "operation_sample_count": operations.items.len(),
+            "operation_total": operations.total,
+            "operation_next_cursor": operations.next_cursor,
+            "operation_sample": operations.items.iter().take(20).map(OperationDto::from).collect::<Vec<_>>(),
+            "media_session_sample_count": sessions.items.len(),
+            "media_session_total": sessions.total,
+            "media_session_next_cursor": sessions.next_cursor,
+            "media_session_sample": sessions.items.iter().take(20).map(MediaSessionDto::from).collect::<Vec<_>>(),
         })),
     ))
+}
+
+/// Publishes a domain event through the raw event bus.
+struct RawBusPublisher<'a>(&'a (dyn cheetah_message_api::RawEventBus + Send + Sync));
+
+#[async_trait::async_trait]
+impl EventPublisher for RawBusPublisher<'_> {
+    async fn publish(&self, event: &Event<DomainEvent>) -> cheetah_domain::Result<()> {
+        let envelope = cheetah_message_api::encode_event(event).map_err(bus_error_to_domain)?;
+        let subject = cheetah_message_api::event_subject(event.tenant_id, "domain_event");
+        self.0
+            .publish(&subject, &envelope)
+            .await
+            .map_err(bus_error_to_domain)
+    }
+}
+
+fn bus_error_to_domain(err: cheetah_message_api::BusError) -> DomainError {
+    use cheetah_message_api::BusError;
+    match err {
+        BusError::Busy => DomainError::unavailable("message bus busy"),
+        BusError::Unavailable(msg) => DomainError::unavailable(msg),
+        BusError::InvalidPayload(msg) | BusError::UnsupportedEnvelope(msg) => {
+            DomainError::invalid_argument(msg)
+        }
+        _ => DomainError::internal(err.to_string()),
+    }
 }
 
 /// Replays pending outbox events to the event bus.
@@ -133,32 +169,31 @@ pub async fn outbox_replay(
     ctx.require_scope("system_admin")?;
     let limit = 1000usize;
     let now = state.clock.now_wall();
+    let service = cheetah_signal_application::EventService::new();
 
-    let mut uow = state.storage.begin().await.map_err(HttpError::from)?;
-    let pending = uow
-        .outbox()
-        .pending(now, limit)
+    // Read pending entries in a short transaction; do not hold it across bus I/O.
+    let mut read_uow = state.storage.begin().await.map_err(HttpError::from)?;
+    let pending = service
+        .read_pending(read_uow.outbox(), now, limit)
         .await
         .map_err(HttpError::from)?;
-    let mut published = 0u32;
+    read_uow.commit().await.map_err(HttpError::from)?;
 
-    for entry in pending {
-        let envelope = cheetah_message_api::encode_event(&entry.event)
-            .map_err(|e| HttpError::Internal(e.to_string()))?;
-        let subject = cheetah_message_api::event_subject(entry.event.tenant_id, "domain_event");
-        state
-            .event_bus
-            .publish(&subject, &envelope)
-            .await
-            .map_err(|e| HttpError::Internal(e.to_string()))?;
-        uow.outbox()
-            .mark_published(entry.event.event_id)
-            .await
-            .map_err(HttpError::from)?;
-        published += 1;
+    if pending.is_empty() {
+        return Ok((StatusCode::OK, Json(serde_json::json!({"replayed": 0}))));
     }
 
-    uow.commit().await.map_err(HttpError::from)?;
+    let publisher = RawBusPublisher(state.event_bus.as_ref());
+    let results = service.publish_events(&publisher, &pending).await;
+
+    // Record publish outcomes in a separate transaction.
+    let mut write_uow = state.storage.begin().await.map_err(HttpError::from)?;
+    let published = service
+        .record_results(write_uow.outbox(), now, &pending, &results)
+        .await
+        .map_err(HttpError::from)?;
+    write_uow.commit().await.map_err(HttpError::from)?;
+
     Ok((
         StatusCode::OK,
         Json(serde_json::json!({"replayed": published})),
