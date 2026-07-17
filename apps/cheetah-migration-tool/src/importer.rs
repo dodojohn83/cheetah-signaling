@@ -47,7 +47,9 @@ pub struct ImportResult {
     pub records_skipped: usize,
     /// Number of invalid records.
     pub records_invalid: usize,
-    /// Number of records that conflicted with an existing aggregate.
+    /// Number of records that already existed and were skipped with skip_existing=true.
+    pub records_skipped_existing: usize,
+    /// Number of records that conflicted with an existing aggregate and could not be imported.
     pub records_conflicting: usize,
     /// Number of records carrying plaintext secrets that must be re-entered.
     pub records_with_secrets: usize,
@@ -231,9 +233,9 @@ impl Importer {
                         uow.outbox()
                             .append(event_for(
                                 self.clock.as_ref(),
-                                device.tenant_id(),
+                                existing.tenant_id(),
                                 ResourceKind::Device,
-                                ResourceId::Device(device.device_id()),
+                                ResourceId::Device(existing.device_id()),
                                 domain_event,
                                 existing.revision().0,
                             ))
@@ -241,7 +243,7 @@ impl Importer {
                         written += 1;
                     }
                     Some(_) => {
-                        result.records_conflicting += 1;
+                        result.records_skipped_existing += 1;
                     }
                     None => {
                         uow.device_repository().save(device).await?;
@@ -296,9 +298,9 @@ impl Importer {
                         uow.outbox()
                             .append(event_for(
                                 self.clock.as_ref(),
-                                channel.tenant_id(),
+                                existing.tenant_id(),
                                 ResourceKind::Channel,
-                                ResourceId::Channel(channel.channel_id()),
+                                ResourceId::Channel(existing.channel_id()),
                                 domain_event,
                                 existing.revision().0,
                             ))
@@ -306,7 +308,7 @@ impl Importer {
                         written += 1;
                     }
                     Some(_) => {
-                        result.records_conflicting += 1;
+                        result.records_skipped_existing += 1;
                     }
                     None => {
                         uow.channel_repository().save(channel).await?;
@@ -343,7 +345,10 @@ fn build_parent_protocols(records: &[OldRecord]) -> ParentProtocols {
 mod tests {
     use super::*;
     use crate::clock::SystemClock;
+    use crate::mappers::{event_for, stable_tenant_id};
     use crate::model::{EntityType, OldRecord};
+    use cheetah_domain::{DeviceKind, Protocol};
+    use cheetah_signal_types::{DeviceId, ProtocolIdentity, ResourceId, ResourceKind};
     use cheetah_storage_sqlite::SqliteStorage;
     use std::collections::BTreeMap;
 
@@ -490,6 +495,115 @@ mod tests {
         let events = uow.outbox().pending(clock.now_wall(), 100).await?;
         uow.commit().await?;
         assert_eq!(events.len(), 2);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn import_skip_existing_counts_skipped_existing() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let (storage, _dir) = sqlite_storage().await?;
+        storage.migration().run().await?;
+        let storage: Arc<dyn Storage> = Arc::new(storage);
+        let clock = Arc::new(SystemClock::new());
+        let importer = Importer::new(Some(storage.clone()), clock.clone());
+        let record = device_record("cam-01", "tenant-a");
+        let source = VecSource(vec![record.clone()]);
+        let first = importer
+            .import(
+                &source,
+                &ImportOptions {
+                    dry_run: false,
+                    checkpoint_every: 10,
+                    ..Default::default()
+                },
+            )
+            .await?;
+        assert_eq!(first.records_imported, 1);
+
+        let source = VecSource(vec![record]);
+        let second = importer
+            .import(
+                &source,
+                &ImportOptions {
+                    dry_run: false,
+                    checkpoint_every: 10,
+                    ..Default::default()
+                },
+            )
+            .await?;
+        assert_eq!(second.records_imported, 0);
+        assert_eq!(second.records_skipped_existing, 1);
+        assert_eq!(second.records_conflicting, 0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn import_overwrite_uses_existing_device_id() -> Result<(), Box<dyn std::error::Error>> {
+        let (storage, _dir) = sqlite_storage().await?;
+        storage.migration().run().await?;
+        let storage: Arc<dyn Storage> = Arc::new(storage);
+        let clock = Arc::new(SystemClock::new());
+
+        // Seed a runtime-created device with the same external identity but a
+        // different internal device_id (UUIDv7). Use the stable tenant id the
+        // migration tool will derive from the string "tenant-a".
+        let tenant_id = stable_tenant_id("tenant-a");
+        let external_id = ProtocolIdentity::new("runtime-cam")?;
+        let runtime_device_id = DeviceId::generate();
+        let (runtime_device, registered) = cheetah_domain::Device::new(
+            clock.as_ref(),
+            tenant_id,
+            runtime_device_id,
+            Protocol::Gb28181,
+            external_id,
+            "192.0.2.1:5060",
+            "Runtime",
+            DeviceKind::Camera,
+            Vec::new(),
+            BTreeMap::new(),
+        )?;
+
+        let mut uow = storage.begin().await?;
+        uow.device_repository().save(&runtime_device).await?;
+        uow.outbox()
+            .append(event_for(
+                clock.as_ref(),
+                tenant_id,
+                ResourceKind::Device,
+                ResourceId::Device(runtime_device_id),
+                registered,
+                0,
+            ))
+            .await?;
+        uow.commit().await?;
+
+        // Import a record with the same external identity.
+        let mut record = device_record("runtime-cam", "tenant-a");
+        record.name = "Imported".to_string();
+        let importer = Importer::new(Some(storage.clone()), clock.clone());
+        let result = importer
+            .import(
+                &VecSource(vec![record]),
+                &ImportOptions {
+                    dry_run: false,
+                    skip_existing: false,
+                    checkpoint_every: 10,
+                    ..Default::default()
+                },
+            )
+            .await?;
+        assert_eq!(result.records_imported, 1);
+
+        let mut uow = storage.begin().await?;
+        let events = uow.outbox().pending(clock.now_wall(), 100).await?;
+        uow.commit().await?;
+
+        assert_eq!(events.len(), 2);
+        assert_eq!(
+            events[1].event.aggregate_ref.id,
+            ResourceId::Device(runtime_device_id),
+            "DeviceUpdated must reference the existing runtime device id"
+        );
         Ok(())
     }
 }

@@ -16,7 +16,7 @@ use uuid::Uuid;
 pub(crate) type ParentProtocols = HashMap<(String, String), Protocol>;
 
 /// Namespace used for deterministic v5 UUIDs derived from old-system identifiers.
-const MIGRATION_NAMESPACE: Uuid = Uuid::from_bytes([
+pub(crate) const MIGRATION_NAMESPACE: Uuid = Uuid::from_bytes([
     0x1a, 0x2b, 0x3c, 0x4d, 0x5e, 0x6f, 0x70, 0x81, 0x92, 0xa3, 0xb4, 0xc5, 0xd6, 0xe7, 0xf8, 0x09,
 ]);
 
@@ -251,7 +251,7 @@ pub(crate) fn event_for(
 }
 
 /// Derives a deterministic `TenantId` from the old-system tenant name.
-fn stable_tenant_id(name: &str) -> TenantId {
+pub(crate) fn stable_tenant_id(name: &str) -> TenantId {
     TenantId::from_uuid(Uuid::new_v5(&MIGRATION_NAMESPACE, name.as_bytes()))
 }
 

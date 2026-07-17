@@ -115,12 +115,16 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let result = importer.import(&source, &options).await?;
 
     println!("Migration summary");
-    println!("  records read:       {}", result.records_read);
-    println!("  imported:           {}", result.records_imported);
-    println!("  skipped (cutover):  {}", result.records_skipped);
-    println!("  invalid:            {}", result.records_invalid);
-    println!("  conflicting:        {}", result.records_conflicting);
-    println!("  with secrets:       {}", result.records_with_secrets);
+    println!("  records read:          {}", result.records_read);
+    println!("  imported:              {}", result.records_imported);
+    println!("  skipped (cutover):     {}", result.records_skipped);
+    println!(
+        "  skipped (existing):    {}",
+        result.records_skipped_existing
+    );
+    println!("  invalid:               {}", result.records_invalid);
+    println!("  conflicting:           {}", result.records_conflicting);
+    println!("  with secrets:          {}", result.records_with_secrets);
 
     if !result.counts_by_kind.is_empty() {
         println!("  by kind:");
