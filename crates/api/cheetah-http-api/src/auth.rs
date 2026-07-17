@@ -52,26 +52,25 @@ impl FromRequestParts<Arc<ApiState>> for AuthContext {
             .get("authorization")
             .and_then(|v| v.to_str().ok());
 
-        let result = if let Some(header) = auth_header {
+        let bearer_result = if let Some(header) = auth_header {
             let (scheme, token) = split_auth_header(header);
-            let scheme = scheme.to_lowercase();
-            if scheme == "bearer" {
-                authenticate_bearer(&state.config.security, token).await
-            } else if scheme == "basic" {
-                Err(HttpError::Unauthenticated(
-                    "basic authentication is not supported".to_string(),
-                ))
+            if scheme.eq_ignore_ascii_case("bearer") {
+                Some(authenticate_bearer(&state.config.security, token).await)
             } else {
-                Err(HttpError::Unauthenticated(format!(
-                    "unsupported authorization scheme: {scheme}"
-                )))
+                // Non-bearer Authorization headers are ignored so that an
+                // unrelated proxy-injected Authorization header does not prevent
+                // X-Api-Key authentication.
+                None
             }
-        } else if let Some(api_key) = parts.headers.get("x-api-key").and_then(|v| v.to_str().ok()) {
-            authenticate_static_key(&state.config.security, api_key)
         } else {
-            Err(HttpError::Unauthenticated(
-                "missing Authorization or X-Api-Key header".to_string(),
-            ))
+            None
+        };
+
+        let result = match bearer_result {
+            Some(res) => res,
+            None => try_api_key_auth(parts, &state.config.security).unwrap_or(Err(
+                HttpError::Unauthenticated("missing Authorization or X-Api-Key header".to_string()),
+            )),
         };
 
         record_auth_audit(parts, state, &result);
@@ -84,6 +83,17 @@ fn split_auth_header(header: &str) -> (&str, &str) {
     let scheme = parts.next().unwrap_or("");
     let token = parts.next().unwrap_or("").trim();
     (scheme, token)
+}
+
+fn try_api_key_auth(
+    parts: &Parts,
+    security: &cheetah_signal_types::config::SecurityConfig,
+) -> Option<Result<AuthContext, HttpError>> {
+    parts
+        .headers
+        .get("x-api-key")
+        .and_then(|v| v.to_str().ok())
+        .map(|api_key| authenticate_static_key(security, api_key))
 }
 
 fn authenticate_static_key(

@@ -37,3 +37,15 @@ async fn valid_api_key_allows_authenticated_request() {
         .expect("send request");
     assert_eq!(response.status(), reqwest::StatusCode::OK);
 }
+
+#[tokio::test]
+async fn api_key_fallback_ignores_non_bearer_authorization() {
+    let server = common::TestServer::new().await;
+    let response = server
+        .request(reqwest::Method::GET, "/metrics")
+        .header("Authorization", "Basic dXNlcjpwYXNz")
+        .send()
+        .await
+        .expect("send request");
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+}
