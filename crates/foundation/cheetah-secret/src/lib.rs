@@ -70,12 +70,11 @@ impl SecretStore for InMemorySecretStore {
         let mut guard = lock(&self.secrets);
         let previous = guard
             .get(key)
-            .ok_or_else(|| SignalError::new(SignalErrorKind::NotFound, "secret not found"))?
-            .expose_secret()
-            .to_string();
+            .cloned()
+            .ok_or_else(|| SignalError::new(SignalErrorKind::NotFound, "secret not found"))?;
         let rotated = SecretString::from(uuid::Uuid::new_v4().to_string());
         guard.insert(key.to_string(), rotated);
-        Ok(SecretString::from(previous))
+        Ok(previous)
     }
 }
 
@@ -196,7 +195,9 @@ impl SecretStore for FileSecretStore {
     fn get(&self, key: &str) -> Result<SecretString> {
         let path = self.secret_path(key)?;
         match std::fs::read_to_string(&path) {
-            Ok(value) => Ok(SecretString::from(value.trim_end_matches('\n').to_string())),
+            Ok(value) => Ok(SecretString::from(
+                value.trim_end_matches(['\n', '\r']).to_string(),
+            )),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(SignalError::new(
                 SignalErrorKind::NotFound,
                 format!("secret {key} not found"),
