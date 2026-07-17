@@ -8,6 +8,7 @@ use cheetah_signal_types::config::GrpcConfig;
 use secrecy::ExposeSecret;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 use tonic::transport::server::{ServerTlsConfig, TcpConnectInfo, TcpIncoming, TlsConnectInfo};
 use tonic::transport::{Certificate, Identity, Server};
 use tonic::{Request, Status};
@@ -15,6 +16,11 @@ use x509_parser::prelude::GeneralName;
 
 use crate::error::SchedulerError;
 use crate::grpc::PeerIdentity;
+
+const DEFAULT_GRPC_TIMEOUT: Duration = Duration::from_secs(30);
+const DEFAULT_GRPC_CONCURRENCY_LIMIT: usize = 256;
+const DEFAULT_GRPC_MAX_CONCURRENT_STREAMS: u32 = 100;
+const DEFAULT_GRPC_KEEPALIVE: Duration = Duration::from_secs(60);
 
 /// Running gRPC server handle.
 #[derive(Debug)]
@@ -47,7 +53,10 @@ impl GrpcServer {
 
         let service = MediaClusterRegistryServer::with_interceptor(registry, mtls_interceptor);
 
-        let mut server = Server::builder();
+        let mut server = Server::builder()
+            .timeout(DEFAULT_GRPC_TIMEOUT)
+            .concurrency_limit_per_connection(DEFAULT_GRPC_CONCURRENCY_LIMIT)
+            .max_concurrent_streams(DEFAULT_GRPC_MAX_CONCURRENT_STREAMS);
 
         server = match (config.tls_cert_ref.as_ref(), config.tls_key_ref.as_ref()) {
             (Some(cert_ref), Some(key_ref)) => {
@@ -101,7 +110,9 @@ impl GrpcServer {
 
         let (tx, rx) = tokio::sync::oneshot::channel();
         let incoming = TcpIncoming::bind(addr)
-            .map_err(|e| SchedulerError::Transport(format!("failed to bind gRPC listener: {e}")))?;
+            .map_err(|e| SchedulerError::Transport(format!("failed to bind gRPC listener: {e}")))?
+            .with_nodelay(Some(true))
+            .with_keepalive(Some(DEFAULT_GRPC_KEEPALIVE));
         let local_addr = incoming.local_addr().map_err(|e| {
             SchedulerError::Transport(format!("failed to get gRPC local address: {e}"))
         })?;
