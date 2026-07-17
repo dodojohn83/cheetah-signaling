@@ -48,6 +48,7 @@ pub struct HostDriverContext {
     plugin_name: PluginName,
     config: serde_json::Value,
     budget: ResourceBudget,
+    monotonic_start: std::time::Instant,
     sink: Arc<dyn DeviceSink>,
     source: Arc<dyn CommandSource>,
     secret_provider: Arc<dyn SecretProvider>,
@@ -85,6 +86,7 @@ impl HostDriverContext {
             plugin_name,
             config,
             budget,
+            monotonic_start: std::time::Instant::now(),
             sink,
             source,
             secret_provider,
@@ -104,6 +106,10 @@ impl DriverContext for HostDriverContext {
 
     fn budget(&self) -> &ResourceBudget {
         &self.budget
+    }
+
+    fn monotonic_now(&self) -> cheetah_plugin_sdk::MonotonicSeconds {
+        self.monotonic_start.elapsed().as_secs()
     }
 
     fn device_sink(&self) -> &dyn DeviceSink {

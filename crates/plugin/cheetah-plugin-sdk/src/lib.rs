@@ -23,7 +23,7 @@ pub mod version;
 pub use checksum::verify_manifest_checksum;
 pub use driver::{
     CapabilityDescriptor, CommandSource, DeviceSink, DriverCommand, DriverContext, HealthReport,
-    HealthStatus, ProtocolDriver, ProtocolDriverFactory, ProtocolEvent,
+    HealthStatus, MonotonicSeconds, ProtocolDriver, ProtocolDriverFactory, ProtocolEvent,
 };
 pub use error::PluginError;
 pub use manifest::{

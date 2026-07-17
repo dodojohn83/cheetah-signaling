@@ -44,7 +44,6 @@ impl CredentialProvider for NoopCredentialProvider {
 /// Built-in GB28181 protocol driver.
 pub struct Gb28181ProtocolDriver {
     inner: Mutex<Option<Gb28181Access<NoopCredentialProvider>>>,
-    started_at: std::time::Instant,
 }
 
 impl std::fmt::Debug for Gb28181ProtocolDriver {
@@ -60,7 +59,6 @@ impl Gb28181ProtocolDriver {
     pub fn new() -> Self {
         Self {
             inner: Mutex::new(None),
-            started_at: std::time::Instant::now(),
         }
     }
 }
@@ -268,7 +266,7 @@ async fn process_sip(
     let message = SipParser::parse_datagram(&bytes, SipParserConfig::default())
         .map_err(|e| PluginError::Driver(format!("SIP parse error: {e}")))?;
 
-    let now = driver.started_at.elapsed().as_secs();
+    let now = ctx.monotonic_now();
     let input = AccessInput {
         source,
         now,
