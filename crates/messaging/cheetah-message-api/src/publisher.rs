@@ -21,7 +21,8 @@ pub struct RawEventBusPublisher<'a>(&'a dyn RawEventBus);
 
 impl<'a> std::fmt::Debug for RawEventBusPublisher<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RawEventBusPublisher").finish_non_exhaustive()
+        f.debug_struct("RawEventBusPublisher")
+            .finish_non_exhaustive()
     }
 }
 
