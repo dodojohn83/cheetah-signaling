@@ -78,6 +78,10 @@ impl Importer {
         source: &dyn RecordSource,
         options: &ImportOptions,
     ) -> Result<ImportResult, MigrationError> {
+        if options.checkpoint_every == 0 {
+            return Err(MigrationError::other("checkpoint_every must be at least 1"));
+        }
+
         let records = source.read_records().await?;
         let mut result = ImportResult {
             records_read: records.len(),
@@ -117,31 +121,19 @@ impl Importer {
             pending.push(entity);
 
             if pending.len() >= options.checkpoint_every {
-                self.drain(
-                    pending.drain(..),
-                    options,
-                    &mut devices,
-                    &mut channels,
-                    &mut result,
-                );
+                self.drain(pending.drain(..), &mut devices, &mut channels);
             }
         }
 
         if !pending.is_empty() {
-            self.drain(
-                pending.drain(..),
-                options,
-                &mut devices,
-                &mut channels,
-                &mut result,
-            );
+            self.drain(pending.drain(..), &mut devices, &mut channels);
         }
 
-        if !options.dry_run {
+        if options.dry_run {
+            result.records_imported = devices.len() + channels.len();
+        } else {
             self.flush_devices(&devices, options, &mut result).await?;
             self.flush_channels(&channels, options, &mut result).await?;
-        } else {
-            result.records_imported = devices.len() + channels.len();
         }
 
         Ok(result)
@@ -150,16 +142,10 @@ impl Importer {
     fn drain(
         &self,
         entities: impl Iterator<Item = MappedEntity>,
-        options: &ImportOptions,
         devices: &mut Vec<Device>,
         channels: &mut Vec<Channel>,
-        result: &mut ImportResult,
     ) {
         for entity in entities {
-            if options.dry_run {
-                result.records_imported += 1;
-                continue;
-            }
             match entity.entity {
                 MappedAggregate::Device(d)
                 | MappedAggregate::Gb28181Platform(d)
@@ -240,6 +226,91 @@ impl Importer {
             }
             uow.commit().await?;
             result.records_imported += written;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::clock::SystemClock;
+    use crate::model::{EntityType, OldRecord};
+    use cheetah_storage_sqlite::SqliteStorage;
+    use std::collections::BTreeMap;
+
+    fn device_record(external_id: &str, tenant_id: &str) -> OldRecord {
+        let mut metadata = BTreeMap::new();
+        metadata.insert(
+            "location".to_string(),
+            serde_json::Value::String("hallway".to_string()),
+        );
+        OldRecord {
+            entity_type: EntityType::Device,
+            tenant_id: tenant_id.to_string(),
+            external_id: external_id.to_string(),
+            name: "Cam".to_string(),
+            protocol: "gb28181".to_string(),
+            kind: "camera".to_string(),
+            authority: "192.0.2.1:5060".to_string(),
+            parent_device_id: external_id.to_string(),
+            channel_kind: String::new(),
+            enabled: true,
+            metadata,
+            secret_fields: String::new(),
+        }
+    }
+
+    struct VecSource(Vec<OldRecord>);
+
+    #[async_trait::async_trait]
+    impl RecordSource for VecSource {
+        async fn read_records(&self) -> Result<Vec<OldRecord>, MigrationError> {
+            Ok(self.0.clone())
+        }
+    }
+
+    async fn sqlite_storage()
+    -> Result<(SqliteStorage, tempfile::TempDir), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("test.db");
+        Ok((SqliteStorage::new(&path).await?, dir))
+    }
+
+    #[tokio::test]
+    async fn dry_run_reports_imported_count() -> Result<(), Box<dyn std::error::Error>> {
+        let (storage, _dir) = sqlite_storage().await?;
+        let storage = Arc::new(storage);
+        let clock = Arc::new(SystemClock::new());
+        let importer = Importer::new(storage, clock);
+        let source = VecSource(vec![device_record("cam-01", "tenant-a")]);
+        let options = ImportOptions {
+            dry_run: true,
+            checkpoint_every: 10,
+            ..Default::default()
+        };
+        let result = importer.import(&source, &options).await?;
+        assert_eq!(result.records_read, 1);
+        assert_eq!(result.records_imported, 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn checkpoint_zero_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
+        let (storage, _dir) = sqlite_storage().await?;
+        let storage = Arc::new(storage);
+        let clock = Arc::new(SystemClock::new());
+        let importer = Importer::new(storage, clock);
+        let source = VecSource(Vec::new());
+        let options = ImportOptions {
+            checkpoint_every: 0,
+            ..Default::default()
+        };
+        let outcome = importer.import(&source, &options).await;
+        assert!(outcome.is_err());
+        match outcome {
+            Err(MigrationError::Other(_)) => {}
+            _ => panic!("expected MigrationError::Other"),
         }
         Ok(())
     }

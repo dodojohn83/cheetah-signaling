@@ -89,6 +89,12 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         None => std::collections::HashSet::new(),
     };
 
+    if args.checkpoint_every == 0 {
+        return Err(MigrationError::other(
+            "--checkpoint-every must be at least 1",
+        ))?;
+    }
+
     let options = ImportOptions {
         checkpoint_every: args.checkpoint_every,
         dry_run: args.dry_run,
