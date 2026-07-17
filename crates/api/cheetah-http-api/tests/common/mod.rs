@@ -143,6 +143,8 @@ impl TestServer {
             rate_limit_burst: 0,
             webhook_delivery_interval_ms: 0,
             node_id,
+            tls_cert_ref: None,
+            tls_key_ref: None,
             security,
         };
 
@@ -184,6 +186,93 @@ impl TestServer {
 
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(5))
+            .build()
+            .expect("build client");
+
+        Self {
+            base_url,
+            api_key,
+            tenant_id,
+            _server: server,
+            _temp_dir: temp_dir,
+            client,
+            webhook_requests,
+        }
+    }
+
+    /// Starts a new HTTPS server on a random local port using a self-signed certificate.
+    pub async fn new_tls() -> Self {
+        let id_generator: Arc<dyn IdGenerator> = Arc::new(InMemoryIdGenerator::new());
+        let node_id = id_generator.generate_node_id();
+        let temp_suffix = format!("{}-{}", node_id, uuid::Uuid::now_v7());
+
+        let temp_dir = std::env::temp_dir().join(format!("cheetah-http-api-test-{temp_suffix}"));
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+        let db_path = temp_dir.join("cheetah.db");
+
+        let storage = Arc::new(
+            cheetah_storage_sqlite::SqliteStorage::new(&db_path)
+                .await
+                .expect("create sqlite storage"),
+        );
+        storage.migration().run().await.expect("run migrations");
+
+        let api_key = "test-api-key-with-at-least-32-characters".to_string();
+        let tenant_id = uuid::Uuid::now_v7().to_string();
+        let security = SecurityConfig {
+            static_api_key: SecretString::from(api_key.clone()),
+            ..Default::default()
+        };
+
+        let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])
+            .expect("generate self-signed cert");
+        let cert_pem = cert.cert.pem();
+        let key_pem = cert.signing_key.serialize_pem();
+
+        let secret_store = Arc::new(TestSecretStore::new());
+        secret_store.insert("sig.test", "super-secret");
+        secret_store.insert("tls-cert", &cert_pem);
+        secret_store.insert("tls-key", &key_pem);
+
+        let config = ApiConfig {
+            listen_addr: "127.0.0.1".to_string(),
+            port: 0,
+            read_timeout_ms: 5000,
+            request_body_limit_bytes: 1024 * 1024,
+            cors_allowed_origins: Vec::new(),
+            rate_limit_requests_per_second: 0,
+            rate_limit_burst: 0,
+            webhook_delivery_interval_ms: 0,
+            node_id,
+            tls_cert_ref: Some("tls-cert".to_string()),
+            tls_key_ref: Some("tls-key".to_string()),
+            security,
+        };
+
+        let webhook_requests = Arc::new(Mutex::new(Vec::new()));
+
+        let state = ApiState::new(
+            config,
+            storage,
+            Arc::new(InMemoryClock::new()),
+            Arc::clone(&id_generator),
+            Arc::new(InProcessMessageBus::new(64, 256)),
+            Arc::new(InMemoryDeviceOwnerResolver::new()),
+            Arc::new(InMemoryMediaPort::new(Arc::clone(&id_generator))),
+        )
+        .with_secret_store(secret_store);
+
+        let server = ApiServer::start(state).await.expect("start server");
+        let SocketAddr::V4(addr) = server.local_addr else {
+            panic!("expected ipv4 address");
+        };
+        let base_url = format!("https://127.0.0.1:{}", addr.port());
+
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(5))
+            .danger_accept_invalid_certs(true)
+            .danger_accept_invalid_hostnames(true)
             .build()
             .expect("build client");
 
