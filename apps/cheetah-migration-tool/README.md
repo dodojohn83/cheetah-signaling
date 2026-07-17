@@ -6,7 +6,8 @@ references from an old system into Cheetah Signaling.
 ## Responsibilities
 
 - Reads source records from CSV or JSON.
-- Maps old-system identities to deterministic UUIDs so re-runs are idempotent.
+- Maps old-system identities to deterministic UUIDv5 identifiers so re-runs are
+  idempotent (see ADR 0001 in `dev-docs/adr/0001-migration-tool-deterministic-uuids.md`).
 - Imports `Device` and `Channel` aggregates through the `Storage` port.
 - Supports dry-run, cutover filtering and batch checkpoint commits.
 - Refuses to migrate plaintext credentials; instead emits an action list for
