@@ -8,7 +8,7 @@ COPY . .
 
 # Build the signaling binary. SQLx query macros use offline mode by default in
 # this repository; if metadata needs to be regenerated, use `cargo sqlx prepare`.
-RUN cargo build --release --bin cheetah-signaling
+RUN cargo build --release --locked --bin cheetah-signaling
 
 # Pin runtime base image digest for reproducibility (linux/amd64).
 FROM debian:bookworm-slim@sha256:63a496b5d3b99214b39f5ed70eb71a61e590a77979c79cbee4faf991f8c0783e AS runtime
