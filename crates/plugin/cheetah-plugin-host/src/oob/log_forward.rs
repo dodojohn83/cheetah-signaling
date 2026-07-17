@@ -24,7 +24,8 @@ pub async fn forward_logs(
     let mut stderr_buf: Vec<u8> = Vec::new();
     let mut stdout_done = false;
     let mut stderr_done = false;
-    let mut in_pem_block = false;
+    let mut stdout_in_pem = false;
+    let mut stderr_in_pem = false;
 
     loop {
         if stdout_done && stderr_done {
@@ -37,7 +38,7 @@ pub async fn forward_logs(
                     if truncated {
                         warn!(plugin = %plugin_name, stream = "stdout", "plugin log line exceeded max length and was truncated");
                     }
-                    let sanitized = redact(&line, &mut in_pem_block);
+                    let sanitized = redact(&line, &mut stdout_in_pem);
                     info!(plugin = %plugin_name, stream = "stdout", "{sanitized}");
                 }
                 Ok(None) => stdout_done = true,
@@ -51,7 +52,7 @@ pub async fn forward_logs(
                     if truncated {
                         warn!(plugin = %plugin_name, stream = "stderr", "plugin log line exceeded max length and was truncated");
                     }
-                    let sanitized = redact(&line, &mut in_pem_block);
+                    let sanitized = redact(&line, &mut stderr_in_pem);
                     warn!(plugin = %plugin_name, stream = "stderr", "{sanitized}");
                 }
                 Ok(None) => stderr_done = true,
