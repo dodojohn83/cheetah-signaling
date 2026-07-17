@@ -15,15 +15,18 @@ data:
     worker_threads = 4
 
     [http]
-    bind = "{{ .Values.config.http.bind }}"
+    listen_addr = "{{ .Values.config.http.listen_addr }}"
     port = {{ .Values.config.http.port }}
 
     [grpc]
-    bind = "{{ .Values.config.grpc.bind }}"
+    listen_addr = "{{ .Values.config.grpc.listen_addr }}"
     port = {{ .Values.config.grpc.port }}
 
     [storage]
-    url = "{{ .Values.config.storage.url }}"
+    backend = "{{ .Values.config.storage.backend }}"
+    sqlite_path = "{{ .Values.config.storage.sqlite_path }}"
+    postgres_url = "{{ .Values.config.storage.postgres_url }}"
 
     [messaging]
-    kind = "{{ .Values.config.messaging.kind }}"
+    backend = "{{ .Values.config.messaging.backend }}"
+    nats_url = "{{ .Values.config.messaging.nats_url }}"

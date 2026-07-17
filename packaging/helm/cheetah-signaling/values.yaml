@@ -52,22 +52,25 @@ resources:
     cpu: 250m
     memory: 256Mi
 
-# readiness/liveness/startup probes share the same HTTP endpoint.
+# Liveness/readiness/startup probes use distinct HTTP paths registered by the
+# application: /health/live and /health/ready.
 probes:
   enabled: true
   port: 8080
-  path: /api/v1/health
   liveness:
+    path: /health/live
     initialDelaySeconds: 60
     periodSeconds: 15
     timeoutSeconds: 5
     failureThreshold: 3
   readiness:
+    path: /health/ready
     initialDelaySeconds: 10
     periodSeconds: 10
     timeoutSeconds: 3
     failureThreshold: 3
   startup:
+    path: /health/ready
     initialDelaySeconds: 10
     periodSeconds: 5
     timeoutSeconds: 3
@@ -113,11 +116,14 @@ networkPolicy:
 config:
   http:
     port: 8080
-    bind: "0.0.0.0"
+    listen_addr: "0.0.0.0"
   grpc:
     port: 9090
-    bind: "0.0.0.0"
+    listen_addr: "0.0.0.0"
   storage:
-    url: "sqlite:///var/lib/cheetah/cheetah.db"
+    backend: "sqlite"
+    sqlite_path: "/var/lib/cheetah/cheetah.db"
+    postgres_url: ""
   messaging:
-    kind: "local"
+    backend: "local"
+    nats_url: ""

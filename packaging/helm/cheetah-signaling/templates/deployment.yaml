@@ -56,7 +56,7 @@ spec:
           {{- if .Values.probes.enabled }}
           livenessProbe:
             httpGet:
-              path: {{ .Values.probes.path }}
+              path: {{ .Values.probes.liveness.path }}
               port: {{ .Values.probes.port }}
             initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
             periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
@@ -64,7 +64,7 @@ spec:
             failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
           readinessProbe:
             httpGet:
-              path: {{ .Values.probes.path }}
+              path: {{ .Values.probes.readiness.path }}
               port: {{ .Values.probes.port }}
             initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
             periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
@@ -72,7 +72,7 @@ spec:
             failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
           startupProbe:
             httpGet:
-              path: {{ .Values.probes.path }}
+              path: {{ .Values.probes.startup.path }}
               port: {{ .Values.probes.port }}
             initialDelaySeconds: {{ .Values.probes.startup.initialDelaySeconds }}
             periodSeconds: {{ .Values.probes.startup.periodSeconds }}
