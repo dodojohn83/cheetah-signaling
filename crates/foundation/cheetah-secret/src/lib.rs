@@ -389,15 +389,22 @@ impl SecretStore for CompositeSecretStore {
                 Err(err) => return Err(err),
             }
         }
-        if deleted {
-            Ok(())
-        } else if let Some(err) = not_found_err {
-            Err(err)
-        } else {
-            Err(SignalError::new(
+        if !deleted && not_found_err.is_none() {
+            return Err(SignalError::new(
                 SignalErrorKind::Unsupported,
                 "no writable secret store accepted the operation",
-            ))
+            ));
+        }
+
+        // A read-only layer may still expose the key. Verify that no readable
+        // copy remains before reporting success.
+        match self.get(key) {
+            Ok(_) => Err(SignalError::new(
+                SignalErrorKind::Unsupported,
+                "secret remains readable in a read-only layer after delete",
+            )),
+            Err(err) if err.kind() == SignalErrorKind::NotFound => Ok(()),
+            Err(err) => Err(err),
         }
     }
 
