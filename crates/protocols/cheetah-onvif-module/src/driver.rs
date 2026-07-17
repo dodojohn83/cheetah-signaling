@@ -69,7 +69,7 @@ impl ProtocolDriver for OnvifProtocolDriver {
     ) -> Result<CapabilityDescriptor, PluginError> {
         let _ = target
             .parse::<SocketAddr>()
-            .map_err(|e| PluginError::InvalidManifest(format!("invalid target address: {e}")))?;
+            .map_err(|e| PluginError::Driver(format!("invalid target address: {e}")))?;
         Ok(CapabilityDescriptor {
             protocol: "onvif".to_string(),
             direction: ProtocolDirection::Outbound,
