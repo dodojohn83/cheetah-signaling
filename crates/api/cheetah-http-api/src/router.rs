@@ -100,12 +100,12 @@ pub fn build_router(state: ApiState) -> Router {
         .route("/api/v1/admin/outbox-replay", post(ops::outbox_replay))
         .route("/api/v1/admin/reconcile", post(ops::reconcile))
         .fallback(fallback)
-        .route_layer(from_fn(trace_context_middleware))
         .with_state(shared_state.clone())
         .layer(from_fn_with_state(shared_state, rate_limit_middleware));
 
     api.layer(
         ServiceBuilder::new()
+            .layer(from_fn(trace_context_middleware))
             .layer(TraceLayer::new_for_http().make_span_with(CheetahMakeSpan))
             .layer(CompressionLayer::new())
             .layer(cors)
