@@ -54,12 +54,20 @@ impl VersionedMigration {
 }
 
 fn phase_from_description(description: &str) -> MigrationPhase {
-    match description.split_once('_') {
-        Some(("expand", _)) => MigrationPhase::Expand,
-        Some(("migrate", _)) => MigrationPhase::Migrate,
-        Some(("backfill", _)) => MigrationPhase::Backfill,
-        Some(("switch", _)) => MigrationPhase::Switch,
-        Some(("contract", _)) => MigrationPhase::Contract,
+    // sqlx normalizes descriptions by stripping the version prefix and
+    // replacing '_' with spaces, so the phase token may be separated by a
+    // space or an underscore and may have leading separators.
+    let token = description
+        .trim_start_matches([' ', '_'])
+        .split([' ', '_'])
+        .next()
+        .unwrap_or_default();
+    match token {
+        "expand" => MigrationPhase::Expand,
+        "migrate" => MigrationPhase::Migrate,
+        "backfill" => MigrationPhase::Backfill,
+        "switch" => MigrationPhase::Switch,
+        "contract" => MigrationPhase::Contract,
         _ => MigrationPhase::Baseline,
     }
 }
@@ -323,23 +331,26 @@ mod tests {
 
     #[test]
     fn phase_from_description_parsing() {
-        assert_eq!(vm(1, "initial").phase, MigrationPhase::Baseline);
+        // sqlx normalizes descriptions to spaces and may leave a leading space.
+        assert_eq!(vm(1, " initial").phase, MigrationPhase::Baseline);
+        assert_eq!(vm(2, " expand add status").phase, MigrationPhase::Expand);
+        assert_eq!(vm(3, " migrate add index").phase, MigrationPhase::Migrate);
+        assert_eq!(vm(4, " backfill status").phase, MigrationPhase::Backfill);
+        assert_eq!(vm(5, " switch use status").phase, MigrationPhase::Switch);
+        assert_eq!(vm(6, " contract drop old").phase, MigrationPhase::Contract);
+        // Underscore-separated descriptions are also accepted for tests/fixtures.
         assert_eq!(vm(2, "expand_add_status").phase, MigrationPhase::Expand);
-        assert_eq!(vm(3, "migrate_add_index").phase, MigrationPhase::Migrate);
-        assert_eq!(vm(4, "backfill_status").phase, MigrationPhase::Backfill);
-        assert_eq!(vm(5, "switch_use_status").phase, MigrationPhase::Switch);
-        assert_eq!(vm(6, "contract_drop_old").phase, MigrationPhase::Contract);
     }
 
     #[test]
     fn startup_migrations_skip_backfill_switch_contract() {
         let planner = PhaseMigrationPlanner::new(vec![
-            vm(1, "initial"),
-            vm(2, "expand_add_status"),
-            vm(2, "migrate_add_index"),
-            vm(2, "backfill_status"),
-            vm(2, "switch_use_status"),
-            vm(2, "contract_drop_old"),
+            vm(1, " initial"),
+            vm(2, " expand add status"),
+            vm(2, " migrate add index"),
+            vm(2, " backfill status"),
+            vm(2, " switch use status"),
+            vm(2, " contract drop old"),
         ]);
         let startup = planner.startup_migrations();
         assert_eq!(startup.len(), 3);
@@ -352,10 +363,10 @@ mod tests {
     #[test]
     fn pending_filters_applied() {
         let known = vec![
-            vm(1, "initial"),
-            vm(2, "expand_add_status"),
-            vm(2, "migrate_add_index"),
-            vm(2, "backfill_status"),
+            vm(1, " initial"),
+            vm(2, " expand add status"),
+            vm(2, " migrate add index"),
+            vm(2, " backfill status"),
         ];
         let applied = [(1, MigrationPhase::Baseline), (2, MigrationPhase::Expand)];
         let pending = PhaseMigrationPlanner::pending(applied, &known);
