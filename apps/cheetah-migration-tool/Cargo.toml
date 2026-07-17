@@ -1,0 +1,35 @@
+[package]
+name = "cheetah-migration-tool"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Standalone import tool for migrating tenants, devices, channels and secret references into Cheetah Signaling."
+
+[dependencies]
+cheetah-config = { path = "../../crates/foundation/cheetah-config" }
+cheetah-domain = { path = "../../crates/domain/cheetah-domain" }
+cheetah-signal-types = { path = "../../crates/foundation/cheetah-signal-types" }
+cheetah-storage-api = { path = "../../crates/storage/cheetah-storage-api" }
+cheetah-storage-postgres = { path = "../../crates/storage/cheetah-storage-postgres" }
+cheetah-storage-sqlite = { path = "../../crates/storage/cheetah-storage-sqlite" }
+async-trait = { workspace = true }
+clap = { workspace = true }
+csv = { workspace = true }
+time = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+secrecy = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "fs"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true
