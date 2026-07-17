@@ -7,11 +7,8 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use cheetah_domain::{DomainError, DomainEvent, EventPublisher};
 use cheetah_signal_application::dto::{DeviceDto, MediaSessionDto, OperationDto};
-use cheetah_signal_types::{
-    DeviceId, Event, PageRequest, SignalConfig, SignalError, SignalErrorKind,
-};
+use cheetah_signal_types::{DeviceId, PageRequest, SignalConfig, SignalError, SignalErrorKind};
 use std::sync::Arc;
 
 /// Validates a submitted configuration without applying it.
@@ -134,33 +131,6 @@ pub async fn device_diagnostics(
     ))
 }
 
-/// Publishes a domain event through the raw event bus.
-struct RawBusPublisher<'a>(&'a (dyn cheetah_message_api::RawEventBus + Send + Sync));
-
-#[async_trait::async_trait]
-impl EventPublisher for RawBusPublisher<'_> {
-    async fn publish(&self, event: &Event<DomainEvent>) -> cheetah_domain::Result<()> {
-        let envelope = cheetah_message_api::encode_event(event).map_err(bus_error_to_domain)?;
-        let subject = cheetah_message_api::event_subject(event.tenant_id, "domain_event");
-        self.0
-            .publish(&subject, &envelope)
-            .await
-            .map_err(bus_error_to_domain)
-    }
-}
-
-fn bus_error_to_domain(err: cheetah_message_api::BusError) -> DomainError {
-    use cheetah_message_api::BusError;
-    match err {
-        BusError::Busy => DomainError::unavailable("message bus busy"),
-        BusError::Unavailable(msg) => DomainError::unavailable(msg),
-        BusError::InvalidPayload(msg) | BusError::UnsupportedEnvelope(msg) => {
-            DomainError::invalid_argument(msg)
-        }
-        _ => DomainError::internal(err.to_string()),
-    }
-}
-
 /// Replays pending outbox events to the event bus.
 pub async fn outbox_replay(
     State(state): State<Arc<ApiState>>,
@@ -183,7 +153,7 @@ pub async fn outbox_replay(
         return Ok((StatusCode::OK, Json(serde_json::json!({"replayed": 0}))));
     }
 
-    let publisher = RawBusPublisher(state.event_bus.as_ref());
+    let publisher = cheetah_message_api::RawEventBusPublisher::new(state.event_bus.as_ref());
     let results = service.publish_events(&publisher, &pending).await;
 
     // Record publish outcomes in a separate transaction.

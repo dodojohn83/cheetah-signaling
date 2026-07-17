@@ -5,7 +5,7 @@ use cheetah_domain::{
 };
 use cheetah_message_api::{
     AckHandle, BusError, CommandEnvelope, Delivery, EventEnvelope, RawCommandBus, RawEventBus,
-    Subscription, command_subject, encode_command, encode_event, event_subject,
+    Subscription, command_subject, encode_command,
 };
 use cheetah_signal_types::{Event, NodeId};
 use futures::StreamExt;
@@ -36,17 +36,6 @@ where
         .await
         .map_err(|_| nats_error_to_bus(format!("{description} timed out")))?
         .map_err(nats_error_to_bus)
-}
-
-fn bus_error_to_domain(err: BusError) -> DomainError {
-    match err {
-        BusError::Busy => DomainError::unavailable("message bus busy"),
-        BusError::Unavailable(msg) => DomainError::unavailable(msg),
-        BusError::InvalidPayload(msg) | BusError::UnsupportedEnvelope(msg) => {
-            DomainError::invalid_argument(msg)
-        }
-        _ => DomainError::internal(err.to_string()),
-    }
 }
 
 /// NATS JetStream message bus.
@@ -275,7 +264,7 @@ impl RawEventBus for NatsBus {
 #[async_trait::async_trait]
 impl CommandBus for NatsBus {
     async fn send(&self, command: &Command) -> cheetah_domain::Result<()> {
-        let envelope = encode_command(command).map_err(bus_error_to_domain)?;
+        let envelope = encode_command(command).map_err(DomainError::from)?;
 
         let owner = match self
             .owner_resolver
@@ -301,18 +290,14 @@ impl CommandBus for NatsBus {
         let subject = command_subject(command.tenant_id(), owner.owner_node_id);
         RawCommandBus::send(self, &subject, &envelope)
             .await
-            .map_err(bus_error_to_domain)
+            .map_err(DomainError::from)
     }
 }
 
 #[async_trait::async_trait]
 impl EventPublisher for NatsBus {
     async fn publish(&self, event: &Event<DomainEvent>) -> cheetah_domain::Result<()> {
-        let envelope = encode_event(event).map_err(bus_error_to_domain)?;
-        let subject = event_subject(event.tenant_id, "domain_event");
-        RawEventBus::publish(self, &subject, &envelope)
-            .await
-            .map_err(bus_error_to_domain)
+        cheetah_message_api::publish_domain_event(self, event).await
     }
 }
 
