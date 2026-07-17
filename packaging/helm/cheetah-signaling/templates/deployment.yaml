@@ -8,6 +8,16 @@ spec:
   {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicaCount }}
   {{- end }}
+  {{- if and .Values.persistence.enabled (eq .Values.config.storage.backend "sqlite") }}
+  strategy:
+    type: Recreate
+  {{- else }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 0
+  {{- end }}
   selector:
     matchLabels:
       {{- include "cheetah-signaling.selectorLabels" . | nindent 6 }}
