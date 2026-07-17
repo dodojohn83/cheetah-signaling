@@ -165,6 +165,14 @@ pub trait ProtocolDriverFactory: Send + Sync {
     fn name(&self) -> PluginName;
     /// Capabilities advertised by drivers from this factory.
     fn capabilities(&self) -> Vec<ProtocolCapability>;
+    /// Returns the maximum time the host should allow for `create` to finish.
+    ///
+    /// Built-in factories that create in-process drivers can keep the default
+    /// (5 seconds). Out-of-process factories should return a budget that covers
+    /// process startup and the first gRPC connection.
+    fn creation_timeout(&self) -> DurationMs {
+        DurationMs::from_seconds(5)
+    }
     /// Creates a new driver instance with the given configuration.
     async fn create(
         &self,

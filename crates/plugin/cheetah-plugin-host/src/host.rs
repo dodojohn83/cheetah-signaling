@@ -247,7 +247,8 @@ impl PluginHost {
                 .registry
                 .get(&manifest.name)
                 .ok_or_else(|| PluginHostError::NotFound(manifest.name.to_string()))?;
-            with_timeout(deadline, factory.create(config.clone())).await?
+            let create_deadline = deadline.max(factory.creation_timeout());
+            with_timeout(create_deadline, factory.create(config.clone())).await?
         };
         let ctx = HostDriverContext::with_secret_provider(
             manifest.name.clone(),
@@ -338,7 +339,8 @@ impl PluginHost {
             .registry
             .get(name)
             .ok_or_else(|| PluginHostError::NotFound(name.to_string()))?;
-        let driver = with_timeout(deadline, factory.create(serde_json::Value::Null)).await?;
+        let create_deadline = deadline.max(factory.creation_timeout());
+        let driver = with_timeout(create_deadline, factory.create(serde_json::Value::Null)).await?;
         let ctx = self.no_op_context(name);
         with_timeout(deadline, driver.probe(&ctx, target, deadline)).await
     }

@@ -25,6 +25,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 mod log_forward;
+mod log_sanitize;
 mod tls_verifier;
 
 use log_forward::forward_logs;
@@ -156,6 +157,12 @@ impl ProtocolDriverFactory for OutOfProcessFactory {
 
     fn capabilities(&self) -> Vec<ProtocolCapability> {
         self.capabilities.clone()
+    }
+
+    fn creation_timeout(&self) -> DurationMs {
+        let startup = self.config.startup_timeout.as_millis();
+        let connect = self.config.connect_timeout.as_millis();
+        DurationMs::from_millis(startup.saturating_add(connect).saturating_add(1_000))
     }
 
     async fn create(

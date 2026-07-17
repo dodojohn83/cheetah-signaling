@@ -4,6 +4,7 @@
 //! truncated and a marker appended so a misbehaving plugin cannot exhaust host
 //! memory with a newline-free flood.
 
+use super::log_sanitize::sanitize_log_line;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, BufReader};
 use tokio::process::{ChildStderr, ChildStdout};
 use tokio::sync::oneshot;
@@ -23,6 +24,7 @@ pub async fn forward_logs(
     let mut stderr_buf: Vec<u8> = Vec::new();
     let mut stdout_done = false;
     let mut stderr_done = false;
+    let mut in_pem_block = false;
 
     loop {
         if stdout_done && stderr_done {
@@ -35,7 +37,8 @@ pub async fn forward_logs(
                     if truncated {
                         warn!(plugin = %plugin_name, stream = "stdout", "plugin log line exceeded max length and was truncated");
                     }
-                    info!(plugin = %plugin_name, stream = "stdout", "{line}");
+                    let sanitized = redact(&line, &mut in_pem_block);
+                    info!(plugin = %plugin_name, stream = "stdout", "{sanitized}");
                 }
                 Ok(None) => stdout_done = true,
                 Err(e) => {
@@ -48,7 +51,8 @@ pub async fn forward_logs(
                     if truncated {
                         warn!(plugin = %plugin_name, stream = "stderr", "plugin log line exceeded max length and was truncated");
                     }
-                    warn!(plugin = %plugin_name, stream = "stderr", "{line}");
+                    let sanitized = redact(&line, &mut in_pem_block);
+                    warn!(plugin = %plugin_name, stream = "stderr", "{sanitized}");
                 }
                 Ok(None) => stderr_done = true,
                 Err(e) => {
@@ -58,6 +62,21 @@ pub async fn forward_logs(
             },
         }
     }
+}
+
+fn redact(line: &str, in_pem_block: &mut bool) -> String {
+    let trimmed = line.trim_start();
+    if trimmed.starts_with("-----BEGIN") {
+        *in_pem_block = true;
+        return "[REDACTED PEM]".to_string();
+    }
+    if *in_pem_block {
+        if trimmed.starts_with("-----END") {
+            *in_pem_block = false;
+        }
+        return "[REDACTED PEM]".to_string();
+    }
+    sanitize_log_line(line)
 }
 
 async fn skip_until_newline<R: AsyncBufRead + Unpin + ?Sized>(

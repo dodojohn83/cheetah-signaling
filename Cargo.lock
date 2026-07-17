@@ -703,6 +703,7 @@ dependencies = [
  "futures",
  "prost",
  "rcgen",
+ "regex",
  "rustls",
  "secrecy",
  "semver",
