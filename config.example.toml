@@ -1,0 +1,134 @@
+# Cheetah Signaling example configuration.
+#
+# Copy this file and adjust values for your deployment. Unknown fields are
+# rejected on startup, so spelling mistakes are caught immediately.
+# Values shown here are examples; defaults are noted per field.
+
+[system]
+# Human-readable node name. Default: "" (auto-generated).
+node_name = "cheetah-edge-01"
+# Data directory for SQLite, logs and local state. Must be writable.
+data_dir = "/var/lib/cheetah"
+# Log level filter. Default: "info". Hot-reload: no.
+log_level = "info"
+# Optional stable node UUID. If omitted a deterministic id is generated.
+# node_id = "018f3b0a-..."
+
+[runtime]
+# Tokio worker threads. Default: 4. Range: >= 1.
+worker_threads = 4
+# Tokio blocking thread pool limit. Default: 512.
+max_blocking_threads = 512
+# Idle blocking thread keep-alive in milliseconds. Default: 10000.
+thread_keep_alive_ms = 10000
+# Per-actor mailbox capacity. Default: 1024.
+queue_depth = 1024
+
+[http]
+# REST API bind address and port.
+listen_addr = "0.0.0.0"
+port = 8080
+# Optional TLS secret references. If set, the API serves HTTPS.
+# tls_cert_ref = "certs/api.crt"
+# tls_key_ref = "certs/api.key"
+# Request read timeout in milliseconds. Default: 5000.
+read_timeout_ms = 5000
+# Allowed CORS origins. Empty disables cross-origin access.
+cors_allowed_origins = []
+# Per-tenant token-bucket rate limit. Default: 100 req/s, burst 200.
+rate_limit_requests_per_second = 100
+rate_limit_burst = 200
+
+[grpc]
+# Internal gRPC API bind address and port.
+listen_addr = "0.0.0.0"
+port = 50051
+# Optional mTLS secret references. Required for cluster deployments.
+# tls_cert_ref = "certs/grpc.crt"
+# tls_key_ref = "certs/grpc.key"
+
+[storage]
+# Backend: "sqlite" or "postgres". Default: "sqlite".
+backend = "sqlite"
+# SQLite database path. Used when backend = "sqlite".
+sqlite_path = "/var/lib/cheetah/cheetah.db"
+# PostgreSQL URL. Used when backend = "postgres". Format:
+# postgresql://user:password@host:port/database
+# Keep credentials in a secret manager or env var; do not commit this file.
+postgres_url = ""
+# Connection pool size. Default: 10.
+max_connections = 10
+# Connection acquisition timeout in milliseconds. Default: 5000.
+connection_timeout_ms = 5000
+
+[messaging]
+# Backend: "local" or "nats". Default: "local" (edge single-node).
+backend = "local"
+# NATS server URL. Required when backend = "nats".
+nats_url = ""
+# JetStream domain. Leave empty for default.
+jetstream_domain = ""
+# Maximum pending messages per consumer. Default: 0 (unbounded in local mode).
+# Set a positive value in production to bound memory.
+max_pending = 1024
+
+[cluster]
+# Enable cluster mode. Default: false.
+enabled = false
+# Ownership lease TTL in milliseconds. Default: 0.
+lease_ttl_ms = 10000
+# Cluster heartbeat interval in milliseconds. Default: 0.
+heartbeat_interval_ms = 3000
+
+[media]
+# Media node selection strategy. Default: "round-robin".
+default_media_node_selector = "round-robin"
+# Maximum concurrent media sessions per device. Default: 4.
+max_sessions_per_device = 4
+# Default SIP INVITE timeout in milliseconds. Default: 30000.
+default_invite_timeout_ms = 30000
+
+[plugins]
+# Enable out-of-process plugin loading. Default: false.
+enabled = false
+# Directory scanned for plugin manifests/binaries.
+plugin_dir = "/usr/lib/cheetah/plugins"
+# Maximum plugin instances per node. Default: 0.
+max_plugin_instances = 8
+
+[gb28181]
+# SIP domain for this node.
+sip_domain = ""
+# Local SIP port. Default: 0 (disabled).
+sip_port = 5060
+# Media stream keep-alive timeout in milliseconds. Default: 0.
+media_stream_timeout_ms = 30000
+
+[onvif]
+# ONVIF discovery timeout in milliseconds. Default: 0.
+discovery_timeout_ms = 10000
+# ONVIF probe timeout in milliseconds. Default: 0.
+probe_timeout_ms = 5000
+
+[security]
+# Reference to the JWT public key secret. Leave empty to disable JWT auth.
+jwt_public_key_ref = ""
+# Expected JWT audiences. Empty disables audience validation.
+jwt_audience = []
+# Expected JWT issuers. Empty disables issuer validation.
+jwt_issuer = []
+# API key hash for service-to-service calls.
+api_key_hash = ""
+# Static API key for edge-mode management. Must be >= 32 bytes when set.
+# Keep this in a secret manager or env var; do not commit plaintext.
+static_api_key = ""
+# Token TTL in milliseconds. Default: 0.
+token_ttl_ms = 3600000
+
+[observability]
+# Bind address for the Prometheus /metrics endpoint.
+metrics_bind_addr = "0.0.0.0:9090"
+# Optional OTLP/gRPC tracing endpoint. Disabled if omitted.
+# tracing_endpoint = "http://localhost:4317"
+# Log format: "json" or "compact". Default: "json".
+log_format = "json"
