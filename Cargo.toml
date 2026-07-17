@@ -63,6 +63,7 @@ libc = "0.2.186"
 axum-server = { version = "0.8.0", default-features = false, features = ["tls-rustls"] }
 rustls = { version = "0.23.42", default-features = false, features = ["ring"] }
 rcgen = { version = "0.14.8", default-features = false, features = ["pem", "ring"] }
+x509-parser = "0.18.1"
 bytes = "1"
 quick-xml = "0.41.0"
 encoding_rs = "0.8.35"

@@ -16,9 +16,10 @@ use std::str::FromStr;
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
 
-/// Peer identity extracted from the TLS layer and inserted into request extensions.
+/// Peer identity candidates extracted from the TLS layer and inserted into request
+/// extensions.
 #[derive(Clone, Debug)]
-pub struct PeerIdentity(pub String);
+pub struct PeerIdentity(pub Vec<String>);
 
 /// gRPC service for media node lifecycle.
 pub struct MediaClusterRegistryService {
@@ -205,15 +206,18 @@ fn check_identity(
     config: &MediaRegistryConfig,
     expected: &str,
 ) -> Result<(), Status> {
-    if !config.require_mtls {
-        return Ok(());
-    }
     match identity {
-        Some(PeerIdentity(found)) if found == expected => Ok(()),
-        found => Err(Status::permission_denied(format!(
-            "mTLS identity mismatch: expected {expected}, found {}",
-            found.as_ref().map(|p| p.0.as_str()).unwrap_or("none")
+        // If the TLS layer presented a peer certificate, the presented identity
+        // must match the claimed node id regardless of the global mTLS switch.
+        Some(PeerIdentity(candidates)) if candidates.iter().any(|id| id == expected) => Ok(()),
+        Some(_) => Err(Status::permission_denied(format!(
+            "mTLS identity mismatch: expected {expected}"
         ))),
+        // No peer certificate was presented; only allow when mTLS is not required.
+        None if !config.require_mtls => Ok(()),
+        None => Err(Status::permission_denied(
+            "mTLS required but no peer identity presented".to_string(),
+        )),
     }
 }
 

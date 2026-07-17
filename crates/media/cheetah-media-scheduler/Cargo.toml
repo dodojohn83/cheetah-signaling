@@ -14,8 +14,11 @@ cheetah-signal-types = { path = "../../foundation/cheetah-signal-types" }
 cheetah-signal-contracts = { path = "../../foundation/cheetah-signal-contracts" }
 cheetah-media-client = { path = "../cheetah-media-client" }
 
-tonic = { workspace = true }
-tokio = { workspace = true, features = ["sync", "time"] }
+tonic = { workspace = true, features = ["tls-ring"] }
+tokio = { workspace = true, features = ["sync", "time", "net", "rt"] }
+rustls = { workspace = true }
+x509-parser = { workspace = true }
+secrecy = { workspace = true }
 time = { workspace = true }
 serde_json = { workspace = true }
 prost-types = { workspace = true }
@@ -26,6 +29,7 @@ serde = { workspace = true, features = ["derive"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }
+rcgen.workspace = true
 
 [lints]
 workspace = true
