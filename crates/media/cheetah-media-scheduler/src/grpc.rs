@@ -206,19 +206,18 @@ fn check_identity(
     config: &MediaRegistryConfig,
     expected: &str,
 ) -> Result<(), Status> {
-    if !config.require_mtls {
-        return Ok(());
-    }
     match identity {
+        // If the TLS layer presented a peer certificate, the presented identity
+        // must match the claimed node id regardless of the global mTLS switch.
         Some(PeerIdentity(candidates)) if candidates.iter().any(|id| id == expected) => Ok(()),
-        found => Err(Status::permission_denied(format!(
-            "mTLS identity mismatch: expected {expected}, found {}",
-            found
-                .as_ref()
-                .and_then(|p| p.0.first())
-                .map(String::as_str)
-                .unwrap_or("none")
+        Some(_) => Err(Status::permission_denied(format!(
+            "mTLS identity mismatch: expected {expected}"
         ))),
+        // No peer certificate was presented; only allow when mTLS is not required.
+        None if !config.require_mtls => Ok(()),
+        None => Err(Status::permission_denied(
+            "mTLS required but no peer identity presented".to_string(),
+        )),
     }
 }
 
