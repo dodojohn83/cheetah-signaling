@@ -486,6 +486,9 @@ fn decode_response(
     method: &str,
 ) -> Result<serde_json::Value, PluginError> {
     if response.ok {
+        if response.payload.is_empty() {
+            return Ok(serde_json::Value::Null);
+        }
         serde_json::from_slice(&response.payload)
             .map_err(|e| PluginError::Driver(format!("{method} response is not valid JSON: {e}")))
     } else {
@@ -738,5 +741,19 @@ mod tests {
         assert_eq!(cap.direction, ProtocolDirection::Outbound);
 
         driver.shutdown(&ctx, DurationMs::from_seconds(5)).await
+    }
+
+    #[test]
+    fn decode_response_treats_empty_ok_payload_as_null() -> Result<(), Box<dyn std::error::Error>> {
+        let response = PluginRuntimeCallDriverResponse {
+            ok: true,
+            correlation_id: Uuid::now_v7().to_string(),
+            payload: Vec::new(),
+            error_code: String::new(),
+            error_message: String::new(),
+        };
+        let value = decode_response(&response, "shutdown")?;
+        assert_eq!(value, serde_json::Value::Null);
+        Ok(())
     }
 }
