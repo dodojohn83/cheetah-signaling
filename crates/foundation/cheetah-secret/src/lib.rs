@@ -362,20 +362,38 @@ impl SecretStore for CompositeSecretStore {
     }
 
     fn put(&self, key: &str, value: SecretString) -> Result<()> {
+        let mut accepted = false;
         let mut last_err = None;
         for store in &self.stores {
             match store.put(key, value.clone()) {
-                Ok(()) => return Ok(()),
+                Ok(()) => {
+                    accepted = true;
+                    break;
+                }
                 Err(err) if err.kind() == SignalErrorKind::Unsupported => last_err = Some(err),
                 Err(err) => return Err(err),
             }
         }
-        Err(last_err.unwrap_or_else(|| {
-            SignalError::new(
+        if !accepted {
+            return Err(last_err.unwrap_or_else(|| {
+                SignalError::new(
+                    SignalErrorKind::Unsupported,
+                    "no writable secret store accepted the operation",
+                )
+            }));
+        }
+
+        // A higher-priority read-only layer may still shadow the value. Verify
+        // the effective read value matches what was written.
+        let effective = self.get(key)?;
+        if effective.expose_secret() == value.expose_secret() {
+            Ok(())
+        } else {
+            Err(SignalError::new(
                 SignalErrorKind::Unsupported,
-                "no writable secret store accepted the operation",
-            )
-        }))
+                "secret value shadowed by a higher-priority layer",
+            ))
+        }
     }
 
     fn delete(&self, key: &str) -> Result<()> {
@@ -414,18 +432,40 @@ impl SecretStore for CompositeSecretStore {
     }
 
     fn rotate(&self, key: &str) -> Result<SecretString> {
-        for store in &self.stores {
+        let mut accepted_idx = None;
+        let mut previous = None;
+        for (i, store) in self.stores.iter().enumerate() {
             match store.rotate(key) {
-                Ok(value) => return Ok(value),
+                Ok(prev) => {
+                    previous = Some(prev);
+                    accepted_idx = Some(i);
+                    break;
+                }
                 Err(err) if err.kind() == SignalErrorKind::NotFound => continue,
                 Err(err) if err.kind() == SignalErrorKind::Unsupported => continue,
                 Err(err) => return Err(err),
             }
         }
-        Err(SignalError::new(
-            SignalErrorKind::NotFound,
-            "secret not found",
-        ))
+        let (Some(idx), Some(previous)) = (accepted_idx, previous) else {
+            return Err(SignalError::new(
+                SignalErrorKind::NotFound,
+                "secret not found",
+            ));
+        };
+
+        // A higher-priority read-only layer may still shadow the rotated value.
+        // Verify the effective read value matches the value in the layer we
+        // just rotated.
+        let rotated = self.stores[idx].get(key)?;
+        let effective = self.get(key)?;
+        if effective.expose_secret() == rotated.expose_secret() {
+            Ok(previous)
+        } else {
+            Err(SignalError::new(
+                SignalErrorKind::Unsupported,
+                "rotated secret shadowed by a higher-priority layer",
+            ))
+        }
     }
 }
 
