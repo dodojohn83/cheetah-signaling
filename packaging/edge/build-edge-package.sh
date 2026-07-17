@@ -39,8 +39,8 @@ install -m 755 "packaging/scripts/uninstall.sh" "$STAGING/$PKG_NAME/"
 # Generate SBOM and license summary.
 install -d -m 755 "$OUT_DIR"
 cargo tree --prefix none --no-dedupe --format "{p} {l}" > "$STAGING/$PKG_NAME/ThirdPartyLicenses.txt"
-cargo metadata --format-version 1 --no-deps \
-    | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps({"packages":[{"name":p["name"],"version":p["version"],"license":(p.get("license") or "")} for p in d["packages"]]}, indent=2))' \
+cargo metadata --format-version 1 \
+    | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps({"packages":[{"name":p["name"],"version":p["version"],"license":(p.get("license") or ""),"source":(p.get("source") or "")} for p in d["packages"]]}, indent=2))' \
     > "$STAGING/$PKG_NAME/${PKG_NAME}.sbom.json"
 
 # Create tarball and checksum.

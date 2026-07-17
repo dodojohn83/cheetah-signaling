@@ -26,7 +26,7 @@ The script produces:
 
 - `cheetah-signaling-v0.1.0-x86_64-unknown-linux-gnu.tar.gz`
 - `cheetah-signaling-v0.1.0-x86_64-unknown-linux-gnu.tar.gz.sha256`
-- `cheetah-signaling-v0.1.0-x86_64-unknown-linux-gnu.sbom.json` (package list from `cargo tree`)
+- `cheetah-signaling-v0.1.0-x86_64-unknown-linux-gnu.sbom.json` (package list from `cargo metadata`)
 - `ThirdPartyLicenses.txt` (aggregated license summary)
 
 ## Install
