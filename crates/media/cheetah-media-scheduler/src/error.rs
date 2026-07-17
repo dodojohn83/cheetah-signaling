@@ -31,4 +31,7 @@ pub enum SchedulerError {
         /// Found identity.
         found: Option<String>,
     },
+    /// TLS configuration or termination error.
+    #[error("TLS error: {0}")]
+    Tls(String),
 }

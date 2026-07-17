@@ -345,9 +345,8 @@ fn map_scheduler_error(e: crate::error::SchedulerError) -> DomainError {
             DomainError::not_found("media_node", e.to_string())
         }
         crate::error::SchedulerError::InvalidArgument(_)
-        | crate::error::SchedulerError::IdentityMismatch { .. } => {
-            DomainError::invalid_argument(e.to_string())
-        }
+        | crate::error::SchedulerError::IdentityMismatch { .. }
+        | crate::error::SchedulerError::Tls(_) => DomainError::invalid_argument(e.to_string()),
     }
 }
 

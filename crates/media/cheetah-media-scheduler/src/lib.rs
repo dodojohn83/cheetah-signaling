@@ -9,6 +9,7 @@ pub mod model;
 pub mod port;
 pub mod registry;
 pub mod scheduler;
+pub mod server;
 
 pub use config::{MediaRegistryConfig, SchedulerConfig};
 pub use error::SchedulerError;
@@ -17,3 +18,4 @@ pub use model::{MediaCapability, MediaNode, MediaNodeCapacity, MediaNodeHealth, 
 pub use port::SchedulerMediaPort;
 pub use registry::{InMemoryMediaNodeRegistry, MediaNodeRegistry};
 pub use scheduler::{LeastLoadedScheduler, MediaScheduler};
+pub use server::GrpcServer;
