@@ -26,6 +26,7 @@ impl AuditLog for TracingAuditLog {
         tracing::info!(
             audit.action = %event.action,
             audit.actor = %event.actor,
+            audit.tenant_id = ?event.tenant_id,
             audit.target_type = %event.target_type,
             audit.target_id = ?event.target_id,
             audit.outcome = %outcome,
