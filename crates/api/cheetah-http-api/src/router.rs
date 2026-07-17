@@ -8,8 +8,8 @@ use crate::rate_limit::rate_limit_middleware;
 use axum::{
     Router,
     extract::DefaultBodyLimit,
-    http::{HeaderValue, StatusCode},
-    middleware::from_fn_with_state,
+    http::{HeaderValue, Request, Response, StatusCode},
+    middleware::{Next, from_fn, from_fn_with_state},
     response::Json,
     routing::{delete, get, patch, post},
 };
@@ -20,8 +20,9 @@ use tower_http::{
     compression::CompressionLayer,
     cors::{AllowOrigin, Any, CorsLayer},
     timeout::TimeoutLayer,
-    trace::TraceLayer,
+    trace::{MakeSpan, TraceLayer},
 };
+use tracing::Span;
 
 /// Builds the public API router.
 pub fn build_router(state: ApiState) -> Router {
@@ -99,12 +100,13 @@ pub fn build_router(state: ApiState) -> Router {
         .route("/api/v1/admin/outbox-replay", post(ops::outbox_replay))
         .route("/api/v1/admin/reconcile", post(ops::reconcile))
         .fallback(fallback)
+        .route_layer(from_fn(trace_context_middleware))
         .with_state(shared_state.clone())
         .layer(from_fn_with_state(shared_state, rate_limit_middleware));
 
     api.layer(
         ServiceBuilder::new()
-            .layer(TraceLayer::new_for_http())
+            .layer(TraceLayer::new_for_http().make_span_with(CheetahMakeSpan))
             .layer(CompressionLayer::new())
             .layer(cors)
             .layer(TimeoutLayer::with_status_code(
@@ -113,6 +115,58 @@ pub fn build_router(state: ApiState) -> Router {
             ))
             .layer(DefaultBodyLimit::max(body_limit)),
     )
+}
+
+/// Echoes incoming `traceparent` and `tracestate` headers back to the response
+/// so HTTP callers can correlate distributed traces end-to-end.
+async fn trace_context_middleware(
+    request: Request<axum::body::Body>,
+    next: Next,
+) -> Response<axum::body::Body> {
+    let traceparent = request.headers().get("traceparent").cloned();
+    let tracestate = request.headers().get("tracestate").cloned();
+    let mut response = next.run(request).await;
+    if let Some(tp) = traceparent {
+        response.headers_mut().insert("traceparent", tp);
+    }
+    if let Some(ts) = tracestate {
+        response.headers_mut().insert("tracestate", ts);
+    }
+    response
+}
+
+#[derive(Clone, Debug)]
+struct CheetahMakeSpan;
+
+impl<B> MakeSpan<B> for CheetahMakeSpan {
+    fn make_span(&mut self, request: &Request<B>) -> Span {
+        let traceparent = request
+            .headers()
+            .get("traceparent")
+            .and_then(|v| v.to_str().ok());
+        let tracestate = request
+            .headers()
+            .get("tracestate")
+            .and_then(|v| v.to_str().ok());
+        let span = tracing::info_span!(
+            "http_request",
+            http.method = %request.method(),
+            http.uri = %request.uri(),
+            http.version = ?request.version(),
+            traceparent = tracing::field::Empty,
+            tracestate = tracing::field::Empty,
+            tenant_id = tracing::field::Empty,
+            request_id = tracing::field::Empty,
+            node_id = tracing::field::Empty,
+        );
+        if let Some(tp) = traceparent {
+            span.record("traceparent", tp);
+        }
+        if let Some(ts) = tracestate {
+            span.record("tracestate", ts);
+        }
+        span
+    }
 }
 
 fn build_cors_layer(origins: &[String]) -> CorsLayer {

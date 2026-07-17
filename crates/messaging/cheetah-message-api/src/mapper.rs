@@ -155,8 +155,8 @@ pub fn encode_event(event: &Event<DomainEvent>) -> Result<proto::EventEnvelope, 
             deadline: None,
             source_node_id: Some(to_uuid(event.source)),
             owner_epoch: 0,
-            traceparent: String::new(),
-            tracestate: String::new(),
+            traceparent: event.traceparent.clone().unwrap_or_default(),
+            tracestate: event.tracestate.clone().unwrap_or_default(),
             contract_version: 0,
         }),
         aggregate: Some(resource_ref_to_proto(&event.aggregate_ref)),
@@ -183,5 +183,19 @@ pub fn decode_event(
         }
     };
 
-    serde_json::from_slice(&generic.payload).map_err(super::BusError::Serialize)
+    let mut event: Event<DomainEvent> =
+        serde_json::from_slice(&generic.payload).map_err(super::BusError::Serialize)?;
+    if event.traceparent.is_none()
+        && let Some(meta) = &envelope.meta
+        && !meta.traceparent.is_empty()
+    {
+        event.traceparent = Some(meta.traceparent.clone());
+    }
+    if event.tracestate.is_none()
+        && let Some(meta) = &envelope.meta
+        && !meta.tracestate.is_empty()
+    {
+        event.tracestate = Some(meta.tracestate.clone());
+    }
+    Ok(event)
 }
