@@ -1,10 +1,10 @@
 //! Core migration orchestrator.
 
 use crate::error::MigrationError;
-use crate::mappers::{MappedAggregate, MappedEntity, map_record};
+use crate::mappers::{MappedAggregate, MappedEntity, event_for, map_record};
 use crate::source::RecordSource;
 use cheetah_domain::{Channel, Device, DomainEvent};
-use cheetah_signal_types::{Clock, Event};
+use cheetah_signal_types::{Clock, Event, ResourceId, ResourceKind};
 use cheetah_storage_api::Storage;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
@@ -202,24 +202,47 @@ impl Importer {
             let mut uow = storage.begin().await?;
             let mut written: usize = 0;
             for (device, event) in chunk.iter().zip(events_chunk.iter()) {
-                let should_write = if options.skip_existing {
-                    uow.device_repository()
-                        .get_by_external_id(
-                            device.tenant_id(),
-                            device.protocol(),
-                            device.external_id().clone(),
-                        )
-                        .await?
-                        .is_none()
-                } else {
-                    true
-                };
-                if should_write {
-                    uow.device_repository().save(device).await?;
-                    uow.outbox().append(event.clone()).await?;
-                    written += 1;
-                } else {
-                    result.records_conflicting += 1;
+                let existing = uow
+                    .device_repository()
+                    .get_by_external_id(
+                        device.tenant_id(),
+                        device.protocol(),
+                        device.external_id().clone(),
+                    )
+                    .await?;
+                match existing {
+                    Some(mut existing) if !options.skip_existing => {
+                        let domain_event = existing.update(
+                            self.clock.as_ref(),
+                            Some(device.name().to_string()),
+                            Some(device.kind()),
+                            None,
+                            None,
+                            Some(device.authority().to_string()),
+                            Some(device.capabilities().to_vec()),
+                            Some(device.metadata().clone()),
+                        )?;
+                        uow.device_repository().save(&existing).await?;
+                        uow.outbox()
+                            .append(event_for(
+                                self.clock.as_ref(),
+                                device.tenant_id(),
+                                ResourceKind::Device,
+                                ResourceId::Device(device.device_id()),
+                                domain_event,
+                                existing.revision().0,
+                            ))
+                            .await?;
+                        written += 1;
+                    }
+                    Some(_) => {
+                        result.records_conflicting += 1;
+                    }
+                    None => {
+                        uow.device_repository().save(device).await?;
+                        uow.outbox().append(event.clone()).await?;
+                        written += 1;
+                    }
                 }
             }
             uow.commit().await?;
@@ -244,24 +267,47 @@ impl Importer {
             let mut uow = storage.begin().await?;
             let mut written: usize = 0;
             for (channel, event) in chunk.iter().zip(events_chunk.iter()) {
-                let should_write = if options.skip_existing {
-                    uow.channel_repository()
-                        .get(
-                            channel.tenant_id(),
-                            channel.device_id(),
-                            channel.channel_id(),
-                        )
-                        .await?
-                        .is_none()
-                } else {
-                    true
-                };
-                if should_write {
-                    uow.channel_repository().save(channel).await?;
-                    uow.outbox().append(event.clone()).await?;
-                    written += 1;
-                } else {
-                    result.records_conflicting += 1;
+                let existing = uow
+                    .channel_repository()
+                    .get(
+                        channel.tenant_id(),
+                        channel.device_id(),
+                        channel.channel_id(),
+                    )
+                    .await?;
+                match existing {
+                    Some(mut existing) if !options.skip_existing => {
+                        let domain_event = existing.update(
+                            self.clock.as_ref(),
+                            Some(channel.kind()),
+                            Some(channel.name().to_string()),
+                            Some(channel.enabled()),
+                            None,
+                            Some(channel.stream_profiles().to_vec()),
+                            Some(channel.ptz_capabilities().clone()),
+                            Some(channel.metadata().clone()),
+                        )?;
+                        uow.channel_repository().save(&existing).await?;
+                        uow.outbox()
+                            .append(event_for(
+                                self.clock.as_ref(),
+                                channel.tenant_id(),
+                                ResourceKind::Channel,
+                                ResourceId::Channel(channel.channel_id()),
+                                domain_event,
+                                existing.revision().0,
+                            ))
+                            .await?;
+                        written += 1;
+                    }
+                    Some(_) => {
+                        result.records_conflicting += 1;
+                    }
+                    None => {
+                        uow.channel_repository().save(channel).await?;
+                        uow.outbox().append(event.clone()).await?;
+                        written += 1;
+                    }
                 }
             }
             uow.commit().await?;
@@ -376,6 +422,52 @@ mod tests {
         let events = uow.outbox().pending(clock.now_wall(), 100).await?;
         uow.commit().await?;
         assert_eq!(events.len(), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn import_overwrites_existing_when_skip_existing_false()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (storage, _dir) = sqlite_storage().await?;
+        storage.migration().run().await?;
+        let storage: Arc<dyn Storage> = Arc::new(storage);
+        let clock = Arc::new(SystemClock::new());
+        let importer = Importer::new(Some(storage.clone()), clock.clone());
+        let mut record = device_record("cam-01", "tenant-a");
+        record.name = "first".to_string();
+        let source = VecSource(vec![record.clone()]);
+        let first = importer
+            .import(
+                &source,
+                &ImportOptions {
+                    dry_run: false,
+                    checkpoint_every: 10,
+                    ..Default::default()
+                },
+            )
+            .await?;
+        assert_eq!(first.records_imported, 1);
+
+        record.name = "second".to_string();
+        let source = VecSource(vec![record]);
+        let second = importer
+            .import(
+                &source,
+                &ImportOptions {
+                    dry_run: false,
+                    skip_existing: false,
+                    checkpoint_every: 10,
+                    ..Default::default()
+                },
+            )
+            .await?;
+        assert_eq!(second.records_imported, 1);
+        assert_eq!(second.records_conflicting, 0);
+
+        let mut uow = storage.begin().await?;
+        let events = uow.outbox().pending(clock.now_wall(), 100).await?;
+        uow.commit().await?;
+        assert_eq!(events.len(), 2);
         Ok(())
     }
 }

@@ -112,6 +112,7 @@ fn map_device_like(clock: &dyn Clock, record: &OldRecord) -> Result<MappedEntity
         ResourceKind::Device,
         ResourceId::Device(device_id),
         domain_event,
+        0,
     );
 
     let actions = if record.has_secret() {
@@ -189,6 +190,7 @@ fn map_channel(clock: &dyn Clock, record: &OldRecord) -> Result<MappedEntity, Mi
         ResourceKind::Channel,
         ResourceId::Channel(channel_id),
         domain_event,
+        0,
     );
 
     let actions = if record.has_secret() {
@@ -209,12 +211,13 @@ fn map_channel(clock: &dyn Clock, record: &OldRecord) -> Result<MappedEntity, Mi
 }
 
 /// Wraps a domain event into an outbox [`Event`] envelope.
-fn event_for(
+pub(crate) fn event_for(
     clock: &dyn Clock,
     tenant_id: TenantId,
     kind: ResourceKind,
     id: ResourceId,
     payload: DomainEvent,
+    aggregate_sequence: u64,
 ) -> Event<DomainEvent> {
     Event {
         event_id: EventId::generate(),
@@ -224,7 +227,7 @@ fn event_for(
             kind,
             id,
         },
-        aggregate_sequence: 0,
+        aggregate_sequence,
         occurred_at: clock.now_wall(),
         correlation_id: CorrelationId::generate(),
         causation_id: MessageId::generate(),
