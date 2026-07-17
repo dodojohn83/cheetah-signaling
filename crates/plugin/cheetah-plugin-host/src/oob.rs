@@ -51,6 +51,8 @@ pub struct OutOfProcessConfig {
     pub startup_timeout: DurationMs,
     /// Maximum time between TCP readiness probes.
     pub startup_poll_interval: DurationMs,
+    /// Maximum time to wait for the gRPC connection (TCP + TLS handshake).
+    pub connect_timeout: DurationMs,
     /// Maximum gRPC request/response payload size in bytes.
     pub max_message_size: usize,
     /// TLS configuration for the gRPC channel. Required for out-of-process plugins.
@@ -96,6 +98,7 @@ impl Default for OutOfProcessConfig {
             listen_address: String::new(),
             startup_timeout: DurationMs::from_seconds(30),
             startup_poll_interval: DurationMs::from_millis(250),
+            connect_timeout: DurationMs::from_seconds(10),
             max_message_size: 4 * 1024 * 1024,
             tls: None,
         }
@@ -280,8 +283,15 @@ impl OutOfProcessDriver {
             .map_err(|e| PluginError::Driver(format!("invalid plugin endpoint {endpoint}: {e}")))?
             .tls_config(tls_config)
             .map_err(|e| PluginError::Driver(format!("invalid TLS config: {e}")))?
-            .connect()
+            .connect_timeout(Duration::from_millis(
+                runtime.connect_timeout.as_millis().max(0) as u64,
+            ));
+
+        let connect_timeout =
+            Duration::from_millis(runtime.connect_timeout.as_millis().max(0) as u64);
+        let channel = tokio::time::timeout(connect_timeout, channel.connect())
             .await
+            .map_err(|_| PluginError::Cancelled)?
             .map_err(|e| {
                 PluginError::Driver(format!("failed to connect to plugin at {endpoint}: {e}"))
             })?;
@@ -432,24 +442,29 @@ async fn forward_logs(
 ) {
     let mut stdout_reader = BufReader::new(stdout).lines();
     let mut stderr_reader = BufReader::new(stderr).lines();
+    let mut stdout_done = false;
+    let mut stderr_done = false;
 
     loop {
+        if stdout_done && stderr_done {
+            break;
+        }
         tokio::select! {
             _ = &mut shutdown => break,
-            line = stdout_reader.next_line() => match line {
+            line = stdout_reader.next_line(), if !stdout_done => match line {
                 Ok(Some(line)) => info!(plugin = %plugin_name, stream = "stdout", "{line}"),
-                Ok(None) => break,
+                Ok(None) => stdout_done = true,
                 Err(e) => {
                     warn!(plugin = %plugin_name, stream = "stdout", error = %e, "log read failed");
-                    break;
+                    stdout_done = true;
                 }
             },
-            line = stderr_reader.next_line() => match line {
+            line = stderr_reader.next_line(), if !stderr_done => match line {
                 Ok(Some(line)) => warn!(plugin = %plugin_name, stream = "stderr", "{line}"),
-                Ok(None) => break,
+                Ok(None) => stderr_done = true,
                 Err(e) => {
                     warn!(plugin = %plugin_name, stream = "stderr", error = %e, "log read failed");
-                    break;
+                    stderr_done = true;
                 }
             },
         }

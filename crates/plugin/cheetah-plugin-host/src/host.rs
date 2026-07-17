@@ -241,12 +241,13 @@ impl PluginHost {
         }
 
         let validated = self.loader.validate(manifest, payload)?;
+        let deadline = timeout.unwrap_or(self.default_timeout);
         let driver = {
             let factory = self
                 .registry
                 .get(&manifest.name)
                 .ok_or_else(|| PluginHostError::NotFound(manifest.name.to_string()))?;
-            factory.create(config.clone()).await?
+            with_timeout(deadline, factory.create(config.clone())).await?
         };
         let ctx = HostDriverContext::with_secret_provider(
             manifest.name.clone(),
@@ -257,7 +258,6 @@ impl PluginHost {
             Arc::clone(&self.secret_provider),
         );
 
-        let deadline = timeout.unwrap_or(self.default_timeout);
         with_timeout(deadline, driver.start(&ctx, deadline)).await?;
 
         self.instances.insert(
@@ -338,7 +338,7 @@ impl PluginHost {
             .registry
             .get(name)
             .ok_or_else(|| PluginHostError::NotFound(name.to_string()))?;
-        let driver = factory.create(serde_json::Value::Null).await?;
+        let driver = with_timeout(deadline, factory.create(serde_json::Value::Null)).await?;
         let ctx = self.no_op_context(name);
         with_timeout(deadline, driver.probe(&ctx, target, deadline)).await
     }
