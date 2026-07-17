@@ -100,7 +100,15 @@ impl GrpcServer {
                         .map_err(|e| SchedulerError::Tls(format!("failed to configure TLS: {e}")))?
                 }
             }
-            (None, None) => server,
+            (None, None) => {
+                if config.tls_client_ca_ref.is_some() {
+                    return Err(SchedulerError::Tls(
+                        "grpc.tls_client_ca_ref requires grpc.tls_cert_ref and grpc.tls_key_ref"
+                            .to_string(),
+                    ));
+                }
+                server
+            }
             _ => {
                 return Err(SchedulerError::Tls(
                     "grpc.tls_cert_ref and grpc.tls_key_ref must both be set or unset".to_string(),
