@@ -71,7 +71,11 @@ impl Default for Gb28181ProtocolDriver {
 
 #[async_trait]
 impl ProtocolDriver for Gb28181ProtocolDriver {
-    async fn start(&self, ctx: &dyn DriverContext) -> Result<(), PluginError> {
+    async fn start(
+        &self,
+        ctx: &dyn DriverContext,
+        _timeout: DurationMs,
+    ) -> Result<(), PluginError> {
         let config = load_domain_config(ctx).await?;
         let access = Gb28181Access::new(config, NoopCredentialProvider)
             .map_err(|e| PluginError::Driver(e.to_string()))?;
@@ -89,7 +93,11 @@ impl ProtocolDriver for Gb28181ProtocolDriver {
         Ok(())
     }
 
-    async fn shutdown(&self, _ctx: &dyn DriverContext) -> Result<(), PluginError> {
+    async fn shutdown(
+        &self,
+        _ctx: &dyn DriverContext,
+        _timeout: DurationMs,
+    ) -> Result<(), PluginError> {
         let mut guard = self.inner.lock().await;
         *guard = None;
         Ok(())
@@ -99,6 +107,7 @@ impl ProtocolDriver for Gb28181ProtocolDriver {
         &self,
         ctx: &dyn DriverContext,
         command: DriverCommand,
+        _timeout: DurationMs,
     ) -> Result<(), PluginError> {
         match command.command_type.as_str() {
             "process_sip" => process_sip(self, ctx, &command.payload).await,

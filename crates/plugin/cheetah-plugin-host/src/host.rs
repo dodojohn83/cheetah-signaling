@@ -258,7 +258,7 @@ impl PluginHost {
         );
 
         let deadline = timeout.unwrap_or(self.default_timeout);
-        with_timeout(deadline, driver.start(&ctx)).await?;
+        with_timeout(deadline, driver.start(&ctx, deadline)).await?;
 
         self.instances.insert(
             id,
@@ -296,7 +296,11 @@ impl PluginHost {
             .instances
             .remove(&id)
             .ok_or_else(|| PluginHostError::NotFound(id.to_string()))?;
-        with_timeout(deadline, instance.driver.shutdown(&instance.context)).await
+        with_timeout(
+            deadline,
+            instance.driver.shutdown(&instance.context, deadline),
+        )
+        .await
     }
 
     /// Dispatches a command to a driver instance.
@@ -315,7 +319,9 @@ impl PluginHost {
         let deadline = command_deadline(&command, self.default_timeout)?;
         with_timeout(
             deadline,
-            instance.driver.handle_command(&instance.context, command),
+            instance
+                .driver
+                .handle_command(&instance.context, command, deadline),
         )
         .await
     }

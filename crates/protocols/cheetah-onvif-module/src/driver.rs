@@ -34,7 +34,11 @@ impl Default for OnvifProtocolDriver {
 
 #[async_trait]
 impl ProtocolDriver for OnvifProtocolDriver {
-    async fn start(&self, _ctx: &dyn DriverContext) -> Result<(), PluginError> {
+    async fn start(
+        &self,
+        _ctx: &dyn DriverContext,
+        _timeout: DurationMs,
+    ) -> Result<(), PluginError> {
         Ok(())
     }
 
@@ -46,7 +50,11 @@ impl ProtocolDriver for OnvifProtocolDriver {
         Ok(())
     }
 
-    async fn shutdown(&self, _ctx: &dyn DriverContext) -> Result<(), PluginError> {
+    async fn shutdown(
+        &self,
+        _ctx: &dyn DriverContext,
+        _timeout: DurationMs,
+    ) -> Result<(), PluginError> {
         Ok(())
     }
 
@@ -54,6 +62,7 @@ impl ProtocolDriver for OnvifProtocolDriver {
         &self,
         _ctx: &dyn DriverContext,
         command: DriverCommand,
+        _timeout: DurationMs,
     ) -> Result<(), PluginError> {
         Err(PluginError::Unsupported(format!(
             "ONVIF command {} is not yet implemented",

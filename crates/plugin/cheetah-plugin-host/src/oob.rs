@@ -24,12 +24,13 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
+use tokio::fs;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::process::{Child, Command};
 use tokio::sync::{Mutex, oneshot};
 use tokio::time::sleep;
-use tonic::transport::Channel;
+use tonic::transport::{Certificate, Channel, ClientTlsConfig, Identity};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
@@ -52,6 +53,38 @@ pub struct OutOfProcessConfig {
     pub startup_poll_interval: DurationMs,
     /// Maximum gRPC request/response payload size in bytes.
     pub max_message_size: usize,
+    /// TLS configuration for the gRPC channel. Required for out-of-process plugins.
+    pub tls: Option<TlsConfig>,
+}
+
+/// TLS configuration for the out-of-process plugin gRPC channel.
+#[derive(Clone, Debug)]
+pub struct TlsConfig {
+    /// Path to the PEM-encoded CA certificate used to verify the plugin server.
+    pub ca_cert_pem_path: PathBuf,
+    /// Path to the PEM-encoded client certificate presented to the plugin server.
+    pub client_cert_pem_path: PathBuf,
+    /// Path to the PEM-encoded client private key.
+    pub client_key_pem_path: PathBuf,
+    /// Expected server name (Subject / SAN) for certificate validation.
+    pub server_name: String,
+}
+
+impl TlsConfig {
+    /// Creates a TLS config from the required certificate paths and server name.
+    pub fn new(
+        ca_cert_pem_path: impl AsRef<Path>,
+        client_cert_pem_path: impl AsRef<Path>,
+        client_key_pem_path: impl AsRef<Path>,
+        server_name: impl Into<String>,
+    ) -> Self {
+        Self {
+            ca_cert_pem_path: ca_cert_pem_path.as_ref().to_path_buf(),
+            client_cert_pem_path: client_cert_pem_path.as_ref().to_path_buf(),
+            client_key_pem_path: client_key_pem_path.as_ref().to_path_buf(),
+            server_name: server_name.into(),
+        }
+    }
 }
 
 impl Default for OutOfProcessConfig {
@@ -64,6 +97,7 @@ impl Default for OutOfProcessConfig {
             startup_timeout: DurationMs::from_seconds(30),
             startup_poll_interval: DurationMs::from_millis(250),
             max_message_size: 4 * 1024 * 1024,
+            tls: None,
         }
     }
 }
@@ -206,9 +240,46 @@ impl OutOfProcessDriver {
         )
         .await?;
 
-        let endpoint = format!("http://{}", runtime.listen_address);
+        let tls = runtime.tls.ok_or_else(|| {
+            PluginError::InvalidManifest(
+                "out-of-process plugin communication requires TLS/mTLS".to_string(),
+            )
+        })?;
+
+        // Ensure a rustls crypto provider is installed before tonic builds the TLS connector.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+
+        let ca_pem = fs::read(&tls.ca_cert_pem_path).await.map_err(|e| {
+            PluginError::Driver(format!(
+                "failed to read plugin CA certificate {}: {e}",
+                tls.ca_cert_pem_path.display()
+            ))
+        })?;
+        let client_cert_pem = fs::read(&tls.client_cert_pem_path).await.map_err(|e| {
+            PluginError::Driver(format!(
+                "failed to read plugin client certificate {}: {e}",
+                tls.client_cert_pem_path.display()
+            ))
+        })?;
+        let client_key_pem = fs::read(&tls.client_key_pem_path).await.map_err(|e| {
+            PluginError::Driver(format!(
+                "failed to read plugin client key {}: {e}",
+                tls.client_key_pem_path.display()
+            ))
+        })?;
+
+        let ca = Certificate::from_pem(ca_pem);
+        let identity = Identity::from_pem(client_cert_pem, client_key_pem);
+        let tls_config = ClientTlsConfig::new()
+            .ca_certificate(ca)
+            .identity(identity)
+            .domain_name(tls.server_name.clone());
+
+        let endpoint = format!("https://{}", runtime.listen_address);
         let channel = Channel::from_shared(endpoint.clone())
             .map_err(|e| PluginError::Driver(format!("invalid plugin endpoint {endpoint}: {e}")))?
+            .tls_config(tls_config)
+            .map_err(|e| PluginError::Driver(format!("invalid TLS config: {e}")))?
             .connect()
             .await
             .map_err(|e| {
@@ -247,7 +318,7 @@ impl OutOfProcessDriver {
         };
 
         let rpc_timeout = Duration::from_millis(timeout.as_millis().max(0) as u64);
-        let mut client = self.client.lock().await;
+        let mut client = self.client.lock().await.clone();
         let response = tokio::time::timeout(rpc_timeout, client.call_driver(request))
             .await
             .map_err(|_| PluginError::Cancelled)?
@@ -259,15 +330,13 @@ impl OutOfProcessDriver {
 
 #[async_trait]
 impl ProtocolDriver for OutOfProcessDriver {
-    async fn start(&self, ctx: &dyn DriverContext) -> Result<(), PluginError> {
+    async fn start(&self, ctx: &dyn DriverContext, timeout: DurationMs) -> Result<(), PluginError> {
         let payload = serde_json::json!({
             "plugin_name": ctx.plugin_name().to_string(),
             "config": ctx.config(),
             "budget": ctx.budget(),
         });
-        let _ = self
-            .call_method("start", payload, DurationMs::from_seconds(30))
-            .await?;
+        let _ = self.call_method("start", payload, timeout).await?;
         Ok(())
     }
 
@@ -283,11 +352,13 @@ impl ProtocolDriver for OutOfProcessDriver {
         Ok(())
     }
 
-    async fn shutdown(&self, _ctx: &dyn DriverContext) -> Result<(), PluginError> {
+    async fn shutdown(
+        &self,
+        _ctx: &dyn DriverContext,
+        timeout: DurationMs,
+    ) -> Result<(), PluginError> {
         let payload = serde_json::json!({});
-        let _ = self
-            .call_method("shutdown", payload, DurationMs::from_seconds(30))
-            .await;
+        let _ = self.call_method("shutdown", payload, timeout).await;
 
         let mut process = self.process.lock().await;
         if let Err(e) = process.child.start_kill() {
@@ -301,14 +372,13 @@ impl ProtocolDriver for OutOfProcessDriver {
         &self,
         ctx: &dyn DriverContext,
         command: DriverCommand,
+        timeout: DurationMs,
     ) -> Result<(), PluginError> {
         let payload = serde_json::json!({
             "plugin_name": ctx.plugin_name().to_string(),
             "command": command,
         });
-        let response = self
-            .call_method("handle_command", payload, DurationMs::from_seconds(30))
-            .await?;
+        let response = self.call_method("handle_command", payload, timeout).await?;
 
         let events: Vec<ProtocolEvent> = match response.get("events") {
             Some(v) => serde_json::from_value(v.clone()).map_err(|e| {
@@ -457,7 +527,10 @@ mod tests {
     };
     use std::sync::Arc;
     use tokio::net::TcpListener;
-    use tonic::{Request, Response, Status, Streaming};
+    use tonic::{
+        Request, Response, Status, Streaming,
+        transport::{Certificate, Identity, ServerTlsConfig},
+    };
 
     struct FakePlugin;
 
@@ -570,7 +643,24 @@ mod tests {
         ))
     }
 
+    fn generate_test_tls_pair() -> Result<(String, String), PluginError> {
+        let certified =
+            rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).map_err(|e| {
+                PluginError::Driver(format!("failed to generate test certificate: {e}"))
+            })?;
+        Ok((certified.cert.pem(), certified.signing_key.serialize_pem()))
+    }
+
     async fn connect_to_fake() -> Result<OutOfProcessDriver, PluginError> {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+
+        let (cert_pem, key_pem) = generate_test_tls_pair()?;
+        let server_identity = Identity::from_pem(&cert_pem, &key_pem);
+        let client_ca = Certificate::from_pem(&cert_pem);
+        let server_tls = ServerTlsConfig::new()
+            .identity(server_identity)
+            .client_ca_root(client_ca);
+
         let addr: std::net::SocketAddr = "127.0.0.1:0"
             .parse()
             .map_err(|e| PluginError::Driver(format!("invalid socket address: {e}")))?;
@@ -582,9 +672,13 @@ mod tests {
             .map_err(|e| PluginError::Driver(format!("failed to read local address: {e}")))?
             .port();
 
+        let mut server = tonic::transport::Server::builder()
+            .tls_config(server_tls)
+            .map_err(|e| PluginError::Driver(format!("invalid test server TLS config: {e}")))?;
+
         tokio::spawn(async move {
             let svc = PluginRuntimeServer::new(FakePlugin);
-            let _ = tonic::transport::Server::builder()
+            let _ = server
                 .add_service(svc)
                 .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener))
                 .await;
@@ -592,9 +686,17 @@ mod tests {
 
         sleep(Duration::from_millis(50)).await;
 
-        let endpoint = format!("http://127.0.0.1:{port}");
+        let client_identity = Identity::from_pem(cert_pem.clone(), key_pem);
+        let client_tls = ClientTlsConfig::new()
+            .ca_certificate(Certificate::from_pem(cert_pem))
+            .identity(client_identity)
+            .domain_name("localhost");
+
+        let endpoint = format!("https://127.0.0.1:{port}");
         let channel = Channel::from_shared(endpoint.clone())
             .map_err(|e| PluginError::Driver(format!("invalid endpoint {endpoint}: {e}")))?
+            .tls_config(client_tls)
+            .map_err(|e| PluginError::Driver(format!("invalid TLS config: {e}")))?
             .connect()
             .await
             .map_err(|e| PluginError::Driver(format!("failed to connect to {endpoint}: {e}")))?;
@@ -635,6 +737,6 @@ mod tests {
         assert_eq!(cap.protocol, "fake");
         assert_eq!(cap.direction, ProtocolDirection::Outbound);
 
-        driver.shutdown(&ctx).await
+        driver.shutdown(&ctx, DurationMs::from_seconds(5)).await
     }
 }
