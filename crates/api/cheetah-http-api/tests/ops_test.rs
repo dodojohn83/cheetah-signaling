@@ -84,6 +84,26 @@ async fn node_drain_accepts_request() {
 }
 
 #[tokio::test]
+async fn node_drain_marks_node_not_ready() {
+    let server = common::TestServer::new().await;
+    let drain = server
+        .request(reqwest::Method::POST, "/api/v1/admin/node-drain")
+        .send()
+        .await
+        .expect("send request");
+    assert_eq!(drain.status(), reqwest::StatusCode::ACCEPTED);
+
+    let ready = server
+        .request(reqwest::Method::GET, "/health/ready")
+        .send()
+        .await
+        .expect("send request");
+    assert_eq!(ready.status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
+    let body = ready.json::<serde_json::Value>().await.expect("read body");
+    assert_eq!(body["status"], "draining");
+}
+
+#[tokio::test]
 async fn device_diagnostics_not_found() {
     let server = common::TestServer::new().await;
     let id = uuid::Uuid::now_v7().to_string();
