@@ -8,8 +8,18 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-
-[dev-dependencies]
+cheetah-plugin-sdk = { path = "../cheetah-plugin-sdk" }
+cheetah-signal-contracts = { path = "../../foundation/cheetah-signal-contracts" }
+cheetah-signal-types = { path = "../../foundation/cheetah-signal-types" }
+async-trait = { workspace = true }
+tokio = { workspace = true, features = ["sync", "time", "net", "rt", "macros"] }
+tokio-stream = { workspace = true }
+tonic = { workspace = true, features = ["tls-ring"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+rcgen = { workspace = true }
+tempfile = { workspace = true }
+tracing = { workspace = true }
 
 [lints]
 workspace = true
