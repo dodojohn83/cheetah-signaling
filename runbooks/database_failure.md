@@ -13,7 +13,7 @@ The signaling node cannot read from or write to its configured storage backend (
 ## Diagnostic Commands
 ```bash
 # Check migration status
-POST /api/v1/admin/db-status
+GET /api/v1/admin/db-status
 
 # Review storage-related logs
 grep -E "storage|sqlx|migration" /var/log/cheetah-signaling/*.log
@@ -33,5 +33,5 @@ df -h /var/lib/cheetah-signaling
 
 ## Recovery Confirmation
 - `GET /health/ready` returns `200` with `{"status":"ready"}`.
-- `POST /api/v1/admin/db-status` reports `status: current`.
+- `GET /api/v1/admin/db-status` reports `status: current`.
 - Operations and device writes succeed without storage errors in logs.

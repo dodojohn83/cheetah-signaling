@@ -19,7 +19,8 @@ grep -E "owner_epoch|owner changed|fencing" /var/log/cheetah-signaling/*.log
 SELECT tenant_id, device_id, owner_node_id, epoch, updated_at FROM ownership ORDER BY updated_at DESC LIMIT 100;
 
 # Trigger ownership reconciliation
-POST /api/v1/admin/reconcile
+# (automated reconcile is pending; use the ownership table query above)
+GET /api/v1/admin/db-status
 ```
 
 ## Mitigation
@@ -32,4 +33,4 @@ POST /api/v1/admin/reconcile
 - `owner_epoch` values are monotonically increasing per `(tenant, device)`.
 - `fencing rejected` log lines stop.
 - Command dispatch success rate returns to normal.
-- `POST /api/v1/admin/reconcile` reports no inconsistencies.
+- No inconsistencies remain in the ownership table; automated reconciliation is pending.

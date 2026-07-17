@@ -19,7 +19,7 @@ grep -E "register|keepalive|REGISTER" /var/log/cheetah-signaling/*.log \
 grep "RATE_LIMITED" /var/log/cheetah-signaling/*.log | tail -50
 
 # Monitor active device actors and CPU
-POST /metrics  # inspect cheetah_http_requests_total, cheetah_http_responses_4xx_total
+GET /metrics  # inspect cheetah_http_requests_total, cheetah_http_responses_4xx_total
 ```
 
 ## Mitigation

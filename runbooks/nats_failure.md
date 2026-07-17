@@ -20,7 +20,7 @@ nats account info --server nats://<host>:4222
 grep -E "nats|bus|JetStream" /var/log/cheetah-signaling/*.log
 
 # Inspect pending outbox
-POST /api/v1/admin/db-status
+GET /api/v1/admin/db-status
 POST /api/v1/admin/outbox-replay  # after recovery
 ```
 
