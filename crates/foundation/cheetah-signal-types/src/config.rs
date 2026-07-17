@@ -115,6 +115,22 @@ impl SignalConfig {
                 ));
             }
         }
+        if self.observability.diagnostic_sample_rate < 0.0
+            || self.observability.diagnostic_sample_rate > 1.0
+        {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                "observability.diagnostic_sample_rate must be in [0.0, 1.0]",
+            ));
+        }
+        if self.observability.diagnostic_sample_rate > 0.0
+            && self.observability.diagnostic_max_duration_ms == 0
+        {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                "observability.diagnostic_max_duration_ms must be greater than zero when sampling is enabled",
+            ));
+        }
         if self.storage.max_connections == 0 {
             return Err(SignalError::new(
                 SignalErrorKind::InvalidArgument,
@@ -144,7 +160,7 @@ impl SignalConfig {
 }
 
 /// System level configuration.
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SystemConfig {
     /// Human readable node name.
@@ -155,6 +171,17 @@ pub struct SystemConfig {
     pub log_level: String,
     /// Optional node id for stable identity.
     pub node_id: Option<NodeId>,
+}
+
+impl Default for SystemConfig {
+    fn default() -> Self {
+        Self {
+            node_name: String::new(),
+            data_dir: String::new(),
+            log_level: "info".to_string(),
+            node_id: None,
+        }
+    }
 }
 
 /// Runtime configuration.
@@ -413,7 +440,7 @@ pub struct SecurityConfig {
 }
 
 /// Observability configuration.
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ObservabilityConfig {
     /// Bind address for metrics.
@@ -430,6 +457,20 @@ pub struct ObservabilityConfig {
     pub diagnostic_max_duration_ms: u64,
     /// Maximum bytes of a protocol body that may be sampled.
     pub diagnostic_max_body_bytes: usize,
+}
+
+impl Default for ObservabilityConfig {
+    fn default() -> Self {
+        Self {
+            metrics_bind_addr: String::new(),
+            tracing_endpoint: None,
+            log_format: LogFormat::Json,
+            protocol_body_logging: false,
+            diagnostic_sample_rate: 0.0,
+            diagnostic_max_duration_ms: 30_000,
+            diagnostic_max_body_bytes: 4096,
+        }
+    }
 }
 
 /// Supported log output formats.

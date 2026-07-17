@@ -14,7 +14,12 @@ static TRACING_INIT: OnceLock<()> = OnceLock::new();
 /// tests and application restarts do not panic.
 pub fn init_tracing(log_level: &str, log_format: LogFormat) {
     TRACING_INIT.get_or_init(|| {
-        let filter = match EnvFilter::try_new(log_level) {
+        let level = if log_level.trim().is_empty() {
+            "info"
+        } else {
+            log_level
+        };
+        let filter = match EnvFilter::try_new(level) {
             Ok(filter) => filter,
             Err(_) => EnvFilter::new("info"),
         };

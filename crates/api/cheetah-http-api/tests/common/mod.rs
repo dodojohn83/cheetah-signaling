@@ -149,6 +149,8 @@ impl TestServer {
             protocol_body_logging: false,
         };
 
+        cheetah_http_api::logging::init_tracing(&config.log_level, config.log_format);
+
         let secret_store = Arc::new(TestSecretStore::new());
         secret_store.insert("sig.test", "super-secret");
 

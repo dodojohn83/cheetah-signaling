@@ -199,7 +199,6 @@ pub struct ApiServer {
 impl ApiServer {
     /// Starts the HTTP server on the configured address.
     pub async fn start(state: ApiState) -> Result<Self, crate::HttpError> {
-        crate::logging::init_tracing(&state.config.log_level, state.config.log_format);
         let event_bus = state.event_bus.clone();
         let event_cache = state.event_cache.clone();
         let cancel = state.cancel.clone();
