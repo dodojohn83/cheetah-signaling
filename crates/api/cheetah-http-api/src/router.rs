@@ -2,7 +2,7 @@
 
 use crate::ApiState;
 use crate::handlers::{
-    channels, devices, events, health, media, nodes, operations, tenants, webhooks,
+    channels, devices, events, health, media, nodes, operations, ops, tenants, webhooks,
 };
 use crate::rate_limit::rate_limit_middleware;
 use axum::{
@@ -88,6 +88,16 @@ pub fn build_router(state: ApiState) -> Router {
         )
         .route("/api/v1/openapi.json", get(crate::openapi::serve_json))
         .route("/api/v1/openapi.yaml", get(crate::openapi::serve_yaml))
+        .route("/api/v1/admin/validate-config", post(ops::validate_config))
+        .route("/api/v1/admin/db-status", get(ops::db_status))
+        .route("/api/v1/admin/db-migrate", post(ops::db_migrate))
+        .route("/api/v1/admin/node-drain", post(ops::node_drain))
+        .route(
+            "/api/v1/admin/devices/{id}/diagnostics",
+            get(ops::device_diagnostics),
+        )
+        .route("/api/v1/admin/outbox-replay", post(ops::outbox_replay))
+        .route("/api/v1/admin/reconcile", post(ops::reconcile))
         .fallback(fallback)
         .with_state(shared_state.clone())
         .layer(from_fn_with_state(shared_state, rate_limit_middleware));
