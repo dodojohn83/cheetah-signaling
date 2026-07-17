@@ -509,10 +509,7 @@ fn decode_response(
 fn map_error_code(code: &str, message: &str) -> PluginError {
     match code {
         "invalid_manifest" => PluginError::InvalidManifest(message.to_string()),
-        "incompatible_sdk" => PluginError::IncompatibleSdk {
-            plugin: message.to_string(),
-            host: String::new(),
-        },
+        "incompatible_sdk" => PluginError::Driver(format!("incompatible SDK: {message}")),
         "invalid_checksum" => PluginError::InvalidChecksum,
         "unsupported_protocol" => PluginError::UnsupportedProtocol(message.to_string()),
         "resource_budget_exceeded" => PluginError::ResourceBudgetExceeded(message.to_string()),
