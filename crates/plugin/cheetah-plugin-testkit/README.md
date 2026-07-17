@@ -12,6 +12,18 @@ This crate is **not** part of the production runtime. It provides:
 - `MockHost` — an in-memory `DeviceSink`/`CommandSource` implementation that
   records events and lets tests inject commands.
 
+## Public entry points
+
+- `cheetah_plugin_testkit::TestCerts`
+- `cheetah_plugin_testkit::CertPaths`
+- `cheetah_plugin_testkit::FakePluginRuntime`
+- `cheetah_plugin_testkit::MockHost`
+- `cheetah_plugin_testkit::certs`, `cheetah_plugin_testkit::server`, `cheetah_plugin_testkit::host`
+
+## Features
+
+None.
+
 ## Allowed dependencies
 
 - `cheetah-plugin-sdk`, `cheetah-signal-contracts`, `cheetah-signal-types`

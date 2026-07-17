@@ -17,7 +17,7 @@ const COMMAND_QUEUE_CAPACITY: usize = 64;
 pub struct MockHost {
     events: Arc<Mutex<Vec<ProtocolEvent>>>,
     command_tx: mpsc::Sender<DriverCommand>,
-    command_rx: Arc<TokioMutex<mpsc::Receiver<DriverCommand>>>,
+    command_rx: Arc<TokioMutex<Option<mpsc::Receiver<DriverCommand>>>>,
 }
 
 impl Default for MockHost {
@@ -33,7 +33,7 @@ impl MockHost {
         Self {
             events: Arc::new(Mutex::new(Vec::new())),
             command_tx,
-            command_rx: Arc::new(TokioMutex::new(command_rx)),
+            command_rx: Arc::new(TokioMutex::new(Some(command_rx))),
         }
     }
 
@@ -81,8 +81,22 @@ impl DeviceSink for MockHost {
 #[async_trait]
 impl CommandSource for MockHost {
     async fn next_command(&self) -> Result<Option<DriverCommand>, PluginError> {
-        let mut guard = self.command_rx.lock().await;
-        let command = guard.recv().await;
+        // Take the receiver out of the mutex so we can await `recv` without
+        // holding an async lock guard across an await point.
+        let mut receiver = {
+            let mut guard = self.command_rx.lock().await;
+            guard.take().ok_or_else(|| {
+                PluginError::Driver("mock host command receiver is already in use".to_string())
+            })?
+        };
+
+        let command = receiver.recv().await;
+
+        {
+            let mut guard = self.command_rx.lock().await;
+            *guard = Some(receiver);
+        }
+
         Ok(command)
     }
 }
