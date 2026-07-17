@@ -3,9 +3,12 @@
 use crate::error::MigrationError;
 use crate::model::{EntityType, OldRecord};
 use cheetah_domain::{
-    Channel, ChannelKind, ChannelStatus, Device, DeviceKind, Protocol, PtzCapabilities,
+    Channel, ChannelKind, ChannelStatus, Device, DeviceKind, DomainEvent, Protocol, PtzCapabilities,
 };
-use cheetah_signal_types::{ChannelId, Clock, DeviceId, ProtocolIdentity, TenantId};
+use cheetah_signal_types::{
+    ChannelId, Clock, CorrelationId, DeviceId, Event, EventId, MessageId, NodeId, ProtocolIdentity,
+    ResourceId, ResourceKind, ResourceRef, TenantId,
+};
 use std::collections::BTreeMap;
 use uuid::Uuid;
 
@@ -21,6 +24,8 @@ pub struct MappedEntity {
     pub entity: MappedAggregate,
     /// Human-readable action items (e.g. missing credentials).
     pub actions: Vec<String>,
+    /// Outbox events produced alongside the aggregate.
+    pub events: Vec<Event<DomainEvent>>,
 }
 
 /// Domain aggregate variants produced by mappers.
@@ -48,6 +53,7 @@ pub fn map_record(clock: &dyn Clock, record: &OldRecord) -> Result<MappedEntity,
         EntityType::Tenant => Ok(MappedEntity {
             entity: MappedAggregate::Tenant,
             actions: Vec::new(),
+            events: Vec::new(),
         }),
         EntityType::Device | EntityType::Gb28181Platform | EntityType::OnvifEndpoint => {
             map_device_like(clock, record)
@@ -56,10 +62,12 @@ pub fn map_record(clock: &dyn Clock, record: &OldRecord) -> Result<MappedEntity,
         EntityType::SecretReference => Ok(MappedEntity {
             entity: MappedAggregate::SecretReference,
             actions: Vec::new(),
+            events: Vec::new(),
         }),
         EntityType::Unknown => Ok(MappedEntity {
             entity: MappedAggregate::Skipped,
             actions: Vec::new(),
+            events: Vec::new(),
         }),
     }
 }
@@ -85,7 +93,7 @@ fn map_device_like(clock: &dyn Clock, record: &OldRecord) -> Result<MappedEntity
     let kind = parse_device_kind(&record.kind, record.entity_type);
     let metadata = extract_metadata(record);
 
-    let (device, _) = Device::new(
+    let (device, domain_event) = Device::new(
         clock,
         tenant_id,
         device_id,
@@ -97,6 +105,14 @@ fn map_device_like(clock: &dyn Clock, record: &OldRecord) -> Result<MappedEntity
         Vec::new(),
         metadata,
     )?;
+
+    let event = event_for(
+        clock,
+        tenant_id,
+        ResourceKind::Device,
+        ResourceId::Device(device_id),
+        domain_event,
+    );
 
     let actions = if record.has_secret() {
         vec![format!(
@@ -117,6 +133,7 @@ fn map_device_like(clock: &dyn Clock, record: &OldRecord) -> Result<MappedEntity
     Ok(MappedEntity {
         entity: aggregate,
         actions,
+        events: vec![event],
     })
 }
 
@@ -152,7 +169,7 @@ fn map_channel(clock: &dyn Clock, record: &OldRecord) -> Result<MappedEntity, Mi
     let kind = parse_channel_kind(&record.channel_kind);
     let metadata = extract_metadata(record);
 
-    let (channel, _) = Channel::new(
+    let (channel, domain_event) = Channel::new(
         clock,
         tenant_id,
         device_id,
@@ -165,6 +182,14 @@ fn map_channel(clock: &dyn Clock, record: &OldRecord) -> Result<MappedEntity, Mi
         PtzCapabilities::default(),
         metadata,
     )?;
+
+    let event = event_for(
+        clock,
+        tenant_id,
+        ResourceKind::Channel,
+        ResourceId::Channel(channel_id),
+        domain_event,
+    );
 
     let actions = if record.has_secret() {
         vec![format!(
@@ -179,7 +204,33 @@ fn map_channel(clock: &dyn Clock, record: &OldRecord) -> Result<MappedEntity, Mi
     Ok(MappedEntity {
         entity: MappedAggregate::Channel(channel),
         actions,
+        events: vec![event],
     })
+}
+
+/// Wraps a domain event into an outbox [`Event`] envelope.
+fn event_for(
+    clock: &dyn Clock,
+    tenant_id: TenantId,
+    kind: ResourceKind,
+    id: ResourceId,
+    payload: DomainEvent,
+) -> Event<DomainEvent> {
+    Event {
+        event_id: EventId::generate(),
+        tenant_id,
+        aggregate_ref: ResourceRef {
+            tenant_id,
+            kind,
+            id,
+        },
+        aggregate_sequence: 0,
+        occurred_at: clock.now_wall(),
+        correlation_id: CorrelationId::generate(),
+        causation_id: MessageId::generate(),
+        source: NodeId::from_uuid(Uuid::nil()),
+        payload,
+    }
 }
 
 /// Derives a deterministic `TenantId` from the old-system tenant name.

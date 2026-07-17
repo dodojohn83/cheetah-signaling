@@ -3,8 +3,8 @@
 use crate::error::MigrationError;
 use crate::mappers::{MappedAggregate, MappedEntity, map_record};
 use crate::source::RecordSource;
-use cheetah_domain::{Channel, Device};
-use cheetah_signal_types::Clock;
+use cheetah_domain::{Channel, Device, DomainEvent};
+use cheetah_signal_types::{Clock, Event};
 use cheetah_storage_api::Storage;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
@@ -91,7 +91,9 @@ impl Importer {
         };
 
         let mut devices: Vec<Device> = Vec::new();
+        let mut device_events: Vec<Event<DomainEvent>> = Vec::new();
         let mut channels: Vec<Channel> = Vec::new();
+        let mut channel_events: Vec<Event<DomainEvent>> = Vec::new();
         let mut pending: Vec<MappedEntity> = Vec::new();
 
         for (row, record) in records.iter().enumerate() {
@@ -123,12 +125,24 @@ impl Importer {
             pending.push(entity);
 
             if pending.len() >= options.checkpoint_every {
-                self.drain(pending.drain(..), &mut devices, &mut channels);
+                self.drain(
+                    pending.drain(..),
+                    &mut devices,
+                    &mut device_events,
+                    &mut channels,
+                    &mut channel_events,
+                );
             }
         }
 
         if !pending.is_empty() {
-            self.drain(pending.drain(..), &mut devices, &mut channels);
+            self.drain(
+                pending.drain(..),
+                &mut devices,
+                &mut device_events,
+                &mut channels,
+                &mut channel_events,
+            );
         }
 
         if options.dry_run {
@@ -137,9 +151,9 @@ impl Importer {
             let storage = self.storage.as_ref().ok_or_else(|| {
                 MigrationError::other("storage is required for non-dry-run import")
             })?;
-            self.flush_devices(storage, &devices, options, &mut result)
+            self.flush_devices(storage, &devices, &device_events, options, &mut result)
                 .await?;
-            self.flush_channels(storage, &channels, options, &mut result)
+            self.flush_channels(storage, &channels, &channel_events, options, &mut result)
                 .await?;
         }
 
@@ -150,14 +164,23 @@ impl Importer {
         &self,
         entities: impl Iterator<Item = MappedEntity>,
         devices: &mut Vec<Device>,
+        device_events: &mut Vec<Event<DomainEvent>>,
         channels: &mut Vec<Channel>,
+        channel_events: &mut Vec<Event<DomainEvent>>,
     ) {
         for entity in entities {
+            let events = entity.events;
             match entity.entity {
                 MappedAggregate::Device(d)
                 | MappedAggregate::Gb28181Platform(d)
-                | MappedAggregate::OnvifEndpoint(d) => devices.push(d),
-                MappedAggregate::Channel(c) => channels.push(c),
+                | MappedAggregate::OnvifEndpoint(d) => {
+                    devices.push(d);
+                    device_events.extend(events);
+                }
+                MappedAggregate::Channel(c) => {
+                    channels.push(c);
+                    channel_events.extend(events);
+                }
                 _ => {}
             }
         }
@@ -167,32 +190,36 @@ impl Importer {
         &self,
         storage: &Arc<dyn Storage>,
         devices: &[Device],
+        device_events: &[Event<DomainEvent>],
         options: &ImportOptions,
         result: &mut ImportResult,
     ) -> Result<(), MigrationError> {
+        let mut event_offset: usize = 0;
         for chunk in devices.chunks(options.checkpoint_every) {
+            let events_chunk = &device_events[event_offset..event_offset + chunk.len()];
+            event_offset += chunk.len();
+
             let mut uow = storage.begin().await?;
             let mut written: usize = 0;
-            {
-                let repo = uow.device_repository();
-                for device in chunk {
-                    let should_write = if options.skip_existing {
-                        repo.get_by_external_id(
+            for (device, event) in chunk.iter().zip(events_chunk.iter()) {
+                let should_write = if options.skip_existing {
+                    uow.device_repository()
+                        .get_by_external_id(
                             device.tenant_id(),
                             device.protocol(),
                             device.external_id().clone(),
                         )
                         .await?
                         .is_none()
-                    } else {
-                        true
-                    };
-                    if should_write {
-                        repo.save(device).await?;
-                        written += 1;
-                    } else {
-                        result.records_conflicting += 1;
-                    }
+                } else {
+                    true
+                };
+                if should_write {
+                    uow.device_repository().save(device).await?;
+                    uow.outbox().append(event.clone()).await?;
+                    written += 1;
+                } else {
+                    result.records_conflicting += 1;
                 }
             }
             uow.commit().await?;
@@ -205,32 +232,36 @@ impl Importer {
         &self,
         storage: &Arc<dyn Storage>,
         channels: &[Channel],
+        channel_events: &[Event<DomainEvent>],
         options: &ImportOptions,
         result: &mut ImportResult,
     ) -> Result<(), MigrationError> {
+        let mut event_offset: usize = 0;
         for chunk in channels.chunks(options.checkpoint_every) {
+            let events_chunk = &channel_events[event_offset..event_offset + chunk.len()];
+            event_offset += chunk.len();
+
             let mut uow = storage.begin().await?;
             let mut written: usize = 0;
-            {
-                let repo = uow.channel_repository();
-                for channel in chunk {
-                    let should_write = if options.skip_existing {
-                        repo.get(
+            for (channel, event) in chunk.iter().zip(events_chunk.iter()) {
+                let should_write = if options.skip_existing {
+                    uow.channel_repository()
+                        .get(
                             channel.tenant_id(),
                             channel.device_id(),
                             channel.channel_id(),
                         )
                         .await?
                         .is_none()
-                    } else {
-                        true
-                    };
-                    if should_write {
-                        repo.save(channel).await?;
-                        written += 1;
-                    } else {
-                        result.records_conflicting += 1;
-                    }
+                } else {
+                    true
+                };
+                if should_write {
+                    uow.channel_repository().save(channel).await?;
+                    uow.outbox().append(event.clone()).await?;
+                    written += 1;
+                } else {
+                    result.records_conflicting += 1;
                 }
             }
             uow.commit().await?;
@@ -321,6 +352,30 @@ mod tests {
             Err(MigrationError::Other(_)) => {}
             _ => panic!("expected MigrationError::Other"),
         }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn import_appends_domain_events_to_outbox() -> Result<(), Box<dyn std::error::Error>> {
+        let (storage, _dir) = sqlite_storage().await?;
+        storage.migration().run().await?;
+        let storage: Arc<dyn Storage> = Arc::new(storage);
+        let clock = Arc::new(SystemClock::new());
+        let importer = Importer::new(Some(storage.clone()), clock.clone());
+        let source = VecSource(vec![device_record("cam-01", "tenant-a")]);
+        let options = ImportOptions {
+            dry_run: false,
+            checkpoint_every: 10,
+            ..Default::default()
+        };
+        let result = importer.import(&source, &options).await?;
+        assert_eq!(result.records_read, 1);
+        assert_eq!(result.records_imported, 1);
+
+        let mut uow = storage.begin().await?;
+        let events = uow.outbox().pending(clock.now_wall(), 100).await?;
+        uow.commit().await?;
+        assert_eq!(events.len(), 1);
         Ok(())
     }
 }
