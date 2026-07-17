@@ -241,13 +241,13 @@ impl PluginHost {
         }
 
         let validated = self.loader.validate(manifest, payload)?;
-        let deadline = timeout.unwrap_or(self.default_timeout);
+        let deadline = effective_timeout(timeout.unwrap_or(self.default_timeout));
         let driver = {
             let factory = self
                 .registry
                 .get(&manifest.name)
                 .ok_or_else(|| PluginHostError::NotFound(manifest.name.to_string()))?;
-            let create_deadline = deadline.max(factory.creation_timeout());
+            let create_deadline = effective_timeout(deadline.max(factory.creation_timeout()));
             with_timeout(create_deadline, factory.create(config.clone())).await?
         };
         let ctx = HostDriverContext::with_secret_provider(
@@ -278,7 +278,7 @@ impl PluginHost {
         id: PluginId,
         timeout: Option<DurationMs>,
     ) -> Result<(), PluginHostError> {
-        let deadline = timeout.unwrap_or(self.default_timeout);
+        let deadline = effective_timeout(timeout.unwrap_or(self.default_timeout));
         let instance = self
             .instances
             .get(&id)
@@ -292,7 +292,7 @@ impl PluginHost {
         id: PluginId,
         timeout: Option<DurationMs>,
     ) -> Result<(), PluginHostError> {
-        let deadline = timeout.unwrap_or(self.default_timeout);
+        let deadline = effective_timeout(timeout.unwrap_or(self.default_timeout));
         let instance = self
             .instances
             .remove(&id)
@@ -317,7 +317,7 @@ impl PluginHost {
             .instances
             .get(&id)
             .ok_or_else(|| PluginHostError::NotFound(id.to_string()))?;
-        let deadline = command_deadline(&command, self.default_timeout)?;
+        let deadline = effective_timeout(command_deadline(&command, self.default_timeout)?);
         with_timeout(
             deadline,
             instance
@@ -334,12 +334,12 @@ impl PluginHost {
         target: &str,
         timeout: Option<DurationMs>,
     ) -> Result<cheetah_plugin_sdk::CapabilityDescriptor, PluginHostError> {
-        let deadline = timeout.unwrap_or(self.default_timeout);
+        let deadline = effective_timeout(timeout.unwrap_or(self.default_timeout));
         let factory = self
             .registry
             .get(name)
             .ok_or_else(|| PluginHostError::NotFound(name.to_string()))?;
-        let create_deadline = deadline.max(factory.creation_timeout());
+        let create_deadline = effective_timeout(deadline.max(factory.creation_timeout()));
         let driver = with_timeout(create_deadline, factory.create(serde_json::Value::Null)).await?;
         let ctx = self.no_op_context(name);
         with_timeout(deadline, driver.probe(&ctx, target, deadline)).await
@@ -356,12 +356,11 @@ impl PluginHost {
         }
 
         let mut reports = Vec::with_capacity(self.instances.len());
+        let deadline = effective_timeout(self.default_timeout);
         for (id, instance) in &self.instances {
             match with_timeout(
-                self.default_timeout,
-                instance
-                    .driver
-                    .health(&instance.context, self.default_timeout),
+                deadline,
+                instance.driver.health(&instance.context, deadline),
             )
             .await
             {
@@ -462,14 +461,19 @@ fn command_deadline(
     Ok(DurationMs::from_millis(remaining_ms))
 }
 
+fn effective_timeout(deadline: DurationMs) -> DurationMs {
+    if deadline.as_millis() <= 0 {
+        MIN_DRIVER_TIMEOUT
+    } else {
+        deadline
+    }
+}
+
 async fn with_timeout<F, T>(deadline: DurationMs, fut: F) -> Result<T, PluginHostError>
 where
     F: std::future::Future<Output = Result<T, PluginError>> + Send,
 {
-    let mut millis = deadline.as_millis();
-    if millis <= 0 {
-        millis = MIN_DRIVER_TIMEOUT.as_millis();
-    }
+    let millis = effective_timeout(deadline).as_millis();
     let std_duration = std::time::Duration::from_millis(millis as u64);
     timeout(std_duration, fut)
         .await
