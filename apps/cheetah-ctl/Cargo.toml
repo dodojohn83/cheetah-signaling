@@ -1,0 +1,17 @@
+[package]
+name = "cheetah-ctl"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+cheetah-config = { path = "../../crates/foundation/cheetah-config" }
+cheetah-signal-types = { path = "../../crates/foundation/cheetah-signal-types" }
+clap = { workspace = true }
+reqwest = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+
+[lints]
+workspace = true

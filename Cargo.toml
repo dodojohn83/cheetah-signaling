@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "apps/cheetah-signaling",
+    "apps/cheetah-ctl",
     "crates/foundation/*",
     "crates/runtime/*",
     "crates/domain/*",
@@ -58,6 +59,7 @@ md5 = "0.8.0"
 hex = "0.4.3"
 url = "2.5.0"
 reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "http2", "json", "charset"] }
+clap = { version = "4.5.36", features = ["derive", "env"] }
 tempfile = "3.27.0"
 libc = "0.2.186"
 bytes = "1"
