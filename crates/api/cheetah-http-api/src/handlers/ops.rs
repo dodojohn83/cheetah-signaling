@@ -111,22 +111,41 @@ pub async fn device_diagnostics(
         .await
         .map_err(HttpError::from)?;
 
+    let channel_sample: Vec<_> = channels
+        .items
+        .iter()
+        .take(20)
+        .map(|c| c.name().to_string())
+        .collect();
+    let operation_sample: Vec<_> = operations
+        .items
+        .iter()
+        .take(20)
+        .map(OperationDto::from)
+        .collect();
+    let media_session_sample: Vec<_> = sessions
+        .items
+        .iter()
+        .take(20)
+        .map(MediaSessionDto::from)
+        .collect();
+
     Ok((
         StatusCode::OK,
         Json(serde_json::json!({
             "device": DeviceDto::from(&device),
-            "channel_sample_count": channels.items.len(),
+            "channel_sample_count": channel_sample.len(),
             "channel_total": channels.total,
             "channel_next_cursor": channels.next_cursor,
-            "channel_sample": channels.items.iter().take(20).map(|c| c.name().to_string()).collect::<Vec<_>>(),
-            "operation_sample_count": operations.items.len(),
+            "channel_sample": channel_sample,
+            "operation_sample_count": operation_sample.len(),
             "operation_total": operations.total,
             "operation_next_cursor": operations.next_cursor,
-            "operation_sample": operations.items.iter().take(20).map(OperationDto::from).collect::<Vec<_>>(),
-            "media_session_sample_count": sessions.items.len(),
+            "operation_sample": operation_sample,
+            "media_session_sample_count": media_session_sample.len(),
             "media_session_total": sessions.total,
             "media_session_next_cursor": sessions.next_cursor,
-            "media_session_sample": sessions.items.iter().take(20).map(MediaSessionDto::from).collect::<Vec<_>>(),
+            "media_session_sample": media_session_sample,
         })),
     ))
 }
