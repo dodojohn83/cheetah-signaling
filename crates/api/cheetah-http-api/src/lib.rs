@@ -7,6 +7,7 @@ pub mod error;
 pub mod event_cache;
 pub mod extract;
 pub mod handlers;
+pub mod logging;
 pub mod metrics;
 pub mod openapi;
 pub mod rate_limit;

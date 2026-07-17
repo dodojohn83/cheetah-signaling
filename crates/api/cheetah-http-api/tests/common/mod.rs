@@ -15,7 +15,7 @@ use cheetah_message_local::InProcessMessageBus;
 use cheetah_signal_application::{
     WebhookDeliveryConfig, WebhookHttpClient, WebhookHttpRequest, WebhookHttpResponse,
 };
-use cheetah_signal_types::config::SecurityConfig;
+use cheetah_signal_types::config::{LogFormat, SecurityConfig};
 use cheetah_signal_types::{DurationMs, IdGenerator, SecretStore, SignalError, SignalErrorKind};
 use cheetah_storage_api::Storage;
 use secrecy::SecretString;
@@ -144,6 +144,9 @@ impl TestServer {
             webhook_delivery_interval_ms: 0,
             node_id,
             security,
+            log_level: "info".to_string(),
+            log_format: LogFormat::Json,
+            protocol_body_logging: false,
         };
 
         let secret_store = Arc::new(TestSecretStore::new());

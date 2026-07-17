@@ -420,8 +420,27 @@ pub struct ObservabilityConfig {
     pub metrics_bind_addr: String,
     /// Optional tracing collector endpoint.
     pub tracing_endpoint: Option<String>,
-    /// Log format.
-    pub log_format: String,
+    /// Log format (json or compact).
+    pub log_format: LogFormat,
+    /// Whether raw protocol body logging is enabled. Defaults to false.
+    pub protocol_body_logging: bool,
+    /// Diagnostic sampling rate in the range [0.0, 1.0]. 0.0 disables sampling.
+    pub diagnostic_sample_rate: f64,
+    /// Maximum duration in milliseconds a diagnostic trace may run.
+    pub diagnostic_max_duration_ms: u64,
+    /// Maximum bytes of a protocol body that may be sampled.
+    pub diagnostic_max_body_bytes: usize,
+}
+
+/// Supported log output formats.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum LogFormat {
+    /// Line-delimited JSON (default).
+    #[default]
+    Json,
+    /// Compact human-readable text for edge interactive mode.
+    Compact,
 }
 
 /// Source of configuration snapshots.
