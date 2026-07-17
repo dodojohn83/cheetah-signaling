@@ -145,7 +145,7 @@ impl SignalConfig {
 }
 
 /// System level configuration.
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 #[serde(deny_unknown_fields)]
 pub struct SystemConfig {
@@ -157,6 +157,17 @@ pub struct SystemConfig {
     pub log_level: String,
     /// Optional node id for stable identity.
     pub node_id: Option<NodeId>,
+}
+
+impl Default for SystemConfig {
+    fn default() -> Self {
+        Self {
+            node_name: String::new(),
+            data_dir: String::new(),
+            log_level: "info".to_string(),
+            node_id: None,
+        }
+    }
 }
 
 /// Runtime configuration.
@@ -426,7 +437,7 @@ pub struct SecurityConfig {
 }
 
 /// Observability configuration.
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 #[serde(deny_unknown_fields)]
 pub struct ObservabilityConfig {
@@ -436,6 +447,16 @@ pub struct ObservabilityConfig {
     pub tracing_endpoint: Option<String>,
     /// Log format.
     pub log_format: String,
+}
+
+impl Default for ObservabilityConfig {
+    fn default() -> Self {
+        Self {
+            metrics_bind_addr: String::new(),
+            tracing_endpoint: None,
+            log_format: "json".to_string(),
+        }
+    }
 }
 
 /// Source of configuration snapshots.
