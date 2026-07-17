@@ -87,7 +87,7 @@ impl FromRequestParts<Arc<ApiState>> for ApiRequestContext {
                 .unwrap_or(now),
         );
 
-        Ok(Self(RequestContext {
+        let request_context = RequestContext {
             tenant_id,
             principal: auth.principal,
             message_id,
@@ -96,7 +96,16 @@ impl FromRequestParts<Arc<ApiState>> for ApiRequestContext {
             tracestate,
             deadline: Some(deadline),
             node_id: Some(state.config.node_id),
-        }))
+        };
+
+        let span = tracing::Span::current();
+        span.record("tenant_id", request_context.tenant_id.to_string());
+        span.record("request_id", request_context.message_id.to_string());
+        if let Some(node_id) = request_context.node_id {
+            span.record("node_id", node_id.to_string());
+        }
+
+        Ok(Self(request_context))
     }
 }
 
