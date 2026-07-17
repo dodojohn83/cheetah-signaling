@@ -211,22 +211,33 @@ impl SecretStore for FileSecretStore {
     }
 
     fn put(&self, key: &str, value: SecretString) -> Result<()> {
-        let path = self.secret_path(key)?;
-        create_secret_dir(&self.base_dir).map_err(|e| {
-            SignalError::new(
-                SignalErrorKind::Internal,
-                "failed to create secret directory",
-            )
-            .with_source(e)
-        })?;
-        write_secret_file(&path, value.expose_secret().as_bytes()).map_err(|e| {
-            SignalError::new(
-                SignalErrorKind::Internal,
-                format!("failed to write secret {key}"),
-            )
-            .with_source(e)
-        })?;
-        Ok(())
+        #[cfg(not(unix))]
+        {
+            let _ = (key, value);
+            return Err(SignalError::new(
+                SignalErrorKind::Unsupported,
+                "file secret store requires Unix for owner-only permissions",
+            ));
+        }
+        #[cfg(unix)]
+        {
+            let path = self.secret_path(key)?;
+            create_secret_dir(&self.base_dir).map_err(|e| {
+                SignalError::new(
+                    SignalErrorKind::Internal,
+                    "failed to create secret directory",
+                )
+                .with_source(e)
+            })?;
+            write_secret_file(&path, value.expose_secret().as_bytes()).map_err(|e| {
+                SignalError::new(
+                    SignalErrorKind::Internal,
+                    format!("failed to write secret {key}"),
+                )
+                .with_source(e)
+            })?;
+            Ok(())
+        }
     }
 
     fn delete(&self, key: &str) -> Result<()> {
@@ -246,19 +257,28 @@ impl SecretStore for FileSecretStore {
     }
 
     fn rotate(&self, key: &str) -> Result<SecretString> {
-        let _path = self.secret_path(key)?;
-        let previous = self.get(key)?;
-        let rotated = SecretString::from(uuid::Uuid::new_v4().to_string());
-        write_secret_file(&self.secret_path(key)?, rotated.expose_secret().as_bytes()).map_err(
-            |e| {
-                SignalError::new(
-                    SignalErrorKind::Internal,
-                    format!("failed to rotate secret {key}"),
-                )
-                .with_source(e)
-            },
-        )?;
-        Ok(previous)
+        #[cfg(not(unix))]
+        {
+            return Err(SignalError::new(
+                SignalErrorKind::Unsupported,
+                "file secret store requires Unix for owner-only permissions",
+            ));
+        }
+        #[cfg(unix)]
+        {
+            let _path = self.secret_path(key)?;
+            let previous = self.get(key)?;
+            let rotated = SecretString::from(uuid::Uuid::new_v4().to_string());
+            write_secret_file(&self.secret_path(key)?, rotated.expose_secret().as_bytes())
+                .map_err(|e| {
+                    SignalError::new(
+                        SignalErrorKind::Internal,
+                        format!("failed to rotate secret {key}"),
+                    )
+                    .with_source(e)
+                })?;
+            Ok(previous)
+        }
     }
 }
 
@@ -347,18 +367,42 @@ impl SecretStore for CompositeSecretStore {
     }
 }
 
-/// Creates `dir` and sets its permissions so only the owner can access it.
+/// Creates `dir` and any missing ancestors with owner-only (`0o700`) permissions.
+/// Existing ancestors are left untouched so shared directories are not modified.
 #[cfg(unix)]
 fn create_secret_dir(dir: &Path) -> std::io::Result<()> {
+    use std::fs::Permissions;
     use std::os::unix::fs::PermissionsExt;
-    std::fs::create_dir_all(dir)?;
-    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
-    Ok(())
-}
+    use std::path::Component;
 
-#[cfg(not(unix))]
-fn create_secret_dir(dir: &Path) -> std::io::Result<()> {
-    std::fs::create_dir_all(dir)
+    if dir.exists() {
+        std::fs::set_permissions(dir, Permissions::from_mode(0o700))?;
+        return Ok(());
+    }
+
+    let mut current = PathBuf::new();
+    let mut fixing = false;
+    for component in dir.components() {
+        match component {
+            Component::RootDir | Component::Prefix(_) => {
+                current.push(component);
+                continue;
+            }
+            Component::CurDir | Component::ParentDir | Component::Normal(_) => {
+                current.push(component);
+            }
+        }
+
+        if !fixing && !current.exists() {
+            fixing = true;
+        }
+
+        if fixing {
+            std::fs::create_dir(&current)?;
+            std::fs::set_permissions(&current, Permissions::from_mode(0o700))?;
+        }
+    }
+    Ok(())
 }
 
 /// Writes `contents` to `path` with owner-only permissions.
@@ -418,6 +462,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn file_store_round_trip() -> Result<()> {
         let dir = tempfile::tempdir().map_err(|e| {
             SignalError::new(SignalErrorKind::Internal, "failed to create temp dir").with_source(e)
