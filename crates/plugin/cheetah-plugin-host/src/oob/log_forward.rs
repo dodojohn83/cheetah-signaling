@@ -38,7 +38,7 @@ pub async fn forward_logs(
                     if truncated {
                         warn!(plugin = %plugin_name, stream = "stdout", "plugin log line exceeded max length and was truncated");
                     }
-                    let sanitized = redact(&line, &mut stdout_in_pem);
+                    let sanitized = redact(&line, truncated, &mut stdout_in_pem);
                     info!(plugin = %plugin_name, stream = "stdout", "{sanitized}");
                 }
                 Ok(None) => stdout_done = true,
@@ -52,7 +52,7 @@ pub async fn forward_logs(
                     if truncated {
                         warn!(plugin = %plugin_name, stream = "stderr", "plugin log line exceeded max length and was truncated");
                     }
-                    let sanitized = redact(&line, &mut stderr_in_pem);
+                    let sanitized = redact(&line, truncated, &mut stderr_in_pem);
                     warn!(plugin = %plugin_name, stream = "stderr", "{sanitized}");
                 }
                 Ok(None) => stderr_done = true,
@@ -65,9 +65,14 @@ pub async fn forward_logs(
     }
 }
 
-fn redact(line: &str, in_pem_block: &mut bool) -> String {
+fn redact(line: &str, truncated: bool, in_pem_block: &mut bool) -> String {
     let trimmed = line.trim_start();
     if trimmed.starts_with("-----BEGIN") {
+        // If the line was truncated, the remainder (and any END marker)
+        // was discarded, so do not enter multi-line redaction mode.
+        if truncated && !trimmed.contains("-----END") {
+            return "[REDACTED PEM]".to_string();
+        }
         // A PEM block may be printed on a single line; only stay in
         // multi-line redaction mode if the END marker is not on this line.
         *in_pem_block = !trimmed.contains("-----END");
@@ -151,4 +156,47 @@ fn take_line(buf: &mut Vec<u8>, truncated: bool) -> (String, bool) {
         line.push_str(" [truncated]");
     }
     (line, truncated)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn truncated_begin_does_not_stick_in_pem_mode() {
+        let mut in_pem = false;
+        let line = "-----BEGIN CERTIFICATE-----";
+        assert_eq!(redact(line, true, &mut in_pem), "[REDACTED PEM]");
+        assert!(!in_pem);
+        // Subsequent normal log lines are not redacted.
+        assert_eq!(redact("hello world", false, &mut in_pem), "hello world");
+    }
+
+    #[test]
+    fn multi_line_pem_is_redacted_until_end() {
+        let mut in_pem = false;
+        assert_eq!(
+            redact("-----BEGIN CERTIFICATE-----", false, &mut in_pem),
+            "[REDACTED PEM]"
+        );
+        assert!(in_pem);
+        assert_eq!(
+            redact("base64encodeddata", false, &mut in_pem),
+            "[REDACTED PEM]"
+        );
+        assert!(in_pem);
+        assert_eq!(
+            redact("-----END CERTIFICATE-----", false, &mut in_pem),
+            "[REDACTED PEM]"
+        );
+        assert!(!in_pem);
+    }
+
+    #[test]
+    fn single_line_pem_does_not_stick() {
+        let mut in_pem = false;
+        let line = "-----BEGIN CERTIFICATE----- ... -----END CERTIFICATE-----";
+        assert_eq!(redact(line, false, &mut in_pem), "[REDACTED PEM]");
+        assert!(!in_pem);
+    }
 }
