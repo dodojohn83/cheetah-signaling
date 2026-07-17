@@ -194,19 +194,39 @@ impl FileSecretStore {
 impl SecretStore for FileSecretStore {
     fn get(&self, key: &str) -> Result<SecretString> {
         let path = self.secret_path(key)?;
-        match std::fs::read_to_string(&path) {
-            Ok(value) => Ok(SecretString::from(
-                value.trim_end_matches(['\n', '\r']).to_string(),
-            )),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(SignalError::new(
-                SignalErrorKind::NotFound,
-                format!("secret {key} not found"),
-            )),
-            Err(e) => Err(SignalError::new(
-                SignalErrorKind::Internal,
-                format!("failed to read secret {key}"),
-            )
-            .with_source(e)),
+        #[cfg(unix)]
+        {
+            match read_secret_file(&path) {
+                Ok(value) => Ok(SecretString::from(
+                    value.trim_end_matches(['\n', '\r']).to_string(),
+                )),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(SignalError::new(
+                    SignalErrorKind::NotFound,
+                    format!("secret {key} not found"),
+                )),
+                Err(e) => Err(SignalError::new(
+                    SignalErrorKind::Internal,
+                    format!("failed to read secret {key}"),
+                )
+                .with_source(e)),
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            match std::fs::read_to_string(&path) {
+                Ok(value) => Ok(SecretString::from(
+                    value.trim_end_matches(['\n', '\r']).to_string(),
+                )),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(SignalError::new(
+                    SignalErrorKind::NotFound,
+                    format!("secret {key} not found"),
+                )),
+                Err(e) => Err(SignalError::new(
+                    SignalErrorKind::Internal,
+                    format!("failed to read secret {key}"),
+                )
+                .with_source(e)),
+            }
         }
     }
 
@@ -338,17 +358,22 @@ impl SecretStore for CompositeSecretStore {
     }
 
     fn delete(&self, key: &str) -> Result<()> {
+        let mut deleted = false;
         let mut last_err = None;
         for store in &self.stores {
             match store.delete(key) {
-                Ok(()) => return Ok(()),
+                Ok(()) => deleted = true,
                 Err(err) if err.kind() == SignalErrorKind::NotFound => last_err = Some(err),
                 Err(err) if err.kind() == SignalErrorKind::Unsupported => continue,
                 Err(err) => return Err(err),
             }
         }
-        Err(last_err
-            .unwrap_or_else(|| SignalError::new(SignalErrorKind::NotFound, "secret not found")))
+        if deleted {
+            Ok(())
+        } else {
+            Err(last_err
+                .unwrap_or_else(|| SignalError::new(SignalErrorKind::NotFound, "secret not found")))
+        }
     }
 
     fn rotate(&self, key: &str) -> Result<SecretString> {
@@ -368,63 +393,60 @@ impl SecretStore for CompositeSecretStore {
 }
 
 /// Creates `dir` and any missing ancestors with owner-only (`0o700`) permissions.
-/// Existing ancestors are left untouched so shared directories are not modified.
+/// `DirBuilder` sets the mode at creation time, avoiding a world-readable window.
 #[cfg(unix)]
 fn create_secret_dir(dir: &Path) -> std::io::Result<()> {
+    use std::fs::DirBuilder;
     use std::fs::Permissions;
-    use std::os::unix::fs::PermissionsExt;
-    use std::path::Component;
+    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 
-    if dir.exists() {
-        std::fs::set_permissions(dir, Permissions::from_mode(0o700))?;
-        return Ok(());
+    let mut builder = DirBuilder::new();
+    builder.recursive(true).mode(0o700);
+    match builder.create(dir) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            std::fs::set_permissions(dir, Permissions::from_mode(0o700))?;
+            Ok(())
+        }
+        Err(e) => Err(e),
     }
-
-    let mut current = PathBuf::new();
-    let mut fixing = false;
-    for component in dir.components() {
-        match component {
-            Component::RootDir | Component::Prefix(_) => {
-                current.push(component);
-                continue;
-            }
-            Component::CurDir | Component::ParentDir | Component::Normal(_) => {
-                current.push(component);
-            }
-        }
-
-        if !fixing && !current.exists() {
-            fixing = true;
-        }
-
-        if fixing {
-            std::fs::create_dir(&current)?;
-            std::fs::set_permissions(&current, Permissions::from_mode(0o700))?;
-        }
-    }
-    Ok(())
 }
 
-/// Writes `contents` to `path` with owner-only permissions.
+/// Reads `path` without following symlinks.
+#[cfg(unix)]
+fn read_secret_file(path: &Path) -> std::io::Result<String> {
+    use std::io::Read;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    const O_NOFOLLOW: i32 = 0o400000;
+
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(O_NOFOLLOW)
+        .open(path)?;
+    let mut value = String::new();
+    file.read_to_string(&mut value)?;
+    Ok(value)
+}
+
+/// Writes `contents` to `path` with owner-only permissions and without following symlinks.
 #[cfg(unix)]
 fn write_secret_file(path: &Path, contents: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+    const O_NOFOLLOW: i32 = 0o400000;
 
     let mut file = std::fs::OpenOptions::new()
         .create(true)
         .truncate(true)
         .write(true)
         .mode(0o600)
+        .custom_flags(O_NOFOLLOW)
         .open(path)?;
     file.write_all(contents)?;
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
     Ok(())
-}
-
-#[cfg(not(unix))]
-fn write_secret_file(path: &Path, contents: &[u8]) -> std::io::Result<()> {
-    std::fs::write(path, contents)
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
