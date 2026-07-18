@@ -65,6 +65,7 @@ async fn sqlite_storage() -> Result<(SqliteStorage, tempfile::TempDir), Box<dyn 
 #[tokio::test]
 async fn dry_run_reports_imported_count() -> Result<(), Box<dyn std::error::Error>> {
     let (storage, _dir) = sqlite_storage().await?;
+    storage.migration().run().await?;
     let storage: Option<Arc<dyn Storage>> = Some(Arc::new(storage));
     let clock = Arc::new(SystemClock::new());
     let importer = Importer::new(storage, clock);

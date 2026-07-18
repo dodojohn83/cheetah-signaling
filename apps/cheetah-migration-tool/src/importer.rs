@@ -155,13 +155,35 @@ impl Importer {
         }
 
         if options.dry_run {
-            result.records_imported = devices.len();
             let local_parent_ids: HashSet<DeviceId> =
                 devices.iter().map(|d| d.device_id()).collect();
             let mut uow = match self.storage.as_ref() {
                 Some(storage) => Some(storage.begin().await?),
                 None => None,
             };
+
+            // When storage is available, mirror real-run existence checks so the
+            // dry-run preview reports the same imported/skipped-existing counts.
+            if let Some(uow) = uow.as_mut() {
+                for device in &devices {
+                    let existing = uow
+                        .device_repository()
+                        .get_by_external_id(
+                            device.tenant_id(),
+                            device.protocol(),
+                            device.external_id().clone(),
+                        )
+                        .await?;
+                    if existing.is_some() && options.skip_existing {
+                        result.records_skipped_existing += 1;
+                    } else {
+                        result.records_imported += 1;
+                    }
+                }
+            } else {
+                result.records_imported = devices.len();
+            }
+
             let mut resolver = ParentDeviceResolver::new();
 
             for (record, parent_protocol) in &channel_records {
@@ -215,7 +237,29 @@ impl Importer {
                     parent_device_id,
                 ) {
                     Ok(entity) => {
-                        result.records_imported += 1;
+                        let channel = match entity.entity {
+                            MappedAggregate::Channel(c) => c,
+                            _ => continue,
+                        };
+
+                        if let Some(uow) = uow.as_mut() {
+                            let existing = uow
+                                .channel_repository()
+                                .get(
+                                    channel.tenant_id(),
+                                    channel.device_id(),
+                                    channel.channel_id(),
+                                )
+                                .await?;
+                            if existing.is_some() && options.skip_existing {
+                                result.records_skipped_existing += 1;
+                            } else {
+                                result.records_imported += 1;
+                            }
+                        } else {
+                            result.records_imported += 1;
+                        }
+
                         if record.has_secret() {
                             result.records_with_secrets += 1;
                             result.action_items.extend(entity.actions);
