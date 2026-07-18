@@ -8,6 +8,7 @@ use axum::{
 };
 use cheetah_signal_types::{
     CorrelationId, Deadline, DurationMs, MessageId, PageRequest, RequestContext, TenantId,
+    validate_traceparent, validate_tracestate,
 };
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -76,11 +77,13 @@ impl FromRequestParts<Arc<ApiState>> for ApiRequestContext {
             .headers
             .get("traceparent")
             .and_then(|v| v.to_str().ok())
+            .and_then(validate_traceparent)
             .map(|s| s.to_string());
         let tracestate = parts
             .headers
             .get("tracestate")
             .and_then(|v| v.to_str().ok())
+            .and_then(validate_tracestate)
             .map(|s| s.to_string());
 
         check_rate_limit(parts, state, &tenant_id)?;

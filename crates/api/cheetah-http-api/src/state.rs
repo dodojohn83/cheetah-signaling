@@ -10,7 +10,7 @@ use cheetah_signal_application::{
     DeviceService, MediaService, OperationService, WebhookDeliveryConfig, WebhookHttpClient,
     WebhookService,
 };
-use cheetah_signal_types::config::SecurityConfig;
+use cheetah_signal_types::config::{LogFormat, SecurityConfig};
 use cheetah_signal_types::{AuditLog, Clock, NodeId, SecretStore, SignalConfig};
 use cheetah_storage_api::Storage;
 use std::net::SocketAddr;
@@ -40,6 +40,12 @@ pub struct ApiConfig {
     pub node_id: NodeId,
     /// Security settings.
     pub security: SecurityConfig,
+    /// Log level filter (e.g. "info,hyper=warn").
+    pub log_level: String,
+    /// Log output format.
+    pub log_format: LogFormat,
+    /// Whether raw protocol body logging is enabled.
+    pub protocol_body_logging: bool,
 }
 
 impl From<&SignalConfig> for ApiConfig {
@@ -55,6 +61,9 @@ impl From<&SignalConfig> for ApiConfig {
             webhook_delivery_interval_ms: 5000,
             node_id: config.system.node_id.unwrap_or_default(),
             security: config.security.clone(),
+            log_level: config.system.log_level.clone(),
+            log_format: config.observability.log_format,
+            protocol_body_logging: config.observability.protocol_body_logging,
         }
     }
 }

@@ -115,6 +115,22 @@ impl SignalConfig {
                 ));
             }
         }
+        if self.observability.diagnostic_sample_rate < 0.0
+            || self.observability.diagnostic_sample_rate > 1.0
+        {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                "observability.diagnostic_sample_rate must be in [0.0, 1.0]",
+            ));
+        }
+        if self.observability.diagnostic_sample_rate > 0.0
+            && self.observability.diagnostic_max_duration_ms == 0
+        {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                "observability.diagnostic_max_duration_ms must be greater than zero when sampling is enabled",
+            ));
+        }
         if self.storage.max_connections == 0 {
             return Err(SignalError::new(
                 SignalErrorKind::InvalidArgument,
@@ -144,7 +160,7 @@ impl SignalConfig {
 }
 
 /// System level configuration.
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SystemConfig {
     /// Human readable node name.
@@ -155,6 +171,17 @@ pub struct SystemConfig {
     pub log_level: String,
     /// Optional node id for stable identity.
     pub node_id: Option<NodeId>,
+}
+
+impl Default for SystemConfig {
+    fn default() -> Self {
+        Self {
+            node_name: String::new(),
+            data_dir: String::new(),
+            log_level: "info".to_string(),
+            node_id: None,
+        }
+    }
 }
 
 /// Runtime configuration.
@@ -413,15 +440,79 @@ pub struct SecurityConfig {
 }
 
 /// Observability configuration.
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ObservabilityConfig {
     /// Bind address for metrics.
     pub metrics_bind_addr: String,
     /// Optional tracing collector endpoint.
     pub tracing_endpoint: Option<String>,
-    /// Log format.
-    pub log_format: String,
+    /// Log format (json or compact).
+    pub log_format: LogFormat,
+    /// Whether raw protocol body logging is enabled. Defaults to false.
+    pub protocol_body_logging: bool,
+    /// Diagnostic sampling rate in the range [0.0, 1.0]. 0.0 disables sampling.
+    pub diagnostic_sample_rate: f64,
+    /// Maximum duration in milliseconds a diagnostic trace may run.
+    pub diagnostic_max_duration_ms: u64,
+    /// Maximum bytes of a protocol body that may be sampled.
+    pub diagnostic_max_body_bytes: usize,
+}
+
+impl Default for ObservabilityConfig {
+    fn default() -> Self {
+        Self {
+            metrics_bind_addr: String::new(),
+            tracing_endpoint: None,
+            log_format: LogFormat::Json,
+            protocol_body_logging: false,
+            diagnostic_sample_rate: 0.0,
+            diagnostic_max_duration_ms: 30_000,
+            diagnostic_max_body_bytes: 4096,
+        }
+    }
+}
+
+/// Supported log output formats.
+#[derive(Clone, Copy, Debug, Default, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum LogFormat {
+    /// Line-delimited JSON (default).
+    #[default]
+    Json,
+    /// Compact human-readable text for edge interactive mode.
+    Compact,
+}
+
+impl<'de> Deserialize<'de> for LogFormat {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct LogFormatVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for LogFormatVisitor {
+            type Value = LogFormat;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a log format string like \"json\" or \"compact\"")
+            }
+
+            fn visit_str<E>(self, value: &str) -> std::result::Result<LogFormat, E>
+            where
+                E: serde::de::Error,
+            {
+                let normalized = value.trim().to_ascii_lowercase();
+                match normalized.as_str() {
+                    "" | "json" => Ok(LogFormat::Json),
+                    "compact" => Ok(LogFormat::Compact),
+                    other => Err(E::unknown_variant(other, &["json", "compact"])),
+                }
+            }
+        }
+
+        deserializer.deserialize_any(LogFormatVisitor)
+    }
 }
 
 /// Source of configuration snapshots.
