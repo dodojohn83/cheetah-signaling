@@ -19,6 +19,7 @@ prost-types = { workspace = true }
 tonic-prost-build = { workspace = true }
 
 [dev-dependencies]
+proptest = { workspace = true }
 
 [lints]
 workspace = true

@@ -23,6 +23,7 @@ secrecy = { workspace = true }
 md5 = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
+proptest = { workspace = true }
 
 [lints]
 workspace = true

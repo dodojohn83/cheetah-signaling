@@ -796,3 +796,6 @@ fn probe_match_response(xaddr: &str, hardware_id: &str, relates_to: Option<&str>
 
 #[cfg(test)]
 mod golden_tests;
+
+#[cfg(test)]
+mod prop_tests;

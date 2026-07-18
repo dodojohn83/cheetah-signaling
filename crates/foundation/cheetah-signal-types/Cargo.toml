@@ -23,5 +23,8 @@ fastrand = { workspace = true }
 [features]
 test-support = []
 
+[dev-dependencies]
+proptest = { workspace = true }
+
 [lints]
 workspace = true
