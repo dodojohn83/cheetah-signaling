@@ -13,6 +13,7 @@ use axum::{
     response::Json,
     routing::{delete, get, patch, post},
 };
+use cheetah_signal_types::{validate_traceparent, validate_tracestate};
 use std::sync::Arc;
 use std::time::Duration;
 use tower::ServiceBuilder;
@@ -39,11 +40,13 @@ pub fn build_router(state: ApiState) -> Router {
             let traceparent = req
                 .headers()
                 .get("traceparent")
-                .and_then(|v| v.to_str().ok());
+                .and_then(|v| v.to_str().ok())
+                .and_then(validate_traceparent);
             let tracestate = req
                 .headers()
                 .get("tracestate")
-                .and_then(|v| v.to_str().ok());
+                .and_then(|v| v.to_str().ok())
+                .and_then(validate_tracestate);
             let span = tracing::info_span!(
                 "http_request",
                 "http.method" = tracing::field::Empty,
@@ -174,8 +177,16 @@ async fn trace_context_middleware(
     request: Request<axum::body::Body>,
     next: Next,
 ) -> Response<axum::body::Body> {
-    let traceparent = request.headers().get("traceparent").cloned();
-    let tracestate = request.headers().get("tracestate").cloned();
+    let traceparent = request
+        .headers()
+        .get("traceparent")
+        .cloned()
+        .filter(|v| v.to_str().ok().and_then(validate_traceparent).is_some());
+    let tracestate = request
+        .headers()
+        .get("tracestate")
+        .cloned()
+        .filter(|v| v.to_str().ok().and_then(validate_tracestate).is_some());
     let mut response = next.run(request).await;
     if let Some(tp) = traceparent {
         response.headers_mut().insert("traceparent", tp);

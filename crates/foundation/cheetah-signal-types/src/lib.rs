@@ -17,6 +17,7 @@ pub mod net;
 pub mod pagination;
 pub mod ports;
 pub mod time;
+pub mod trace_context;
 
 pub use audit::{AuditEvent, AuditLog, AuditOutcome, NoOpAuditLog};
 pub use config::{ConfigSource, SignalConfig};
@@ -34,3 +35,4 @@ pub use net::is_internal_ip;
 pub use pagination::{DEFAULT_PAGE_SIZE, ListCursor, MAX_PAGE_SIZE, Page, PageRequest};
 pub use ports::{Clock, IdGenerator, SecretStore};
 pub use time::{Deadline, DurationMs, UtcTimestamp};
+pub use trace_context::{validate_traceparent, validate_tracestate};

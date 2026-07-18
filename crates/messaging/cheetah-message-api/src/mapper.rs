@@ -3,7 +3,9 @@
 use cheetah_domain::{Command, CommandPayload, DomainEvent};
 use cheetah_signal_contracts::cheetah::common::v1 as proto;
 use cheetah_signal_contracts::cheetah::control::v1 as control;
-use cheetah_signal_types::{Event, ResourceId, ResourceRef, UtcTimestamp};
+use cheetah_signal_types::{
+    Event, ResourceId, ResourceRef, UtcTimestamp, validate_traceparent, validate_tracestate,
+};
 use prost_types::Timestamp;
 
 fn to_uuid(id: impl std::fmt::Display) -> proto::Uuid {
@@ -187,13 +189,13 @@ pub fn decode_event(
         serde_json::from_slice(&generic.payload).map_err(super::BusError::Serialize)?;
     if event.traceparent.is_none()
         && let Some(meta) = &envelope.meta
-        && !meta.traceparent.is_empty()
+        && validate_traceparent(&meta.traceparent).is_some()
     {
         event.traceparent = Some(meta.traceparent.clone());
     }
     if event.tracestate.is_none()
         && let Some(meta) = &envelope.meta
-        && !meta.tracestate.is_empty()
+        && validate_tracestate(&meta.tracestate).is_some()
     {
         event.tracestate = Some(meta.tracestate.clone());
     }

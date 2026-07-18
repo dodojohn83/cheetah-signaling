@@ -502,9 +502,11 @@ impl<'de> Deserialize<'de> for LogFormat {
             where
                 E: serde::de::Error,
             {
-                match value.trim().to_ascii_lowercase().as_str() {
+                let normalized = value.trim().to_ascii_lowercase();
+                match normalized.as_str() {
+                    "" | "json" => Ok(LogFormat::Json),
                     "compact" => Ok(LogFormat::Compact),
-                    _ => Ok(LogFormat::Json),
+                    other => Err(E::unknown_variant(other, &["json", "compact"])),
                 }
             }
         }
