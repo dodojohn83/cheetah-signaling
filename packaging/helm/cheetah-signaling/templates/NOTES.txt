@@ -1,0 +1,9 @@
+1. Get the application HTTP endpoint by running these commands:
+   export POD_NAME=$(kubectl get pods --namespace {{ .Release.Namespace }} -l "app.kubernetes.io/name={{ include "cheetah-signaling.name" . }},app.kubernetes.io/instance={{ .Release.Name }}" -o jsonpath="{.items[0].metadata.name}")
+   export CONTAINER_PORT=$(kubectl get pod --namespace {{ .Release.Namespace }} $POD_NAME -o jsonpath="{.spec.containers[0].ports[0].containerPort}")
+   echo "Visit http://127.0.0.1:8080 to use your application"
+   kubectl --namespace {{ .Release.Namespace }} port-forward $POD_NAME 8080:$CONTAINER_PORT
+
+2. Use the gRPC endpoint on port {{ .Values.service.grpcPort }} for inter-service calls.
+
+3. Remember to set .Values.existingSecret if your configuration references secret values.

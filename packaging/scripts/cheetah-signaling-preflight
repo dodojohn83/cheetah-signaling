@@ -1,0 +1,50 @@
+#!/bin/sh
+# Cheetah Signaling startup preflight check for edge deployments.
+# Exits non-zero when the data directory is not ready for the service to start.
+
+set -eu
+
+DATA_DIR="${1:-/var/lib/cheetah}"
+MIN_FREE_KB=1048576  # 1 GiB
+
+log() {
+    echo "cheetah-signaling-preflight: $*" >&2
+}
+
+fail() {
+    log "$*"
+    exit 1
+}
+
+if [ ! -d "$DATA_DIR" ]; then
+    fail "data directory $DATA_DIR does not exist"
+fi
+
+if [ ! -w "$DATA_DIR" ]; then
+    fail "data directory $DATA_DIR is not writable"
+fi
+
+# Check free space in the filesystem hosting the data directory.
+available_kb=$(df -kP "$DATA_DIR" | awk 'NR==2 {print $4}')
+if [ "$available_kb" -lt "$MIN_FREE_KB" ]; then
+    fail "insufficient disk space in $DATA_DIR: ${available_kb} KiB available, ${MIN_FREE_KB} KiB required"
+fi
+
+# Check that the data directory is not a symlink to a world-writable location.
+if [ -L "$DATA_DIR" ]; then
+    resolved=$(readlink -f "$DATA_DIR")
+    if [ -z "$resolved" ]; then
+        fail "cannot resolve symlink $DATA_DIR"
+    fi
+    perms=$(stat -c "%a" "$resolved" 2>/dev/null || stat -f "%Lp" "$resolved" 2>/dev/null)
+else
+    perms=$(stat -c "%a" "$DATA_DIR" 2>/dev/null || stat -f "%Lp" "$DATA_DIR" 2>/dev/null)
+fi
+
+last_digit=$(printf '%s' "$perms" | tail -c 1)
+if [ $((last_digit & 2)) -ne 0 ]; then
+    fail "$DATA_DIR must not be world-writable (mode $perms)"
+fi
+
+log "$DATA_DIR is ready"
+exit 0

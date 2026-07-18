@@ -1,0 +1,122 @@
+# Default to one replica with the embedded SQLite/local-bus backend.
+# Set replicaCount > 1 only when using shared Postgres + NATS storage/messaging.
+replicaCount: 1
+
+autoscaling:
+  enabled: false
+
+image:
+  repository: ghcr.io/dodojohn83/cheetah-signaling
+  pullPolicy: IfNotPresent
+  tag: "v0.1.0"
+  # digest overrides tag when set.
+  digest: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  automount: false
+  annotations: {}
+
+# Name of an existing Secret whose keys are injected as CHEETAH_* environment
+# variables (e.g. CHEETAH_STORAGE__POSTGRES_URL). The chart still creates the
+# ConfigMap for non-secret configuration.
+existingSecret: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+  seccompProfile:
+    type: RuntimeDefault
+
+service:
+  type: ClusterIP
+  httpPort: 8080
+  grpcPort: 9090
+
+resources:
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+  requests:
+    cpu: 250m
+    memory: 256Mi
+
+# Liveness/readiness/startup probes use distinct HTTP paths registered by the
+# application: /health/live and /health/ready.
+probes:
+  enabled: true
+  port: 8080
+  liveness:
+    path: /health/live
+    initialDelaySeconds: 60
+    periodSeconds: 15
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readiness:
+    path: /health/ready
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+  startup:
+    path: /health/ready
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 30
+
+# Separate termination grace period so active requests and reconcilers can drain.
+terminationGracePeriodSeconds: 60
+
+# Scheduling defaults are generated in templates/deployment.yaml using the
+# chart's selector labels. Set extraScheduling to override or extend them.
+extraScheduling: {}
+
+# PodDisruptionBudget allows one replica to be unavailable (supports single
+# replica drains and rolling updates with HA).
+pdb:
+  enabled: true
+  maxUnavailable: 1
+
+# Persistence for the SQLite data directory. Required for durable single-replica
+# installs; ignored when using Postgres storage.
+persistence:
+  enabled: true
+  storageClass: ""
+  accessMode: ReadWriteOnce
+  size: 10Gi
+
+# NetworkPolicy restricts ingress/egress to the required ports and peers.
+networkPolicy:
+  enabled: true
+  additionalIngress: []
+  additionalEgress: []
+
+config:
+  http:
+    port: 8080
+    listen_addr: "0.0.0.0"
+  grpc:
+    port: 9090
+    listen_addr: "0.0.0.0"
+  storage:
+    backend: "sqlite"
+    sqlite_path: "/var/lib/cheetah/cheetah.db"
+  messaging:
+    backend: "local"
