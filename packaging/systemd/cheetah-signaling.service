@@ -12,6 +12,7 @@ User=cheetah
 Group=cheetah
 WorkingDirectory=/var/lib/cheetah
 Environment="RUST_LOG=info"
+Environment="CHEETAH_CONFIG_PATH=/etc/cheetah/config.toml"
 EnvironmentFile=-/etc/default/cheetah-signaling
 ExecStartPre=/usr/lib/cheetah/cheetah-signaling-preflight /var/lib/cheetah
 ExecStart=/usr/bin/cheetah-signaling

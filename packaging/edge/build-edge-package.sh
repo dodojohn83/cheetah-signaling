@@ -21,7 +21,7 @@ trap cleanup EXIT
 cd "$REPO_ROOT"
 
 # Build release binaries.
-cargo build --release --target "$TARGET" --bin cheetah-signaling
+cargo build --release --locked --target "$TARGET" --bin cheetah-signaling
 
 # Assemble package contents.
 install -d -m 755 "$STAGING/$PKG_NAME/bin"
