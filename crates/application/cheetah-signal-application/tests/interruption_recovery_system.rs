@@ -329,12 +329,31 @@ async fn postgres_nats_brief_interruption_and_recovery() {
     assert_eq!(recovered_owner.owner_epoch, OwnerEpoch(1));
 
     // A final operation after both backends are up should dispatch end-to-end.
+    // After PostgreSQL restarts the original resolver and NATS bus route to the
+    // old PostgreSQL pools. Build a final NATS client and dispatcher using the
+    // recovered resolver so the end-to-end path actually exercises the new
+    // storage pools.
+    let nats_final = Arc::new(
+        wait_for_nats_ready(
+            &nats_url,
+            node_b,
+            resolver_recovered.clone(),
+            Duration::from_secs(10),
+        )
+        .await
+        .unwrap(),
+    );
     let dispatcher_final = CommandDispatcher::new(
         clock.clone(),
         id_gen_dyn.clone(),
         resolver_recovered,
-        nats_recovered.clone(),
+        nats_final.clone(),
     );
+    let mut subscriber_final = nats_final
+        .subscribe(&subject_a, "consumer-interrupt-final")
+        .await
+        .unwrap();
+
     let mut uow = storage_recovered.begin().await.unwrap();
     let ptz_final = operation_service
         .submit_operation(
@@ -361,7 +380,7 @@ async fn postgres_nats_brief_interruption_and_recovery() {
         .unwrap();
 
     let delivery_final = wait_for_command(
-        &mut subscriber_recovered,
+        &mut subscriber_final,
         ptz_final.operation_id,
         Duration::from_secs(5),
     )
@@ -395,7 +414,10 @@ async fn wait_until_unreachable(host: &str, port: u16, timeout: Duration) {
         );
         match attempt.await {
             Ok(Ok(_)) => tokio::time::sleep(Duration::from_millis(50)).await,
-            Ok(Err(_)) | Err(_) => break,
+            // Connection refused/reset means the port is closed; a timeout
+            // alone could be a transient network drop, so keep probing.
+            Ok(Err(_)) => break,
+            Err(_) => tokio::time::sleep(Duration::from_millis(50)).await,
         }
     }
 }
