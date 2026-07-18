@@ -55,6 +55,38 @@ pub trait IdGenerator: Send + Sync {
     fn generate_delivery_id(&self) -> DeliveryId;
 }
 
+/// Source of randomness that can be seeded for deterministic tests.
+///
+/// Production implementations use the operating system's CSPRNG. Test
+/// implementations can use a fixed seed so failing tests are reproducible.
+pub trait RandomSource: Send + Sync {
+    /// Fills `dest` with random bytes.
+    fn fill_bytes(&self, dest: &mut [u8]);
+
+    /// Returns a random `u64`.
+    fn u64(&self) -> u64;
+
+    /// Returns a random `usize` in the range `0..bound`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `bound` is zero.
+    fn usize(&self, bound: usize) -> usize;
+}
+
+/// Policy consulted by network adapters to inject deterministic faults.
+///
+/// This port stays in `cheetah-signal-types` so protocol core and driver
+/// tests can model delay, drop, and reorder without depending on a specific
+/// runtime.
+pub trait NetworkFaultPolicy: Send + Sync {
+    /// Whether the next outbound packet should be dropped.
+    fn should_drop(&self) -> bool;
+
+    /// Additional latency to add before the next packet, in milliseconds.
+    fn latency_ms(&self) -> u64;
+}
+
 /// Secure secret storage accessed by reference.
 ///
 /// No plaintext enumeration interface is exposed.

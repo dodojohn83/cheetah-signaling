@@ -64,6 +64,7 @@ bytes = "1"
 quick-xml = "0.41.0"
 encoding_rs = "0.8.35"
 futures = "0.3.28"
+fastrand = "2.4.1"
 sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-native-roots", "sqlite", "postgres", "migrate", "macros", "time", "uuid", "json"] }
 
 [workspace.lints.rust]
