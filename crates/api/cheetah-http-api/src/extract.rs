@@ -87,25 +87,25 @@ impl FromRequestParts<Arc<ApiState>> for ApiRequestContext {
                 .unwrap_or(now),
         );
 
-        let context = RequestContext {
+        let request_context = RequestContext {
             tenant_id,
             principal: auth.principal,
             message_id,
             correlation_id,
-            traceparent: traceparent.clone(),
-            tracestate: tracestate.clone(),
+            traceparent,
+            tracestate,
             deadline: Some(deadline),
             node_id: Some(state.config.node_id),
         };
 
         let span = tracing::Span::current();
-        span.record("tenant_id", tracing::field::display(&context.tenant_id));
-        span.record("request_id", tracing::field::display(&context.message_id));
-        if let Some(node_id) = context.node_id {
-            span.record("node_id", tracing::field::display(&node_id));
+        span.record("tenant_id", request_context.tenant_id.to_string());
+        span.record("request_id", request_context.message_id.to_string());
+        if let Some(node_id) = request_context.node_id {
+            span.record("node_id", node_id.to_string());
         }
 
-        Ok(Self(context))
+        Ok(Self(request_context))
     }
 }
 
