@@ -8,7 +8,7 @@ use crate::rate_limit::rate_limit_middleware;
 use axum::{
     Router,
     extract::DefaultBodyLimit,
-    http::{HeaderValue, StatusCode},
+    http::{HeaderValue, Request, Response as AxumResponse, StatusCode},
     middleware::from_fn_with_state,
     response::Json,
     routing::{delete, get, patch, post},
@@ -22,13 +22,48 @@ use tower_http::{
     timeout::TimeoutLayer,
     trace::TraceLayer,
 };
+use tracing::Span;
 
 /// Builds the public API router.
 pub fn build_router(state: ApiState) -> Router {
     let timeout = Duration::from_millis(state.config.read_timeout_ms);
     let body_limit = state.config.request_body_limit_bytes;
     let cors = build_cors_layer(&state.config.cors_allowed_origins);
+    let metrics = state.metrics.clone();
     let shared_state = Arc::new(state);
+    let metrics_request = metrics.clone();
+    let metrics_response = metrics;
+
+    let trace_layer = TraceLayer::new_for_http()
+        .make_span_with(|_req: &Request<_>| {
+            tracing::info_span!(
+                "http_request",
+                "http.method" = tracing::field::Empty,
+                "http.uri" = tracing::field::Empty,
+                protocol = "http",
+                tenant_id = tracing::field::Empty,
+                request_id = tracing::field::Empty,
+                node_id = tracing::field::Empty,
+            )
+        })
+        .on_request(move |req: &Request<_>, span: &Span| {
+            span.record("http.method", tracing::field::display(req.method()));
+            span.record("http.uri", req.uri().to_string());
+            metrics_request.record_request();
+        })
+        .on_response(
+            move |response: &AxumResponse<_>, latency: Duration, span: &Span| {
+                let status = response.status();
+                metrics_response.record_response(status);
+                metrics_response.record_duration(latency);
+                tracing::info!(
+                    parent: span,
+                    status = status.as_u16(),
+                    "finished processing request"
+                );
+            },
+        );
+
     let api = Router::new()
         .route("/health/live", get(health::live))
         .route("/health/ready", get(health::ready))
@@ -94,7 +129,7 @@ pub fn build_router(state: ApiState) -> Router {
 
     api.layer(
         ServiceBuilder::new()
-            .layer(TraceLayer::new_for_http())
+            .layer(trace_layer)
             .layer(CompressionLayer::new())
             .layer(cors)
             .layer(TimeoutLayer::with_status_code(
