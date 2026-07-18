@@ -109,48 +109,49 @@ pub(crate) async fn save_webhook_config(
     conn: &mut <Db as ::sqlx::Database>::Connection,
     config: &WebhookConfig,
 ) -> Result<()> {
+    let new_revision = i64::try_from(config.revision().0)
+        .map_err(|_| DomainError::internal("webhook config revision overflow"))?;
+    let previous_revision = i64::try_from(config.revision().0.saturating_sub(1))
+        .map_err(|_| DomainError::internal("webhook config previous revision overflow"))?;
     let data = Json(config.clone());
     let event_types = Json(config.event_types().to_vec());
-    let updated = sqlx::query(
-        "UPDATE webhook_configs SET url = $1, secret_ref = $2, event_types = $3, enabled = $4, \
-         revision = $5, updated_at = $6, data = $7, schema_version = 1 \
-         WHERE tenant_id = $8 AND webhook_id = $9 AND revision = $10",
+
+    let result = sqlx::query(
+        "INSERT INTO webhook_configs (\
+            tenant_id, webhook_id, url, secret_ref, event_types, enabled, \
+            revision, updated_at, data, schema_version\
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 1) \
+         ON CONFLICT(webhook_id) DO UPDATE SET \
+            tenant_id = EXCLUDED.tenant_id, \
+            url = EXCLUDED.url, \
+            secret_ref = EXCLUDED.secret_ref, \
+            event_types = EXCLUDED.event_types, \
+            enabled = EXCLUDED.enabled, \
+            revision = EXCLUDED.revision, \
+            updated_at = EXCLUDED.updated_at, \
+            data = EXCLUDED.data, \
+            schema_version = EXCLUDED.schema_version \
+         WHERE webhook_configs.revision = $10",
     )
+    .bind(config.tenant_id().as_uuid())
+    .bind(config.webhook_id().as_uuid())
     .bind(config.url())
     .bind(config.secret_ref())
     .bind(event_types)
     .bind(config.enabled())
-    .bind(i64::try_from(config.revision().0).unwrap_or(i64::MAX))
+    .bind(new_revision)
     .bind(config.updated_at().as_offset())
     .bind(data)
-    .bind(config.tenant_id().as_uuid())
-    .bind(config.webhook_id().as_uuid())
-    .bind(i64::try_from(config.revision().0.saturating_sub(1)).unwrap_or(i64::MIN))
+    .bind(previous_revision)
     .execute(&mut *conn)
     .await
-    .map_err(crate::error::sqlx_to_domain)?
-    .rows_affected();
+    .map_err(crate::error::sqlx_to_domain)?;
 
-    if updated == 0 {
-        let data = Json(config.clone());
-        let event_types = Json(config.event_types().to_vec());
-        sqlx::query(
-            "INSERT INTO webhook_configs (tenant_id, webhook_id, url, secret_ref, event_types, \
-             enabled, revision, updated_at, data, schema_version) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 1)",
-        )
-        .bind(config.tenant_id().as_uuid())
-        .bind(config.webhook_id().as_uuid())
-        .bind(config.url())
-        .bind(config.secret_ref())
-        .bind(event_types)
-        .bind(config.enabled())
-        .bind(i64::try_from(config.revision().0).unwrap_or(i64::MAX))
-        .bind(config.updated_at().as_offset())
-        .bind(data)
-        .execute(&mut *conn)
-        .await
-        .map_err(crate::error::sqlx_to_domain)?;
+    if result.rows_affected() != 1 {
+        return Err(DomainError::ConcurrentModification {
+            expected: config.revision().0.saturating_sub(1),
+            found: config.revision().0,
+        });
     }
     Ok(())
 }

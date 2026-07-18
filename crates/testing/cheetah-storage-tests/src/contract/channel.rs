@@ -1,12 +1,15 @@
 //! Channel repository contract tests.
 
 use crate::{contract::TestResult, fixtures::Fixtures};
+use cheetah_domain::DomainError;
+use cheetah_signal_types::Revision;
 use cheetah_storage_api::Storage;
 
 pub async fn run(storage: &dyn Storage, fixtures: &Fixtures) -> TestResult<()> {
     crud(storage, fixtures).await?;
     list_by_device(storage, fixtures).await?;
     remove(storage, fixtures).await?;
+    remove_concurrency(storage, fixtures).await?;
     tenant_isolation(storage, fixtures).await?;
     Ok(())
 }
@@ -78,9 +81,16 @@ async fn remove(storage: &dyn Storage, fixtures: &Fixtures) -> TestResult<()> {
     uow.channel_repository().save(&channel).await?;
     uow.commit().await?;
 
+    let deleted_at = fixtures.clock().now_wall();
     let mut uow = storage.begin().await?;
     uow.channel_repository()
-        .remove(tenant_id, device_id, channel.channel_id())
+        .remove(
+            tenant_id,
+            device_id,
+            channel.channel_id(),
+            channel.revision(),
+            deleted_at,
+        )
         .await?;
     uow.commit().await?;
 
@@ -119,6 +129,41 @@ async fn tenant_isolation(storage: &dyn Storage, fixtures: &Fixtures) -> TestRes
         "foreign tenant channel must not be visible"
     );
     uow.commit().await?;
+
+    Ok(())
+}
+
+async fn remove_concurrency(storage: &dyn Storage, fixtures: &Fixtures) -> TestResult<()> {
+    let tenant_id = fixtures.tenant_id();
+    let device_id = fixtures.device_id();
+    let mut device = fixtures.device(tenant_id, device_id)?;
+    device.mark_online(fixtures.clock(), None)?;
+    let channel = fixtures.channel(tenant_id, device_id)?;
+
+    let mut uow = storage.begin().await?;
+    uow.device_repository().save(&device).await?;
+    uow.channel_repository().save(&channel).await?;
+    uow.commit().await?;
+
+    let stale_revision = Revision(channel.revision().0 + 1);
+    let deleted_at = fixtures.clock().now_wall();
+    let mut uow = storage.begin().await?;
+    let result = uow
+        .channel_repository()
+        .remove(
+            tenant_id,
+            device_id,
+            channel.channel_id(),
+            stale_revision,
+            deleted_at,
+        )
+        .await;
+    assert!(
+        matches!(result, Err(DomainError::ConcurrentModification { .. })),
+        "removing a channel with a stale revision must fail, got {:?}",
+        result
+    );
+    uow.rollback().await?;
 
     Ok(())
 }

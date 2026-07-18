@@ -5,9 +5,9 @@ use crate::list;
 use crate::unit_of_work::PostgresUnitOfWork;
 use cheetah_domain::Protocol;
 use cheetah_domain::{
-    Channel, ChannelRepository, Device, DeviceRepository, DomainError, MediaBinding,
-    MediaBindingRepository, MediaSession, MediaSessionRepository, Operation, OperationRepository,
-    Outbox, OutboxEntry, ProcessedMessageRecord, ProcessedMessageRepository,
+    Channel, ChannelRepository, Device, DeviceLifecycle, DeviceRepository, DomainError,
+    MediaBinding, MediaBindingRepository, MediaSession, MediaSessionRepository, Operation,
+    OperationRepository, Outbox, OutboxEntry, ProcessedMessageRecord, ProcessedMessageRepository,
     ProcessedMessageStatus,
 };
 use cheetah_signal_types::{DeviceId, Event, MessageId, Page, PageRequest, TenantId, UtcTimestamp};
@@ -134,7 +134,7 @@ impl DeviceRepository for PostgresUnitOfWork {
         .bind(device.revision().0 as i64)
         .bind(device.created_at().as_offset())
         .bind(device.updated_at().as_offset())
-        .bind(false)
+        .bind(device.lifecycle() == DeviceLifecycle::Retired)
         .bind(Json(device))
         .bind(1i32)
         .execute(self.tx().await?.as_mut())
@@ -257,17 +257,26 @@ impl ChannelRepository for PostgresUnitOfWork {
         tenant_id: cheetah_signal_types::TenantId,
         device_id: cheetah_signal_types::DeviceId,
         channel_id: cheetah_signal_types::ChannelId,
+        expected_revision: cheetah_signal_types::Revision,
+        deleted_at: cheetah_signal_types::UtcTimestamp,
     ) -> cheetah_domain::Result<()> {
-        sqlx::query(
-            "UPDATE channels SET deleted = true, updated_at = $1 WHERE tenant_id = $2 AND device_id = $3 AND channel_id = $4",
+        let result = sqlx::query(
+            "UPDATE channels SET deleted = true, updated_at = $1 WHERE tenant_id = $2 AND device_id = $3 AND channel_id = $4 AND revision = $5",
         )
-        .bind(OffsetDateTime::now_utc())
+        .bind(deleted_at.as_offset())
         .bind(tenant_id.as_uuid())
         .bind(device_id.as_uuid())
         .bind(channel_id.as_uuid())
+        .bind(expected_revision.0 as i64)
         .execute(self.tx().await?.as_mut())
         .await
         .map_err(sqlx_to_domain)?;
+        if result.rows_affected() != 1 {
+            return Err(DomainError::ConcurrentModification {
+                expected: expected_revision.0,
+                found: expected_revision.0.saturating_add(1),
+            });
+        }
         Ok(())
     }
 

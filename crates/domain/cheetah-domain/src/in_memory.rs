@@ -6,18 +6,18 @@
 
 use crate::{
     Channel, ChannelRepository, ChannelStatus, Command, CommandBus, CommandPayload, DeliveryStatus,
-    Device, DeviceRepository, DomainError, DomainEvent, EventPublisher, MediaBinding,
-    MediaBindingRepository, MediaNodeCommand, MediaNodeCommandResult, MediaNodeSessionRef,
-    MediaPurpose, MediaReservation, MediaSession, MediaSessionRepository, MediaSessionState,
-    Operation, OperationRepository, OperationStatus, Outbox, OutboxEntry, OwnerInfo,
-    ProcessedMessageRecord, ProcessedMessageRepository, ProcessedMessageStatus, UnitOfWork,
-    WebhookConfig, WebhookConfigRepository, WebhookDelivery, WebhookDeliveryRepository,
+    Device, DeviceLifecycle, DeviceRepository, DomainError, DomainEvent, EventPublisher,
+    MediaBinding, MediaBindingRepository, MediaNodeCommand, MediaNodeCommandResult,
+    MediaNodeSessionRef, MediaPurpose, MediaReservation, MediaSession, MediaSessionRepository,
+    MediaSessionState, Operation, OperationRepository, OperationStatus, Outbox, OutboxEntry,
+    OwnerInfo, ProcessedMessageRecord, ProcessedMessageRepository, ProcessedMessageStatus,
+    UnitOfWork, WebhookConfig, WebhookConfigRepository, WebhookDelivery, WebhookDeliveryRepository,
 };
 use cheetah_signal_types::{
     ChannelId, Clock, DeliveryId, DeviceId, DurationMs, Event, IdGenerator, ListCursor,
     MediaBindingId, MediaNodeInstanceEpoch, MediaSessionId, MessageId, NodeId, OperationId, Page,
     PageRequest, Principal, ProtocolIdentity, RequestContext, ResourceId, ResourceKind,
-    ResourceRef, TenantId, UtcTimestamp, WebhookId,
+    ResourceRef, Revision, TenantId, UtcTimestamp, WebhookId,
 };
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -354,7 +354,11 @@ impl DeviceRepository for InMemoryUnitOfWork {
         device_id: DeviceId,
     ) -> crate::Result<Option<Device>> {
         let pending = lock_mutex(&self.pending);
-        Ok(pending.devices.get(&(tenant_id, device_id)).cloned())
+        Ok(pending
+            .devices
+            .get(&(tenant_id, device_id))
+            .filter(|d| d.lifecycle() != DeviceLifecycle::Retired)
+            .cloned())
     }
 
     async fn get_by_external_id(
@@ -368,7 +372,8 @@ impl DeviceRepository for InMemoryUnitOfWork {
             .devices
             .values()
             .find(|d| {
-                d.tenant_id() == tenant_id
+                d.lifecycle() != DeviceLifecycle::Retired
+                    && d.tenant_id() == tenant_id
                     && d.protocol() == protocol
                     && d.external_id() == &external_id
             })
@@ -399,7 +404,8 @@ impl DeviceRepository for InMemoryUnitOfWork {
             .devices
             .values()
             .filter(|d| {
-                d.tenant_id() == tenant_id
+                d.lifecycle() != DeviceLifecycle::Retired
+                    && d.tenant_id() == tenant_id
                     && protocol
                         .as_ref()
                         .is_none_or(|p| d.protocol().to_string() == *p)
@@ -468,11 +474,24 @@ impl ChannelRepository for InMemoryUnitOfWork {
         tenant_id: TenantId,
         device_id: DeviceId,
         channel_id: ChannelId,
+        expected_revision: Revision,
+        _deleted_at: UtcTimestamp,
     ) -> crate::Result<()> {
-        self.with_pending(|pending| {
-            pending.channels.remove(&(tenant_id, device_id, channel_id));
-        });
-        Ok(())
+        let key = (tenant_id, device_id, channel_id);
+        self.with_pending(|pending| match pending.channels.get(&key) {
+            Some(existing) if existing.revision() == expected_revision => {
+                pending.channels.remove(&key);
+                Ok(())
+            }
+            Some(existing) => Err(DomainError::ConcurrentModification {
+                expected: expected_revision.0,
+                found: existing.revision().0,
+            }),
+            None => Err(DomainError::ConcurrentModification {
+                expected: expected_revision.0,
+                found: 0,
+            }),
+        })
     }
 
     async fn list(
@@ -746,11 +765,23 @@ impl WebhookConfigRepository for InMemoryUnitOfWork {
 
     async fn save(&mut self, config: &WebhookConfig) -> crate::Result<()> {
         self.with_pending(|pending| {
+            if let Some(existing) = pending
+                .webhook_configs
+                .get(&(config.tenant_id(), config.webhook_id()))
+            {
+                let expected = existing.revision().0.saturating_add(1);
+                if config.revision().0 != expected {
+                    return Err(DomainError::ConcurrentModification {
+                        expected,
+                        found: config.revision().0,
+                    });
+                }
+            }
             pending
                 .webhook_configs
                 .insert((config.tenant_id(), config.webhook_id()), config.clone());
-        });
-        Ok(())
+            Ok(())
+        })
     }
 
     async fn delete(&mut self, tenant_id: TenantId, webhook_id: WebhookId) -> crate::Result<()> {
