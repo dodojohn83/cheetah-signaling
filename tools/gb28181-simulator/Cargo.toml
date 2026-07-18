@@ -1,0 +1,30 @@
+[package]
+name = "cheetah-gb28181-simulator"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+description = "Multi-device GB28181 simulator for registration, heartbeat, catalog and media session testing."
+
+[[bin]]
+name = "gb28181-simulator"
+path = "src/main.rs"
+
+[dependencies]
+cheetah-gb28181-core = { path = "../../crates/protocols/cheetah-gb28181-core" }
+cheetah-gb28181-module = { path = "../../crates/protocols/cheetah-gb28181-module" }
+clap = { workspace = true }
+futures = { workspace = true }
+rand = { workspace = true }
+secrecy = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time", "signal", "sync"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["fmt", "json", "env-filter"] }
+
+[lints]
+workspace = true

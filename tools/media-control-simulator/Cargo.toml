@@ -1,0 +1,32 @@
+[package]
+name = "cheetah-media-control-simulator"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+description = "A fake media control node for testing Cheetah Signaling media commands."
+
+[[bin]]
+name = "media-control-simulator"
+path = "src/main.rs"
+
+[dependencies]
+cheetah-signal-contracts = { path = "../../crates/foundation/cheetah-signal-contracts" }
+clap = { workspace = true }
+futures = { workspace = true }
+prost-types = { workspace = true }
+rand = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time", "signal", "sync"] }
+tokio-stream = { workspace = true, features = ["sync"] }
+uuid = { workspace = true }
+tonic = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["fmt", "json", "env-filter"] }
+
+[lints]
+workspace = true

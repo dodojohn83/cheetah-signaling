@@ -1,0 +1,32 @@
+[package]
+name = "cheetah-onvif-simulator"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+description = "ONVIF device/media/PTZ/events simulator with WSSE auth and clock drift."
+
+[[bin]]
+name = "onvif-simulator"
+path = "src/main.rs"
+
+[dependencies]
+axum = { workspace = true }
+base64 = { workspace = true }
+clap = { workspace = true }
+quick-xml = { workspace = true, features = ["serialize"] }
+rand = { workspace = true }
+secrecy = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+sha1 = { workspace = true }
+time = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time", "signal"] }
+url = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["fmt", "json", "env-filter"] }
+
+[lints]
+workspace = true
