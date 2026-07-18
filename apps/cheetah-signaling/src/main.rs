@@ -2,6 +2,7 @@
 
 use cheetah_signal_types::config::ConfigSource;
 
+#[allow(clippy::print_stderr)]
 fn main() {
     // Load configuration so that observability can be initialized before
     // the full transport/adapters are assembled. The complete startup
@@ -10,7 +11,10 @@ fn main() {
     let config_source = cheetah_config::LayeredConfigSource::new();
     let config = match config_source.snapshot() {
         Ok(config) => config,
-        Err(_) => std::process::exit(1),
+        Err(e) => {
+            eprintln!("failed to load configuration: {e:#}");
+            std::process::exit(1);
+        }
     };
     cheetah_http_api::logging::init_tracing(
         &config.system.log_level,
