@@ -287,7 +287,15 @@ async fn perf_edge_media_session_control() {
         .await
         .unwrap();
 
-    uow.commit().await.unwrap();
+    device_service
+        .mark_device_online(
+            &ctx,
+            &mut *uow,
+            device.device_id,
+            MarkDeviceOnlineRequest { reason: None },
+        )
+        .await
+        .unwrap();
 
     let summary = perf_common::measure("edge_media_session_start_stop", MEDIA_SESSIONS, || {
         let ctx = ctx.clone();

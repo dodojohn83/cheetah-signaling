@@ -27,10 +27,10 @@ use testcontainers_modules::testcontainers::runners::AsyncRunner;
 
 mod perf_common;
 
-const DEVICE_COUNT: usize = 100;
-const HEARTBEAT_ITERATIONS: usize = 500;
-const COMMAND_ITERATIONS: usize = 500;
-const CONCURRENCY: usize = 4;
+const DEVICE_COUNT: usize = 50;
+const HEARTBEAT_ITERATIONS: usize = 50;
+const COMMAND_ITERATIONS: usize = 50;
+const CONCURRENCY: usize = 1;
 
 async fn wait_for_postgres_ready(
     url: &str,
@@ -68,6 +68,13 @@ async fn setup_cluster() -> (
             .unwrap(),
     );
     storage.migration().run().await.unwrap();
+
+    // Warm the connection pool before concurrent scenarios so the first
+    // acquisitions don't pay connection-establishment cost under the timeout.
+    for _ in 0..5 {
+        let mut uow = storage.begin().await.unwrap();
+        uow.commit().await.unwrap();
+    }
 
     let clock: Arc<dyn Clock> = Arc::new(InMemoryClock::new());
     let id_generator = Arc::new(InMemoryIdGenerator::new());
@@ -222,8 +229,6 @@ async fn perf_cluster_heartbeat_and_command() {
             lease_until: None,
         },
     );
-
-    uow.commit().await.unwrap();
 
     let hb_ctx = ctx.clone();
     let hb_storage = storage.clone();

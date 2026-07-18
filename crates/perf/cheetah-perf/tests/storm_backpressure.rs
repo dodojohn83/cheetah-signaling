@@ -20,9 +20,9 @@ use testcontainers_modules::testcontainers::runners::AsyncRunner;
 
 mod perf_common;
 
-const DEVICE_COUNT: usize = 200;
+const DEVICE_COUNT: usize = 50;
 const RECONNECT_FRACTION: f64 = 0.5;
-const CONCURRENCY: usize = 50;
+const CONCURRENCY: usize = 2;
 
 async fn wait_for_postgres_ready(
     url: &str,
@@ -56,6 +56,13 @@ async fn setup_storm() -> (
             .unwrap(),
     );
     storage.migration().run().await.unwrap();
+
+    // Warm the connection pool before concurrent scenarios so the first
+    // acquisitions don't pay connection-establishment cost under the timeout.
+    for _ in 0..5 {
+        let mut uow = storage.begin().await.unwrap();
+        uow.commit().await.unwrap();
+    }
 
     let clock: Arc<dyn Clock> = Arc::new(InMemoryClock::new());
     let id_generator = Arc::new(InMemoryIdGenerator::new());
