@@ -56,12 +56,28 @@ fn node_id() -> NodeId {
     NodeId::from_str("22222222-2222-2222-2222-222222222222").unwrap()
 }
 
+fn node_b_id() -> NodeId {
+    NodeId::from_str("22222222-2222-2222-2222-222222222223").unwrap()
+}
+
 fn binding_id() -> MediaBindingId {
     MediaBindingId::from_str("33333333-3333-3333-3333-333333333333").unwrap()
 }
 
 fn session_id() -> MediaSessionId {
     MediaSessionId::from_str("44444444-4444-4444-4444-444444444444").unwrap()
+}
+
+fn node_with_contract_version(version: &str) -> MediaNode {
+    let mut node = default_node();
+    node.instance_id = format!("instance-{version}");
+    node.node_id =
+        NodeId::from_str(&format!("22222222-2222-2222-2222-22222222222{version}")).unwrap();
+    for cap in &mut node.capabilities {
+        cap.constraints
+            .insert("contract_version".to_string(), version.to_string());
+    }
+    node
 }
 
 fn default_node() -> MediaNode {
@@ -348,4 +364,169 @@ async fn capacity_exhausted_falls_back_or_fails() {
         err,
         cheetah_media_scheduler::error::SchedulerError::CapacityExhausted(_)
     ));
+}
+
+#[tokio::test]
+async fn scale_out_avoids_draining_node_and_breaks_affinity() {
+    let clock = Arc::new(ManualClock::new(OffsetDateTime::UNIX_EPOCH));
+    let registry = Arc::new(InMemoryMediaNodeRegistry::new(
+        MediaRegistryConfig::default(),
+    ));
+
+    let node_a = default_node();
+    registry
+        .register(node_a.clone(), 60_000, clock.as_ref())
+        .await
+        .unwrap();
+
+    // Register node B but immediately mark it as Draining so the first session
+    // deterministically lands on node A.
+    let mut node_b = default_node();
+    node_b.node_id = node_b_id();
+    node_b.instance_id = "instance-2".to_string();
+    node_b.load = 5;
+    registry
+        .register(node_b.clone(), 60_000, clock.as_ref())
+        .await
+        .unwrap();
+    registry
+        .drain(node_b.node_id, true, clock.as_ref())
+        .await
+        .unwrap();
+
+    let scheduler = Arc::new(LeastLoadedScheduler::new(
+        registry.clone(),
+        SchedulerConfig::default(),
+    ));
+
+    // Initial session is scheduled on node A and reserved.
+    let session = session_id();
+    let req = requirements("live", Some(session));
+    let chosen = scheduler
+        .schedule(tenant_id(), &req, &[], clock.as_ref())
+        .await
+        .unwrap();
+    assert_eq!(chosen.node_id, node_a.node_id);
+
+    scheduler
+        .reserve(
+            chosen.node_id,
+            tenant_id(),
+            binding_id(),
+            &req,
+            clock.as_ref(),
+        )
+        .await
+        .unwrap();
+
+    // Scale out: re-enable node B, then drain node A. New work must go to node B
+    // and affinity on node A is broken because it is no longer eligible.
+    registry
+        .drain(node_b.node_id, false, clock.as_ref())
+        .await
+        .unwrap();
+    registry
+        .drain(node_a.node_id, true, clock.as_ref())
+        .await
+        .unwrap();
+
+    let migrated = scheduler
+        .schedule(tenant_id(), &req, &[], clock.as_ref())
+        .await
+        .unwrap();
+    assert_eq!(migrated.node_id, node_b.node_id);
+
+    // A completely new session is also scheduled on node B.
+    let new_session = MediaSessionId::from_str("44444444-4444-4444-4444-444444444445").unwrap();
+    let new_req = requirements("live", Some(new_session));
+    let new_chosen = scheduler
+        .schedule(tenant_id(), &new_req, &[], clock.as_ref())
+        .await
+        .unwrap();
+    assert_eq!(new_chosen.node_id, node_b.node_id);
+
+    // Node A remains listed because it is only draining (not Left or expired)
+    // and the frozen clock never exceeds its 60s lease.
+    let active_nodes = scheduler.list_nodes(clock.as_ref()).await;
+    assert!(active_nodes.contains(&node_a.node_id));
+    assert!(active_nodes.contains(&node_b.node_id));
+}
+
+#[tokio::test]
+async fn rolling_upgrade_routes_new_sessions_to_newer_contract_version() {
+    let clock = Arc::new(ManualClock::new(OffsetDateTime::UNIX_EPOCH));
+    let registry = Arc::new(InMemoryMediaNodeRegistry::new(
+        MediaRegistryConfig::default(),
+    ));
+
+    let node_a = node_with_contract_version("1");
+    registry
+        .register(node_a.clone(), 60_000, clock.as_ref())
+        .await
+        .unwrap();
+
+    let scheduler = Arc::new(LeastLoadedScheduler::new(
+        registry.clone(),
+        SchedulerConfig::default(),
+    ));
+
+    // Existing session lands on node A (contract v1) without a contract requirement.
+    let session = session_id();
+    let mut old_req = requirements("live", Some(session));
+    let chosen = scheduler
+        .schedule(tenant_id(), &old_req, &[], clock.as_ref())
+        .await
+        .unwrap();
+    assert_eq!(chosen.node_id, node_a.node_id);
+
+    scheduler
+        .reserve(
+            chosen.node_id,
+            tenant_id(),
+            binding_id(),
+            &old_req,
+            clock.as_ref(),
+        )
+        .await
+        .unwrap();
+
+    // A new node joins with contract v2 (rolling upgrade scale-out).
+    let node_b = node_with_contract_version("2");
+    registry
+        .register(node_b.clone(), 60_000, clock.as_ref())
+        .await
+        .unwrap();
+
+    // New sessions requiring contract v2 must be scheduled on node B.
+    let new_session = MediaSessionId::from_str("44444444-4444-4444-4444-444444444445").unwrap();
+    let mut new_req = requirements("live", Some(new_session));
+    new_req
+        .required_constraints
+        .insert("contract_version".to_string(), "2".to_string());
+    let v2_chosen = scheduler
+        .schedule(tenant_id(), &new_req, &[], clock.as_ref())
+        .await
+        .unwrap();
+    assert_eq!(v2_chosen.node_id, node_b.node_id);
+
+    // Re-scheduling the old session with a v2 requirement breaks affinity and migrates to B.
+    old_req
+        .required_constraints
+        .insert("contract_version".to_string(), "2".to_string());
+    let migrated = scheduler
+        .schedule(tenant_id(), &old_req, &[], clock.as_ref())
+        .await
+        .unwrap();
+    assert_eq!(migrated.node_id, node_b.node_id);
+
+    // Node A is still available for sessions that only need contract v1.
+    let mut v1_req = requirements("live", None);
+    v1_req
+        .required_constraints
+        .insert("contract_version".to_string(), "1".to_string());
+    let v1_chosen = scheduler
+        .schedule(tenant_id(), &v1_req, &[], clock.as_ref())
+        .await
+        .unwrap();
+    assert_eq!(v1_chosen.node_id, node_a.node_id);
 }
