@@ -149,9 +149,19 @@ pub(crate) async fn save_webhook_config(
     .map_err(crate::error::sqlx_to_domain)?;
 
     if result.rows_affected() != 1 {
+        let placeholder = if IS_POSTGRES { "$1" } else { "?" };
+        let query = format!("SELECT revision FROM webhook_configs WHERE webhook_id = {placeholder}");
+        let found: Option<(i64,)> = sqlx::query_as(&query)
+            .bind(config.webhook_id().as_uuid())
+            .fetch_optional(&mut *conn)
+            .await
+            .map_err(crate::error::sqlx_to_domain)?;
+        let found = found
+            .and_then(|(r,)| u64::try_from(r).ok())
+            .unwrap_or(0);
         return Err(DomainError::ConcurrentModification {
             expected: config.revision().0.saturating_sub(1),
-            found: config.revision().0,
+            found,
         });
     }
     Ok(())

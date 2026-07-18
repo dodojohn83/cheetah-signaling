@@ -276,9 +276,19 @@ impl ChannelRepository for SqliteUnitOfWork {
         .await
         .map_err(sqlx_to_domain)?;
         if result.rows_affected() != 1 {
+            let found: Option<(i64,)> = sqlx::query_as(
+                "SELECT revision FROM channels WHERE tenant_id = ? AND device_id = ? AND channel_id = ?",
+            )
+            .bind(tenant_id.as_uuid())
+            .bind(device_id.as_uuid())
+            .bind(channel_id.as_uuid())
+            .fetch_optional(self.tx().await?.as_mut())
+            .await
+            .map_err(sqlx_to_domain)?;
+            let found = found.and_then(|(r,)| u64::try_from(r).ok()).unwrap_or(0);
             return Err(DomainError::ConcurrentModification {
                 expected: expected_revision.0,
-                found: expected_revision.0.saturating_add(1),
+                found,
             });
         }
         Ok(())
