@@ -373,7 +373,12 @@ impl BackfillJobRow {
         let mut job = BackfillJob::new(self.version, self.description);
         job.processed_rows = self.processed_rows as u64;
         job.finished = self.finished;
-        job.updated_at = UNIX_EPOCH + Duration::from_secs(self.updated_at.unix_timestamp() as u64);
+        let nanos = self.updated_at.unix_timestamp_nanos();
+        job.updated_at = if nanos < 0 {
+            UNIX_EPOCH
+        } else {
+            UNIX_EPOCH + Duration::from_nanos(nanos as u64)
+        };
         job
     }
 }
