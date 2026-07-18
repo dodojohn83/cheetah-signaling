@@ -11,6 +11,9 @@ and property tests.  Each sample is paired with:
 All IDs, passwords, tokens, addresses and credentials are synthetic.  No real
 deployment data, certificates or private keys are committed here.
 
+Unless otherwise noted in a sample's `.meta.toml`, all samples in this directory
+are released under the `MIT-0` license.
+
 | Subdirectory | Protocol | Handled by |
 | --- | --- | --- |
 | `gb28181/sip/` | GB/T 28181 SIP datagrams | `crates/protocols/cheetah-gb28181-core/tests/golden.rs` |
