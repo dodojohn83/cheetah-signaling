@@ -1,0 +1,6 @@
+source = "synthetic"
+standard = "GB/T 28181-2016"
+profile = "generic"
+expected = "SIP/2.0 200 OK response for REGISTER CSeq 314159"
+desensitization = "Call-ID is synthetic."
+license = "MIT-0"

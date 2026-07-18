@@ -1,0 +1,6 @@
+source = "synthetic"
+standard = "GB/T 28181-2016"
+profile = "generic"
+expected = "REGISTER request for sip:registrar.example.com with CSeq 314159"
+desensitization = "All hostnames, Call-IDs and contact addresses are synthetic. No real credentials or deployment data."
+license = "MIT-0"

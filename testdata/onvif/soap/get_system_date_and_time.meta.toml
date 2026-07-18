@@ -1,0 +1,6 @@
+source = "synthetic"
+standard = "ONVIF Profile T / Core"
+profile = "generic"
+expected = "SOAP envelope with anonymous action GetSystemDateAndTime"
+desensitization = "No credentials or device-specific identifiers."
+license = "MIT-0"

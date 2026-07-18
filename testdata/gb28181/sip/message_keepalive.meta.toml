@@ -1,0 +1,6 @@
+source = "synthetic"
+standard = "GB/T 28181-2016"
+profile = "generic"
+expected = "MESSAGE request carrying a MANSCDP Keepalive XML body"
+desensitization = "Device IDs, Call-ID and tags are synthetic; XML body contains no real credentials."
+license = "MIT-0"

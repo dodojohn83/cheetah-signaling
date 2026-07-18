@@ -1,0 +1,6 @@
+source = "synthetic"
+standard = "GB/T 28181-2016"
+profile = "generic"
+expected = "Keepalive Notify with CmdType=Keepalive, SN=1, DeviceID=34020000001320000001, Status=OK"
+desensitization = "Device ID is synthetic."
+license = "MIT-0"

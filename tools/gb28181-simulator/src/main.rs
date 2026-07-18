@@ -386,7 +386,11 @@ async fn on_heartbeat(runtime: &DeviceRuntime) -> Result<(), SimError> {
         return Ok(());
     }
 
-    let xml = build_keepalive(&next_cseq_string(runtime).await, &runtime.device_id, "OK")?;
+    let xml = build_keepalive(
+        &current_cseq_string(runtime).await,
+        &runtime.device_id,
+        "OK",
+    )?;
     let msg = build_message(
         runtime,
         Method::Message,
@@ -398,7 +402,7 @@ async fn on_heartbeat(runtime: &DeviceRuntime) -> Result<(), SimError> {
 
     if should_trigger(runtime, runtime.config.alarm_every_n_heartbeats, cycle) {
         let alarm_xml = build_alarm_notify(
-            &next_cseq_string(runtime).await,
+            &current_cseq_string(runtime).await,
             &runtime.device_id,
             Some("1"),
             Some("1"),
@@ -772,9 +776,7 @@ async fn send_message(runtime: &DeviceRuntime, msg: &SipMessage) -> Result<(), S
     Ok(())
 }
 
-async fn next_cseq_string(runtime: &DeviceRuntime) -> String {
-    let mut state = runtime.state.lock().await;
-    let cseq = state.cseq;
-    state.cseq += 1;
-    cseq.to_string()
+async fn current_cseq_string(runtime: &DeviceRuntime) -> String {
+    let state = runtime.state.lock().await;
+    state.cseq.to_string()
 }
