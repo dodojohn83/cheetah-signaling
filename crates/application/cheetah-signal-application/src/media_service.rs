@@ -78,7 +78,7 @@ impl MediaService {
             return Ok(MediaSessionDto::from(&session));
         }
 
-        let mut session = uow
+        let session = uow
             .media_session_repository()
             .get(tenant_id, media_session_id)
             .await?
@@ -88,7 +88,7 @@ impl MediaService {
                     media_session_id.to_string(),
                 ))
             })?;
-        let mut binding = uow
+        let binding = uow
             .media_binding_repository()
             .get_by_media_session(tenant_id, media_session_id)
             .await?
@@ -98,39 +98,6 @@ impl MediaService {
                     media_session_id.to_string(),
                 ))
             })?;
-
-        let session_event = session
-            .stop(self.clock.as_ref())
-            .map_err(crate::SignalError::from)?;
-        let binding_event = binding
-            .release(self.clock.as_ref())
-            .map_err(crate::SignalError::from)?;
-
-        uow.media_session_repository().save(&session).await?;
-        uow.media_binding_repository().save(&binding).await?;
-
-        uow.outbox()
-            .append(wrap_event(
-                self.id_generator.as_ref(),
-                self.clock.as_ref(),
-                context,
-                tenant_id,
-                media_session_resource_ref(tenant_id, session.media_session_id()),
-                session.revision().0,
-                session_event,
-            ))
-            .await?;
-        uow.outbox()
-            .append(wrap_event(
-                self.id_generator.as_ref(),
-                self.clock.as_ref(),
-                context,
-                tenant_id,
-                media_binding_resource_ref(tenant_id, binding.media_binding_id()),
-                binding.revision().0,
-                binding_event,
-            ))
-            .await?;
 
         let payload = CommandPayload::StopMediaSession { media_session_id };
         let (operation, op_event) = Operation::new(
