@@ -40,6 +40,7 @@ secrecy = { version = "0.10.3", features = ["serde"] }
 config = { version = "0.15.11", default-features = false, features = ["toml", "json"] }
 toml = "0.8.19"
 tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.18", default-features = false, features = ["fmt", "json", "env-filter", "std"] }
 tonic = "0.14"
 tonic-prost = "0.14"
 tonic-prost-build = "0.14"
