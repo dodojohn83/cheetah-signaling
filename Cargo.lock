@@ -609,6 +609,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "cheetah-gb28181-simulator"
+version = "0.1.0"
+dependencies = [
+ "cheetah-gb28181-core",
+ "cheetah-gb28181-module",
+ "clap",
+ "futures",
+ "rand 0.8.7",
+ "secrecy",
+ "serde",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "cheetah-grpc-api"
 version = "0.1.0"
 
@@ -662,6 +679,25 @@ dependencies = [
  "tokio-stream",
  "tonic",
  "tracing",
+]
+
+[[package]]
+name = "cheetah-media-control-simulator"
+version = "0.1.0"
+dependencies = [
+ "cheetah-signal-contracts",
+ "clap",
+ "futures",
+ "prost-types",
+ "rand 0.8.7",
+ "serde",
+ "thiserror",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]
@@ -781,6 +817,25 @@ dependencies = [
  "serde_json",
  "thiserror",
  "tokio",
+]
+
+[[package]]
+name = "cheetah-onvif-simulator"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "base64",
+ "clap",
+ "quick-xml",
+ "rand 0.8.7",
+ "secrecy",
+ "serde",
+ "sha1",
+ "time",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "url",
 ]
 
 [[package]]
@@ -2708,6 +2763,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e660451e55124f798a69a5af3f49ccfbefbd41910eefd25caf2393e1f3473ec1"
 dependencies = [
  "memchr",
+ "serde",
 ]
 
 [[package]]
@@ -4008,6 +4064,7 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]
