@@ -396,8 +396,8 @@ impl PhaseMigrationRunner {
     ) -> Result<(), StorageError> {
         backend.init_state_tables().await?;
         let backfills = self.planner.phase_migrations(MigrationPhase::Backfill);
-        let start = Instant::now();
         for m in backfills {
+            let start = Instant::now();
             for batch in 0..MAX_BACKFILL_BATCHES {
                 if start.elapsed() > MAX_BACKFILL_DURATION {
                     return Err(StorageError::migration(
