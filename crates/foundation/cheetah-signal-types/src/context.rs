@@ -53,6 +53,8 @@ pub struct RequestContext {
     pub deadline: Option<Deadline>,
     /// Node handling the request.
     pub node_id: Option<NodeId>,
+    /// Source IP address of the request when available.
+    pub source_ip: Option<String>,
 }
 
 /// A reference to a resource in the system.
