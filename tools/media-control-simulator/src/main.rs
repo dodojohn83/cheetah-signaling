@@ -113,6 +113,14 @@ impl Config {
             max_cpu_percent: self.max_cpu_percent,
         }
     }
+
+    fn effective_failure_rate(&self) -> f64 {
+        if self.failure_rate.is_finite() {
+            self.failure_rate.clamp(0.0, 1.0)
+        } else {
+            0.0
+        }
+    }
 }
 
 /// A synthetic session stored by the simulator.
@@ -162,7 +170,7 @@ impl State {
 
     async fn should_fail(&self) -> bool {
         let mut rng = self.rng.lock().await;
-        rng.r#gen::<f64>() < self.config.failure_rate
+        rng.r#gen::<f64>() < self.config.effective_failure_rate()
     }
 
     async fn maybe_sleep(&self) {
@@ -232,6 +240,8 @@ impl MediaControl for State {
             .ok_or_else(|| invalid_argument("missing command envelope"))?;
         let operation_id = envelope.operation_id.clone();
 
+        self.maybe_sleep().await;
+
         if self.should_fail().await {
             let result =
                 State::make_result(CommandStatus::Failed, operation_id, Some(injected_error()));
@@ -239,8 +249,6 @@ impl MediaControl for State {
                 result: Some(result),
             }));
         }
-
-        self.maybe_sleep().await;
 
         let command = match envelope.command {
             Some(EnvelopeCommand::MediaCommand(m)) => m,

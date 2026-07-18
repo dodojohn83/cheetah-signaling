@@ -27,7 +27,7 @@ use tokio::time::{self, Instant};
 use tracing::{info, warn};
 
 /// Runtime configuration.
-#[derive(Clone, Debug, Parser)]
+#[derive(Clone, Parser)]
 #[command(name = "gb28181-simulator")]
 struct Config {
     /// Platform SIP registrar address.
@@ -73,6 +73,27 @@ struct Config {
     /// Disconnect the socket for a random duration every N keepalive cycles (0 disables).
     #[arg(long, default_value = "0")]
     disconnect_every_n_heartbeats: usize,
+}
+
+impl std::fmt::Debug for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Config")
+            .field("server", &self.server)
+            .field("count", &self.count)
+            .field("base_device_id", &self.base_device_id)
+            .field("seed", &self.seed)
+            .field("password", &"[REDACTED]")
+            .field("profile", &self.profile)
+            .field("malformed_rate", &self.malformed_rate)
+            .field("failure_rate", &self.failure_rate)
+            .field("keepalive_start_delay_sec", &self.keepalive_start_delay_sec)
+            .field("alarm_every_n_heartbeats", &self.alarm_every_n_heartbeats)
+            .field(
+                "disconnect_every_n_heartbeats",
+                &self.disconnect_every_n_heartbeats,
+            )
+            .finish()
+    }
 }
 
 impl Config {
@@ -337,13 +358,17 @@ async fn register_device(runtime: &DeviceRuntime) -> Result<(), SimError> {
 }
 
 async fn on_heartbeat(runtime: &DeviceRuntime) -> Result<(), SimError> {
-    let mut state = runtime.state.lock().await;
-    if !state.registered {
-        return Ok(());
+    let cycle = {
+        let mut state = runtime.state.lock().await;
+        if state.registered {
+            state.heartbeat_count += 1;
+        }
+        state.heartbeat_count
+    };
+
+    if !runtime.state.lock().await.registered {
+        return register_device(runtime).await;
     }
-    state.heartbeat_count += 1;
-    let cycle = state.heartbeat_count;
-    drop(state);
 
     if should_trigger(runtime, runtime.config.disconnect_every_n_heartbeats, cycle) {
         let reconnect_ms = {
@@ -571,7 +596,7 @@ async fn send_register(runtime: &DeviceRuntime, with_auth: bool) -> Result<(), S
                     &runtime.device_id,
                     &runtime.password,
                     "REGISTER",
-                    &from_uri.encode(),
+                    &server_uri.encode(),
                     &challenge,
                     &cnonce,
                 )

@@ -342,7 +342,12 @@ fn write_stream_uri<W: std::io::Write>(
     write_element(
         writer,
         "tt:Uri",
-        &format!("rtsp://{}:{}/stream0", config.bind.ip(), config.bind.port()),
+        &service_url(
+            "rtsp",
+            config.bind,
+            config.xaddr_host.as_deref(),
+            "/stream0",
+        ),
     )?;
     write_element(writer, "tt:InvalidAfterConnect", "false")?;
     write_element(writer, "tt:InvalidAfterReboot", "false")?;
@@ -370,10 +375,11 @@ fn write_subscription<W: std::io::Write>(
 ) -> std::io::Result<()> {
     writer.write_event(Event::Start(BytesStart::new("tev:SubscriptionReference")))?;
     writer.write_event(Event::Start(BytesStart::new("wsa:Address")))?;
-    writer.write_event(Event::Text(BytesText::new(&format!(
-        "http://{}:{}/onvif/events_sub",
-        config.bind.ip(),
-        config.bind.port()
+    writer.write_event(Event::Text(BytesText::new(&service_url(
+        "http",
+        config.bind,
+        config.xaddr_host.as_deref(),
+        "/onvif/events_sub",
     ))))?;
     writer.write_event(Event::End(BytesEnd::new("wsa:Address")))?;
     writer.write_event(Event::End(BytesEnd::new("tev:SubscriptionReference")))
@@ -604,9 +610,22 @@ fn soap_fault(status: StatusCode, code: &str, subcode: &str, reason: &str) -> Re
     let mut writer = Writer::new(&mut out);
     if let Err(e) = write_envelope(&mut writer, &[], |w| {
         w.write_event(Event::Start(BytesStart::new("soap:Fault")))?;
-        write_element(w, "soap:Code", &format!("soap:{code}"))?;
-        write_element(w, "soap:Subcode", &format!("soap:{subcode}"))?;
-        write_element(w, "soap:Reason", reason)?;
+
+        w.write_event(Event::Start(BytesStart::new("soap:Code")))?;
+        write_element(w, "soap:Value", &format!("soap:{code}"))?;
+        w.write_event(Event::Start(BytesStart::new("soap:Subcode")))?;
+        write_element(w, "soap:Value", &format!("soap:{subcode}"))?;
+        w.write_event(Event::End(BytesEnd::new("soap:Subcode")))?;
+        w.write_event(Event::End(BytesEnd::new("soap:Code")))?;
+
+        w.write_event(Event::Start(BytesStart::new("soap:Reason")))?;
+        let mut text = BytesStart::new("soap:Text");
+        text.push_attribute(("xml:lang", "en"));
+        w.write_event(Event::Start(text))?;
+        w.write_event(Event::Text(BytesText::new(reason)))?;
+        w.write_event(Event::End(BytesEnd::new("soap:Text")))?;
+        w.write_event(Event::End(BytesEnd::new("soap:Reason")))?;
+
         write_element(w, "soap:Detail", "simulated ONVIF fault")?;
         w.write_event(Event::End(BytesEnd::new("soap:Fault")))
     }) {
@@ -628,21 +647,66 @@ fn iso_now() -> String {
         .unwrap_or_default()
 }
 
-fn discovery_xaddr(bind: SocketAddr, xaddr_host: Option<&str>) -> String {
-    let host = if let Some(h) = xaddr_host {
-        h.to_string()
+fn host_for_client(bind: SocketAddr, xaddr_host: Option<&str>) -> String {
+    if let Some(h) = xaddr_host {
+        return h.to_string();
+    }
+    if bind.ip().is_unspecified() {
+        "localhost".to_string()
     } else {
-        url::Host::parse(&bind.ip().to_string())
-            .map(|h| h.to_string())
-            .unwrap_or_else(|_| bind.ip().to_string())
-    };
-    let mut xaddr = match url::Url::parse("http://localhost/onvif/device_service") {
+        bind.ip().to_string()
+    }
+}
+
+fn service_url(scheme: &str, bind: SocketAddr, xaddr_host: Option<&str>, path: &str) -> String {
+    let host = host_for_client(bind, xaddr_host);
+    let mut url = match url::Url::parse(&format!("{scheme}://localhost{path}")) {
         Ok(u) => u,
-        Err(_) => return format!("http://{}:{}/onvif/device_service", host, bind.port()),
+        Err(_) => return format!("{scheme}://{}:{}{path}", host, bind.port()),
     };
-    xaddr.set_host(Some(&host)).ok();
-    xaddr.set_port(Some(bind.port())).ok();
-    xaddr.to_string()
+    url.set_host(Some(&host)).ok();
+    url.set_port(Some(bind.port())).ok();
+    url.to_string()
+}
+
+fn discovery_xaddr(bind: SocketAddr, xaddr_host: Option<&str>) -> String {
+    service_url("http", bind, xaddr_host, "/onvif/device_service")
+}
+
+fn parse_probe_message_id(body: &[u8]) -> Option<String> {
+    let mut reader = Reader::from_reader(body);
+    reader.config_mut().trim_text(true);
+    let mut capture: Option<String> = None;
+    let mut current = String::new();
+
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(e)) => {
+                let name = String::from_utf8_lossy(e.name().local_name().as_ref()).into_owned();
+                if name == "MessageID" || name.ends_with(":MessageID") {
+                    capture = Some(name);
+                    current.clear();
+                }
+            }
+            Ok(Event::Text(e)) => {
+                if capture.is_some()
+                    && let Ok(text) = e.decode()
+                {
+                    current.push_str(text.as_ref());
+                }
+            }
+            Ok(Event::End(e)) => {
+                let name = String::from_utf8_lossy(e.name().local_name().as_ref()).into_owned();
+                if Some(name) == capture {
+                    return Some(current);
+                }
+            }
+            Ok(Event::Eof) => break,
+            Err(_) => break,
+            _ => {}
+        }
+    }
+    None
 }
 
 async fn run_discovery(config: Config) -> std::io::Result<()> {
@@ -663,13 +727,14 @@ async fn run_discovery(config: Config) -> std::io::Result<()> {
         let data = &buf[..len];
         let text = String::from_utf8_lossy(data);
         if text.contains("Probe") {
-            let response = probe_match_response(&xaddr, &hardware_id);
+            let message_id = parse_probe_message_id(data);
+            let response = probe_match_response(&xaddr, &hardware_id, message_id.as_deref());
             let _ = socket.send_to(response.as_bytes(), peer).await;
         }
     }
 }
 
-fn probe_match_response(xaddr: &str, hardware_id: &str) -> String {
+fn probe_match_response(xaddr: &str, hardware_id: &str, relates_to: Option<&str>) -> String {
     let mut out = XML_DECLARATION.to_vec();
     let mut writer = Writer::new(&mut out);
 
@@ -683,7 +748,8 @@ fn probe_match_response(xaddr: &str, hardware_id: &str) -> String {
 
     let _ = writer.write_event(Event::Start(BytesStart::new("SOAP-ENV:Header")));
     let _ = write_element(&mut writer, "wsa:MessageID", &format!("uuid:{hardware_id}"));
-    let _ = write_element(&mut writer, "wsa:RelatesTo", &format!("uuid:{hardware_id}"));
+    let relates_to_value = relates_to.unwrap_or("uuid:unknown");
+    let _ = write_element(&mut writer, "wsa:RelatesTo", relates_to_value);
     let _ = write_element(
         &mut writer,
         "wsa:To",
