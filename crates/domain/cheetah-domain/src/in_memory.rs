@@ -475,7 +475,6 @@ impl ChannelRepository for InMemoryUnitOfWork {
         device_id: DeviceId,
         channel_id: ChannelId,
         expected_revision: Revision,
-        _deleted_at: UtcTimestamp,
     ) -> crate::Result<()> {
         let key = (tenant_id, device_id, channel_id);
         self.with_pending(|pending| match pending.channels.get(&key) {

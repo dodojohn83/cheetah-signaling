@@ -236,7 +236,6 @@ impl DeviceService {
             if !incoming_ids.contains(&channel.channel_id()) {
                 let channel_id = channel.channel_id();
                 let revision = channel.revision();
-                let deleted_at = self.clock.now_wall();
                 let event = channel.remove();
                 let event = wrap_event(
                     self.id_generator.as_ref(),
@@ -249,7 +248,7 @@ impl DeviceService {
                 );
                 uow.outbox().append(event).await?;
                 uow.channel_repository()
-                    .remove(tenant_id, device_id, channel_id, revision, deleted_at)
+                    .remove(tenant_id, device_id, channel_id, revision)
                     .await?;
             }
         }

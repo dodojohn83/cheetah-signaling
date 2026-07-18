@@ -170,17 +170,13 @@ pub trait ChannelRepository: Send {
     ) -> Result<Vec<Channel>>;
     /// Saves a channel.
     async fn save(&mut self, channel: &Channel) -> Result<()>;
-    /// Marks a channel as deleted.
-    ///
-    /// `expected_revision` and `deleted_at` are used for optimistic concurrency
-    /// and deterministic timestamping, respectively.
+    /// Removes a channel if its current revision matches `expected_revision`.
     async fn remove(
         &mut self,
         tenant_id: TenantId,
         device_id: DeviceId,
         channel_id: ChannelId,
         expected_revision: Revision,
-        deleted_at: UtcTimestamp,
     ) -> Result<()>;
     /// Lists channels for a device with optional filters and stable cursor pagination.
     async fn list(

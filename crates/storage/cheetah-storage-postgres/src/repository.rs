@@ -258,12 +258,10 @@ impl ChannelRepository for PostgresUnitOfWork {
         device_id: cheetah_signal_types::DeviceId,
         channel_id: cheetah_signal_types::ChannelId,
         expected_revision: cheetah_signal_types::Revision,
-        deleted_at: cheetah_signal_types::UtcTimestamp,
     ) -> cheetah_domain::Result<()> {
         let result = sqlx::query(
-            "UPDATE channels SET deleted = true, updated_at = $1 WHERE tenant_id = $2 AND device_id = $3 AND channel_id = $4 AND revision = $5",
+            "DELETE FROM channels WHERE tenant_id = $1 AND device_id = $2 AND channel_id = $3 AND revision = $4",
         )
-        .bind(deleted_at.as_offset())
         .bind(tenant_id.as_uuid())
         .bind(device_id.as_uuid())
         .bind(channel_id.as_uuid())

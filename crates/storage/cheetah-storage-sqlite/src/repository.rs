@@ -262,12 +262,10 @@ impl ChannelRepository for SqliteUnitOfWork {
         device_id: cheetah_signal_types::DeviceId,
         channel_id: cheetah_signal_types::ChannelId,
         expected_revision: cheetah_signal_types::Revision,
-        deleted_at: cheetah_signal_types::UtcTimestamp,
     ) -> cheetah_domain::Result<()> {
         let result = sqlx::query(
-            "UPDATE channels SET deleted = 1, updated_at = ? WHERE tenant_id = ? AND device_id = ? AND channel_id = ? AND revision = ?",
+            "DELETE FROM channels WHERE tenant_id = ? AND device_id = ? AND channel_id = ? AND revision = ?",
         )
-        .bind(deleted_at.as_offset())
         .bind(tenant_id.as_uuid())
         .bind(device_id.as_uuid())
         .bind(channel_id.as_uuid())
