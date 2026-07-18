@@ -943,15 +943,19 @@ name = "cheetah-signal-application"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "cheetah-cluster-ownership",
  "cheetah-domain",
  "cheetah-message-api",
  "cheetah-message-local",
+ "cheetah-message-nats",
  "cheetah-signal-types",
  "cheetah-storage-api",
+ "cheetah-storage-postgres",
  "cheetah-storage-sqlite",
  "secrecy",
  "serde",
  "serde_json",
+ "testcontainers-modules",
  "tokio",
  "tracing",
 ]

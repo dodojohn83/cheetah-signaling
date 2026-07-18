@@ -13,6 +13,7 @@ use cheetah_storage_api::{
 use sqlx::PgPool;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::Duration;
 
 /// PostgreSQL storage adapter.
@@ -92,10 +93,11 @@ impl Storage for PostgresStorage {
         )))
     }
 
-    fn owner_repository(&self) -> Box<dyn OwnerRepository> {
+    fn owner_repository(&self, clock: Arc<dyn Clock>) -> Box<dyn OwnerRepository> {
         Box::new(PostgresOwnerRepository::new(
             self.read_pool.clone(),
             self.write_pool.clone(),
+            clock,
         ))
     }
 

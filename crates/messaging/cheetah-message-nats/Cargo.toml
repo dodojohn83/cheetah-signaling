@@ -24,6 +24,10 @@ serde_json = { workspace = true }
 tracing = { workspace = true }
 prost = { workspace = true }
 
+[features]
+default = []
+test-helpers = []
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 testcontainers-modules = { version = "0.15", features = ["nats"] }

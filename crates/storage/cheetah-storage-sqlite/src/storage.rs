@@ -13,6 +13,7 @@ use cheetah_storage_api::{
 use sqlx::SqlitePool;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 
 /// SQLite storage adapter.
@@ -93,10 +94,11 @@ impl Storage for SqliteStorage {
         Ok(Box::new(SqliteUnitOfWork::new(self.write_pool.clone(), tx)))
     }
 
-    fn owner_repository(&self) -> Box<dyn OwnerRepository> {
+    fn owner_repository(&self, clock: Arc<dyn Clock>) -> Box<dyn OwnerRepository> {
         Box::new(SqliteOwnerRepository::new(
             self.read_pool.clone(),
             self.write_pool.clone(),
+            clock,
         ))
     }
 
