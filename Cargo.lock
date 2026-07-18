@@ -532,6 +532,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "cheetah-ctl"
+version = "0.1.0"
+dependencies = [
+ "cheetah-config",
+ "cheetah-signal-types",
+ "clap",
+ "reqwest",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "cheetah-domain"
 version = "0.1.0"
 dependencies = [
