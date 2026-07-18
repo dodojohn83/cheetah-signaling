@@ -5,7 +5,7 @@ To: <sip:platform@example.com>
 Call-ID: keepalive-1@example.com
 CSeq: 1 MESSAGE
 Content-Type: application/MANSCDP+xml
-Content-Length: 159
+Content-Length: 166
 
 <?xml version="1.0"?>
 <Notify>
