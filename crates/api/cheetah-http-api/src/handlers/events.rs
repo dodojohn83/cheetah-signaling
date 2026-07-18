@@ -95,14 +95,14 @@ pub async fn event_stream(
 }
 
 fn resolve_start_cursor(cursor: Option<String>, latest: u64) -> Result<u64, HttpError> {
-    match cursor {
-        Some(s) => s.parse::<u64>().map_err(|_| {
+    match cursor.as_deref() {
+        Some(s) if !s.is_empty() => s.parse::<u64>().map_err(|_| {
             HttpError::Signal(SignalError::new(
                 SignalErrorKind::InvalidArgument,
                 "cursor must be a non-negative integer",
             ))
         }),
-        None => Ok(latest),
+        _ => Ok(latest),
     }
 }
 
@@ -111,10 +111,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn resolve_start_cursor_uses_latest_when_empty() {
+    fn resolve_start_cursor_uses_latest_when_missing() {
         match resolve_start_cursor(None, 42) {
             Ok(cursor) => assert_eq!(cursor, 42),
             Err(_) => panic!("expected latest cursor"),
+        }
+    }
+
+    #[test]
+    fn resolve_start_cursor_uses_latest_for_empty_string() {
+        match resolve_start_cursor(Some("".into()), 42) {
+            Ok(cursor) => assert_eq!(cursor, 42),
+            Err(_) => panic!("expected latest cursor for empty string"),
         }
     }
 
