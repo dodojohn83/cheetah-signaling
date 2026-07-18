@@ -51,10 +51,12 @@ impl<P: CredentialProvider + Send + 'static> Gb28181UdpDriver<P> {
         credential_provider: P,
         sink: Arc<dyn EventSink>,
     ) -> Result<(Self, SocketAddr), DriverError> {
-        let socket = UdpSocket::bind(config.bind_addr).await.map_err(DriverError::Bind)?;
+        let socket = UdpSocket::bind(config.bind_addr)
+            .await
+            .map_err(DriverError::Bind)?;
         let local_addr = socket.local_addr().map_err(DriverError::Bind)?;
-        let access = Gb28181Access::new(domain_config, credential_provider)
-            .map_err(DriverError::Access)?;
+        let access =
+            Gb28181Access::new(domain_config, credential_provider).map_err(DriverError::Access)?;
 
         Ok((
             Self {
@@ -104,7 +106,10 @@ impl<P: CredentialProvider + Send + 'static> Gb28181UdpDriver<P> {
             match output {
                 AccessOutput::SendResponse(response) => {
                     let bytes = encode_message(&response);
-                    self.socket.send_to(&bytes, source).await.map_err(DriverError::Io)?;
+                    self.socket
+                        .send_to(&bytes, source)
+                        .await
+                        .map_err(DriverError::Io)?;
                     debug!(%source, "sent SIP response");
                 }
                 AccessOutput::EmitEvent(event) => {
@@ -152,9 +157,7 @@ mod tests {
     fn test_credential_provider(
         passwords: HashMap<String, SecretString>,
     ) -> impl CredentialProvider + 'static {
-        move |id: &cheetah_gb28181_module::DeviceId| {
-            passwords.get(&id.to_string()).cloned()
-        }
+        move |id: &cheetah_gb28181_module::DeviceId| passwords.get(&id.to_string()).cloned()
     }
 
     fn build_register_request(device_id: &str, port: u16) -> SipMessage {
@@ -166,8 +169,7 @@ mod tests {
         let mut headers = SipHeaders::new();
         headers.append(
             HeaderName::Via,
-            HeaderValue::via("UDP", "127.0.0.1", port, "z9hG4bKregister")
-                .expect("valid via"),
+            HeaderValue::via("UDP", "127.0.0.1", port, "z9hG4bKregister").expect("valid via"),
         );
         headers.append(
             HeaderName::From,
@@ -192,14 +194,10 @@ mod tests {
         let config = DriverConfig::new("127.0.0.1:0".parse().unwrap());
         let domain = test_domain_config(AuthPolicy::Required);
         let provider = test_credential_provider(HashMap::new());
-        let (driver, local_addr) = Gb28181UdpDriver::bind(
-            config,
-            domain,
-            provider,
-            Arc::new(NoOpEventSink),
-        )
-        .await
-        .expect("bind");
+        let (driver, local_addr) =
+            Gb28181UdpDriver::bind(config, domain, provider, Arc::new(NoOpEventSink))
+                .await
+                .expect("bind");
 
         let handle = tokio::spawn(driver.run());
 
@@ -214,8 +212,11 @@ mod tests {
             .expect("receive within timeout")
             .expect("recv_from");
 
-        let response = SipParser::parse_datagram(&buf[..len], cheetah_gb28181_core::SipParserConfig::default())
-            .expect("parse response");
+        let response = SipParser::parse_datagram(
+            &buf[..len],
+            cheetah_gb28181_core::SipParserConfig::default(),
+        )
+        .expect("parse response");
 
         if let SipMessage::Response { line, headers, .. } = response {
             assert_eq!(line.code, 401);
@@ -237,14 +238,10 @@ mod tests {
             SecretString::new("ignored".into()),
         );
         let provider = test_credential_provider(passwords);
-        let (driver, local_addr) = Gb28181UdpDriver::bind(
-            config,
-            domain,
-            provider,
-            Arc::new(NoOpEventSink),
-        )
-        .await
-        .expect("bind");
+        let (driver, local_addr) =
+            Gb28181UdpDriver::bind(config, domain, provider, Arc::new(NoOpEventSink))
+                .await
+                .expect("bind");
 
         let handle = tokio::spawn(driver.run());
 
@@ -259,8 +256,11 @@ mod tests {
             .expect("receive within timeout")
             .expect("recv_from");
 
-        let response = SipParser::parse_datagram(&buf[..len], cheetah_gb28181_core::SipParserConfig::default())
-            .expect("parse response");
+        let response = SipParser::parse_datagram(
+            &buf[..len],
+            cheetah_gb28181_core::SipParserConfig::default(),
+        )
+        .expect("parse response");
 
         if let SipMessage::Response { line, .. } = response {
             assert_eq!(line.code, 200);
