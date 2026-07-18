@@ -1,7 +1,273 @@
-//! Tokio-based driver for the GB28181 protocol module.
+//! Tokio-based UDP driver for the GB28181 access module.
 //!
-//! This crate will contain the UDP/TCP listener, SIP transaction manager and
-//! timer injection. It is currently a placeholder while the module and core
-//! state machines are finalized in earlier sub-tasks.
+//! The driver binds a UDP socket, parses incoming SIP datagrams, forwards them
+//! to the Sans-I/O [`Gb28181Access`] state machine, and sends any produced SIP
+//! responses back to the source address. Domain events are emitted through an
+//! [`EventSink`] so the caller can forward them to a message bus or log them.
 
 #![warn(missing_docs)]
+
+pub mod config;
+pub mod error;
+pub mod sink;
+
+use cheetah_gb28181_core::{SipParser, encode_message};
+use cheetah_gb28181_module::{AccessInput, AccessOutput, CredentialProvider, Gb28181Access};
+use config::DriverConfig;
+use error::DriverError;
+use sink::EventSink;
+use std::net::SocketAddr;
+use std::sync::{Arc, Mutex};
+use tokio::net::UdpSocket;
+use tracing::{debug, trace, warn};
+
+/// A UDP transport driver that executes the GB28181 access state machine.
+pub struct Gb28181UdpDriver<P: CredentialProvider> {
+    socket: Arc<UdpSocket>,
+    access: Mutex<Gb28181Access<P>>,
+    sink: Arc<dyn EventSink>,
+    parser_config: cheetah_gb28181_core::SipParserConfig,
+    max_datagram_size: usize,
+}
+
+impl<P: CredentialProvider> std::fmt::Debug for Gb28181UdpDriver<P> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Gb28181UdpDriver")
+            .field("local_addr", &self.socket.local_addr())
+            .field("parser_config", &self.parser_config)
+            .field("max_datagram_size", &self.max_datagram_size)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<P: CredentialProvider + Send + 'static> Gb28181UdpDriver<P> {
+    /// Creates a driver bound to `config.bind_addr`.
+    ///
+    /// Returns the driver and the local address it actually bound to (useful
+    /// when `config.bind_addr` uses port `0`).
+    pub async fn bind(
+        config: DriverConfig,
+        domain_config: cheetah_gb28181_module::Gb28181DomainConfig,
+        credential_provider: P,
+        sink: Arc<dyn EventSink>,
+    ) -> Result<(Self, SocketAddr), DriverError> {
+        let socket = UdpSocket::bind(config.bind_addr).await.map_err(DriverError::Bind)?;
+        let local_addr = socket.local_addr().map_err(DriverError::Bind)?;
+        let access = Gb28181Access::new(domain_config, credential_provider)
+            .map_err(DriverError::Access)?;
+
+        Ok((
+            Self {
+                socket: Arc::new(socket),
+                access: Mutex::new(access),
+                sink,
+                parser_config: config.parser_config,
+                max_datagram_size: config.max_datagram_size,
+            },
+            local_addr,
+        ))
+    }
+
+    /// Runs the driver loop until the socket is closed.
+    pub async fn run(self) -> Result<(), DriverError> {
+        let mut buf = vec![0u8; self.max_datagram_size];
+        loop {
+            match self.socket.recv_from(&mut buf).await {
+                Ok((len, source)) => {
+                    let data = &buf[..len];
+                    if let Err(e) = self.handle_datagram(data, source).await {
+                        warn!(error = %e, %source, "failed to handle SIP datagram");
+                    }
+                }
+                Err(e) => return Err(DriverError::Io(e)),
+            }
+        }
+    }
+
+    async fn handle_datagram(&self, data: &[u8], source: SocketAddr) -> Result<(), DriverError> {
+        let message =
+            SipParser::parse_datagram(data, self.parser_config).map_err(DriverError::Parse)?;
+        trace!(%source, "received SIP datagram");
+
+        let input = AccessInput {
+            source,
+            now: now_seconds(),
+            message,
+        };
+
+        let outputs = {
+            let mut access = self.access.lock().map_err(|_| DriverError::AccessLock)?;
+            access.process(input).map_err(DriverError::Access)?
+        };
+
+        for output in outputs {
+            match output {
+                AccessOutput::SendResponse(response) => {
+                    let bytes = encode_message(&response);
+                    self.socket.send_to(&bytes, source).await.map_err(DriverError::Io)?;
+                    debug!(%source, "sent SIP response");
+                }
+                AccessOutput::EmitEvent(event) => {
+                    self.sink.emit(event);
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+fn now_seconds() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used, clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use cheetah_gb28181_core::{
+        HeaderName, HeaderValue, Method, RequestLine, SipHeaders, SipMessage, SipUri,
+    };
+    use cheetah_gb28181_module::{AuthPolicy, Gb28181DomainConfig};
+    use secrecy::SecretString;
+    use sink::NoOpEventSink;
+    use std::collections::HashMap;
+    use std::time::Duration;
+    use tokio::net::UdpSocket;
+    use tokio::time::timeout;
+
+    fn test_domain_config(policy: AuthPolicy) -> Gb28181DomainConfig {
+        Gb28181DomainConfig::new(
+            "test-domain",
+            "test.realm",
+            std::iter::repeat_n(b'a', 32).collect::<Vec<u8>>(),
+        )
+        .expect("valid test config")
+        .with_auth_policy(policy)
+    }
+
+    fn test_credential_provider(
+        passwords: HashMap<String, SecretString>,
+    ) -> impl CredentialProvider + 'static {
+        move |id: &cheetah_gb28181_module::DeviceId| {
+            passwords.get(&id.to_string()).cloned()
+        }
+    }
+
+    fn build_register_request(device_id: &str, port: u16) -> SipMessage {
+        let uri = SipUri::parse(format!("sip:{device_id}@127.0.0.1")).expect("valid uri");
+        let from_uri = SipUri::parse(format!("sip:{device_id}@127.0.0.1")).expect("valid uri");
+        let contact_uri =
+            SipUri::parse(format!("sip:{device_id}@127.0.0.1:{port}")).expect("valid uri");
+
+        let mut headers = SipHeaders::new();
+        headers.append(
+            HeaderName::Via,
+            HeaderValue::via("UDP", "127.0.0.1", port, "z9hG4bKregister")
+                .expect("valid via"),
+        );
+        headers.append(
+            HeaderName::From,
+            HeaderValue::from_uri(&from_uri, "fromtag").expect("valid from"),
+        );
+        headers.append(HeaderName::To, HeaderValue::to_uri(&from_uri));
+        headers.append(HeaderName::CallId, HeaderValue::new("call-1"));
+        headers.append(HeaderName::CSeq, HeaderValue::cseq(1, Method::Register));
+        headers.append(HeaderName::Contact, HeaderValue::contact_uri(&contact_uri));
+        headers.append(HeaderName::MaxForwards, HeaderValue::new("70"));
+        headers.append(HeaderName::Expires, HeaderValue::new("3600"));
+
+        SipMessage::Request {
+            line: RequestLine::new(Method::Register, uri),
+            headers,
+            body: Vec::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn register_without_credentials_gets_401_challenge() {
+        let config = DriverConfig::new("127.0.0.1:0".parse().unwrap());
+        let domain = test_domain_config(AuthPolicy::Required);
+        let provider = test_credential_provider(HashMap::new());
+        let (driver, local_addr) = Gb28181UdpDriver::bind(
+            config,
+            domain,
+            provider,
+            Arc::new(NoOpEventSink),
+        )
+        .await
+        .expect("bind");
+
+        let handle = tokio::spawn(driver.run());
+
+        let client = UdpSocket::bind("127.0.0.1:0").await.expect("client bind");
+        let request = build_register_request("34020000001320000001", 5060);
+        let bytes = encode_message(&request);
+        client.send_to(&bytes, local_addr).await.expect("send");
+
+        let mut buf = vec![0u8; 65535];
+        let (len, _source) = timeout(Duration::from_secs(2), client.recv_from(&mut buf))
+            .await
+            .expect("receive within timeout")
+            .expect("recv_from");
+
+        let response = SipParser::parse_datagram(&buf[..len], cheetah_gb28181_core::SipParserConfig::default())
+            .expect("parse response");
+
+        if let SipMessage::Response { line, headers, .. } = response {
+            assert_eq!(line.code, 401);
+            assert!(headers.get(&HeaderName::WwwAuthenticate).is_some());
+        } else {
+            panic!("expected response");
+        }
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn register_with_optional_auth_gets_200_ok() {
+        let config = DriverConfig::new("127.0.0.1:0".parse().unwrap());
+        let domain = test_domain_config(AuthPolicy::ChallengeOptional);
+        let mut passwords = HashMap::new();
+        passwords.insert(
+            "34020000001320000001".to_string(),
+            SecretString::new("ignored".into()),
+        );
+        let provider = test_credential_provider(passwords);
+        let (driver, local_addr) = Gb28181UdpDriver::bind(
+            config,
+            domain,
+            provider,
+            Arc::new(NoOpEventSink),
+        )
+        .await
+        .expect("bind");
+
+        let handle = tokio::spawn(driver.run());
+
+        let client = UdpSocket::bind("127.0.0.1:0").await.expect("client bind");
+        let request = build_register_request("34020000001320000001", 5060);
+        let bytes = encode_message(&request);
+        client.send_to(&bytes, local_addr).await.expect("send");
+
+        let mut buf = vec![0u8; 65535];
+        let (len, _source) = timeout(Duration::from_secs(2), client.recv_from(&mut buf))
+            .await
+            .expect("receive within timeout")
+            .expect("recv_from");
+
+        let response = SipParser::parse_datagram(&buf[..len], cheetah_gb28181_core::SipParserConfig::default())
+            .expect("parse response");
+
+        if let SipMessage::Response { line, .. } = response {
+            assert_eq!(line.code, 200);
+        } else {
+            panic!("expected response");
+        }
+
+        handle.abort();
+    }
+}

@@ -519,6 +519,9 @@ name = "cheetah-gb28181-driver-tokio"
 version = "0.1.0"
 dependencies = [
  "cheetah-gb28181-core",
+ "cheetah-gb28181-module",
+ "secrecy",
+ "thiserror",
  "tokio",
  "tracing",
 ]
