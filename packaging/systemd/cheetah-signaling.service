@@ -1,0 +1,37 @@
+[Unit]
+Description=Cheetah Signaling control plane
+Documentation=https://github.com/dodojohn83/cheetah-signaling
+After=network.target
+Wants=network.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=cheetah
+Group=cheetah
+WorkingDirectory=/var/lib/cheetah
+Environment="RUST_LOG=info"
+EnvironmentFile=-/etc/default/cheetah-signaling
+ExecStartPre=/usr/lib/cheetah/cheetah-signaling-preflight /var/lib/cheetah
+ExecStart=/usr/bin/cheetah-signaling
+Restart=on-failure
+RestartSec=5
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectProc=invisible
+PrivateTmp=true
+PrivateDevices=true
+ReadWritePaths=/var/lib/cheetah /var/log/cheetah
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+
+[Install]
+WantedBy=multi-user.target
