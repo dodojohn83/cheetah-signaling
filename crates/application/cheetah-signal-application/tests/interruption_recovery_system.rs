@@ -389,11 +389,13 @@ async fn wait_until_unreachable(host: &str, port: u16, timeout: Duration) {
         if start.elapsed() >= timeout {
             panic!("port {host}:{port} remained reachable within {timeout:?}");
         }
-        match tokio::net::TcpStream::connect((host, port)).await {
-            Ok(_) => {
-                tokio::time::sleep(Duration::from_millis(50)).await;
-            }
-            Err(_) => break,
+        let attempt = tokio::time::timeout(
+            Duration::from_millis(200),
+            tokio::net::TcpStream::connect((host, port)),
+        );
+        match attempt.await {
+            Ok(Ok(_)) => tokio::time::sleep(Duration::from_millis(50)).await,
+            Ok(Err(_)) | Err(_) => break,
         }
     }
 }
@@ -404,9 +406,13 @@ async fn wait_until_reachable(host: &str, port: u16, timeout: Duration) {
         if start.elapsed() >= timeout {
             panic!("port {host}:{port} remained unreachable within {timeout:?}");
         }
-        match tokio::net::TcpStream::connect((host, port)).await {
-            Ok(_) => break,
-            Err(_) => tokio::time::sleep(Duration::from_millis(50)).await,
+        let attempt = tokio::time::timeout(
+            Duration::from_millis(200),
+            tokio::net::TcpStream::connect((host, port)),
+        );
+        match attempt.await {
+            Ok(Ok(_)) => break,
+            Ok(Err(_)) | Err(_) => tokio::time::sleep(Duration::from_millis(50)).await,
         }
     }
 }
