@@ -42,7 +42,7 @@ impl SqliteOwnerRepository {
         let row: Option<(uuid::Uuid,)> =
             sqlx::query_as("SELECT tenant_id FROM devices WHERE device_id = ?")
                 .bind(device_id.as_uuid())
-                .fetch_optional(&self.read_pool)
+                .fetch_optional(&self.write_pool)
                 .await
                 .map_err(|e| StorageError::backend(e.to_string()))?;
         match row {
@@ -77,7 +77,7 @@ impl OwnerRepository for SqliteOwnerRepository {
         )
         .bind(tenant_id.as_uuid())
         .bind(device_id.as_uuid())
-        .fetch_optional(&self.write_pool)
+        .fetch_optional(&self.read_pool)
         .await
         .map_err(|e| StorageError::backend(e.to_string()))?;
 
