@@ -145,7 +145,12 @@ impl OwnerRepository for PostgresOwnerRepository {
     ) -> Result<OwnerInfo, StorageError> {
         self.check_device_tenant(tenant_id, device_id)
             .await
-            .map_err(|_| StorageError::unavailable("device not found or not owned by tenant"))?;
+            .map_err(|e| match e {
+                StorageError::InvalidArgument { .. } => {
+                    StorageError::unavailable("device not found or not owned by tenant")
+                }
+                other => other,
+            })?;
         let updated_at = self.clock.now_wall().as_offset();
         sqlx::query(
             "INSERT INTO device_owners (tenant_id, device_id, owner_node_id, owner_epoch, expires_at, updated_at)
