@@ -27,19 +27,8 @@ const REGISTRATION_ITERATIONS: usize = 1000;
 const HEARTBEAT_ITERATIONS: usize = 1000;
 const MEDIA_SESSIONS: usize = 100;
 
-fn sqlite_path() -> std::path::PathBuf {
-    let file_id = format!(
-        "{}_{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    );
-    std::env::temp_dir().join(format!("cheetah_perf_edge_{file_id}"))
-}
-
 async fn setup_edge() -> (
+    tempfile::TempDir,
     Arc<SqliteStorage>,
     Arc<dyn Clock>,
     Arc<InMemoryIdGenerator>,
@@ -50,8 +39,8 @@ async fn setup_edge() -> (
     cheetah_signal_types::NodeId,
     Arc<InMemoryDeviceOwnerResolver>,
 ) {
-    let base = sqlite_path();
-    let db_path = base.with_extension("db");
+    let tempdir = tempfile::tempdir().unwrap();
+    let db_path = tempdir.path().join("perf.db");
 
     let storage = Arc::new(SqliteStorage::new(&db_path).await.unwrap());
     storage.migration().run().await.unwrap();
@@ -76,6 +65,7 @@ async fn setup_edge() -> (
     );
 
     (
+        tempdir,
         storage,
         clock,
         id_generator,
@@ -92,6 +82,7 @@ async fn setup_edge() -> (
 #[ignore = "manual performance test"]
 async fn perf_edge_device_registration() {
     let (
+        _tempdir,
         storage,
         clock,
         id_generator,
@@ -161,6 +152,7 @@ async fn perf_edge_device_registration() {
 #[ignore = "manual performance test"]
 async fn perf_edge_heartbeat() {
     let (
+        _tempdir,
         storage,
         clock,
         id_generator,
@@ -222,6 +214,7 @@ async fn perf_edge_heartbeat() {
 #[ignore = "manual performance test"]
 async fn perf_edge_media_session_control() {
     let (
+        _tempdir,
         storage,
         clock,
         id_generator,
