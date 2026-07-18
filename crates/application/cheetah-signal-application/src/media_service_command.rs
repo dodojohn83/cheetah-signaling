@@ -170,6 +170,7 @@ impl MediaService {
                             ev,
                         ))
                         .await?;
+                    uow.media_session_repository().save(&session).await?;
                 }
                 if !session.is_terminal() {
                     let ev = session
@@ -189,6 +190,7 @@ impl MediaService {
                             ev,
                         ))
                         .await?;
+                    uow.media_session_repository().save(&session).await?;
                 }
 
                 if binding.state() == MediaBindingState::Active {
@@ -209,6 +211,7 @@ impl MediaService {
                             ev,
                         ))
                         .await?;
+                    uow.media_binding_repository().save(&binding).await?;
                 }
                 if !binding.is_terminal() {
                     let ev = binding
@@ -228,14 +231,13 @@ impl MediaService {
                             ev,
                         ))
                         .await?;
+                    uow.media_binding_repository().save(&binding).await?;
                 }
 
                 let op_event = operation
                     .complete(OperationResult::success(), self.clock.as_ref())
                     .map_err(crate::SignalError::from)?;
 
-                uow.media_session_repository().save(&session).await?;
-                uow.media_binding_repository().save(&binding).await?;
                 uow.operation_repository().save(&operation).await?;
                 uow.outbox()
                     .append(wrap_event(
@@ -261,7 +263,6 @@ impl MediaService {
                 Ok(MediaSessionDto::from(&session))
             }
             MediaNodeCommandResult::Accepted => {
-                uow.operation_repository().save(&operation).await?;
                 uow.commit().await?;
                 Ok(MediaSessionDto::from(&session))
             }
@@ -511,6 +512,7 @@ impl MediaService {
                     .inviting(self.clock.as_ref())
                     .map_err(crate::SignalError::from)?;
                 let session_inviting_revision = session.revision().0;
+                uow.media_session_repository().save(&session).await?;
                 let session_active_event = session
                     .active(self.clock.as_ref())
                     .map_err(crate::SignalError::from)?;
@@ -581,7 +583,6 @@ impl MediaService {
 
                 uow.media_session_repository().save(&session).await?;
                 uow.media_binding_repository().save(&binding).await?;
-                uow.operation_repository().save(&operation).await?;
                 uow.outbox()
                     .append(wrap_event(
                         self.id_generator.as_ref(),

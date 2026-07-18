@@ -71,7 +71,7 @@ impl DeviceRepository for PostgresUnitOfWork {
         )
         .bind(tenant_id.as_uuid())
         .bind(device_id.as_uuid())
-        .fetch_optional(self.tx()?.as_mut())
+        .fetch_optional(self.tx().await?.as_mut())
         .await
         .map_err(sqlx_to_domain)?;
 
@@ -90,7 +90,7 @@ impl DeviceRepository for PostgresUnitOfWork {
         .bind(tenant_id.as_uuid())
         .bind(variant_name(&protocol)?)
         .bind(external_id.as_str())
-        .fetch_optional(self.tx()?.as_mut())
+        .fetch_optional(self.tx().await?.as_mut())
         .await
         .map_err(sqlx_to_domain)?;
 
@@ -137,7 +137,7 @@ impl DeviceRepository for PostgresUnitOfWork {
         .bind(false)
         .bind(Json(device))
         .bind(1i32)
-        .execute(self.tx()?.as_mut())
+        .execute(self.tx().await?.as_mut())
         .await
         .map_err(sqlx_to_domain)?;
 
@@ -157,7 +157,7 @@ impl DeviceRepository for PostgresUnitOfWork {
         page: PageRequest,
     ) -> cheetah_domain::Result<Page<Device>> {
         list::devices(
-            self.tx()?.as_mut(),
+            self.tx().await?.as_mut(),
             tenant_id,
             protocol,
             lifecycle,
@@ -189,7 +189,7 @@ impl ChannelRepository for PostgresUnitOfWork {
         .bind(tenant_id.as_uuid())
         .bind(device_id.as_uuid())
         .bind(channel_id.as_uuid())
-        .fetch_optional(self.tx()?.as_mut())
+        .fetch_optional(self.tx().await?.as_mut())
         .await
         .map_err(sqlx_to_domain)?;
 
@@ -206,7 +206,7 @@ impl ChannelRepository for PostgresUnitOfWork {
         )
         .bind(tenant_id.as_uuid())
         .bind(device_id.as_uuid())
-        .fetch_all(self.tx()?.as_mut())
+        .fetch_all(self.tx().await?.as_mut())
         .await
         .map_err(sqlx_to_domain)?;
 
@@ -242,7 +242,7 @@ impl ChannelRepository for PostgresUnitOfWork {
         .bind(false)
         .bind(Json(channel))
         .bind(1i32)
-        .execute(self.tx()?.as_mut())
+        .execute(self.tx().await?.as_mut())
         .await
         .map_err(sqlx_to_domain)?;
 
@@ -265,7 +265,7 @@ impl ChannelRepository for PostgresUnitOfWork {
         .bind(tenant_id.as_uuid())
         .bind(device_id.as_uuid())
         .bind(channel_id.as_uuid())
-        .execute(self.tx()?.as_mut())
+        .execute(self.tx().await?.as_mut())
         .await
         .map_err(sqlx_to_domain)?;
         Ok(())
@@ -281,7 +281,7 @@ impl ChannelRepository for PostgresUnitOfWork {
         page: PageRequest,
     ) -> cheetah_domain::Result<Page<Channel>> {
         list::channels(
-            self.tx()?.as_mut(),
+            self.tx().await?.as_mut(),
             tenant_id,
             device_id.as_uuid(),
             status,
@@ -311,7 +311,7 @@ impl OperationRepository for PostgresUnitOfWork {
         )
         .bind(tenant_id.as_uuid())
         .bind(operation_id.as_uuid())
-        .fetch_optional(self.tx()?.as_mut())
+        .fetch_optional(self.tx().await?.as_mut())
         .await
         .map_err(sqlx_to_domain)?;
 
@@ -328,7 +328,7 @@ impl OperationRepository for PostgresUnitOfWork {
         .bind(scope.tenant_id.as_uuid())
         .bind(&scope.principal_id)
         .bind(&scope.idempotency_key)
-        .fetch_optional(self.tx()?.as_mut())
+        .fetch_optional(self.tx().await?.as_mut())
         .await
         .map_err(sqlx_to_domain)?;
 
@@ -369,7 +369,7 @@ impl OperationRepository for PostgresUnitOfWork {
         .bind(operation.deadline().map(|d| d.as_timestamp().as_offset()))
         .bind(Json(operation))
         .bind(1i32)
-        .execute(self.tx()?.as_mut())
+        .execute(self.tx().await?.as_mut())
         .await
         .map_err(sqlx_to_domain)?;
 
@@ -388,7 +388,7 @@ impl OperationRepository for PostgresUnitOfWork {
         page: PageRequest,
     ) -> cheetah_domain::Result<Page<Operation>> {
         list::operations(
-            self.tx()?.as_mut(),
+            self.tx().await?.as_mut(),
             tenant_id,
             device_id.map(|d| d.as_uuid()),
             status,
@@ -417,7 +417,7 @@ impl MediaSessionRepository for PostgresUnitOfWork {
         )
         .bind(tenant_id.as_uuid())
         .bind(media_session_id.as_uuid())
-        .fetch_optional(self.tx()?.as_mut())
+        .fetch_optional(self.tx().await?.as_mut())
         .await
         .map_err(sqlx_to_domain)?;
 
@@ -434,7 +434,7 @@ impl MediaSessionRepository for PostgresUnitOfWork {
         .bind(scope.tenant_id.as_uuid())
         .bind(&scope.principal_id)
         .bind(&scope.idempotency_key)
-        .fetch_optional(self.tx()?.as_mut())
+        .fetch_optional(self.tx().await?.as_mut())
         .await
         .map_err(sqlx_to_domain)?;
 
@@ -481,7 +481,7 @@ impl MediaSessionRepository for PostgresUnitOfWork {
         .bind(session.deadline().map(|d| d.as_timestamp().as_offset()))
         .bind(Json(session))
         .bind(1i32)
-        .execute(self.tx()?.as_mut())
+        .execute(self.tx().await?.as_mut())
         .await
         .map_err(sqlx_to_domain)?;
 
@@ -501,7 +501,7 @@ impl MediaSessionRepository for PostgresUnitOfWork {
         page: PageRequest,
     ) -> cheetah_domain::Result<Page<MediaSession>> {
         list::media_sessions(
-            self.tx()?.as_mut(),
+            self.tx().await?.as_mut(),
             tenant_id,
             device_id.map(|d| d.as_uuid()),
             purpose,
@@ -531,7 +531,7 @@ impl MediaBindingRepository for PostgresUnitOfWork {
         )
         .bind(tenant_id.as_uuid())
         .bind(media_binding_id.as_uuid())
-        .fetch_optional(self.tx()?.as_mut())
+        .fetch_optional(self.tx().await?.as_mut())
         .await
         .map_err(sqlx_to_domain)?;
 
@@ -548,7 +548,7 @@ impl MediaBindingRepository for PostgresUnitOfWork {
         )
         .bind(tenant_id.as_uuid())
         .bind(media_session_id.as_uuid())
-        .fetch_optional(self.tx()?.as_mut())
+        .fetch_optional(self.tx().await?.as_mut())
         .await
         .map_err(sqlx_to_domain)?;
 
@@ -587,7 +587,7 @@ impl MediaBindingRepository for PostgresUnitOfWork {
         .bind(binding.updated_at().as_offset())
         .bind(Json(binding))
         .bind(1i32)
-        .execute(self.tx()?.as_mut())
+        .execute(self.tx().await?.as_mut())
         .await
         .map_err(sqlx_to_domain)?;
 
@@ -633,7 +633,7 @@ impl Outbox for PostgresUnitOfWork {
         .bind(event.correlation_id.as_uuid())
         .bind(event.causation_id.as_uuid())
         .bind(event.source.as_uuid())
-        .execute(self.tx()?.as_mut())
+        .execute(self.tx().await?.as_mut())
         .await
         .map_err(sqlx_to_domain)?;
         Ok(())
@@ -652,7 +652,7 @@ impl Outbox for PostgresUnitOfWork {
         )
         .bind(limit as i64)
         .bind(now.as_offset())
-        .fetch_all(self.tx()?.as_mut())
+        .fetch_all(self.tx().await?.as_mut())
         .await
         .map_err(sqlx_to_domain)?;
 
@@ -677,7 +677,7 @@ impl Outbox for PostgresUnitOfWork {
     ) -> cheetah_domain::Result<()> {
         sqlx::query("UPDATE outbox_events SET published = true WHERE event_id = $1")
             .bind(event_id.as_uuid())
-            .execute(self.tx()?.as_mut())
+            .execute(self.tx().await?.as_mut())
             .await
             .map_err(sqlx_to_domain)?;
         Ok(())
@@ -701,7 +701,7 @@ impl Outbox for PostgresUnitOfWork {
         .bind(error)
         .bind(next_attempt_at.map(|t| t.as_offset()))
         .bind(event_id.as_uuid())
-        .execute(self.tx()?.as_mut())
+        .execute(self.tx().await?.as_mut())
         .await
         .map_err(sqlx_to_domain)?;
         Ok(())
@@ -768,7 +768,7 @@ impl ProcessedMessageRepository for PostgresUnitOfWork {
             )
             .bind(tenant_id.as_uuid())
             .bind(message_id.as_uuid())
-            .fetch_optional(self.tx()?.as_mut())
+            .fetch_optional(self.tx().await?.as_mut())
             .await
             .map_err(sqlx_to_domain)?;
 
@@ -794,7 +794,7 @@ impl ProcessedMessageRepository for PostgresUnitOfWork {
             .bind(record.result_payload)
             .bind(record.processed_at.as_offset())
             .bind(record.expires_at.map(|t| t.as_offset()))
-            .fetch_optional(self.tx()?.as_mut())
+            .fetch_optional(self.tx().await?.as_mut())
             .await
             .map_err(sqlx_to_domain)?;
 
@@ -823,7 +823,7 @@ impl ProcessedMessageRepository for PostgresUnitOfWork {
         .bind(processed_at.as_offset())
         .bind(tenant_id.as_uuid())
         .bind(message_id.as_uuid())
-        .execute(self.tx()?.as_mut())
+        .execute(self.tx().await?.as_mut())
         .await
         .map_err(sqlx_to_domain)?;
         Ok(())

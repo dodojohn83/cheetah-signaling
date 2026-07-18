@@ -6,24 +6,33 @@ use cheetah_domain::{
     MediaSessionRepository, OperationRepository, Outbox, ProcessedMessageRepository, UnitOfWork,
     WebhookConfigRepository, WebhookDeliveryRepository,
 };
-use sqlx::Transaction;
+use sqlx::{PgPool, Transaction};
 
 /// Unit of work backed by a PostgreSQL transaction.
 pub(crate) struct PostgresUnitOfWork {
-    pub(crate) tx: Option<Transaction<'static, sqlx::Postgres>>,
+    pool: PgPool,
+    tx: Option<Transaction<'static, sqlx::Postgres>>,
 }
 
 impl PostgresUnitOfWork {
-    pub(crate) fn new(tx: Transaction<'static, sqlx::Postgres>) -> Self {
-        Self { tx: Some(tx) }
+    pub(crate) fn new(pool: PgPool, tx: Transaction<'static, sqlx::Postgres>) -> Self {
+        Self { pool, tx: Some(tx) }
     }
 
-    pub(crate) fn tx(
+    /// Returns the current transaction, lazily beginning a new one if the
+    /// previous transaction was committed or rolled back. This allows the same
+    /// unit-of-work handle to span pre- and post-I/O phases without holding a
+    /// transaction open across external calls.
+    pub(crate) async fn tx(
         &mut self,
     ) -> cheetah_domain::Result<&mut Transaction<'static, sqlx::Postgres>> {
+        if self.tx.is_none() {
+            let tx = self.pool.begin().await.map_err(sqlx_to_domain)?;
+            self.tx = Some(tx);
+        }
         self.tx
             .as_mut()
-            .ok_or_else(|| DomainError::internal("unit of work already consumed"))
+            .ok_or_else(|| DomainError::internal("failed to initialize transaction"))
     }
 }
 

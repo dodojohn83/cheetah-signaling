@@ -90,7 +90,7 @@ impl Storage for SqliteStorage {
 
     async fn begin(&self) -> Result<Box<dyn cheetah_domain::UnitOfWork>, StorageError> {
         let tx = self.write_pool.begin().await.map_err(sqlx_to_storage)?;
-        Ok(Box::new(SqliteUnitOfWork::new(tx)))
+        Ok(Box::new(SqliteUnitOfWork::new(self.write_pool.clone(), tx)))
     }
 
     fn owner_repository(&self) -> Box<dyn OwnerRepository> {
