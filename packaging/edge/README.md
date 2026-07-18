@@ -51,13 +51,16 @@ sudo ./upgrade.sh v0.1.1
 
 `upgrade.sh` stops the service, runs `install.sh`, and starts the service again. Existing data in `/var/lib/cheetah` and configuration in `/etc/cheetah/config.toml` are preserved.
 
-## Signing and Verification
+## Verification
 
-Release tarballs are signed with the project release GPG key. Verify before install:
+Verify the tarball integrity before install:
 
 ```bash
-gpg --verify cheetah-signaling-*.tar.gz.asc cheetah-signaling-*.tar.gz
 sha256sum -c cheetah-signaling-*.tar.gz.sha256
 ```
 
-The public signing key is published in the repository at `security/RELEASE_KEY.asc`.
+GitHub release builds also include SLSA build-provenance attestations (created by `actions/attest-build-provenance`). You can verify a release artifact's provenance with the `gh attestation verify` command, for example:
+
+```bash
+gh attestation verify cheetah-signaling-*.tar.gz --owner dodojohn83
+```
