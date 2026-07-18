@@ -33,6 +33,26 @@ impl PostgresOwnerRepository {
             clock,
         }
     }
+
+    async fn check_device_tenant(
+        &self,
+        tenant_id: cheetah_signal_types::TenantId,
+        device_id: cheetah_signal_types::DeviceId,
+    ) -> Result<(), StorageError> {
+        let row: Option<(uuid::Uuid,)> =
+            sqlx::query_as("SELECT tenant_id FROM devices WHERE device_id = $1")
+                .bind(device_id.as_uuid())
+                .fetch_optional(&self.read_pool)
+                .await
+                .map_err(|e| StorageError::backend(e.to_string()))?;
+        match row {
+            Some((found,)) if found == tenant_id.as_uuid() => Ok(()),
+            Some(_) => Err(StorageError::invalid_argument(
+                "device does not belong to tenant",
+            )),
+            None => Err(StorageError::invalid_argument("device not found")),
+        }
+    }
 }
 
 impl std::fmt::Debug for PostgresOwnerRepository {
@@ -74,6 +94,7 @@ impl OwnerRepository for PostgresOwnerRepository {
         device_id: cheetah_signal_types::DeviceId,
         owner: OwnerInfo,
     ) -> Result<(), StorageError> {
+        self.check_device_tenant(tenant_id, device_id).await?;
         let result = sqlx::query(
             "INSERT INTO device_owners (tenant_id, device_id, owner_node_id, owner_epoch, expires_at, updated_at)
              VALUES ($1, $2, $3, $4, $5, $6)
@@ -122,6 +143,9 @@ impl OwnerRepository for PostgresOwnerRepository {
         node_id: cheetah_signal_types::NodeId,
         lease_until: cheetah_signal_types::UtcTimestamp,
     ) -> Result<OwnerInfo, StorageError> {
+        self.check_device_tenant(tenant_id, device_id)
+            .await
+            .map_err(|_| StorageError::unavailable("device not found or not owned by tenant"))?;
         let updated_at = self.clock.now_wall().as_offset();
         sqlx::query(
             "INSERT INTO device_owners (tenant_id, device_id, owner_node_id, owner_epoch, expires_at, updated_at)
