@@ -252,7 +252,7 @@ jobs:
       - name: Generate checksums
         run: |
           cd artifacts
-          sha256sum * > checksums-sha256.txt
+          sha256sum *.tar.gz *.spdx.json > checksums-sha256.txt
 
       - name: Create release
         uses: softprops/action-gh-release@v2
