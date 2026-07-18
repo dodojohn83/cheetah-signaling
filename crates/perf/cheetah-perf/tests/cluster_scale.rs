@@ -23,14 +23,18 @@ use cheetah_signal_types::{Clock, IdGenerator, OwnerEpoch, ResourceId, ResourceK
 use cheetah_storage_api::Storage;
 use cheetah_storage_postgres::PostgresStorage;
 use testcontainers_modules::postgres;
-use testcontainers_modules::testcontainers::runners::AsyncRunner;
+use testcontainers_modules::testcontainers::{ContainerAsync, runners::AsyncRunner};
 
 mod perf_common;
 
-const DEVICE_COUNT: usize = 50;
-const HEARTBEAT_ITERATIONS: usize = 50;
-const COMMAND_ITERATIONS: usize = 50;
-const CONCURRENCY: usize = 1;
+const DEVICE_COUNT: usize = 100;
+const HEARTBEAT_ITERATIONS: usize = 100;
+const COMMAND_ITERATIONS: usize = 100;
+// Heartbeat/command dispatch are measured on the same device; use concurrency 1
+// to avoid optimistic-lock conflicts on the device aggregate. Registration uses
+// unique external IDs and can run concurrently.
+const REGISTRATION_CONCURRENCY: usize = 2;
+const HEARTBEAT_COMMAND_CONCURRENCY: usize = 1;
 
 async fn wait_for_postgres_ready(
     url: &str,
@@ -47,6 +51,7 @@ async fn wait_for_postgres_ready(
 }
 
 async fn setup_cluster() -> (
+    ContainerAsync<postgres::Postgres>,
     Arc<PostgresStorage>,
     Arc<dyn Clock>,
     Arc<InMemoryIdGenerator>,
@@ -93,6 +98,7 @@ async fn setup_cluster() -> (
 
     // Pre-seed the node as owner for all generated devices.
     (
+        pg_container,
         storage,
         clock,
         id_generator,
@@ -108,6 +114,7 @@ async fn setup_cluster() -> (
 #[ignore = "manual performance test"]
 async fn perf_cluster_device_registration() {
     let (
+        _pg_container,
         storage,
         clock,
         id_generator,
@@ -123,8 +130,8 @@ async fn perf_cluster_device_registration() {
 
     let summary = perf_common::measure_concurrent(
         "cluster_device_registration",
-        CONCURRENCY,
-        DEVICE_COUNT / CONCURRENCY,
+        REGISTRATION_CONCURRENCY,
+        DEVICE_COUNT / REGISTRATION_CONCURRENCY,
         move || {
             let ctx = ctx.clone();
             let device_service = device_service.clone();
@@ -164,6 +171,7 @@ async fn perf_cluster_device_registration() {
 #[ignore = "manual performance test"]
 async fn perf_cluster_heartbeat_and_command() {
     let (
+        _pg_container,
         storage,
         clock,
         id_generator,
@@ -235,8 +243,8 @@ async fn perf_cluster_heartbeat_and_command() {
     let hb_device_service = device_service.clone();
     let hb_summary = perf_common::measure_concurrent(
         "cluster_heartbeat",
-        CONCURRENCY,
-        HEARTBEAT_ITERATIONS / CONCURRENCY,
+        HEARTBEAT_COMMAND_CONCURRENCY,
+        HEARTBEAT_ITERATIONS / HEARTBEAT_COMMAND_CONCURRENCY,
         move || {
             let ctx = hb_ctx.clone();
             let device_service = hb_device_service.clone();
@@ -270,8 +278,8 @@ async fn perf_cluster_heartbeat_and_command() {
     let cmd_id_generator = id_generator.clone();
     let cmd_summary = perf_common::measure_concurrent(
         "cluster_command_dispatch",
-        CONCURRENCY,
-        COMMAND_ITERATIONS / CONCURRENCY,
+        HEARTBEAT_COMMAND_CONCURRENCY,
+        COMMAND_ITERATIONS / HEARTBEAT_COMMAND_CONCURRENCY,
         move || {
             let ctx = cmd_ctx.clone();
             let operation_service = cmd_operation_service.clone();

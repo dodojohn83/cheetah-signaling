@@ -16,13 +16,13 @@ use cheetah_signal_types::{Clock, IdGenerator};
 use cheetah_storage_api::Storage;
 use cheetah_storage_postgres::PostgresStorage;
 use testcontainers_modules::postgres;
-use testcontainers_modules::testcontainers::runners::AsyncRunner;
+use testcontainers_modules::testcontainers::{ContainerAsync, runners::AsyncRunner};
 
 mod perf_common;
 
-const DEVICE_COUNT: usize = 50;
+const DEVICE_COUNT: usize = 100;
 const RECONNECT_FRACTION: f64 = 0.5;
-const CONCURRENCY: usize = 2;
+const CONCURRENCY: usize = 4;
 
 async fn wait_for_postgres_ready(
     url: &str,
@@ -39,6 +39,7 @@ async fn wait_for_postgres_ready(
 }
 
 async fn setup_storm() -> (
+    ContainerAsync<postgres::Postgres>,
     Arc<PostgresStorage>,
     Arc<dyn Clock>,
     Arc<InMemoryIdGenerator>,
@@ -70,13 +71,13 @@ async fn setup_storm() -> (
 
     let device_service = DeviceService::new(clock.clone(), id_gen_dyn);
 
-    (storage, clock, id_generator, device_service)
+    (pg_container, storage, clock, id_generator, device_service)
 }
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "manual performance test"]
 async fn perf_storm_reconnect_spike() {
-    let (storage, clock, id_generator, device_service) = setup_storm().await;
+    let (_pg_container, storage, clock, id_generator, device_service) = setup_storm().await;
 
     let tenant = id_generator.generate_tenant_id();
     let ctx = request_context(tenant, id_generator.as_ref(), clock.as_ref());
