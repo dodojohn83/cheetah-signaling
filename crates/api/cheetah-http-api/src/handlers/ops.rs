@@ -1,6 +1,6 @@
 //! Administrative operations handlers.
 
-use crate::{ApiRequestContext, ApiState, HttpError};
+use crate::{ApiRequestContext, ApiState, AuthContext, HttpError};
 use axum::{
     Json,
     extract::{Path, State},
@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 /// Validates a submitted configuration without applying it.
 pub async fn validate_config(
-    ctx: ApiRequestContext,
+    ctx: AuthContext,
     Json(config): Json<SignalConfig>,
 ) -> Result<impl IntoResponse, HttpError> {
     ctx.require_scope("system_admin")?;
@@ -24,7 +24,7 @@ pub async fn validate_config(
 /// Returns the current database migration status.
 pub async fn db_status(
     State(state): State<Arc<ApiState>>,
-    ctx: ApiRequestContext,
+    ctx: AuthContext,
 ) -> Result<impl IntoResponse, HttpError> {
     ctx.require_scope("system_admin")?;
     let info = state
@@ -46,7 +46,7 @@ pub async fn db_status(
 /// Runs pending database migrations.
 pub async fn db_migrate(
     State(state): State<Arc<ApiState>>,
-    ctx: ApiRequestContext,
+    ctx: AuthContext,
 ) -> Result<impl IntoResponse, HttpError> {
     ctx.require_scope("system_admin")?;
     state
@@ -61,7 +61,7 @@ pub async fn db_migrate(
 /// Requests a graceful node drain by cancelling background work tokens.
 pub async fn node_drain(
     State(state): State<Arc<ApiState>>,
-    ctx: ApiRequestContext,
+    ctx: AuthContext,
 ) -> Result<impl IntoResponse, HttpError> {
     ctx.require_scope("system_admin")?;
     state.cancel.cancel();
@@ -153,7 +153,7 @@ pub async fn device_diagnostics(
 /// Replays pending outbox events to the event bus.
 pub async fn outbox_replay(
     State(state): State<Arc<ApiState>>,
-    ctx: ApiRequestContext,
+    ctx: AuthContext,
 ) -> Result<impl IntoResponse, HttpError> {
     ctx.require_scope("system_admin")?;
     let limit = 1000usize;
@@ -192,7 +192,7 @@ pub async fn outbox_replay(
 /// Triggers background reconciliation.
 pub async fn reconcile(
     State(_state): State<Arc<ApiState>>,
-    ctx: ApiRequestContext,
+    ctx: AuthContext,
 ) -> Result<StatusCode, HttpError> {
     ctx.require_scope("system_admin")?;
     Err(HttpError::NotImplemented(

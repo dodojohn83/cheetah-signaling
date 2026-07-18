@@ -37,6 +37,7 @@ fn deserialize_secret_string<'de, D: Deserializer<'de>>(
 /// Root configuration for the Cheetah Signaling process.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
+#[serde(deny_unknown_fields)]
 pub struct SignalConfig {
     /// System level settings.
     pub system: SystemConfig,
@@ -162,6 +163,7 @@ impl SignalConfig {
 /// System level configuration.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
+#[serde(deny_unknown_fields)]
 pub struct SystemConfig {
     /// Human readable node name.
     pub node_name: String,
@@ -187,6 +189,7 @@ impl Default for SystemConfig {
 /// Runtime configuration.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
+#[serde(deny_unknown_fields)]
 pub struct RuntimeConfig {
     /// Number of async worker threads.
     pub worker_threads: usize,
@@ -212,6 +215,7 @@ impl Default for RuntimeConfig {
 /// HTTP API configuration.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
+#[serde(deny_unknown_fields)]
 pub struct HttpConfig {
     /// Bind address for the HTTP server.
     pub listen_addr: String,
@@ -249,6 +253,7 @@ impl Default for HttpConfig {
 /// gRPC API configuration.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
+#[serde(deny_unknown_fields)]
 pub struct GrpcConfig {
     /// Bind address for the gRPC server.
     pub listen_addr: String,
@@ -274,6 +279,7 @@ impl Default for GrpcConfig {
 /// Storage backend configuration.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
+#[serde(deny_unknown_fields)]
 pub struct StorageConfig {
     /// Selected storage backend.
     pub backend: StorageBackend,
@@ -318,6 +324,7 @@ pub enum StorageBackend {
 /// Messaging backend configuration.
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 #[serde(default)]
+#[serde(deny_unknown_fields)]
 pub struct MessagingConfig {
     /// Selected messaging backend.
     pub backend: MessagingBackend,
@@ -344,6 +351,7 @@ pub enum MessagingBackend {
 /// Cluster configuration.
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 #[serde(default)]
+#[serde(deny_unknown_fields)]
 pub struct ClusterConfig {
     /// Whether clustering is enabled.
     pub enabled: bool,
@@ -356,6 +364,7 @@ pub struct ClusterConfig {
 /// Media coordination configuration.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
+#[serde(deny_unknown_fields)]
 pub struct MediaConfig {
     /// Default selector for media nodes.
     pub default_media_node_selector: String,
@@ -378,6 +387,7 @@ impl Default for MediaConfig {
 /// Plugin runtime configuration.
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 #[serde(default)]
+#[serde(deny_unknown_fields)]
 pub struct PluginsConfig {
     /// Whether plugins are enabled.
     pub enabled: bool,
@@ -390,6 +400,7 @@ pub struct PluginsConfig {
 /// GB28181 protocol configuration.
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 #[serde(default)]
+#[serde(deny_unknown_fields)]
 pub struct Gb28181Config {
     /// SIP domain.
     pub sip_domain: String,
@@ -402,6 +413,7 @@ pub struct Gb28181Config {
 /// ONVIF protocol configuration.
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 #[serde(default)]
+#[serde(deny_unknown_fields)]
 pub struct OnvifConfig {
     /// Discovery timeout.
     pub discovery_timeout_ms: DurationMs,
@@ -412,6 +424,7 @@ pub struct OnvifConfig {
 /// Security configuration.
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 #[serde(default)]
+#[serde(deny_unknown_fields)]
 pub struct SecurityConfig {
     /// Reference to the JWT public key secret.
     #[serde(
@@ -442,6 +455,7 @@ pub struct SecurityConfig {
 /// Observability configuration.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
+#[serde(deny_unknown_fields)]
 pub struct ObservabilityConfig {
     /// Bind address for metrics.
     pub metrics_bind_addr: String,
