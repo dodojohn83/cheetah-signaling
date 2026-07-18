@@ -895,6 +895,7 @@ dependencies = [
 name = "cheetah-signal-types"
 version = "0.1.0"
 dependencies = [
+ "fastrand",
  "secrecy",
  "serde",
  "serde_json",

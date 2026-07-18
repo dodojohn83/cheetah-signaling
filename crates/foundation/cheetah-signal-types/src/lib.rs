@@ -16,6 +16,8 @@ pub mod id;
 pub mod net;
 pub mod pagination;
 pub mod ports;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 pub mod time;
 pub mod trace_context;
 
@@ -33,6 +35,10 @@ pub use id::{
 };
 pub use net::is_internal_ip;
 pub use pagination::{DEFAULT_PAGE_SIZE, ListCursor, MAX_PAGE_SIZE, Page, PageRequest};
-pub use ports::{Clock, IdGenerator, SecretStore};
+pub use ports::{Clock, IdGenerator, NetworkFaultPolicy, RandomSource, SecretStore};
+#[cfg(any(test, feature = "test-support"))]
+pub use test_support::{
+    FakeClock, FakeIdGenerator, FakeNetworkFault, FakeRandom, NoOpNetworkFault, TestSeed,
+};
 pub use time::{Deadline, DurationMs, UtcTimestamp};
 pub use trace_context::{validate_traceparent, validate_tracestate};

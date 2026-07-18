@@ -18,8 +18,10 @@ time = { workspace = true }
 secrecy = { workspace = true }
 toml = { workspace = true }
 tracing = { workspace = true }
+fastrand = { workspace = true }
 
-[dev-dependencies]
+[features]
+test-support = []
 
 [lints]
 workspace = true
