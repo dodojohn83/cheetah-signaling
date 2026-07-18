@@ -7,6 +7,7 @@ use axum::{
     extract::{Query, State},
     response::sse::{Event, Sse},
 };
+use cheetah_signal_types::{SignalError, SignalErrorKind};
 use futures::{Stream, StreamExt};
 use serde::Deserialize;
 use std::sync::Arc;
@@ -36,11 +37,7 @@ pub async fn event_stream(
     let tenant_filter = Some(ctx.tenant_id.to_string());
     let device_filter = query.device_id;
     let type_filter = query.event_type;
-    let start_cursor = query
-        .cursor
-        .as_deref()
-        .and_then(|s| s.parse::<u64>().ok())
-        .unwrap_or_else(|| state.event_cache.latest_cursor());
+    let start_cursor = resolve_start_cursor(query.cursor, state.event_cache.latest_cursor())?;
 
     let cache = state.event_cache.clone();
     let (tx, rx) = tokio::sync::mpsc::channel(64);
@@ -95,4 +92,45 @@ pub async fn event_stream(
             .interval(std::time::Duration::from_secs(15))
             .text("heartbeat"),
     ))
+}
+
+fn resolve_start_cursor(cursor: Option<String>, latest: u64) -> Result<u64, HttpError> {
+    match cursor {
+        Some(s) => s.parse::<u64>().map_err(|_| {
+            HttpError::Signal(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                "cursor must be a non-negative integer",
+            ))
+        }),
+        None => Ok(latest),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_start_cursor_uses_latest_when_empty() {
+        match resolve_start_cursor(None, 42) {
+            Ok(cursor) => assert_eq!(cursor, 42),
+            Err(_) => panic!("expected latest cursor"),
+        }
+    }
+
+    #[test]
+    fn resolve_start_cursor_parses_valid_cursor() {
+        match resolve_start_cursor(Some("7".into()), 42) {
+            Ok(cursor) => assert_eq!(cursor, 7),
+            Err(_) => panic!("expected parsed cursor"),
+        }
+    }
+
+    #[test]
+    fn resolve_start_cursor_rejects_non_numeric_cursor() {
+        match resolve_start_cursor(Some("abc".into()), 42) {
+            Err(err) => assert_eq!(err.status(), axum::http::StatusCode::BAD_REQUEST),
+            Ok(_) => panic!("expected invalid cursor error"),
+        }
+    }
 }

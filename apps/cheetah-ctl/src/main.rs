@@ -8,6 +8,7 @@
 use cheetah_signal_types::config::ConfigSource;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
+use std::time::Duration;
 
 /// Operational CLI for Cheetah Signaling.
 #[derive(Parser)]
@@ -81,8 +82,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 );
                 std::process::exit(2);
             }
-            let path = format!("/api/v1/admin/devices/{id}/diagnostics");
-            admin_get(&cli, &path).await
+            let url = device_diagnostics_url(&cli.base_url, id)?;
+            admin_get_url(&cli, url).await
         }
     }
 }
@@ -101,40 +102,92 @@ fn validate_config(path: PathBuf) {
     }
 }
 
-fn admin_url(base: &str, path: &str) -> String {
-    let base = base.trim_end_matches('/');
-    format!("{base}{path}")
+/// Builds an admin endpoint URL by appending `path` to `base_url`.
+fn admin_url(
+    base: &str,
+    path: &str,
+) -> Result<reqwest::Url, Box<dyn std::error::Error + Send + Sync>> {
+    let mut url = reqwest::Url::parse(base)?;
+    url.path_segments_mut()
+        .map_err(|_| "base URL cannot be used as a base for path segments")?
+        .extend(path.split('/').filter(|s| !s.is_empty()));
+    Ok(url)
 }
 
-fn build_client(cli: &Cli) -> reqwest::Client {
-    let mut headers = reqwest::header::HeaderMap::new();
-    if let Some(key) = &cli.api_key
-        && let Ok(value) = reqwest::header::HeaderValue::from_str(key)
+/// Builds a device diagnostics URL, percent-encoding the device identifier.
+fn device_diagnostics_url(
+    base: &str,
+    id: &str,
+) -> Result<reqwest::Url, Box<dyn std::error::Error + Send + Sync>> {
+    if id.is_empty() {
+        return Err("device id must not be empty".into());
+    }
+    let mut url = reqwest::Url::parse(base)?;
     {
+        let mut segments = url
+            .path_segments_mut()
+            .map_err(|_| "base URL cannot be used as a base for path segments")?;
+        segments.extend(["api", "v1", "admin", "devices"]);
+        segments.push(id);
+        segments.push("diagnostics");
+    }
+    Ok(url)
+}
+
+fn build_client(cli: &Cli) -> Result<reqwest::Client, Box<dyn std::error::Error + Send + Sync>> {
+    Ok(reqwest::Client::builder()
+        .default_headers(build_headers(cli)?)
+        .connect_timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(30))
+        .build()?)
+}
+
+fn build_headers(
+    cli: &Cli,
+) -> Result<reqwest::header::HeaderMap, Box<dyn std::error::Error + Send + Sync>> {
+    use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        HeaderName::from_static("accept"),
+        HeaderValue::from_static("application/json"),
+    );
+    if let Some(key) = &cli.api_key {
+        let value = HeaderValue::from_str(key)?;
         headers.insert("X-Api-Key", value);
     }
-    if let Some(tenant) = &cli.tenant
-        && let Ok(value) = reqwest::header::HeaderValue::from_str(tenant)
-    {
+    if let Some(tenant) = &cli.tenant {
+        let value = HeaderValue::from_str(tenant)?;
         headers.insert("x-tenant-id", value);
     }
-    reqwest::Client::builder()
-        .default_headers(headers)
-        .build()
-        .unwrap_or_else(|_| reqwest::Client::new())
+    Ok(headers)
 }
 
 async fn admin_get(cli: &Cli, path: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let client = build_client(cli);
-    let url = admin_url(&cli.base_url, path);
-    let response = client.get(&url).send().await?;
-    handle_response(response).await
+    let url = admin_url(&cli.base_url, path)?;
+    admin_get_url(cli, url).await
 }
 
 async fn admin_post(cli: &Cli, path: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let client = build_client(cli);
-    let url = admin_url(&cli.base_url, path);
-    let response = client.post(&url).send().await?;
+    let url = admin_url(&cli.base_url, path)?;
+    admin_post_url(cli, url).await
+}
+
+async fn admin_get_url(
+    cli: &Cli,
+    url: reqwest::Url,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let client = build_client(cli)?;
+    let response = client.get(url).send().await?;
+    handle_response(response).await
+}
+
+async fn admin_post_url(
+    cli: &Cli,
+    url: reqwest::Url,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let client = build_client(cli)?;
+    let response = client.post(url).send().await?;
     handle_response(response).await
 }
 
@@ -158,4 +211,73 @@ async fn handle_response(
         println!("{body}");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn admin_url_appends_path_to_base() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let url = admin_url("http://localhost:8080", "/api/v1/admin/db-status")?;
+        assert_eq!(url.as_str(), "http://localhost:8080/api/v1/admin/db-status");
+        Ok(())
+    }
+
+    #[test]
+    fn admin_url_works_with_trailing_slash() -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+    {
+        let url = admin_url("http://localhost:8080/", "/api/v1/admin/db-status")?;
+        assert_eq!(url.as_str(), "http://localhost:8080/api/v1/admin/db-status");
+        Ok(())
+    }
+
+    #[test]
+    fn device_diagnostics_url_encodes_id() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let url = device_diagnostics_url("http://localhost:8080", "dev/ 1")?;
+        assert_eq!(
+            url.as_str(),
+            "http://localhost:8080/api/v1/admin/devices/dev%2F%201/diagnostics"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn device_diagnostics_url_rejects_empty_id() {
+        assert!(device_diagnostics_url("http://localhost:8080", "").is_err());
+    }
+
+    #[test]
+    fn build_headers_rejects_invalid_header_values() {
+        let cli = Cli {
+            base_url: "http://localhost:8080".to_string(),
+            api_key: Some("bad\nvalue".to_string()),
+            tenant: None,
+            command: Command::DbStatus,
+        };
+        assert!(build_headers(&cli).is_err());
+    }
+
+    #[test]
+    fn build_headers_sets_accept_api_key_and_tenant()
+    -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+
+        let cli = Cli {
+            base_url: "http://localhost:8080".to_string(),
+            api_key: Some("secret-key".to_string()),
+            tenant: Some("tenant-42".to_string()),
+            command: Command::DbStatus,
+        };
+        let headers = build_headers(&cli)?;
+        let mut expected = HeaderMap::new();
+        expected.insert(
+            HeaderName::from_static("accept"),
+            HeaderValue::from_static("application/json"),
+        );
+        expected.insert("X-Api-Key", HeaderValue::from_static("secret-key"));
+        expected.insert("x-tenant-id", HeaderValue::from_static("tenant-42"));
+        assert_eq!(headers, expected);
+        Ok(())
+    }
 }
