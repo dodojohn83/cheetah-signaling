@@ -532,6 +532,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "cheetah-ctl"
+version = "0.1.0"
+dependencies = [
+ "cheetah-config",
+ "cheetah-signal-types",
+ "clap",
+ "reqwest",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "cheetah-domain"
 version = "0.1.0"
 dependencies = [
@@ -626,6 +638,7 @@ dependencies = [
  "tower",
  "tower-http",
  "tracing",
+ "tracing-subscriber",
  "url",
  "uuid",
 ]
@@ -897,6 +910,7 @@ name = "cheetah-signaling"
 version = "0.1.0"
 dependencies = [
  "cheetah-config",
+ "cheetah-http-api",
  "cheetah-runtime-api",
  "cheetah-runtime-tokio",
  "cheetah-signal-application",
@@ -2282,15 +2296,6 @@ checksum = "d273983c5a657a70a3e8f2a01329822f3b8c8172b73826411a55751e404a0a4a"
 dependencies = [
  "memchr",
  "minimal-lexical",
-]
-
-[[package]]
-name = "nu-ansi-term"
-version = "0.50.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
-dependencies = [
- "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4266,13 +4271,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "tracing-log"
+name = "tracing-serde"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ee855f1f400bd0e5c02d150ae5de3840039a3f54b025156404e34c23c03f47c3"
+checksum = "704b1aeb7be0d0a84fc9828cae51dab5970fee5088f83d1dd7ee6f6246fc6ff1"
 dependencies = [
- "log",
- "once_cell",
+ "serde",
  "tracing-core",
 ]
 
@@ -4283,15 +4287,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb7f578e5945fb242538965c2d0b04418d38ec25c79d160cd279bf0731c8d319"
 dependencies = [
  "matchers",
- "nu-ansi-term",
  "once_cell",
  "regex-automata",
+ "serde",
+ "serde_json",
  "sharded-slab",
- "smallvec",
  "thread_local",
  "tracing",
  "tracing-core",
- "tracing-log",
+ "tracing-serde",
 ]
 
 [[package]]

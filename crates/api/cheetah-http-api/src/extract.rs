@@ -8,6 +8,7 @@ use axum::{
 };
 use cheetah_signal_types::{
     CorrelationId, Deadline, DurationMs, MessageId, PageRequest, RequestContext, TenantId,
+    validate_traceparent, validate_tracestate,
 };
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -52,6 +53,11 @@ impl FromRequestParts<Arc<ApiState>> for ApiRequestContext {
     ) -> Result<Self, Self::Rejection> {
         let auth = AuthContext::from_request_parts(parts, state).await?;
 
+        let source_ip = parts
+            .extensions
+            .get::<ConnectInfo<SocketAddr>>()
+            .map(|c| c.0.ip().to_string());
+
         let tenant_id = resolve_tenant_id(parts, &auth)?;
 
         let message_id: MessageId = if let Some(header) = parts.headers.get("x-request-id") {
@@ -71,11 +77,13 @@ impl FromRequestParts<Arc<ApiState>> for ApiRequestContext {
             .headers
             .get("traceparent")
             .and_then(|v| v.to_str().ok())
+            .and_then(validate_traceparent)
             .map(|s| s.to_string());
         let tracestate = parts
             .headers
             .get("tracestate")
             .and_then(|v| v.to_str().ok())
+            .and_then(validate_tracestate)
             .map(|s| s.to_string());
 
         check_rate_limit(parts, state, &tenant_id)?;
@@ -87,7 +95,7 @@ impl FromRequestParts<Arc<ApiState>> for ApiRequestContext {
                 .unwrap_or(now),
         );
 
-        Ok(Self(RequestContext {
+        let request_context = RequestContext {
             tenant_id,
             principal: auth.principal,
             message_id,
@@ -96,7 +104,17 @@ impl FromRequestParts<Arc<ApiState>> for ApiRequestContext {
             tracestate,
             deadline: Some(deadline),
             node_id: Some(state.config.node_id),
-        }))
+            source_ip,
+        };
+
+        let span = tracing::Span::current();
+        span.record("tenant_id", request_context.tenant_id.to_string());
+        span.record("request_id", request_context.message_id.to_string());
+        if let Some(node_id) = request_context.node_id {
+            span.record("node_id", node_id.to_string());
+        }
+
+        Ok(Self(request_context))
     }
 }
 

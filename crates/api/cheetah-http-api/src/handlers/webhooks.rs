@@ -10,7 +10,7 @@ use axum::{
 use cheetah_signal_application::{
     CreateWebhookRequest, TriggerWebhookRequest, UpdateWebhookRequest,
 };
-use cheetah_signal_types::{DeliveryId, WebhookId};
+use cheetah_signal_types::{AuditOutcome, DeliveryId, WebhookId};
 use std::sync::Arc;
 
 fn parse_webhook_id(id: &str) -> Result<WebhookId, HttpError> {
@@ -44,6 +44,15 @@ pub async fn create_webhook(
 ) -> Result<impl IntoResponse, HttpError> {
     ctx.require_scope("operator")?;
     let config = state.webhook_service()?.create_webhook(&ctx, body).await?;
+    crate::audit::record(
+        &state,
+        &ctx,
+        "webhook.create",
+        "webhook",
+        Some(config.webhook_id().to_string()),
+        None,
+        AuditOutcome::Success,
+    );
     Ok((StatusCode::CREATED, Json(config)))
 }
 
@@ -75,6 +84,15 @@ pub async fn update_webhook(
         .webhook_service()?
         .update_webhook(&ctx, webhook_id, body)
         .await?;
+    crate::audit::record(
+        &state,
+        &ctx,
+        "webhook.update",
+        "webhook",
+        Some(config.webhook_id().to_string()),
+        None,
+        AuditOutcome::Success,
+    );
     Ok((StatusCode::OK, Json(config)))
 }
 
@@ -90,6 +108,15 @@ pub async fn delete_webhook(
         .webhook_service()?
         .delete_webhook(&ctx, webhook_id)
         .await?;
+    crate::audit::record(
+        &state,
+        &ctx,
+        "webhook.delete",
+        "webhook",
+        Some(webhook_id.to_string()),
+        None,
+        AuditOutcome::Success,
+    );
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -123,6 +150,15 @@ pub async fn trigger_delivery(
         .webhook_service()?
         .trigger_webhook(&ctx, webhook_id, body)
         .await?;
+    crate::audit::record(
+        &state,
+        &ctx,
+        "webhook.trigger",
+        "webhook_delivery",
+        Some(delivery.delivery_id().to_string()),
+        None,
+        AuditOutcome::Success,
+    );
     Ok((StatusCode::CREATED, Json(delivery)))
 }
 
@@ -139,5 +175,14 @@ pub async fn replay_delivery(
         .webhook_service()?
         .replay_delivery(&ctx, webhook_id, delivery_id)
         .await?;
+    crate::audit::record(
+        &state,
+        &ctx,
+        "webhook.replay",
+        "webhook_delivery",
+        Some(delivery.delivery_id().to_string()),
+        None,
+        AuditOutcome::Success,
+    );
     Ok((StatusCode::CREATED, Json(delivery)))
 }

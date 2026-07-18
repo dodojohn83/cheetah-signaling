@@ -14,8 +14,14 @@ pub async fn live() -> impl IntoResponse {
     (StatusCode::OK, Json(serde_json::json!({"status": "ok"})))
 }
 
-/// Readiness probe: verifies storage migration status.
+/// Readiness probe: verifies storage migration status and that the node is not draining.
 pub async fn ready(State(state): State<Arc<ApiState>>) -> Result<impl IntoResponse, HttpError> {
+    if state.cancel.is_cancelled() {
+        return Ok((
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"status": "draining"})),
+        ));
+    }
     let migration = state
         .storage
         .migration()

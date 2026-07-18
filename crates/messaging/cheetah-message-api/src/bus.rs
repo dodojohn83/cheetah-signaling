@@ -1,5 +1,6 @@
 //! Low-level messaging bus traits.
 
+use cheetah_domain::DomainError;
 use cheetah_signal_contracts::cheetah::common::v1::{CommandEnvelope, EventEnvelope};
 use prost::Message;
 
@@ -109,4 +110,17 @@ pub trait RawEventBus: Send + Sync {
         subject: &str,
         consumer_group: &str,
     ) -> Result<Box<dyn Subscription<EventEnvelope>>, BusError>;
+}
+
+impl From<BusError> for DomainError {
+    fn from(err: BusError) -> Self {
+        match err {
+            BusError::Busy => Self::unavailable("message bus busy"),
+            BusError::Unavailable(msg) => Self::unavailable(msg),
+            BusError::InvalidPayload(msg) | BusError::UnsupportedEnvelope(msg) => {
+                Self::invalid_argument(msg)
+            }
+            _ => Self::internal(err.to_string()),
+        }
+    }
 }
