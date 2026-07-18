@@ -15,6 +15,7 @@ members = [
     "crates/plugin/*",
     "crates/protocols/*",
     "crates/testing/*",
+    "crates/perf/*",
     "tools/*",
 ]
 resolver = "3"

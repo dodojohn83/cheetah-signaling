@@ -857,6 +857,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "cheetah-perf"
+version = "0.1.0"
+dependencies = [
+ "cheetah-cluster-ownership",
+ "cheetah-domain",
+ "cheetah-media-scheduler",
+ "cheetah-message-api",
+ "cheetah-message-local",
+ "cheetah-message-nats",
+ "cheetah-signal-application",
+ "cheetah-signal-types",
+ "cheetah-storage-api",
+ "cheetah-storage-postgres",
+ "cheetah-storage-sqlite",
+ "tempfile",
+ "testcontainers-modules",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "cheetah-plugin-host"
 version = "0.1.0"
 dependencies = [
