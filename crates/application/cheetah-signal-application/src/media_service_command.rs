@@ -263,6 +263,50 @@ impl MediaService {
                 Ok(MediaSessionDto::from(&session))
             }
             MediaNodeCommandResult::Accepted => {
+                // The media node accepted the stop asynchronously. Record the
+                // stop intent durably so a lost completion still converges to a
+                // terminal state during reconciliation.
+                if !session.is_terminal() {
+                    let ev = session
+                        .stop(self.clock.as_ref())
+                        .map_err(crate::SignalError::from)?;
+                    uow.outbox()
+                        .append(wrap_event(
+                            self.id_generator.as_ref(),
+                            self.clock.as_ref(),
+                            context,
+                            context.tenant_id,
+                            media_session_resource_ref(
+                                context.tenant_id,
+                                session.media_session_id(),
+                            ),
+                            session.revision().0,
+                            ev,
+                        ))
+                        .await?;
+                    uow.media_session_repository().save(&session).await?;
+                }
+                if !binding.is_terminal() && binding.state() != MediaBindingState::Releasing {
+                    let ev = binding
+                        .release(self.clock.as_ref())
+                        .map_err(crate::SignalError::from)?;
+                    uow.outbox()
+                        .append(wrap_event(
+                            self.id_generator.as_ref(),
+                            self.clock.as_ref(),
+                            context,
+                            context.tenant_id,
+                            media_binding_resource_ref(
+                                context.tenant_id,
+                                binding.media_binding_id(),
+                            ),
+                            binding.revision().0,
+                            ev,
+                        ))
+                        .await?;
+                    uow.media_binding_repository().save(&binding).await?;
+                }
+
                 uow.commit().await?;
                 Ok(MediaSessionDto::from(&session))
             }
@@ -409,7 +453,6 @@ impl MediaService {
                 Ok(OperationDto::from(&operation))
             }
             MediaNodeCommandResult::Accepted => {
-                uow.operation_repository().save(&operation).await?;
                 uow.commit().await?;
                 Ok(OperationDto::from(&operation))
             }
