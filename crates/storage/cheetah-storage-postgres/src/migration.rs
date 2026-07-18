@@ -328,6 +328,9 @@ impl Migration for PostgresMigration {
     }
 
     async fn status(&self) -> Result<MigrationInfo, StorageError> {
+        // Ensure the tracking tables exist so status/validate work against
+        // databases that were previously migrated by an older binary.
+        self.init_state_tables().await?;
         let applied = self.applied_startup_versions().await?;
         Ok(self.runner.status_info(&applied))
     }
@@ -345,6 +348,7 @@ impl Migration for PostgresMigration {
     }
 
     async fn backfill_progress(&self) -> Result<BackfillProgress, StorageError> {
+        self.init_state_tables().await?;
         let rows: Vec<BackfillJobRow> = sqlx::query_as(
             "SELECT version, description, processed_rows, finished, updated_at
              FROM _cheetah_backfill_jobs ORDER BY version",
