@@ -769,11 +769,11 @@ impl WebhookConfigRepository for InMemoryUnitOfWork {
                 .webhook_configs
                 .get(&(config.tenant_id(), config.webhook_id()))
             {
-                let expected = existing.revision().0.saturating_add(1);
-                if config.revision().0 != expected {
+                let expected = config.revision().0.saturating_sub(1);
+                if existing.revision().0 != expected {
                     return Err(DomainError::ConcurrentModification {
                         expected,
-                        found: config.revision().0,
+                        found: existing.revision().0,
                     });
                 }
             }

@@ -131,7 +131,8 @@ pub(crate) async fn save_webhook_config(
             updated_at = EXCLUDED.updated_at, \
             data = EXCLUDED.data, \
             schema_version = EXCLUDED.schema_version \
-         WHERE webhook_configs.revision = $10",
+         WHERE webhook_configs.tenant_id = EXCLUDED.tenant_id \
+            AND webhook_configs.revision = $10",
     )
     .bind(config.tenant_id().as_uuid())
     .bind(config.webhook_id().as_uuid())
