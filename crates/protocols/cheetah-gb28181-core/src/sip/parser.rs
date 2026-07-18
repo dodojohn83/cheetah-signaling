@@ -78,7 +78,20 @@ impl SipParser {
         let mut parser = Self::new(config);
         parser.feed(data)?;
         match parser.pop_message() {
-            Some(result) => result,
+            Some(Ok(message)) => {
+                if !parser.buffer.is_empty() {
+                    return Err(SipError::new(
+                        SipErrorKind::InvalidFraming,
+                        None,
+                        format!(
+                            "trailing bytes after Content-Length: {} bytes remain",
+                            parser.buffer.len()
+                        ),
+                    ));
+                }
+                Ok(message)
+            }
+            Some(Err(e)) => Err(e),
             None => {
                 if let ParserState::Body { content_length, .. } = &parser.state
                     && parser.buffer.len() < *content_length

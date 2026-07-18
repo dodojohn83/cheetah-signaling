@@ -28,5 +28,8 @@ url = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["fmt", "json", "env-filter"] }
 
+[dev-dependencies]
+proptest = { workspace = true }
+
 [lints]
 workspace = true

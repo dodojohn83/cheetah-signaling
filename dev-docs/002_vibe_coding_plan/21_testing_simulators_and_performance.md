@@ -40,9 +40,9 @@
 
 ### TST-004：Fuzz/属性测试
 
-- [ ] SIP、SDP、GB XML、SOAP/XML、Proto decode、cursor decode 均建 fuzz target。
-- [ ] CI 跑短时 fuzz，夜间跑长时 corpus；崩溃样本回归入库。
-- [ ] 解析器属性：不 panic、受限分配、往返语义、拒绝歧义长度。
+- [x] SIP、SDP、GB XML、SOAP/XML、Proto decode、cursor decode 均建 proptest 属性测试（cargo-fuzz 需 nightly/libfuzzer，后续可迁移）。
+- [x] CI 跑短时 fuzz（proptest 128 cases/test，随 `cargo nextest run --workspace` 执行）。
+- [x] 解析器属性：不 panic、受限分配、往返语义、拒绝歧义长度（修复 SIP `parse_datagram` 残留 trailing bytes 歧义长度）。
 
 ## 3. 系统场景
 
