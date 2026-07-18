@@ -1,0 +1,20 @@
+[package]
+name = "cheetah-ctl"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+cheetah-config = { path = "../../crates/foundation/cheetah-config" }
+cheetah-signal-types = { path = "../../crates/foundation/cheetah-signal-types" }
+clap = { workspace = true }
+reqwest = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+
+[lints]
+workspace = true
