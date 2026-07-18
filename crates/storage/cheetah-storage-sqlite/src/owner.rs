@@ -1,11 +1,12 @@
 //! Owner repository and device owner resolver for SQLite.
 
 use crate::error::sqlx_to_domain;
-use cheetah_domain::ports::{DeviceOwnerResolver, OwnerInfo};
+use cheetah_domain::ports::{Clock, DeviceOwnerResolver, OwnerInfo};
 use cheetah_signal_types::UtcTimestamp;
 use cheetah_storage_api::{OwnerRepository, StorageError};
 use sqlx::FromRow;
 use sqlx::SqlitePool;
+use std::sync::Arc;
 use time::OffsetDateTime;
 
 #[derive(FromRow)]
@@ -16,19 +17,31 @@ struct OwnerRow {
 }
 
 /// SQLite owner repository.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SqliteOwnerRepository {
     read_pool: SqlitePool,
     write_pool: SqlitePool,
+    clock: Arc<dyn Clock>,
 }
 
 impl SqliteOwnerRepository {
     /// Creates a new repository.
-    pub const fn new(read_pool: SqlitePool, write_pool: SqlitePool) -> Self {
+    pub fn new(read_pool: SqlitePool, write_pool: SqlitePool, clock: Arc<dyn Clock>) -> Self {
         Self {
             read_pool,
             write_pool,
+            clock,
         }
+    }
+}
+
+impl std::fmt::Debug for SqliteOwnerRepository {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SqliteOwnerRepository")
+            .field("read_pool", &self.read_pool)
+            .field("write_pool", &self.write_pool)
+            .field("clock", &"<dyn Clock>")
+            .finish()
     }
 }
 
@@ -76,7 +89,7 @@ impl OwnerRepository for SqliteOwnerRepository {
         .bind(owner.owner_node_id.as_uuid())
         .bind(owner.owner_epoch.0 as i64)
         .bind(owner.lease_until.map(|t| t.as_offset()))
-        .bind(OffsetDateTime::now_utc())
+        .bind(self.clock.now_wall().as_offset())
         .execute(&self.write_pool)
         .await
         .map_err(|e| StorageError::backend(e.to_string()))?;
@@ -104,7 +117,7 @@ impl OwnerRepository for SqliteOwnerRepository {
         node_id: cheetah_signal_types::NodeId,
         lease_until: cheetah_signal_types::UtcTimestamp,
     ) -> Result<OwnerInfo, StorageError> {
-        let updated_at = OffsetDateTime::now_utc();
+        let updated_at = self.clock.now_wall().as_offset();
         sqlx::query(
             "INSERT INTO device_owners (tenant_id, device_id, owner_node_id, owner_epoch, expires_at, updated_at)
              VALUES (?, ?, ?, 1, ?, ?)
@@ -154,7 +167,7 @@ impl OwnerRepository for SqliteOwnerRepository {
         node_id: cheetah_signal_types::NodeId,
         lease_until: cheetah_signal_types::UtcTimestamp,
     ) -> Result<Option<OwnerInfo>, StorageError> {
-        let now = OffsetDateTime::now_utc();
+        let now = self.clock.now_wall().as_offset();
         let result = sqlx::query(
             "UPDATE device_owners
              SET expires_at = ?, updated_at = ?

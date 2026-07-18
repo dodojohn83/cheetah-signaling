@@ -125,6 +125,63 @@ impl NatsBus {
         &self.client
     }
 
+    /// Connect to a NATS server without requiring TLS.
+    ///
+    /// This is only available under test configuration because production
+    /// cluster traffic must be TLS protected.
+    #[cfg(any(test, feature = "test-helpers"))]
+    pub async fn connect_insecure(
+        url: impl Into<String>,
+        this_node: NodeId,
+        owner_resolver: Arc<dyn DeviceOwnerResolver>,
+        connect_timeout: Duration,
+        operation_timeout: Duration,
+    ) -> Result<Self, BusError> {
+        let url = url.into();
+        let options = async_nats::ConnectOptions::new();
+        let client = with_timeout(
+            connect_timeout,
+            "NATS connect",
+            options.connect(url.as_str()),
+        )
+        .await?;
+        let jetstream = async_nats::jetstream::new(client.clone());
+
+        let commands_config = async_nats::jetstream::stream::Config {
+            name: COMMANDS_STREAM.to_string(),
+            subjects: vec![COMMAND_SUBJECT_PATTERN.to_string()],
+            ..Default::default()
+        };
+        with_timeout(
+            connect_timeout,
+            "create NATS commands stream",
+            jetstream.get_or_create_stream(commands_config),
+        )
+        .await?;
+
+        let events_config = async_nats::jetstream::stream::Config {
+            name: EVENTS_STREAM.to_string(),
+            subjects: vec![EVENT_SUBJECT_PATTERN.to_string()],
+            ..Default::default()
+        };
+        with_timeout(
+            connect_timeout,
+            "create NATS events stream",
+            jetstream.get_or_create_stream(events_config),
+        )
+        .await?;
+
+        info!("NATS streams created (insecure): {COMMANDS_STREAM}, {EVENTS_STREAM}");
+
+        Ok(Self {
+            client,
+            jetstream,
+            owner_resolver,
+            this_node,
+            operation_timeout,
+        })
+    }
+
     async fn publish_envelope(
         &self,
         subject: &str,

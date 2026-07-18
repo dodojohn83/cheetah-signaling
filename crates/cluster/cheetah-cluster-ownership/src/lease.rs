@@ -9,7 +9,7 @@ use tracing::{info, warn};
 
 /// Manages device owner leases for a single node.
 pub struct OwnerLeaseService {
-    repository: Arc<tokio::sync::Mutex<dyn OwnerRepository>>,
+    repository: Arc<tokio::sync::Mutex<Box<dyn OwnerRepository>>>,
     clock: Arc<dyn Clock>,
     this_node: NodeId,
     lease_duration: DurationMs,
@@ -18,7 +18,7 @@ pub struct OwnerLeaseService {
 impl OwnerLeaseService {
     /// Creates a new lease service.
     pub fn new(
-        repository: Arc<tokio::sync::Mutex<dyn OwnerRepository>>,
+        repository: Arc<tokio::sync::Mutex<Box<dyn OwnerRepository>>>,
         clock: Arc<dyn Clock>,
         this_node: NodeId,
         lease_duration: DurationMs,
