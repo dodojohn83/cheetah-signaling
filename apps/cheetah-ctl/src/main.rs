@@ -110,6 +110,7 @@ fn admin_url(
     let mut url = reqwest::Url::parse(base)?;
     url.path_segments_mut()
         .map_err(|_| "base URL cannot be used as a base for path segments")?
+        .pop_if_empty()
         .extend(path.split('/').filter(|s| !s.is_empty()));
     Ok(url)
 }
@@ -127,6 +128,7 @@ fn device_diagnostics_url(
         let mut segments = url
             .path_segments_mut()
             .map_err(|_| "base URL cannot be used as a base for path segments")?;
+        segments.pop_if_empty();
         segments.extend(["api", "v1", "admin", "devices"]);
         segments.push(id);
         segments.push("diagnostics");
@@ -233,11 +235,33 @@ mod tests {
     }
 
     #[test]
+    fn admin_url_strips_empty_trailing_path_segment()
+    -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let url = admin_url("https://gw.example.com/cheetah/", "/api/v1/admin/db-status")?;
+        assert_eq!(
+            url.as_str(),
+            "https://gw.example.com/cheetah/api/v1/admin/db-status"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn device_diagnostics_url_encodes_id() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let url = device_diagnostics_url("http://localhost:8080", "dev/ 1")?;
         assert_eq!(
             url.as_str(),
             "http://localhost:8080/api/v1/admin/devices/dev%2F%201/diagnostics"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn device_diagnostics_url_strips_empty_trailing_path_segment()
+    -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let url = device_diagnostics_url("https://gw.example.com/cheetah/", "dev-1")?;
+        assert_eq!(
+            url.as_str(),
+            "https://gw.example.com/cheetah/api/v1/admin/devices/dev-1/diagnostics"
         );
         Ok(())
     }
