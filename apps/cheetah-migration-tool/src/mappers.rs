@@ -251,6 +251,8 @@ pub(crate) fn event_for(
         correlation_id: CorrelationId::generate(),
         causation_id: MessageId::generate(),
         source: NodeId::from_uuid(Uuid::nil()),
+        traceparent: None,
+        tracestate: None,
         payload,
     }
 }
