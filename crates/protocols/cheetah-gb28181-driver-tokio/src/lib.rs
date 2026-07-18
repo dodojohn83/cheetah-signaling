@@ -18,7 +18,9 @@ use error::DriverError;
 use sink::EventSink;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tokio::net::UdpSocket;
+use tokio::time::MissedTickBehavior;
 use tracing::{debug, trace, warn};
 
 /// A UDP transport driver that executes the GB28181 access state machine.
@@ -28,6 +30,7 @@ pub struct Gb28181UdpDriver<P: CredentialProvider> {
     sink: Arc<dyn EventSink>,
     parser_config: cheetah_gb28181_core::SipParserConfig,
     max_datagram_size: usize,
+    started_at: Instant,
 }
 
 impl<P: CredentialProvider> std::fmt::Debug for Gb28181UdpDriver<P> {
@@ -65,23 +68,40 @@ impl<P: CredentialProvider + Send + 'static> Gb28181UdpDriver<P> {
                 sink,
                 parser_config: config.parser_config,
                 max_datagram_size: config.max_datagram_size,
+                started_at: Instant::now(),
             },
             local_addr,
         ))
     }
 
     /// Runs the driver loop until the socket is closed.
+    ///
+    /// Incoming datagrams are parsed and forwarded to [`Gb28181Access`]. A
+    /// periodic tick (once per second) is also forwarded so that registration
+    /// expiry and heartbeat timeouts are processed.
     pub async fn run(self) -> Result<(), DriverError> {
         let mut buf = vec![0u8; self.max_datagram_size];
+        let mut interval = tokio::time::interval(Duration::from_secs(1));
+        interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
+
         loop {
-            match self.socket.recv_from(&mut buf).await {
-                Ok((len, source)) => {
-                    let data = &buf[..len];
-                    if let Err(e) = self.handle_datagram(data, source).await {
-                        warn!(error = %e, %source, "failed to handle SIP datagram");
+            tokio::select! {
+                result = self.socket.recv_from(&mut buf) => {
+                    match result {
+                        Ok((len, source)) => {
+                            let data = &buf[..len];
+                            if let Err(e) = self.handle_datagram(data, source).await {
+                                warn!(error = %e, %source, "failed to handle SIP datagram");
+                            }
+                        }
+                        Err(e) => return Err(DriverError::Io(e)),
                     }
                 }
-                Err(e) => return Err(DriverError::Io(e)),
+                _ = interval.tick() => {
+                    if let Err(e) = self.handle_tick().await {
+                        warn!(error = %e, "failed to process access tick");
+                    }
+                }
             }
         }
     }
@@ -93,7 +113,7 @@ impl<P: CredentialProvider + Send + 'static> Gb28181UdpDriver<P> {
 
         let input = AccessInput {
             source,
-            now: now_seconds(),
+            now: self.now_seconds(),
             message,
         };
 
@@ -102,15 +122,37 @@ impl<P: CredentialProvider + Send + 'static> Gb28181UdpDriver<P> {
             access.process(input).map_err(DriverError::Access)?
         };
 
+        self.dispatch_outputs(outputs, Some(source)).await
+    }
+
+    async fn handle_tick(&self) -> Result<(), DriverError> {
+        let now = self.now_seconds();
+        let outputs = {
+            let mut access = self.access.lock().map_err(|_| DriverError::AccessLock)?;
+            access.tick(now)
+        };
+
+        self.dispatch_outputs(outputs, None).await
+    }
+
+    async fn dispatch_outputs(
+        &self,
+        outputs: Vec<AccessOutput>,
+        response_target: Option<SocketAddr>,
+    ) -> Result<(), DriverError> {
         for output in outputs {
             match output {
                 AccessOutput::SendResponse(response) => {
-                    let bytes = encode_message(&response);
-                    self.socket
-                        .send_to(&bytes, source)
-                        .await
-                        .map_err(DriverError::Io)?;
-                    debug!(%source, "sent SIP response");
+                    if let Some(target) = response_target {
+                        let bytes = encode_message(&response);
+                        self.socket
+                            .send_to(&bytes, target)
+                            .await
+                            .map_err(DriverError::Io)?;
+                        debug!(%target, "sent SIP response");
+                    } else {
+                        warn!("dropping SIP response produced by tick with no response target");
+                    }
                 }
                 AccessOutput::EmitEvent(event) => {
                     self.sink.emit(event);
@@ -120,13 +162,10 @@ impl<P: CredentialProvider + Send + 'static> Gb28181UdpDriver<P> {
 
         Ok(())
     }
-}
 
-fn now_seconds() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
+    fn now_seconds(&self) -> u64 {
+        self.started_at.elapsed().as_secs()
+    }
 }
 
 #[cfg(test)]
