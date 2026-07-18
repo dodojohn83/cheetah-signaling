@@ -529,16 +529,6 @@ impl<'de> Deserialize<'de> for LogFormat {
     }
 }
 
-impl Default for ObservabilityConfig {
-    fn default() -> Self {
-        Self {
-            metrics_bind_addr: String::new(),
-            tracing_endpoint: None,
-            log_format: "json".to_string(),
-        }
-    }
-}
-
 /// Source of configuration snapshots.
 ///
 /// Implementations are responsible for layering defaults, files, environment
