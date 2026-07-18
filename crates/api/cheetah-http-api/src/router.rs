@@ -2,17 +2,18 @@
 
 use crate::ApiState;
 use crate::handlers::{
-    channels, devices, events, health, media, nodes, operations, tenants, webhooks,
+    channels, devices, events, health, media, nodes, operations, ops, tenants, webhooks,
 };
 use crate::rate_limit::rate_limit_middleware;
 use axum::{
     Router,
     extract::DefaultBodyLimit,
-    http::{HeaderValue, StatusCode},
-    middleware::from_fn_with_state,
+    http::{HeaderValue, Request, Response, StatusCode},
+    middleware::{Next, from_fn, from_fn_with_state},
     response::Json,
     routing::{delete, get, patch, post},
 };
+use cheetah_signal_types::{validate_traceparent, validate_tracestate};
 use std::sync::Arc;
 use std::time::Duration;
 use tower::ServiceBuilder;
@@ -22,13 +23,67 @@ use tower_http::{
     timeout::TimeoutLayer,
     trace::TraceLayer,
 };
+use tracing::Span;
 
 /// Builds the public API router.
 pub fn build_router(state: ApiState) -> Router {
     let timeout = Duration::from_millis(state.config.read_timeout_ms);
     let body_limit = state.config.request_body_limit_bytes;
     let cors = build_cors_layer(&state.config.cors_allowed_origins);
+    let metrics = state.metrics.clone();
     let shared_state = Arc::new(state);
+    let metrics_request = metrics.clone();
+    let metrics_response = metrics;
+
+    let trace_layer = TraceLayer::new_for_http()
+        .make_span_with(|req: &Request<_>| {
+            let traceparent = req
+                .headers()
+                .get("traceparent")
+                .and_then(|v| v.to_str().ok())
+                .and_then(validate_traceparent);
+            let tracestate = req
+                .headers()
+                .get("tracestate")
+                .and_then(|v| v.to_str().ok())
+                .and_then(validate_tracestate);
+            let span = tracing::info_span!(
+                "http_request",
+                "http.method" = tracing::field::Empty,
+                "http.uri" = tracing::field::Empty,
+                protocol = "http",
+                traceparent = tracing::field::Empty,
+                tracestate = tracing::field::Empty,
+                tenant_id = tracing::field::Empty,
+                request_id = tracing::field::Empty,
+                node_id = tracing::field::Empty,
+            );
+            if let Some(tp) = traceparent {
+                span.record("traceparent", tp);
+            }
+            if let Some(ts) = tracestate {
+                span.record("tracestate", ts);
+            }
+            span
+        })
+        .on_request(move |req: &Request<_>, span: &Span| {
+            span.record("http.method", tracing::field::display(req.method()));
+            span.record("http.uri", req.uri().to_string());
+            metrics_request.record_request();
+        })
+        .on_response(
+            move |response: &Response<_>, latency: Duration, span: &Span| {
+                let status = response.status();
+                metrics_response.record_response(status);
+                metrics_response.record_duration(latency);
+                tracing::info!(
+                    parent: span,
+                    status = status.as_u16(),
+                    "finished processing request"
+                );
+            },
+        );
+
     let api = Router::new()
         .route("/health/live", get(health::live))
         .route("/health/ready", get(health::ready))
@@ -88,13 +143,24 @@ pub fn build_router(state: ApiState) -> Router {
         )
         .route("/api/v1/openapi.json", get(crate::openapi::serve_json))
         .route("/api/v1/openapi.yaml", get(crate::openapi::serve_yaml))
+        .route("/api/v1/admin/validate-config", post(ops::validate_config))
+        .route("/api/v1/admin/db-status", get(ops::db_status))
+        .route("/api/v1/admin/db-migrate", post(ops::db_migrate))
+        .route("/api/v1/admin/node-drain", post(ops::node_drain))
+        .route(
+            "/api/v1/admin/devices/{id}/diagnostics",
+            get(ops::device_diagnostics),
+        )
+        .route("/api/v1/admin/outbox-replay", post(ops::outbox_replay))
+        .route("/api/v1/admin/reconcile", post(ops::reconcile))
         .fallback(fallback)
         .with_state(shared_state.clone())
         .layer(from_fn_with_state(shared_state, rate_limit_middleware));
 
     api.layer(
         ServiceBuilder::new()
-            .layer(TraceLayer::new_for_http())
+            .layer(from_fn(trace_context_middleware))
+            .layer(trace_layer)
             .layer(CompressionLayer::new())
             .layer(cors)
             .layer(TimeoutLayer::with_status_code(
@@ -103,6 +169,32 @@ pub fn build_router(state: ApiState) -> Router {
             ))
             .layer(DefaultBodyLimit::max(body_limit)),
     )
+}
+
+/// Echoes incoming `traceparent` and `tracestate` headers back to the response
+/// so HTTP callers can correlate distributed traces end-to-end.
+async fn trace_context_middleware(
+    request: Request<axum::body::Body>,
+    next: Next,
+) -> Response<axum::body::Body> {
+    let traceparent = request
+        .headers()
+        .get("traceparent")
+        .cloned()
+        .filter(|v| v.to_str().ok().and_then(validate_traceparent).is_some());
+    let tracestate = request
+        .headers()
+        .get("tracestate")
+        .cloned()
+        .filter(|v| v.to_str().ok().and_then(validate_tracestate).is_some());
+    let mut response = next.run(request).await;
+    if let Some(tp) = traceparent {
+        response.headers_mut().insert("traceparent", tp);
+    }
+    if let Some(ts) = tracestate {
+        response.headers_mut().insert("tracestate", ts);
+    }
+    response
 }
 
 fn build_cors_layer(origins: &[String]) -> CorsLayer {

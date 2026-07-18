@@ -27,6 +27,12 @@ pub struct Event<P> {
     pub correlation_id: CorrelationId,
     /// Causation identifier, usually the request message id.
     pub causation_id: MessageId,
+    /// W3C trace parent that propagated with the causation request.
+    #[serde(default)]
+    pub traceparent: Option<String>,
+    /// W3C trace state that propagated with the causation request.
+    #[serde(default)]
+    pub tracestate: Option<String>,
     /// Node that produced the event.
     pub source: NodeId,
     /// Domain-specific payload.
@@ -52,9 +58,21 @@ impl<P> Event<P> {
             occurred_at: clock.now_wall(),
             correlation_id: context.correlation_id,
             causation_id: context.message_id,
+            traceparent: context.traceparent.clone(),
+            tracestate: context.tracestate.clone(),
             source: context.node_id.unwrap_or_default(),
             payload,
         }
+    }
+
+    /// Returns the W3C trace parent, if any.
+    pub fn traceparent(&self) -> Option<&str> {
+        self.traceparent.as_deref()
+    }
+
+    /// Returns the W3C trace state, if any.
+    pub fn tracestate(&self) -> Option<&str> {
+        self.tracestate.as_deref()
     }
 
     /// Returns the event payload by reference.
