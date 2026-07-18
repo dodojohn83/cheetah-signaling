@@ -68,6 +68,7 @@ impl Fixtures {
             tracestate: None,
             deadline: None,
             node_id: Some(self.id_generator.generate_node_id()),
+            source_ip: None,
         }
     }
 

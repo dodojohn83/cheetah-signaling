@@ -269,6 +269,7 @@ fn make_command(device_id: DeviceId, tenant_id: TenantId) -> Command {
         tracestate: None,
         deadline: None,
         node_id: None,
+        source_ip: None,
     };
     let target = ResourceRef {
         tenant_id,

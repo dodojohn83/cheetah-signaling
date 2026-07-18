@@ -1,25 +1,23 @@
 //! Cheetah Signaling application binary.
 
-use cheetah_config::LayeredConfigSource;
-use cheetah_signal_types::ConfigSource;
+use cheetah_signal_types::config::ConfigSource;
 
 #[allow(clippy::print_stderr)]
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let source = LayeredConfigSource::new();
-    let config = source.snapshot()?;
-
-    // Sanitized startup summary: selected non-secret configuration fields only.
-    eprintln!("Cheetah Signaling starting");
-    eprintln!("  node: {}", config.system.node_name);
-    eprintln!("  data dir: {}", config.system.data_dir);
-    eprintln!("  http: {}:{}", config.http.listen_addr, config.http.port);
-    eprintln!("  grpc: {}:{}", config.grpc.listen_addr, config.grpc.port);
-    eprintln!("  storage backend: {:?}", config.storage.backend);
-    eprintln!("  messaging backend: {:?}", config.messaging.backend);
-    eprintln!("  log level: {}", config.system.log_level);
-
-    // Full startup sequence (runtime, bus, repositories, protocols) is
-    // implemented in later phases of 002_vibe_coding_plan.
-
-    Ok(())
+fn main() {
+    // Load configuration so that observability can be initialized before
+    // the full transport/adapters are assembled. The complete startup
+    // sequence (storage, bus, ownership, media, protocol drivers, HTTP/gRPC)
+    // is implemented in later phases.
+    let config_source = cheetah_config::LayeredConfigSource::new();
+    let config = match config_source.snapshot() {
+        Ok(config) => config,
+        Err(e) => {
+            eprintln!("failed to load configuration: {e:#}");
+            std::process::exit(1);
+        }
+    };
+    cheetah_http_api::logging::init_tracing(
+        &config.system.log_level,
+        config.observability.log_format,
+    );
 }
