@@ -228,7 +228,7 @@ impl ChannelRepository for SqliteUnitOfWork {
                 deleted = EXCLUDED.deleted,
                 data = EXCLUDED.data,
                 schema_version = EXCLUDED.schema_version
-            WHERE channels.deleted = 1 OR channels.revision = EXCLUDED.revision - 1",
+            WHERE channels.revision = EXCLUDED.revision - 1",
         )
         .bind(channel.tenant_id().as_uuid())
         .bind(channel.device_id().as_uuid())
@@ -259,9 +259,8 @@ impl ChannelRepository for SqliteUnitOfWork {
         channel_id: cheetah_signal_types::ChannelId,
     ) -> cheetah_domain::Result<()> {
         sqlx::query(
-            "UPDATE channels SET deleted = 1, updated_at = ? WHERE tenant_id = ? AND device_id = ? AND channel_id = ?",
+            "DELETE FROM channels WHERE tenant_id = ? AND device_id = ? AND channel_id = ?",
         )
-        .bind(OffsetDateTime::now_utc())
         .bind(tenant_id.as_uuid())
         .bind(device_id.as_uuid())
         .bind(channel_id.as_uuid())

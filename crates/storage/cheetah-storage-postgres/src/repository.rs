@@ -228,7 +228,7 @@ impl ChannelRepository for PostgresUnitOfWork {
                 deleted = EXCLUDED.deleted,
                 data = EXCLUDED.data,
                 schema_version = EXCLUDED.schema_version
-            WHERE channels.deleted = TRUE OR channels.revision = EXCLUDED.revision - 1",
+            WHERE channels.revision = EXCLUDED.revision - 1",
         )
         .bind(channel.tenant_id().as_uuid())
         .bind(channel.device_id().as_uuid())
@@ -259,9 +259,8 @@ impl ChannelRepository for PostgresUnitOfWork {
         channel_id: cheetah_signal_types::ChannelId,
     ) -> cheetah_domain::Result<()> {
         sqlx::query(
-            "UPDATE channels SET deleted = true, updated_at = $1 WHERE tenant_id = $2 AND device_id = $3 AND channel_id = $4",
+            "DELETE FROM channels WHERE tenant_id = $1 AND device_id = $2 AND channel_id = $3",
         )
-        .bind(OffsetDateTime::now_utc())
         .bind(tenant_id.as_uuid())
         .bind(device_id.as_uuid())
         .bind(channel_id.as_uuid())
