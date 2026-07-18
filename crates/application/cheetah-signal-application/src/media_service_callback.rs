@@ -88,6 +88,10 @@ impl MediaService {
             return Ok(MediaSessionDto::from(&session));
         }
 
+        let session_state_before = session.state();
+        let binding_state_before = binding.state();
+        let operation_status_before = operation.status();
+
         match callback.kind {
             MediaNodeCallbackKind::Started => {
                 apply_started(
@@ -127,9 +131,15 @@ impl MediaService {
             }
         }
 
-        uow.media_session_repository().save(&session).await?;
-        uow.media_binding_repository().save(&binding).await?;
-        uow.operation_repository().save(&operation).await?;
+        if session.state() != session_state_before {
+            uow.media_session_repository().save(&session).await?;
+        }
+        if binding.state() != binding_state_before {
+            uow.media_binding_repository().save(&binding).await?;
+        }
+        if operation.status() != operation_status_before {
+            uow.operation_repository().save(&operation).await?;
+        }
         uow.commit().await?;
 
         Ok(MediaSessionDto::from(&session))
