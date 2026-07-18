@@ -74,15 +74,15 @@ impl OwnerRepository for SqliteOwnerRepository {
         device_id: cheetah_signal_types::DeviceId,
         owner: OwnerInfo,
     ) -> Result<(), StorageError> {
-        sqlx::query(
+        let result = sqlx::query(
             "INSERT INTO device_owners (tenant_id, device_id, owner_node_id, owner_epoch, expires_at, updated_at)
              VALUES (?, ?, ?, ?, ?, ?)
              ON CONFLICT(device_id) DO UPDATE SET
-                 tenant_id = EXCLUDED.tenant_id,
                  owner_node_id = EXCLUDED.owner_node_id,
                  owner_epoch = EXCLUDED.owner_epoch,
                  expires_at = EXCLUDED.expires_at,
-                 updated_at = EXCLUDED.updated_at",
+                 updated_at = EXCLUDED.updated_at
+             WHERE device_owners.tenant_id = EXCLUDED.tenant_id",
         )
         .bind(tenant_id.as_uuid())
         .bind(device_id.as_uuid())
@@ -93,6 +93,11 @@ impl OwnerRepository for SqliteOwnerRepository {
         .execute(&self.write_pool)
         .await
         .map_err(|e| StorageError::backend(e.to_string()))?;
+        if result.rows_affected() == 0 {
+            return Err(StorageError::invalid_argument(
+                "device owner does not belong to tenant",
+            ));
+        }
         Ok(())
     }
 
@@ -122,13 +127,13 @@ impl OwnerRepository for SqliteOwnerRepository {
             "INSERT INTO device_owners (tenant_id, device_id, owner_node_id, owner_epoch, expires_at, updated_at)
              VALUES (?, ?, ?, 1, ?, ?)
              ON CONFLICT(device_id) DO UPDATE SET
-                 tenant_id = EXCLUDED.tenant_id,
                  owner_node_id = EXCLUDED.owner_node_id,
                  owner_epoch = device_owners.owner_epoch + 1,
                  expires_at = EXCLUDED.expires_at,
                  updated_at = EXCLUDED.updated_at
-             WHERE (device_owners.expires_at IS NOT NULL AND device_owners.expires_at <= EXCLUDED.updated_at)
-                OR device_owners.owner_node_id = EXCLUDED.owner_node_id",
+             WHERE device_owners.tenant_id = EXCLUDED.tenant_id
+                 AND ((device_owners.expires_at IS NOT NULL AND device_owners.expires_at <= EXCLUDED.updated_at)
+                   OR device_owners.owner_node_id = EXCLUDED.owner_node_id)",
         )
         .bind(tenant_id.as_uuid())
         .bind(device_id.as_uuid())
