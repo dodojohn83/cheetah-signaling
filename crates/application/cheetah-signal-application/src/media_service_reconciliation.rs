@@ -62,9 +62,15 @@ impl MediaService {
         }
 
         for (session, binding) in &mut to_release {
+            let session_state_before = session.state();
+            let binding_state_before = binding.state();
             self.release_binding(context, uow, session, binding).await?;
-            uow.media_session_repository().save(session).await?;
-            uow.media_binding_repository().save(binding).await?;
+            if session.state() != session_state_before {
+                uow.media_session_repository().save(session).await?;
+            }
+            if binding.state() != binding_state_before {
+                uow.media_binding_repository().save(binding).await?;
+            }
             reservations_to_release.push(binding.media_binding_id());
             report.missing_released += 1;
         }
@@ -104,6 +110,8 @@ impl MediaService {
             report.sessions_found += reported.len() as u64;
 
             for (mut session, mut binding) in local_list {
+                let session_state_before = session.state();
+                let binding_state_before = binding.state();
                 match reported.get(&session.media_session_id()) {
                     Some(report_ref) => {
                         if report_ref.media_node_instance_epoch
@@ -139,8 +147,12 @@ impl MediaService {
                         report.missing_failed += 1;
                     }
                 }
-                uow.media_session_repository().save(&session).await?;
-                uow.media_binding_repository().save(&binding).await?;
+                if session.state() != session_state_before {
+                    uow.media_session_repository().save(&session).await?;
+                }
+                if binding.state() != binding_state_before {
+                    uow.media_binding_repository().save(&binding).await?;
+                }
             }
 
             for id in reported.keys() {
@@ -160,6 +172,8 @@ impl MediaService {
         // no longer active in the cluster (crashed, deregistered, or expired).
         for (_node_id, sessions) in active_by_node {
             for (mut session, mut binding) in sessions {
+                let session_state_before = session.state();
+                let binding_state_before = binding.state();
                 self.fail_session(
                     context,
                     uow,
@@ -169,8 +183,12 @@ impl MediaService {
                     "media node no longer active",
                 )
                 .await?;
-                uow.media_session_repository().save(&session).await?;
-                uow.media_binding_repository().save(&binding).await?;
+                if session.state() != session_state_before {
+                    uow.media_session_repository().save(&session).await?;
+                }
+                if binding.state() != binding_state_before {
+                    uow.media_binding_repository().save(&binding).await?;
+                }
                 reservations_to_release.push(binding.media_binding_id());
                 report.missing_failed += 1;
             }
