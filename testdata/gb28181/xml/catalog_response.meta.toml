@@ -1,0 +1,5 @@
+source = "synthetic"
+standard = "GB/T 28181-2016"
+profile = "generic"
+expected = "Catalog response with one item, DeviceID=34020000001320000001, Name=Camera 1, Status=ON"
+desensitization = "Device IDs and names are synthetic."

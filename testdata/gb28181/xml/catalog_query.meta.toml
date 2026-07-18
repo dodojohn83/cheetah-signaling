@@ -1,0 +1,5 @@
+source = "synthetic"
+standard = "GB/T 28181-2016"
+profile = "generic"
+expected = "Catalog query with SN=7 and DeviceID=34020000001320000001"
+desensitization = "Device ID and SN are synthetic."

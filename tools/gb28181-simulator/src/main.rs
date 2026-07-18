@@ -386,7 +386,11 @@ async fn on_heartbeat(runtime: &DeviceRuntime) -> Result<(), SimError> {
         return Ok(());
     }
 
-    let xml = build_keepalive(&current_cseq_string(runtime).await, &runtime.device_id, "OK")?;
+    let xml = build_keepalive(
+        &current_cseq_string(runtime).await,
+        &runtime.device_id,
+        "OK",
+    )?;
     let msg = build_message(
         runtime,
         Method::Message,

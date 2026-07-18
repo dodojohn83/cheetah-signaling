@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<Notify>
+    <CmdType>Keepalive</CmdType>
+    <SN>1</SN>
+    <DeviceID>34020000001320000001</DeviceID>
+    <Status>OK</Status>
+</Notify>

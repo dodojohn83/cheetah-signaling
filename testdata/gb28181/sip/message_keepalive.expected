@@ -1,0 +1,16 @@
+MESSAGE sip:platform@example.com SIP/2.0
+Via: SIP/2.0/UDP 192.168.1.1:5060;branch=z9hG4bKkeepalive
+From: <sip:34020000001320000001@example.com>;tag=kptag
+To: <sip:platform@example.com>
+Call-ID: keepalive-1@example.com
+CSeq: 1 MESSAGE
+Content-Type: application/MANSCDP+xml
+Content-Length: 159
+
+<?xml version="1.0"?>
+<Notify>
+    <CmdType>Keepalive</CmdType>
+    <SN>1</SN>
+    <DeviceID>34020000001320000001</DeviceID>
+    <Status>OK</Status>
+</No

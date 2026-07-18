@@ -793,3 +793,6 @@ fn probe_match_response(xaddr: &str, hardware_id: &str, relates_to: Option<&str>
 
     String::from_utf8(out).unwrap_or_default()
 }
+
+#[cfg(test)]
+mod golden_tests;
