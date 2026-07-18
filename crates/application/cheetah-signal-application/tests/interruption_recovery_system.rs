@@ -390,6 +390,9 @@ async fn postgres_nats_brief_interruption_and_recovery() {
     assert_eq!(decoded_final.operation_id(), ptz_final.operation_id);
     delivery_final.ack.ack().await.unwrap();
 
+    // Drop the final UoW so Arc::try_unwrap can check storage references.
+    drop(uow);
+
     Arc::try_unwrap(storage)
         .expect("no outstanding storage references")
         .close()
@@ -406,7 +409,7 @@ async fn wait_until_unreachable(host: &str, port: u16, timeout: Duration) {
     let start = std::time::Instant::now();
     loop {
         if start.elapsed() >= timeout {
-            panic!("port {host}:{port} remained reachable within {timeout:?}");
+            panic!("port {host}:{port} did not become unreachable within {timeout:?}");
         }
         let attempt = tokio::time::timeout(
             Duration::from_millis(200),
@@ -487,7 +490,9 @@ async fn wait_for_command(
         if started.elapsed() >= timeout {
             return None;
         }
-        let delivery = tokio::time::timeout(Duration::from_millis(500), sub.next()).await;
+        // Allow the underlying NATS pull consumer's own operation-timeout retry
+        // loop to run before cancelling, so we do not interrupt healthy polls.
+        let delivery = tokio::time::timeout(Duration::from_secs(2), sub.next()).await;
         match delivery {
             Ok(Ok(Some(d))) => {
                 if let Ok(cmd) = decode_command(&d.envelope)
