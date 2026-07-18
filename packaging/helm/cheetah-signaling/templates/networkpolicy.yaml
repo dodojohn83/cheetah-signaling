@@ -1,0 +1,52 @@
+{{- if .Values.networkPolicy.enabled -}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "cheetah-signaling.fullname" . }}
+  labels:
+    {{- include "cheetah-signaling.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "cheetah-signaling.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # HTTP API and gRPC from pods in the same namespace.
+    - from:
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.service.httpPort }}
+        - protocol: TCP
+          port: {{ .Values.service.grpcPort }}
+    # Additional ingress rules (e.g. device protocol CIDRs) supplied by the operator.
+    {{- with .Values.networkPolicy.additionalIngress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  egress:
+    # DNS (UDP and TCP) is allowed to the cluster DNS service.
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Postgres, NATS, and internal HTTP/gRPC peers in the same namespace.
+    - to:
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 4222
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 9090
+    {{- with .Values.networkPolicy.additionalEgress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}
