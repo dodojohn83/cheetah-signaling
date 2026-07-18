@@ -228,7 +228,7 @@ impl ChannelRepository for SqliteUnitOfWork {
                 deleted = EXCLUDED.deleted,
                 data = EXCLUDED.data,
                 schema_version = EXCLUDED.schema_version
-            WHERE channels.revision = EXCLUDED.revision - 1",
+            WHERE channels.deleted = 1 OR channels.revision = EXCLUDED.revision - 1",
         )
         .bind(channel.tenant_id().as_uuid())
         .bind(channel.device_id().as_uuid())
