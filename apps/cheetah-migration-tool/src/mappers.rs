@@ -10,6 +10,7 @@ use cheetah_signal_types::{
     ResourceId, ResourceKind, ResourceRef, TenantId,
 };
 use std::collections::{BTreeMap, HashMap};
+use std::str::FromStr;
 use uuid::Uuid;
 
 /// Map from (tenant_id, external_id) to the protocol used by the parent device.
@@ -270,6 +271,8 @@ fn protocol_name(protocol: Protocol) -> &'static str {
         Protocol::Jt808 => "jt808",
         Protocol::Isup => "isup",
         Protocol::Plugin => "plugin",
+        Protocol::Homekit => "homekit",
+        Protocol::Matter => "matter",
         Protocol::Unknown => "unknown",
         _ => "unknown",
     }
@@ -296,18 +299,13 @@ fn stable_channel_id(
 }
 
 pub(crate) fn parse_protocol(value: &str) -> Result<Protocol, MigrationError> {
-    match value.to_lowercase().as_str() {
-        "gb28181" => Ok(Protocol::Gb28181),
-        "onvif" => Ok(Protocol::Onvif),
-        "mqtt" => Ok(Protocol::Mqtt),
-        "jt808" => Ok(Protocol::Jt808),
-        "isup" => Ok(Protocol::Isup),
-        "" => Ok(Protocol::Gb28181),
-        _ => Err(MigrationError::InvalidRecord {
-            row: 0,
-            message: format!("unknown protocol: {value}"),
-        }),
+    if value.is_empty() {
+        return Ok(Protocol::Gb28181);
     }
+    Protocol::from_str(value).map_err(|e| MigrationError::InvalidRecord {
+        row: 0,
+        message: e.to_string(),
+    })
 }
 
 fn parse_device_kind(value: &str, entity_type: EntityType) -> DeviceKind {
