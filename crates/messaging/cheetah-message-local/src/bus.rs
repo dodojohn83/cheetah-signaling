@@ -3,7 +3,7 @@
 use cheetah_domain::{Command, CommandBus, DomainError, DomainEvent, EventPublisher};
 use cheetah_message_api::{
     AckHandle, BusError, CommandEnvelope, Delivery, EventEnvelope, RawCommandBus, RawEventBus,
-    Subscription, encode_command, encode_event,
+    Subscription, encode_command,
 };
 use cheetah_signal_types::Event;
 use std::sync::{Mutex, MutexGuard};
@@ -14,17 +14,6 @@ fn lock_mutex<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     match mutex.lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
-    }
-}
-
-fn bus_error_to_domain(err: BusError) -> DomainError {
-    match err {
-        BusError::Busy => DomainError::unavailable("message bus busy"),
-        BusError::Unavailable(msg) => DomainError::unavailable(msg),
-        BusError::InvalidPayload(msg) | BusError::UnsupportedEnvelope(msg) => {
-            DomainError::invalid_argument(msg)
-        }
-        _ => DomainError::internal(err.to_string()),
     }
 }
 
@@ -133,20 +122,17 @@ impl RawEventBus for InProcessMessageBus {
 #[async_trait::async_trait]
 impl CommandBus for InProcessMessageBus {
     async fn send(&self, command: &Command) -> cheetah_domain::Result<()> {
-        let envelope = encode_command(command).map_err(bus_error_to_domain)?;
+        let envelope = encode_command(command).map_err(DomainError::from)?;
         RawCommandBus::send(self, "", &envelope)
             .await
-            .map_err(bus_error_to_domain)
+            .map_err(DomainError::from)
     }
 }
 
 #[async_trait::async_trait]
 impl EventPublisher for InProcessMessageBus {
     async fn publish(&self, event: &Event<DomainEvent>) -> cheetah_domain::Result<()> {
-        let envelope = encode_event(event).map_err(bus_error_to_domain)?;
-        RawEventBus::publish(self, "", &envelope)
-            .await
-            .map_err(bus_error_to_domain)
+        cheetah_message_api::publish_domain_event(self, event).await
     }
 }
 
