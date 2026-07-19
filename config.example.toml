@@ -135,10 +135,36 @@ env_prefix = "CHEETAH_SECRET_"
 # file_dir = "/etc/cheetah/secrets"
 
 [onvif]
-# ONVIF discovery timeout in milliseconds. Default: 0.
-discovery_timeout_ms = 10000
-# ONVIF probe timeout in milliseconds. Default: 0.
+# Whether ONVIF discovery and command processing is enabled.
+enabled = false
+# ONVIF discovery timeout in milliseconds.
+discovery_timeout_ms = 3000
+# ONVIF probe timeout in milliseconds.
 probe_timeout_ms = 5000
+# HTTP connect timeout in milliseconds.
+connect_timeout_ms = 5000
+# HTTP request timeout (includes body download) in milliseconds.
+request_timeout_ms = 15000
+# Maximum response body size in bytes.
+max_response_bytes = 2097152
+# Maximum concurrent HTTP requests per driver client.
+max_concurrent_requests = 32
+# Whether to follow HTTP redirects (each hop re-checked against policy).
+follow_redirects = false
+# Allowed URL schemes for discovered device XAddrs.
+allowed_schemes = ["http", "https"]
+# Allowed destination ports for discovered device XAddrs. Empty allows any.
+allowed_ports = [80, 443]
+# Whether private (RFC 1918) addresses are allowed.
+allow_private = false
+# Whether loopback addresses are allowed.
+allow_loopback = false
+# Whether IPv4 link-local and IPv6 unicast link-local addresses are allowed.
+allow_link_local = false
+# Whether `0.0.0.0` / `::` is allowed.
+allow_unspecified = false
+# Whether domain-name hosts are allowed.
+allow_domain_names = false
 
 [security]
 # Reference to the JWT public key secret. Leave empty to disable JWT auth.

@@ -603,13 +603,25 @@ async fn validate_external_plugins(
 
     let mut validated = 0u32;
     for entry in std::fs::read_dir(&dir)? {
-        let entry = entry?;
+        let entry = match entry {
+            Ok(e) => e,
+            Err(e) => {
+                warn!(error = %e, "skipping unreadable plugin directory entry");
+                continue;
+            }
+        };
         let path = entry.path();
         if path.extension().and_then(|s| s.to_str()) != Some("json") {
             continue;
         }
 
-        let payload = std::fs::read(&path)?;
+        let payload = match std::fs::read(&path) {
+            Ok(p) => p,
+            Err(e) => {
+                warn!(path = %path.display(), error = %e, "skipping unreadable plugin manifest");
+                continue;
+            }
+        };
         let manifest: PluginManifest = match serde_json::from_slice(&payload) {
             Ok(m) => m,
             Err(e) => {
