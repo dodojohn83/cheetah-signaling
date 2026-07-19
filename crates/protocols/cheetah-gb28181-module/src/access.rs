@@ -127,28 +127,24 @@ impl<P: CredentialProvider> Gb28181Access<P> {
             return Err(AccessError::Internal("expected request".to_string()));
         };
 
-        let device_id = device_id_from_request(line, headers)?;
+        let device_id = match device_id_from_request(line, headers) {
+            Ok(id) => id,
+            Err(AccessError::InvalidDeviceId) => {
+                return Ok(self.bad_request_response(&message));
+            }
+            Err(e) => return Err(e),
+        };
         let (contact_uri, contact_expires) = match parse_contact_header(headers) {
             Ok(v) => v,
             Err(AccessError::InvalidContact | AccessError::InvalidExpires) => {
-                return Ok(vec![AccessOutput::SendResponse(build_error_response(
-                    &message,
-                    400,
-                    "Bad Request",
-                    self.next_tag(),
-                ))]);
+                return Ok(self.bad_request_response(&message));
             }
             Err(e) => return Err(e),
         };
         let expires_header = match parse_expires_header(headers) {
             Ok(v) => v,
             Err(AccessError::InvalidExpires) => {
-                return Ok(vec![AccessOutput::SendResponse(build_error_response(
-                    &message,
-                    400,
-                    "Bad Request",
-                    self.next_tag(),
-                ))]);
+                return Ok(self.bad_request_response(&message));
             }
             Err(e) => return Err(e),
         };
@@ -164,14 +160,20 @@ impl<P: CredentialProvider> Gb28181Access<P> {
         let mut authenticated = false;
         if let Some(auth_header) = headers.get(&HeaderName::Authorization) {
             if self.config.auth_policy() == AuthPolicy::Required {
-                let password = self
-                    .credential_provider
-                    .password_for(&device_id)
-                    .ok_or(AccessError::AuthenticationFailed)?;
-                let digest = parse_authorization(auth_header.as_str())
-                    .map_err(|_| AccessError::AuthenticationFailed)?;
+                let password = match self.credential_provider.password_for(&device_id) {
+                    Some(p) => p,
+                    None => return self.authentication_failure_response(&message, now),
+                };
+                let digest = match parse_authorization(auth_header.as_str()) {
+                    Ok(d) => d,
+                    Err(cheetah_gb28181_core::DigestError::Malformed(_)) => {
+                        return Ok(self.bad_request_response(&message));
+                    }
+                    Err(_) => return self.authentication_failure_response(&message, now),
+                };
                 let request_uri = line.uri.encode();
-                self.digest_context
+                if self
+                    .digest_context
                     .validate(
                         &digest,
                         &Method::Register,
@@ -180,7 +182,10 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                         &mut self.replay_cache,
                         now,
                     )
-                    .map_err(|_| AccessError::AuthenticationFailed)?;
+                    .is_err()
+                {
+                    return self.authentication_failure_response(&message, now);
+                }
                 authenticated = true;
             } else if let Some(password) = self.credential_provider.password_for(&device_id)
                 && let Ok(digest) = parse_authorization(auth_header.as_str())
@@ -474,6 +479,31 @@ impl<P: CredentialProvider> Gb28181Access<P> {
     fn next_tag(&self) -> String {
         let n = self.tag_counter.fetch_add(1, Ordering::Relaxed);
         format!("gb{n}")
+    }
+
+    fn bad_request_response(&self, request: &SipMessage) -> Vec<AccessOutput> {
+        vec![AccessOutput::SendResponse(build_error_response(
+            request,
+            400,
+            "Bad Request",
+            self.next_tag(),
+        ))]
+    }
+
+    fn authentication_failure_response(
+        &self,
+        request: &SipMessage,
+        now: u64,
+    ) -> Result<Vec<AccessOutput>, AccessError> {
+        let challenge = self
+            .digest_context
+            .generate_challenge(now)
+            .map_err(|e| AccessError::Internal(e.to_string()))?;
+        Ok(vec![AccessOutput::SendResponse(build_challenge_response(
+            request,
+            &challenge,
+            self.next_tag(),
+        ))])
     }
 }
 

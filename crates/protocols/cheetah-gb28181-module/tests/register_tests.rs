@@ -1063,3 +1063,127 @@ fn register_rejects_malformed_contact_expires_param() {
         AccessOutput::SendResponse(SipMessage::Response { line, .. }) if line.code == 400
     ));
 }
+
+#[test]
+fn register_rejects_missing_device_id_with_400() {
+    let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec())
+        .unwrap()
+        .with_auth_policy(AuthPolicy::ChallengeOptional);
+    let provider = |_device: &DeviceId| None;
+    let mut access = Gb28181Access::new(config, provider).unwrap();
+
+    let request = make_register_request_without_device_id(1, 3600);
+    let outputs = access
+        .process(AccessInput {
+            source: "192.168.1.100:5060".parse().unwrap(),
+            now: 1000,
+            message: request,
+        })
+        .unwrap();
+    assert_eq!(outputs.len(), 1);
+    let response = find_response(&outputs);
+    let SipMessage::Response { line, .. } = response else {
+        panic!("expected response");
+    };
+    assert_eq!(line.code, 400);
+}
+
+#[test]
+fn register_required_rejects_malformed_authorization_with_400() {
+    let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec()).unwrap();
+    let provider = |device: &DeviceId| {
+        if device.as_ref() == DEVICE_ID {
+            Some(SecretString::from(PASSWORD))
+        } else {
+            None
+        }
+    };
+    let mut access = Gb28181Access::new(config, provider).unwrap();
+
+    let mut request = make_request(1, false);
+    request.headers_mut().append(
+        HeaderName::Authorization,
+        HeaderValue::new("Basic dXNlcjpwYXNz"),
+    );
+    let outputs = access
+        .process(AccessInput {
+            source: "192.168.1.100:5060".parse().unwrap(),
+            now: 1000,
+            message: request,
+        })
+        .unwrap();
+    assert_eq!(outputs.len(), 1);
+    let response = find_response(&outputs);
+    let SipMessage::Response { line, .. } = response else {
+        panic!("expected response");
+    };
+    assert_eq!(line.code, 400);
+}
+
+#[test]
+fn register_required_rejects_invalid_credentials_with_401() {
+    let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec()).unwrap();
+    let provider = |device: &DeviceId| {
+        if device.as_ref() == DEVICE_ID {
+            Some(SecretString::from(PASSWORD))
+        } else {
+            None
+        }
+    };
+    let mut access = Gb28181Access::new(config, provider).unwrap();
+
+    let mut request = make_request(1, false);
+    request.headers_mut().append(
+        HeaderName::Authorization,
+        HeaderValue::new(format!(
+            "username=\"{}\", realm=\"{}\", nonce=\"deadbeef\", uri=\"sip:{}@{}\", response=\"0000000000000000000000000000000000000000000000000000000000000000\", algorithm=\"SHA-256\"",
+            DEVICE_ID, REALM, DEVICE_ID, REALM
+        )),
+    );
+    let outputs = access
+        .process(AccessInput {
+            source: "192.168.1.100:5060".parse().unwrap(),
+            now: 1000,
+            message: request,
+        })
+        .unwrap();
+    assert_eq!(outputs.len(), 1);
+    let response = find_response(&outputs);
+    let SipMessage::Response { line, headers, .. } = response else {
+        panic!("expected response");
+    };
+    assert_eq!(line.code, 401);
+    assert!(headers.get(&HeaderName::WwwAuthenticate).is_some());
+}
+
+fn make_register_request_without_device_id(cseq: u32, expires: u32) -> SipMessage {
+    let mut headers = SipHeaders::new();
+    headers.append(
+        HeaderName::Via,
+        HeaderValue::new("SIP/2.0/UDP 192.168.1.100:5060;branch=z9hG4bKabc"),
+    );
+    headers.append(
+        HeaderName::From,
+        HeaderValue::new("<sip:example.com>;tag=fromtag"),
+    );
+    headers.append(HeaderName::To, HeaderValue::new("<sip:example.com>"));
+    headers.append(HeaderName::CallId, HeaderValue::new("call-id-no-device"));
+    headers.append(
+        HeaderName::CSeq,
+        HeaderValue::new(format!("{cseq} REGISTER")),
+    );
+    headers.append(
+        HeaderName::Contact,
+        HeaderValue::new(format!(
+            "<sip:{DEVICE_ID}@192.168.1.100:5060>;expires={expires}"
+        )),
+    );
+    headers.append(HeaderName::UserAgent, HeaderValue::new("IPC"));
+    headers.append(HeaderName::ContentLength, HeaderValue::new("0"));
+
+    SipMessage::Request {
+        line: RequestLine::new(Method::Register, SipUri::parse("sip:example.com").unwrap()),
+        headers,
+        body: Vec::new(),
+    }
+}
