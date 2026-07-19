@@ -165,6 +165,30 @@ allow_link_local = false
 allow_unspecified = false
 # Whether domain-name hosts are allowed.
 allow_domain_names = false
+# Multicast group for WS-Discovery Probe. Default: 239.255.255.250:3702.
+discovery_multicast = "239.255.255.250:3702"
+# Local bind address for discovery sockets. Default: 0.0.0.0:0.
+discovery_bind = "0.0.0.0:0"
+# Maximum XML body size accepted for parsing discovery datagrams. Default: 65536.
+discovery_max_datagram_bytes = 65536
+# Maximum XML element depth for discovery datagrams. Default: 64.
+discovery_max_xml_depth = 64
+# Maximum XML elements to visit while parsing a discovery datagram. Default: 4096.
+discovery_max_xml_nodes = 4096
+# Maximum matched devices returned from a single ProbeMatches. Default: 256.
+discovery_max_matches = 256
+# Per-source rate limit window in seconds. Default: 60.
+discovery_rate_window_seconds = 60
+# Maximum discovery datagrams per source IP within the window. Default: 120.
+discovery_rate_max_per_source = 120
+# Maximum distinct source IPs tracked by the discovery rate limiter. Default: 1024.
+discovery_rate_max_sources = 1024
+# Interval between discovery sweeps in milliseconds. Zero disables periodic discovery. Default: 0.
+discovery_interval_ms = 0
+# Maximum concurrent device detail probes during a discovery sweep. Default: 8.
+max_concurrent_probes = 8
+# Optional default tenant UUID for discovered ONVIF devices. Required for provisioning.
+# default_tenant_id = "00000000-0000-0000-0000-000000000000"
 
 [security]
 # Reference to the JWT public key secret. Leave empty to disable JWT auth.
