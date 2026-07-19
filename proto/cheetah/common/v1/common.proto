@@ -5,6 +5,7 @@ package cheetah.common.v1;
 import "cheetah/cluster/v1/cluster.proto";
 import "cheetah/control/v1/control.proto";
 import "cheetah/device/v1/device.proto";
+import "cheetah/foundation/v1/error.proto";
 import "cheetah/media/v1/media.proto";
 import "cheetah/plugin/v1/plugin.proto";
 import "google/protobuf/timestamp.proto";
@@ -19,20 +20,6 @@ message Uuid {
 // A duration in milliseconds.
 message DurationMillis {
   int64 milliseconds = 1;
-}
-
-// A field level validation failure.
-message FieldViolation {
-  string field = 1;
-  string description = 2;
-}
-
-// A safe error status suitable for wire responses.
-message ErrorStatus {
-  string code = 1;
-  string message = 2;
-  bool retryable = 3;
-  repeated FieldViolation violations = 4;
 }
 
 // Kinds of resources that can be referenced.
@@ -85,7 +72,7 @@ enum CommandStatus {
 message CommandResult {
   CommandStatus status = 1;
   string operation_id = 2;
-  ErrorStatus error = 3;
+  cheetah.foundation.v1.ErrorStatus error = 3;
 }
 
 // Metadata carried on every envelope.

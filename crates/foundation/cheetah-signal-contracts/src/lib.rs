@@ -4,12 +4,24 @@
 
 /// Cheetah package namespace.
 pub mod cheetah {
+    /// Foundation types shared across all domains.
+    pub mod foundation {
+        /// Version 1 foundation types.
+        #[allow(missing_docs, missing_debug_implementations, clippy::large_enum_variant)]
+        pub mod v1 {
+            include!(concat!(env!("OUT_DIR"), "/cheetah.foundation.v1.rs"));
+        }
+    }
+
     /// Common shared types and services.
     pub mod common {
         /// Version 1 common types and services.
         #[allow(missing_docs, missing_debug_implementations, clippy::large_enum_variant)]
         pub mod v1 {
             include!(concat!(env!("OUT_DIR"), "/cheetah.common.v1.rs"));
+            // Re-export foundation error types so existing consumers that imported
+            // them from cheetah.common.v1 keep compiling.
+            pub use super::super::foundation::v1::{ErrorStatus, FieldViolation};
         }
     }
 

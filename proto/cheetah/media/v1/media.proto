@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package cheetah.media.v1;
 
+import "cheetah/foundation/v1/error.proto";
 import "cheetah/media/v1/media_context.proto";
 import "cheetah/media/v1/media_resource.proto";
 import "google/protobuf/timestamp.proto";
@@ -190,26 +191,20 @@ enum ErrorOutcome {
   ERROR_OUTCOME_UNKNOWN = 3;
 }
 
-// A field-level validation violation.
-message FieldViolation {
-  string field = 1;
-  string description = 2;
-}
-
 // Wire-safe error emitted by media processing.
 message MediaError {
   // Deprecated: use resource_ref for the affected session reference.
   MediaSessionRef session = 1 [deprecated = true];
-  string error_code = 2;
-  // Deprecated: use safe_message.
+  // Deprecated: use status.code.
+  string error_code = 2 [deprecated = true];
+  // Deprecated: use status.message.
   string error_message = 3 [deprecated = true];
-  string safe_message = 4;
-  bool retryable = 5;
-  repeated FieldViolation violations = 6;
-  string request_id = 7;
-  string correlation_id = 8;
-  MediaSessionRef resource_ref = 9;
-  ErrorOutcome outcome = 10;
+  // Shared safe error shape. New consumers should read status.code/message/retryable/violations.
+  cheetah.foundation.v1.ErrorStatus status = 4;
+  string request_id = 5;
+  string correlation_id = 6;
+  MediaSessionRef resource_ref = 7;
+  ErrorOutcome outcome = 8;
 }
 
 // Capacity advertised at registration.
