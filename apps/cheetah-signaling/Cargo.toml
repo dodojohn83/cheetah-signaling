@@ -23,6 +23,7 @@ cheetah-storage-postgres = { path = "../../crates/storage/cheetah-storage-postgr
 cheetah-message-local = { path = "../../crates/messaging/cheetah-message-local" }
 cheetah-gb28181-module = { path = "../../crates/protocols/cheetah-gb28181-module" }
 cheetah-gb28181-driver-tokio = { path = "../../crates/protocols/cheetah-gb28181-driver-tokio" }
+cheetah-secret = { path = "../../crates/foundation/cheetah-secret" }
 async-trait = { workspace = true }
 hex = { workspace = true }
 secrecy = { workspace = true }

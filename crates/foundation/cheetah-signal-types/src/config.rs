@@ -63,6 +63,8 @@ pub struct SignalConfig {
     pub onvif: OnvifConfig,
     /// Security and authentication settings.
     pub security: SecurityConfig,
+    /// Secret provider configuration.
+    pub secret: SecretConfig,
     /// Observability settings.
     pub observability: ObservabilityConfig,
 }
@@ -291,6 +293,8 @@ pub struct StorageConfig {
         deserialize_with = "deserialize_secret_string"
     )]
     pub postgres_url: SecretString,
+    /// Secret reference for the PostgreSQL URL. When set, takes precedence over `postgres_url`.
+    pub postgres_url_ref: Option<String>,
     /// Maximum connection pool size.
     pub max_connections: u32,
     /// Connection acquisition timeout.
@@ -303,6 +307,7 @@ impl Default for StorageConfig {
             backend: StorageBackend::Sqlite,
             sqlite_path: "/var/lib/cheetah/cheetah.db".to_string(),
             postgres_url: SecretString::default(),
+            postgres_url_ref: None,
             max_connections: 10,
             connection_timeout_ms: DurationMs::from_seconds(5),
         }
@@ -330,6 +335,8 @@ pub struct MessagingConfig {
     pub backend: MessagingBackend,
     /// NATS server URL.
     pub nats_url: String,
+    /// Secret reference for the NATS URL. When set, takes precedence over `nats_url`.
+    pub nats_url_ref: Option<String>,
     /// JetStream domain.
     pub jetstream_domain: String,
     /// Maximum pending messages per consumer.
@@ -408,6 +415,11 @@ pub struct Gb28181Config {
     pub sip_port: u16,
     /// Media stream timeout.
     pub media_stream_timeout_ms: DurationMs,
+    /// Secret reference for the hex-encoded SIP digest secret used by this node.
+    pub digest_secret_ref: Option<String>,
+    /// Optional secret reference template for per-device SIP passwords.
+    /// `{device_id}` is replaced with the GB device ID.
+    pub device_password_ref: Option<String>,
 }
 
 /// ONVIF protocol configuration.
@@ -450,6 +462,26 @@ pub struct SecurityConfig {
     pub static_api_key: SecretString,
     /// Token time to live in milliseconds.
     pub token_ttl_ms: DurationMs,
+}
+
+/// Secret provider configuration.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+#[serde(deny_unknown_fields)]
+pub struct SecretConfig {
+    /// Environment variable prefix for the env-backed secret store.
+    pub env_prefix: String,
+    /// Optional directory to read file-backed secrets from.
+    pub file_dir: Option<String>,
+}
+
+impl Default for SecretConfig {
+    fn default() -> Self {
+        Self {
+            env_prefix: "CHEETAH_SECRET_".to_string(),
+            file_dir: None,
+        }
+    }
 }
 
 /// Observability configuration.

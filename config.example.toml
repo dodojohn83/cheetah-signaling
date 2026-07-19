@@ -52,10 +52,12 @@ port = 50051
 backend = "sqlite"
 # SQLite database path. Used when backend = "sqlite".
 sqlite_path = "/var/lib/cheetah/cheetah.db"
-# PostgreSQL URL. Used when backend = "postgres". Format:
-# postgresql://user:password@host:port/database
+# PostgreSQL URL. Used when backend = "postgres" and postgres_url_ref is not set.
+# Format: postgresql://user:password@host:port/database
 # Keep credentials in a secret manager or env var; do not commit this file.
 postgres_url = ""
+# Optional secret reference for the PostgreSQL URL; takes precedence over postgres_url.
+# postgres_url_ref = "database.postgres"
 # Connection pool size. Default: 10.
 max_connections = 10
 # Connection acquisition timeout in milliseconds. Default: 5000.
@@ -64,8 +66,10 @@ connection_timeout_ms = 5000
 [messaging]
 # Backend: "local" or "nats". Default: "local" (edge single-node).
 backend = "local"
-# NATS server URL. Required when backend = "nats".
+# NATS server URL. Used when backend = "nats" and nats_url_ref is not set.
 nats_url = ""
+# Optional secret reference for the NATS URL; takes precedence over nats_url.
+# nats_url_ref = "messaging.nats"
 # JetStream domain. Leave empty for default.
 jetstream_domain = ""
 # Maximum pending messages per consumer. Default: 0 (unbounded in local mode).
@@ -101,8 +105,20 @@ max_plugin_instances = 8
 sip_domain = ""
 # Local SIP port. Default: 0 (disabled).
 sip_port = 5060
+# Secret reference for the hex-encoded SIP digest secret. Required when sip_port > 0.
+# The secret is resolved from the secret store; with the default env prefix this is
+# looked up as CHEETAH_SECRET_GB28181_DIGEST.
+digest_secret_ref = "gb28181.digest"
+# Optional secret reference template for per-device passwords. {device_id} is replaced.
+# device_password_ref = "gb28181.devices.{device_id}.password"
 # Media stream keep-alive timeout in milliseconds. Default: 0.
 media_stream_timeout_ms = 30000
+
+[secret]
+# Prefix for environment-variable-backed secrets. Default: "CHEETAH_SECRET_".
+env_prefix = "CHEETAH_SECRET_"
+# Optional directory for file-backed secrets. Leave empty to disable.
+# file_dir = "/etc/cheetah/secrets"
 
 [onvif]
 # ONVIF discovery timeout in milliseconds. Default: 0.

@@ -1065,6 +1065,7 @@ dependencies = [
  "cheetah-message-local",
  "cheetah-runtime-api",
  "cheetah-runtime-tokio",
+ "cheetah-secret",
  "cheetah-signal-application",
  "cheetah-signal-contracts",
  "cheetah-signal-types",

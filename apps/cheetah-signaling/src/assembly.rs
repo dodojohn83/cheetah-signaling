@@ -17,11 +17,12 @@ use cheetah_gb28181_module::ports::CredentialProvider;
 use cheetah_gb28181_module::types::DeviceId as GbDeviceId;
 use cheetah_http_api::state::{ApiConfig, ApiServer, ApiState};
 use cheetah_message_local::InProcessMessageBus;
+use cheetah_secret::{CompositeSecretStore, EnvSecretStore, FileSecretStore};
 use cheetah_signal_application::OutboxRelay;
 use cheetah_signal_types::config::{SignalConfig, StorageBackend};
 use cheetah_signal_types::{
     ChannelId, Clock, DeviceId, DurationMs, IdGenerator, MediaBindingId, MediaSessionId, NodeId,
-    Page, PageRequest, TenantId, UtcTimestamp,
+    Page, PageRequest, SecretStore, TenantId, UtcTimestamp,
 };
 use cheetah_storage_api::Storage;
 use cheetah_storage_sqlite::SqliteStorage;
@@ -244,17 +245,40 @@ impl MediaPort for UnsupportedMediaPort {
     }
 }
 
-/// Credential provider that never returns a device password.
+/// Credential provider backed by the process secret store.
 ///
-/// Domain config uses `ChallengeOptional` so REGISTER can complete challenge
-/// negotiation without a pre-provisioned password store. Production assemblies
-/// should replace this with a SecretStore-backed provider.
-#[derive(Debug, Default)]
-struct NoPasswordProvider;
+/// The configured `device_password_ref` template may contain the `{device_id}`
+/// placeholder, which is replaced with the GB28181 device identifier before the
+/// secret store is queried. Missing optional secrets return `None` so the domain
+/// can fall back to challenge-based authentication when enabled.
+#[derive(Clone)]
+struct SecretStoreCredentialProvider {
+    store: Arc<dyn SecretStore>,
+    ref_template: Option<String>,
+}
 
-impl CredentialProvider for NoPasswordProvider {
-    fn password_for(&self, _device_id: &GbDeviceId) -> Option<SecretString> {
-        None
+impl std::fmt::Debug for SecretStoreCredentialProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SecretStoreCredentialProvider")
+            .field("ref_template", &self.ref_template)
+            .finish_non_exhaustive()
+    }
+}
+
+impl SecretStoreCredentialProvider {
+    fn new(store: Arc<dyn SecretStore>, ref_template: Option<String>) -> Self {
+        Self {
+            store,
+            ref_template,
+        }
+    }
+}
+
+impl CredentialProvider for SecretStoreCredentialProvider {
+    fn password_for(&self, device_id: &GbDeviceId) -> Option<SecretString> {
+        let template = self.ref_template.as_ref()?;
+        let key = template.replace("{device_id}", device_id.as_ref());
+        self.store.get(&key).ok()
     }
 }
 
@@ -268,22 +292,33 @@ impl EventSink for TracingGbEventSink {
     }
 }
 
-fn gb28181_digest_secret() -> Result<SecretSlice<u8>, Box<dyn std::error::Error + Send + Sync>> {
-    if let Ok(hex_secret) = std::env::var("CHEETAH_GB28181_DIGEST_SECRET") {
-        let bytes = hex::decode(hex_secret.trim())
-            .map_err(|e| format!("CHEETAH_GB28181_DIGEST_SECRET must be hex-encoded: {e}"))?;
-        if bytes.len() < 32 {
-            return Err("CHEETAH_GB28181_DIGEST_SECRET must decode to at least 32 bytes".into());
-        }
-        return Ok(SecretSlice::from(bytes));
+/// Builds the process secret store from the configured sources.
+fn build_secret_store(config: &SignalConfig) -> Arc<dyn SecretStore> {
+    let env_store = EnvSecretStore::with_prefix(&config.secret.env_prefix);
+    let mut stores: Vec<Arc<dyn SecretStore>> = vec![Arc::new(env_store) as Arc<dyn SecretStore>];
+    if let Some(dir) = config.secret.file_dir.as_deref() {
+        stores.push(Arc::new(FileSecretStore::new(dir)) as Arc<dyn SecretStore>);
     }
-    // Development fallback only; log a warning when used.
-    warn!(
-        "CHEETAH_GB28181_DIGEST_SECRET unset; using development digest secret. Set a hex secret of >=32 bytes for production."
-    );
-    Ok(SecretSlice::from(
-        b"cheetah-dev-digest-secret-min-32-bytes!!".to_vec(),
-    ))
+    Arc::new(CompositeSecretStore::new(stores)) as Arc<dyn SecretStore>
+}
+
+/// Resolves the GB28181 SIP digest secret from the secret store.
+fn resolve_gb28181_digest_secret(
+    secret_store: &dyn SecretStore,
+    ref_key: &str,
+) -> Result<SecretSlice<u8>, Box<dyn std::error::Error + Send + Sync>> {
+    let secret = secret_store
+        .get(ref_key)
+        .map_err(|e| format!("failed to resolve gb28181 digest secret ({ref_key}): {e}"))?;
+    let hex_secret = secret.expose_secret();
+    let bytes = hex::decode(hex_secret.trim())
+        .map_err(|e| format!("gb28181 digest secret ({ref_key}) must be hex-encoded: {e}"))?;
+    if bytes.len() < 32 {
+        return Err(
+            format!("gb28181 digest secret ({ref_key}) must decode to at least 32 bytes").into(),
+        );
+    }
+    Ok(SecretSlice::from(bytes))
 }
 
 /// Assembles storage, local bus, application services, protocol drivers and the HTTP API.
@@ -291,6 +326,8 @@ pub async fn start(
     config: SignalConfig,
 ) -> Result<SignalingRuntime, Box<dyn std::error::Error + Send + Sync>> {
     config.validate()?;
+
+    let secret_store = build_secret_store(&config);
 
     let clock: Arc<dyn Clock> = Arc::new(SystemClock::new());
     let id_generator: Arc<dyn IdGenerator> = Arc::new(UuidIdGenerator);
@@ -309,9 +346,21 @@ pub async fn start(
             Arc::new(sqlite)
         }
         StorageBackend::Postgres => {
-            let url = config.storage.postgres_url.expose_secret().to_string();
+            let url = if let Some(ref_key) = config.storage.postgres_url_ref.as_deref() {
+                secret_store
+                    .get(ref_key)
+                    .map_err(|e| {
+                        format!("failed to resolve storage.postgres_url_ref ({ref_key}): {e}")
+                    })?
+                    .expose_secret()
+                    .to_string()
+            } else {
+                config.storage.postgres_url.expose_secret().to_string()
+            };
             if url.is_empty() {
-                return Err("storage.postgres_url is required when backend=postgres".into());
+                return Err(
+                    "storage.postgres_url or storage.postgres_url_ref is required when backend=postgres".into(),
+                );
             }
             let pg = cheetah_storage_postgres::PostgresStorage::new(&url).await?;
             pg.migration().run().await?;
@@ -369,16 +418,26 @@ pub async fn start(
             config.gb28181.sip_domain.clone()
         };
         let realm = domain_id.clone();
-        let digest_secret = gb28181_digest_secret()?;
+        let digest_ref = config
+            .gb28181
+            .digest_secret_ref
+            .as_deref()
+            .ok_or("gb28181.digest_secret_ref is required when sip_port > 0")?;
+        let digest_secret = resolve_gb28181_digest_secret(&*secret_store, digest_ref)?;
         let domain_config = Gb28181DomainConfig::new(&domain_id, &realm, digest_secret)
             .map_err(|e| format!("gb28181 domain config: {e}"))?
             .with_auth_policy(AuthPolicy::ChallengeOptional);
+
+        let credential_provider = SecretStoreCredentialProvider::new(
+            secret_store.clone(),
+            config.gb28181.device_password_ref.clone(),
+        );
 
         let bind = SocketAddr::from(([0, 0, 0, 0], config.gb28181.sip_port));
         let driver_config = GbDriverConfig::new(bind);
         let sink: Arc<dyn EventSink> = Arc::new(TracingGbEventSink);
         let (driver, local) =
-            Gb28181UdpDriver::bind(driver_config, domain_config, NoPasswordProvider, sink)
+            Gb28181UdpDriver::bind(driver_config, domain_config, credential_provider, sink)
                 .await
                 .map_err(|e| format!("gb28181 bind failed: {e}"))?;
         gb28181_addr = Some(local);
