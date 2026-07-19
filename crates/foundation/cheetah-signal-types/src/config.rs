@@ -144,7 +144,76 @@ impl SignalConfig {
                 "media.default_invite_timeout_ms must be greater than zero",
             ));
         }
+        let inferred = self.infer_deployment_profile()?;
+        match inferred {
+            DeploymentProfile::Edge => {
+                if self.storage.backend != StorageBackend::Sqlite {
+                    return Err(SignalError::new(
+                        SignalErrorKind::InvalidArgument,
+                        "edge profile requires storage.backend = \"sqlite\"",
+                    ));
+                }
+                if self.messaging.backend != MessagingBackend::Local {
+                    return Err(SignalError::new(
+                        SignalErrorKind::InvalidArgument,
+                        "edge profile requires messaging.backend = \"local\"",
+                    ));
+                }
+                if self.cluster.enabled {
+                    return Err(SignalError::new(
+                        SignalErrorKind::InvalidArgument,
+                        "edge profile requires cluster.enabled = false",
+                    ));
+                }
+            }
+            DeploymentProfile::Cluster => {
+                if self.storage.backend != StorageBackend::Postgres {
+                    return Err(SignalError::new(
+                        SignalErrorKind::InvalidArgument,
+                        "cluster profile requires storage.backend = \"postgres\"",
+                    ));
+                }
+                if self.messaging.backend != MessagingBackend::Nats {
+                    return Err(SignalError::new(
+                        SignalErrorKind::InvalidArgument,
+                        "cluster profile requires messaging.backend = \"nats\"",
+                    ));
+                }
+                if !self.cluster.enabled {
+                    return Err(SignalError::new(
+                        SignalErrorKind::InvalidArgument,
+                        "cluster profile requires cluster.enabled = true",
+                    ));
+                }
+            }
+        }
         Ok(())
+    }
+
+    /// Returns the effective deployment profile, inferring it from the other
+    /// backend settings when the profile is not explicitly set.
+    fn infer_deployment_profile(&self) -> Result<DeploymentProfile> {
+        match &self.system.profile {
+            Some(profile) => Ok(profile.clone()),
+            None => {
+                if self.storage.backend == StorageBackend::Postgres
+                    && self.messaging.backend == MessagingBackend::Nats
+                    && self.cluster.enabled
+                {
+                    Ok(DeploymentProfile::Cluster)
+                } else if self.storage.backend == StorageBackend::Sqlite
+                    && self.messaging.backend == MessagingBackend::Local
+                    && !self.cluster.enabled
+                {
+                    Ok(DeploymentProfile::Edge)
+                } else {
+                    Err(SignalError::new(
+                        SignalErrorKind::InvalidArgument,
+                        "could not infer deployment profile from storage/messaging/cluster settings; set system.profile explicitly",
+                    ))
+                }
+            }
+        }
     }
 
     /// Generates a TOML example of the default configuration.
@@ -160,6 +229,18 @@ impl SignalConfig {
     }
 }
 
+/// Deployment profile for the signaling process.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, Eq, PartialEq, Hash)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum DeploymentProfile {
+    /// Single-node edge deployment with SQLite and local bus.
+    #[default]
+    Edge,
+    /// Clustered deployment with PostgreSQL, NATS and ownership.
+    Cluster,
+}
+
 /// System level configuration.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
@@ -173,6 +254,8 @@ pub struct SystemConfig {
     pub log_level: String,
     /// Optional node id for stable identity.
     pub node_id: Option<NodeId>,
+    /// Deployment profile. If omitted, it is inferred from storage/messaging/cluster settings.
+    pub profile: Option<DeploymentProfile>,
 }
 
 impl Default for SystemConfig {
@@ -182,6 +265,7 @@ impl Default for SystemConfig {
             data_dir: String::new(),
             log_level: "info".to_string(),
             node_id: None,
+            profile: None,
         }
     }
 }

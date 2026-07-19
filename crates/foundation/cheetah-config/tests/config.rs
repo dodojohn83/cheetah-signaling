@@ -1,7 +1,7 @@
 //! Integration tests for cheetah-config.
 
 use cheetah_config::LayeredConfigSource;
-use cheetah_signal_types::{ConfigSource, DurationMs, SignalError};
+use cheetah_signal_types::{ConfigSource, DeploymentProfile, DurationMs, SignalError};
 use std::fs;
 use std::path::PathBuf;
 
@@ -80,6 +80,88 @@ fn invalid_config_fails_validation() {
     let content = r#"
 [runtime]
 worker_threads = 0
+"#;
+    let _ = fs::write(&path, content);
+
+    let source = LayeredConfigSource::new().with_config_path(&path);
+    let result = source.snapshot();
+    assert!(result.is_err());
+
+    let _ = fs::remove_file(&path);
+}
+
+#[test]
+fn cluster_profile_requires_postgres_nats_and_cluster_enabled() -> Result<(), SignalError> {
+    let path = temp_config_path("cluster");
+    let content = r#"
+[system]
+profile = "cluster"
+
+[storage]
+backend = "postgres"
+postgres_url = "postgres://u:p@localhost/cheetah"
+
+[messaging]
+backend = "nats"
+
+[cluster]
+enabled = true
+"#;
+    fs::write(&path, content).map_err(|e| {
+        SignalError::new(
+            cheetah_signal_types::SignalErrorKind::Internal,
+            "failed to write temp file",
+        )
+        .with_source(e)
+    })?;
+
+    let source = LayeredConfigSource::new().with_config_path(&path);
+    let config = source.snapshot()?;
+    assert_eq!(config.system.profile, Some(DeploymentProfile::Cluster));
+
+    let _ = fs::remove_file(&path);
+    Ok(())
+}
+
+#[test]
+fn cluster_profile_is_inferred_when_omitted() -> Result<(), SignalError> {
+    let path = temp_config_path("cluster-inferred");
+    let content = r#"
+[storage]
+backend = "postgres"
+postgres_url = "postgres://u:p@localhost/cheetah"
+
+[messaging]
+backend = "nats"
+
+[cluster]
+enabled = true
+"#;
+    fs::write(&path, content).map_err(|e| {
+        SignalError::new(
+            cheetah_signal_types::SignalErrorKind::Internal,
+            "failed to write temp file",
+        )
+        .with_source(e)
+    })?;
+
+    let source = LayeredConfigSource::new().with_config_path(&path);
+    let config = source.snapshot()?;
+    assert_eq!(config.system.profile, None);
+
+    let _ = fs::remove_file(&path);
+    Ok(())
+}
+
+#[test]
+fn edge_profile_rejects_postgres_backend() {
+    let path = temp_config_path("edge-postgres");
+    let content = r#"
+[system]
+profile = "edge"
+
+[storage]
+backend = "postgres"
 "#;
     let _ = fs::write(&path, content);
 

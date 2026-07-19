@@ -5,6 +5,11 @@
 # Values shown here are examples; defaults are noted per field.
 
 [system]
+# Deployment profile: "edge" or "cluster".
+# edge: SQLite + local bus, single-node, cluster disabled.
+# cluster: PostgreSQL + NATS + ownership, cluster enabled.
+# If omitted, the profile is inferred from storage/messaging/cluster settings.
+profile = "edge"
 # Human-readable node name. Default: "" (auto-generated).
 node_name = "cheetah-edge-01"
 # Data directory for SQLite, logs and local state. Must be writable.
