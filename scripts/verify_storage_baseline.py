@@ -30,29 +30,22 @@ def run(cmd, **kwargs):
 
 
 def list_migration_files():
-    """Return list of .sql migration files under crates/storage/*/migrations."""
-    dirs = sorted((REPO / "crates" / "storage").glob("*/migrations"))
+    """Return list of .sql migration files under migrations/postgres and migrations/sqlite."""
     files = []
-    for d in dirs:
-        files.extend(sorted(d.rglob("*.sql")))
+    for backend in ("postgres", "sqlite"):
+        d = REPO / "migrations" / backend
+        if d.exists():
+            files.extend(sorted(d.glob("*.sql")))
     return files
 
 
 def check_migrations_append_only(migrations):
-    """Verify migrations are organized by version directories."""
+    """Verify migration files follow the NNNN__name.sql convention."""
     errors = []
     for path in migrations:
         rel = path.relative_to(REPO)
-        parts = rel.parts
-        if "migrations" not in parts:
-            continue
-        # Expect migrations/<version>/... structure.
-        idx = parts.index("migrations")
-        if idx + 1 >= len(parts):
-            continue
-        version_dir = parts[idx + 1]
-        if not re.match(r"^\d{14}(_[a-z0-9_]+)?$", version_dir):
-            errors.append(f"unexpected migration layout: {rel}")
+        if not re.match(r"^\d{4}__[a-z0-9_]+\.sql$", path.name):
+            errors.append(f"unexpected migration filename: {rel}")
     return errors
 
 

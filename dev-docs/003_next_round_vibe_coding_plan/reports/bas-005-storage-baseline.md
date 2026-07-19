@@ -1,10 +1,10 @@
 # BAS-005: Storage and Migration Baseline
 
 - SQLite/PostgreSQL contract suite return code: 0
-- SQLite/PostgreSQL contract suite elapsed: 4.85s
+- SQLite/PostgreSQL contract suite elapsed: 4.50s
 - Storage adapter tests return code: 0
-- Storage adapter tests elapsed: 1.28s
-- Migration files scanned: 0
+- Storage adapter tests elapsed: 1.32s
+- Migration files scanned: 14
 - Migration append-only errors: 0
 
 ## Commands run
@@ -26,7 +26,7 @@ The shared contract suite in `crates/testing/cheetah-storage-tests/src/contract.
 running 1 test
 test postgres_contract_suite ... ok
 
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.57s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.54s
 
 
 running 1 test
