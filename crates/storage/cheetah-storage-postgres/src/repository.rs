@@ -11,6 +11,7 @@ use cheetah_domain::{
     ProcessedMessageStatus,
 };
 use cheetah_signal_types::{DeviceId, Event, MessageId, Page, PageRequest, TenantId, UtcTimestamp};
+use cheetah_storage_api::stored_revision_as_u64;
 use sqlx::FromRow;
 use sqlx::types::Json;
 use time::OffsetDateTime;
@@ -146,7 +147,10 @@ impl DeviceRepository for PostgresUnitOfWork {
                     .fetch_optional(self.tx().await?.as_mut())
                     .await
                     .map_err(sqlx_to_domain)?;
-            let found = found.and_then(|(r,)| u64::try_from(r).ok()).unwrap_or(0);
+            let found = match found {
+                Some((r,)) => stored_revision_as_u64(r)?,
+                None => 0,
+            };
             return Err(concurrent_modification_error(
                 device.revision().0.saturating_sub(1),
                 found,
@@ -264,7 +268,10 @@ impl ChannelRepository for PostgresUnitOfWork {
             .fetch_optional(self.tx().await?.as_mut())
             .await
             .map_err(sqlx_to_domain)?;
-            let found = found.and_then(|(r,)| u64::try_from(r).ok()).unwrap_or(0);
+            let found = match found {
+                Some((r,)) => stored_revision_as_u64(r)?,
+                None => 0,
+            };
             return Err(concurrent_modification_error(
                 channel.revision().0.saturating_sub(1),
                 found,
@@ -300,7 +307,10 @@ impl ChannelRepository for PostgresUnitOfWork {
             .fetch_optional(self.tx().await?.as_mut())
             .await
             .map_err(sqlx_to_domain)?;
-            let found = found.and_then(|(r,)| u64::try_from(r).ok()).unwrap_or(0);
+            let found = match found {
+                Some((r,)) => stored_revision_as_u64(r)?,
+                None => 0,
+            };
             return Err(concurrent_modification_error(expected_revision.0, found));
         }
         Ok(())
@@ -415,7 +425,10 @@ impl OperationRepository for PostgresUnitOfWork {
                     .fetch_optional(self.tx().await?.as_mut())
                     .await
                     .map_err(sqlx_to_domain)?;
-            let found = found.and_then(|(r,)| u64::try_from(r).ok()).unwrap_or(0);
+            let found = match found {
+                Some((r,)) => stored_revision_as_u64(r)?,
+                None => 0,
+            };
             return Err(concurrent_modification_error(
                 operation.revision().0.saturating_sub(1),
                 found,
@@ -537,7 +550,10 @@ impl MediaSessionRepository for PostgresUnitOfWork {
                     .fetch_optional(self.tx().await?.as_mut())
                     .await
                     .map_err(sqlx_to_domain)?;
-            let found = found.and_then(|(r,)| u64::try_from(r).ok()).unwrap_or(0);
+            let found = match found {
+                Some((r,)) => stored_revision_as_u64(r)?,
+                None => 0,
+            };
             return Err(concurrent_modification_error(
                 session.revision().0.saturating_sub(1),
                 found,
@@ -653,7 +669,10 @@ impl MediaBindingRepository for PostgresUnitOfWork {
                     .fetch_optional(self.tx().await?.as_mut())
                     .await
                     .map_err(sqlx_to_domain)?;
-            let found = found.and_then(|(r,)| u64::try_from(r).ok()).unwrap_or(0);
+            let found = match found {
+                Some((r,)) => stored_revision_as_u64(r)?,
+                None => 0,
+            };
             return Err(concurrent_modification_error(
                 binding.revision().0.saturating_sub(1),
                 found,

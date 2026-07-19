@@ -6,7 +6,10 @@ pub mod error;
 pub mod migration;
 pub mod phase_migration;
 pub mod repository;
+pub mod revision;
 pub mod storage;
+
+pub use revision::stored_revision_as_u64;
 
 pub use error::StorageError;
 pub use migration::{
