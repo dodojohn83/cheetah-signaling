@@ -308,7 +308,12 @@ fn validate_registration_fields(
         }
     }
 
-    for cap in &registration.capabilities {
+    #[allow(deprecated)]
+    for cap in registration
+        .capabilities
+        .iter()
+        .chain(registration.capability.iter())
+    {
         if cap.protocol.len() > max {
             return Err(Status::invalid_argument(format!(
                 "field 'capabilities[].protocol' exceeds {max} bytes"
