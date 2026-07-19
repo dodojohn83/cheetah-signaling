@@ -16,7 +16,9 @@ pub struct RecordInfoResponse {
     pub name: Option<String>,
     /// `SumNum` declaring total record count across all fragments.
     pub sum_num: u32,
-    /// Number of records in this fragment (from `RecordList` attribute `Num`).
+    /// Number of well-formed records actually parsed in this fragment. This may
+    /// be less than the `Num` attribute if some `Item` elements had missing or
+    /// empty `DeviceID` values and were dropped.
     pub num: u32,
     /// Records in this fragment.
     pub items: Vec<RecordItem>,
@@ -63,23 +65,42 @@ pub(crate) fn extract_record_info(root: &XmlElement) -> Result<RecordInfoRespons
         .child("RecordList")
         .ok_or_else(|| AccessError::InvalidXml("missing RecordList".to_string()))?;
 
+    let sn = root.require_child_text("SN")?;
+    let device_id = root.require_child_text("DeviceID")?;
+    let name = root.child_text("Name");
     let sum_num = parse_u32(&root.require_child_text("SumNum")?)?;
 
+    let mut dropped = 0u32;
     let items: Vec<RecordItem> = record_list
         .children
         .iter()
         .filter(|c| c.name == "Item")
-        .filter_map(parse_item)
+        .filter_map(|item| {
+            let parsed = parse_item(item);
+            if parsed.is_none() {
+                dropped += 1;
+            }
+            parsed
+        })
         .collect();
+
+    if dropped > 0 {
+        tracing::warn!(
+            sn = %sn,
+            device_id = %device_id,
+            dropped,
+            "record info item(s) dropped due to missing or empty DeviceID"
+        );
+    }
 
     // Ignore a missing or malformed `Num` attribute and use the number of
     // well-formed items actually parsed.
     let num = items.len() as u32;
 
     Ok(RecordInfoResponse {
-        sn: root.require_child_text("SN")?,
-        device_id: root.require_child_text("DeviceID")?,
-        name: root.child_text("Name"),
+        sn,
+        device_id,
+        name,
         sum_num,
         num,
         items,

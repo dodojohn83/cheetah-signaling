@@ -17,7 +17,9 @@ pub struct CatalogResponse {
     pub device_id: String,
     /// `SumNum` attribute declaring total item count across all fragments.
     pub sum_num: u32,
-    /// `Num` attribute declaring the number of items in this fragment.
+    /// Number of well-formed items actually parsed in this fragment. This may be
+    /// less than the `Num` attribute if some `Item` elements had missing or
+    /// empty `DeviceID` values and were dropped.
     pub num: u32,
     /// Items in this fragment.
     pub items: Vec<CatalogItem>,
@@ -90,14 +92,32 @@ pub(crate) fn extract_catalog(root: &XmlElement) -> Result<CatalogResponse, Acce
         .child("DeviceList")
         .ok_or_else(|| AccessError::InvalidXml("missing DeviceList".to_string()))?;
 
+    let sn = root.require_child_text("SN")?;
+    let device_id = root.require_child_text("DeviceID")?;
     let sum_num = parse_u32(&root.require_child_text("SumNum")?)?;
 
+    let mut dropped = 0u32;
     let items: Vec<CatalogItem> = device_list
         .children
         .iter()
         .filter(|c| c.name == "Item")
-        .filter_map(parse_item)
+        .filter_map(|item| {
+            let parsed = parse_item(item);
+            if parsed.is_none() {
+                dropped += 1;
+            }
+            parsed
+        })
         .collect();
+
+    if dropped > 0 {
+        tracing::warn!(
+            sn = %sn,
+            device_id = %device_id,
+            dropped,
+            "catalog item(s) dropped due to missing or empty DeviceID"
+        );
+    }
 
     // Trust the number of well-formed items we actually parsed. A missing or
     // malformed `Num` attribute is ignored so a single bad item cannot force
@@ -105,8 +125,8 @@ pub(crate) fn extract_catalog(root: &XmlElement) -> Result<CatalogResponse, Acce
     let num = items.len() as u32;
 
     Ok(CatalogResponse {
-        sn: root.require_child_text("SN")?,
-        device_id: root.require_child_text("DeviceID")?,
+        sn,
+        device_id,
         sum_num,
         num,
         items,
