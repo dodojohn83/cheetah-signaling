@@ -69,12 +69,12 @@ impl MediaClusterRegistry for MediaClusterRegistryService {
         validate_registration_fields(&registration, &self.config)?;
 
         let node_id = parse_node_id(&registration.node_id)?;
+        // An empty instance_id means the node did not transmit a stable process
+        // identity. To avoid inheriting stale state from a previous registration
+        // with the same node_id (e.g. after a restart), always mint a fresh
+        // instance identifier for the new process.
         let instance_id = if registration.instance_id.is_empty() {
-            if let Some(existing) = self.registry.get(node_id, self.clock.as_ref()).await {
-                existing.instance_id
-            } else {
-                self.id_generator.generate_node_id().to_string()
-            }
+            self.id_generator.generate_node_id().to_string()
         } else {
             registration.instance_id
         };
@@ -425,5 +425,227 @@ fn map_scheduler_error(e: SchedulerError) -> Status {
         SchedulerError::IdentityMismatch { .. } => Status::permission_denied(e.to_string()),
         SchedulerError::InvalidArgument(_) => Status::invalid_argument(e.to_string()),
         _ => Status::internal(e.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{MediaNode, MediaNodeCapacity, MediaNodeHealth, NodeStatus};
+    use crate::registry::MediaNodeRegistry;
+    use cheetah_signal_types::test_support::{FakeClock, FakeIdGenerator};
+    use cheetah_signal_types::{MediaBindingId, TenantId};
+    use std::str::FromStr;
+    use std::sync::Mutex;
+
+    struct FakeRegistry {
+        node: Mutex<Option<MediaNode>>,
+    }
+
+    impl FakeRegistry {
+        fn lock_node(&self) -> std::sync::MutexGuard<'_, Option<MediaNode>> {
+            match self.node.lock() {
+                Ok(g) => g,
+                Err(e) => e.into_inner(),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MediaNodeRegistry for FakeRegistry {
+        async fn register(
+            &self,
+            node: MediaNode,
+            _lease_ttl_ms: u64,
+            _clock: &dyn Clock,
+        ) -> Result<MediaNode, SchedulerError> {
+            *self.lock_node() = Some(node.clone());
+            Ok(node)
+        }
+
+        async fn heartbeat(
+            &self,
+            _node_id: NodeId,
+            _load: u64,
+            _session_count: u64,
+            _clock: &dyn Clock,
+        ) -> Result<MediaNode, SchedulerError> {
+            unimplemented!()
+        }
+
+        async fn drain(
+            &self,
+            _node_id: NodeId,
+            _drain: bool,
+            _clock: &dyn Clock,
+        ) -> Result<MediaNode, SchedulerError> {
+            unimplemented!()
+        }
+
+        async fn deregister(
+            &self,
+            _node_id: NodeId,
+            _clock: &dyn Clock,
+        ) -> Result<MediaNode, SchedulerError> {
+            unimplemented!()
+        }
+
+        async fn get(&self, _node_id: NodeId, _clock: &dyn Clock) -> Option<MediaNode> {
+            self.lock_node().clone()
+        }
+
+        async fn list_active(&self, _clock: &dyn Clock) -> Vec<MediaNode> {
+            unimplemented!()
+        }
+
+        async fn reserve(
+            &self,
+            _node_id: NodeId,
+            _tenant_id: TenantId,
+            _binding_id: MediaBindingId,
+            _clock: &dyn Clock,
+        ) -> Result<MediaNode, SchedulerError> {
+            unimplemented!()
+        }
+
+        async fn release(
+            &self,
+            _node_id: NodeId,
+            _tenant_id: TenantId,
+            _binding_id: MediaBindingId,
+            _clock: &dyn Clock,
+        ) -> Result<MediaNode, SchedulerError> {
+            unimplemented!()
+        }
+    }
+
+    fn fake_existing_node(node_id: NodeId) -> MediaNode {
+        MediaNode {
+            node_id,
+            instance_id: "existing-instance".to_string(),
+            instance_epoch: 1,
+            zone: "us-east".to_string(),
+            region: "us-east".to_string(),
+            labels: std::collections::BTreeMap::new(),
+            control_endpoint: "https://1.1.1.1:443".to_string(),
+            media_addresses: Vec::new(),
+            capabilities: Vec::new(),
+            capacity: MediaNodeCapacity {
+                max_sessions: 10,
+                max_bandwidth_mbps: 1000,
+                max_cpu_percent: 100,
+            },
+            load: 0,
+            session_count: 0,
+            health: MediaNodeHealth::Healthy,
+            draining: false,
+            status: NodeStatus::Active,
+            last_heartbeat_at: None,
+            lease_until: None,
+            generation: 0,
+            contract_version: 1,
+        }
+    }
+
+    fn test_config() -> MediaRegistryConfig {
+        let mut config = MediaRegistryConfig::test();
+        config.require_mtls = false;
+        config
+    }
+
+    #[tokio::test]
+    async fn register_generates_new_instance_id_when_empty()
+    -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let node_id = NodeId::from_str("11111111-1111-1111-1111-111111111111")?;
+        let registry = Arc::new(FakeRegistry {
+            node: Mutex::new(Some(fake_existing_node(node_id))),
+        });
+        let service = MediaClusterRegistryService::new(
+            registry.clone(),
+            Arc::new(FakeClock::new()),
+            Arc::new(FakeIdGenerator::new()),
+            test_config(),
+        );
+
+        let request = Request::new(RegisterMediaNodeRequest {
+            node: Some(media_proto::MediaNodeRegistration {
+                node_id: node_id.to_string(),
+                listen_addr: "https://1.1.1.1:443".to_string(),
+                capability: Some(media_proto::MediaCapability {
+                    protocol: "gb28181".to_string(),
+                    operations: vec!["live".to_string()],
+                    constraints: std::collections::BTreeMap::new(),
+                }),
+                region: "us-east".to_string(),
+                capacity: Some(media_proto::MediaNodeCapacity {
+                    max_sessions: 10,
+                    max_bandwidth_mbps: 1000,
+                    max_cpu_percent: 100,
+                }),
+                instance_id: String::new(),
+            }),
+        });
+
+        let response = service.register_media_node(request).await?;
+        let info = response
+            .into_inner()
+            .node
+            .ok_or_else(|| tonic::Status::internal("missing node"))?;
+
+        assert_eq!(info.node_id, node_id.to_string());
+        assert_ne!(
+            info.instance_id, "existing-instance",
+            "empty instance_id must not inherit a stale instance_id from a previous registration"
+        );
+
+        let registered = registry
+            .lock_node()
+            .clone()
+            .ok_or_else(|| tonic::Status::internal("missing registered node"))?;
+        assert_ne!(registered.instance_id, "existing-instance");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn register_preserves_supplied_instance_id()
+    -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let node_id = NodeId::from_str("22222222-2222-2222-2222-222222222222")?;
+        let registry = Arc::new(FakeRegistry {
+            node: Mutex::new(Some(fake_existing_node(node_id))),
+        });
+        let service = MediaClusterRegistryService::new(
+            registry.clone(),
+            Arc::new(FakeClock::new()),
+            Arc::new(FakeIdGenerator::new()),
+            test_config(),
+        );
+
+        let request = Request::new(RegisterMediaNodeRequest {
+            node: Some(media_proto::MediaNodeRegistration {
+                node_id: node_id.to_string(),
+                listen_addr: "https://1.1.1.1:443".to_string(),
+                capability: Some(media_proto::MediaCapability {
+                    protocol: "gb28181".to_string(),
+                    operations: vec!["live".to_string()],
+                    constraints: std::collections::BTreeMap::new(),
+                }),
+                region: "us-east".to_string(),
+                capacity: Some(media_proto::MediaNodeCapacity {
+                    max_sessions: 10,
+                    max_bandwidth_mbps: 1000,
+                    max_cpu_percent: 100,
+                }),
+                instance_id: "supplied-id".to_string(),
+            }),
+        });
+
+        let response = service.register_media_node(request).await?;
+        let info = response
+            .into_inner()
+            .node
+            .ok_or_else(|| tonic::Status::internal("missing node"))?;
+
+        assert_eq!(info.instance_id, "supplied-id");
+        Ok(())
     }
 }

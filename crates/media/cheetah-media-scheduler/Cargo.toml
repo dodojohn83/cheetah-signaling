@@ -25,6 +25,7 @@ async-trait = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 
 [dev-dependencies]
+cheetah-signal-types = { path = "../../foundation/cheetah-signal-types", features = ["test-support"] }
 tokio = { workspace = true, features = ["macros", "rt"] }
 
 [lints]
