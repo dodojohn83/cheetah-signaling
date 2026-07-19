@@ -7,7 +7,7 @@ use cheetah_gb28181_core::{
     SipUri,
 };
 use cheetah_gb28181_module::{
-    AccessInput, AccessOutput, AuthPolicy, DeviceId, DevicePresence, Gb28181Access,
+    AccessError, AccessInput, AccessOutput, AuthPolicy, DeviceId, DevicePresence, Gb28181Access,
     Gb28181DomainConfig, Gb28181Event,
 };
 use secrecy::SecretString;
@@ -988,4 +988,66 @@ fn device_control_response_emits_device_control_response_received_event() {
         }
     }
     assert!(seen);
+}
+
+#[test]
+fn register_rejects_malformed_expires_header() {
+    let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec())
+        .unwrap()
+        .with_auth_policy(AuthPolicy::ChallengeOptional);
+    let provider = |_device: &DeviceId| None;
+    let mut access = Gb28181Access::new(config, provider).unwrap();
+
+    let mut request = make_request(1, false);
+    request
+        .headers_mut()
+        .append(HeaderName::Expires, HeaderValue::new("not-a-number"));
+    let result = access.process(AccessInput {
+        source: "192.168.1.100:5060".parse().unwrap(),
+        now: 1000,
+        message: request,
+    });
+    assert!(matches!(result, Err(AccessError::InvalidExpires)));
+}
+
+#[test]
+fn register_rejects_malformed_contact_expires_param() {
+    let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec())
+        .unwrap()
+        .with_auth_policy(AuthPolicy::ChallengeOptional);
+    let provider = |_device: &DeviceId| None;
+    let mut access = Gb28181Access::new(config, provider).unwrap();
+
+    let base = make_request(1, false);
+    let SipMessage::Request {
+        line,
+        headers,
+        body,
+    } = base
+    else {
+        panic!("expected request");
+    };
+    let mut new_headers = SipHeaders::new();
+    for (name, value) in headers.iter() {
+        if name != &HeaderName::Contact {
+            new_headers.append(name.clone(), value.clone());
+        }
+    }
+    new_headers.append(
+        HeaderName::Contact,
+        HeaderValue::new(format!(
+            "<sip:{DEVICE_ID}@192.168.1.100:5060>;expires=not-a-number"
+        )),
+    );
+    let request = SipMessage::Request {
+        line,
+        headers: new_headers,
+        body,
+    };
+    let result = access.process(AccessInput {
+        source: "192.168.1.100:5060".parse().unwrap(),
+        now: 1000,
+        message: request,
+    });
+    assert!(matches!(result, Err(AccessError::InvalidExpires)));
 }

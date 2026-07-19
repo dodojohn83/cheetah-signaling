@@ -506,3 +506,25 @@ fn capacity_eviction_sends_terminated_notify() {
             .is_some_and(|v| v.as_str().starts_with("active"))
     );
 }
+
+#[test]
+fn subscribe_with_malformed_expires_returns_400() {
+    let mut cascade = Gb28181Cascade::new(test_config(), password_provider()).unwrap();
+    register_to_connected(&mut cascade);
+
+    let mut request = subscribe_request_with_call_id("Catalog", None, "sub-call-id-1");
+    request
+        .headers_mut()
+        .append(HeaderName::Expires, HeaderValue::new("not-a-number"));
+
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 2000,
+            event: CascadeEvent::Request(Box::new(request)),
+        })
+        .unwrap();
+
+    let response = first_response(&outputs).expect("400 response");
+    assert!(matches!(response, SipMessage::Response { line, .. } if line.code == 400));
+    assert!(cascade.subscriptions.is_empty());
+}

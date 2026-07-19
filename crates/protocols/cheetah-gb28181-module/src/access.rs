@@ -129,7 +129,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
 
         let device_id = device_id_from_request(line, headers)?;
         let (contact_uri, contact_expires) = parse_contact_header(headers)?;
-        let expires_header = parse_expires_header(headers);
+        let expires_header = parse_expires_header(headers)?;
         let expires = resolve_expires(contact_expires, expires_header, &self.config);
 
         let user_agent = headers
@@ -503,7 +503,7 @@ fn parse_contact_header(headers: &SipHeaders) -> Result<(SipUri, Option<u32>), A
         .get(&HeaderName::Contact)
         .ok_or(AccessError::InvalidContact)?
         .as_str();
-    parse_address_with_expires(value).map_err(|_| AccessError::InvalidContact)
+    parse_address_with_expires(value)
 }
 
 fn parse_address_with_expires(value: &str) -> Result<(SipUri, Option<u32>), AccessError> {
@@ -521,19 +521,39 @@ fn parse_address_with_expires(value: &str) -> Result<(SipUri, Option<u32>), Acce
     };
 
     let uri = SipUri::parse(uri_text).map_err(|_| AccessError::InvalidContact)?;
-    let expires = params_text.split(';').find_map(|token| {
+    let mut expires = None;
+    for token in params_text.split(';') {
         let token = token.trim();
-        token
-            .strip_prefix("expires=")
-            .and_then(|v| v.trim().parse::<u32>().ok())
-    });
+        if token.is_empty() {
+            continue;
+        }
+        if let Some(value) = token.strip_prefix("expires=") {
+            let value = value.trim();
+            if value.is_empty() {
+                return Err(AccessError::InvalidExpires);
+            }
+            expires = Some(
+                value
+                    .parse::<u32>()
+                    .map_err(|_| AccessError::InvalidExpires)?,
+            );
+        }
+    }
     Ok((uri, expires))
 }
 
-fn parse_expires_header(headers: &SipHeaders) -> Option<u32> {
-    headers
-        .get(&HeaderName::Expires)
-        .and_then(|v| v.as_str().trim().parse::<u32>().ok())
+fn parse_expires_header(headers: &SipHeaders) -> Result<Option<u32>, AccessError> {
+    let Some(value) = headers.get(&HeaderName::Expires) else {
+        return Ok(None);
+    };
+    let trimmed = value.as_str().trim();
+    if trimmed.is_empty() {
+        return Err(AccessError::InvalidExpires);
+    }
+    trimmed
+        .parse::<u32>()
+        .map(Some)
+        .map_err(|_| AccessError::InvalidExpires)
 }
 
 fn resolve_expires(
@@ -645,5 +665,46 @@ fn add_or_replace_tag(value: &str, tag: &str) -> String {
         format!("tag={tag}")
     } else {
         format!("{without_tag};tag={tag}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use super::*;
+    use cheetah_gb28181_core::{HeaderName, HeaderValue, SipHeaders};
+
+    #[test]
+    fn parse_expires_header_rejects_non_numeric() {
+        let mut headers = SipHeaders::new();
+        headers.append(HeaderName::Expires, HeaderValue::new("not-a-number"));
+        assert!(matches!(
+            parse_expires_header(&headers),
+            Err(AccessError::InvalidExpires)
+        ));
+    }
+
+    #[test]
+    fn parse_expires_header_rejects_empty() {
+        let mut headers = SipHeaders::new();
+        headers.append(HeaderName::Expires, HeaderValue::new(""));
+        assert!(matches!(
+            parse_expires_header(&headers),
+            Err(AccessError::InvalidExpires)
+        ));
+    }
+
+    #[test]
+    fn parse_address_with_expires_rejects_non_numeric_param() {
+        let result = parse_address_with_expires("<sip:a@example.com>;expires=not-a-number");
+        assert!(matches!(result, Err(AccessError::InvalidExpires)));
+    }
+
+    #[test]
+    fn parse_address_with_expires_accepts_valid_param() {
+        let (uri, expires) = parse_address_with_expires("<sip:a@example.com>;expires=60").unwrap();
+        assert_eq!(expires, Some(60));
+        assert_eq!(uri.user(), Some("a"));
     }
 }
