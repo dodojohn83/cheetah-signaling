@@ -1,7 +1,8 @@
 //! Driver configuration.
 
-use cheetah_onvif_core::discovery::{DiscoveryLimits, XAddrPolicy};
+use cheetah_onvif_core::discovery::{DiscoveryLimits, RateLimitConfig, XAddrPolicy};
 use cheetah_signal_types::DurationMs;
+use cheetah_signal_types::config::OnvifConfig;
 use std::net::SocketAddr;
 use std::time::Duration;
 
@@ -44,6 +45,45 @@ impl Default for DriverConfig {
             discovery_bind: SocketAddr::from(([0, 0, 0, 0], 0)),
             discovery_timeout: DurationMs::from_millis(3_000),
             follow_redirects: false,
+        }
+    }
+}
+
+impl From<&OnvifConfig> for DriverConfig {
+    fn from(config: &OnvifConfig) -> Self {
+        Self {
+            connect_timeout: Duration::from_millis(
+                config.connect_timeout_ms.as_millis().max(0) as u64
+            ),
+            request_timeout: Duration::from_millis(
+                config.request_timeout_ms.as_millis().max(0) as u64
+            ),
+            max_response_bytes: config.max_response_bytes,
+            max_concurrent_requests: config.max_concurrent_requests,
+            xaddr_policy: XAddrPolicy {
+                allowed_schemes: config.allowed_schemes.clone(),
+                allowed_ports: config.allowed_ports.clone(),
+                allow_private: config.allow_private,
+                allow_loopback: config.allow_loopback,
+                allow_link_local: config.allow_link_local,
+                allow_unspecified: config.allow_unspecified,
+                allow_domain_names: config.allow_domain_names,
+            },
+            discovery_limits: DiscoveryLimits {
+                max_datagram_bytes: config.discovery_max_datagram_bytes,
+                max_xml_depth: config.discovery_max_xml_depth,
+                max_xml_nodes: config.discovery_max_xml_nodes,
+                max_matches: config.discovery_max_matches,
+                rate: RateLimitConfig {
+                    window_seconds: config.discovery_rate_window_seconds,
+                    max_per_source: config.discovery_rate_max_per_source,
+                    max_sources: config.discovery_rate_max_sources,
+                },
+            },
+            discovery_multicast: config.discovery_multicast,
+            discovery_bind: config.discovery_bind,
+            discovery_timeout: config.discovery_timeout_ms,
+            follow_redirects: config.follow_redirects,
         }
     }
 }

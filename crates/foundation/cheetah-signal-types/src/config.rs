@@ -8,6 +8,7 @@ use crate::error::{Result, SignalError, SignalErrorKind};
 use crate::{DurationMs, NodeId};
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::net::SocketAddr;
 
 /// Serializes a `SecretString` as a redacted placeholder, preserving empty defaults.
 ///
@@ -95,6 +96,52 @@ impl SignalConfig {
                 SignalErrorKind::InvalidArgument,
                 "gb28181.catalog_fragment_max_items must be greater than zero",
             ));
+        }
+        if self.onvif.enabled {
+            if self.onvif.connect_timeout_ms.as_millis() <= 0 {
+                return Err(SignalError::new(
+                    SignalErrorKind::InvalidArgument,
+                    "onvif.connect_timeout_ms must be greater than zero",
+                ));
+            }
+            if self.onvif.request_timeout_ms.as_millis() <= 0 {
+                return Err(SignalError::new(
+                    SignalErrorKind::InvalidArgument,
+                    "onvif.request_timeout_ms must be greater than zero",
+                ));
+            }
+            if self.onvif.max_response_bytes == 0 {
+                return Err(SignalError::new(
+                    SignalErrorKind::InvalidArgument,
+                    "onvif.max_response_bytes must be greater than zero",
+                ));
+            }
+            if self.onvif.max_concurrent_requests == 0 {
+                return Err(SignalError::new(
+                    SignalErrorKind::InvalidArgument,
+                    "onvif.max_concurrent_requests must be greater than zero",
+                ));
+            }
+            if self.onvif.max_concurrent_probes == 0 {
+                return Err(SignalError::new(
+                    SignalErrorKind::InvalidArgument,
+                    "onvif.max_concurrent_probes must be greater than zero",
+                ));
+            }
+            if !self.onvif.allowed_schemes.is_empty()
+                && !self.onvif.allowed_schemes.iter().all(|s| !s.is_empty())
+            {
+                return Err(SignalError::new(
+                    SignalErrorKind::InvalidArgument,
+                    "onvif.allowed_schemes must not contain empty entries",
+                ));
+            }
+            if self.onvif.discovery_interval_ms.as_millis() < 0 {
+                return Err(SignalError::new(
+                    SignalErrorKind::InvalidArgument,
+                    "onvif.discovery_interval_ms must not be negative",
+                ));
+            }
         }
         if self.http.port == 0 {
             return Err(SignalError::new(
@@ -551,14 +598,98 @@ impl Default for Gb28181Config {
 }
 
 /// ONVIF protocol configuration.
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 #[serde(deny_unknown_fields)]
 pub struct OnvifConfig {
+    /// Whether ONVIF discovery and command processing is enabled.
+    pub enabled: bool,
     /// Discovery timeout.
     pub discovery_timeout_ms: DurationMs,
     /// Probe timeout.
     pub probe_timeout_ms: DurationMs,
+    /// HTTP connect timeout.
+    pub connect_timeout_ms: DurationMs,
+    /// HTTP request timeout (includes body download).
+    pub request_timeout_ms: DurationMs,
+    /// Maximum response body size in bytes.
+    pub max_response_bytes: usize,
+    /// Maximum concurrent HTTP requests per driver client.
+    pub max_concurrent_requests: usize,
+    /// Whether to follow HTTP redirects (each hop re-checked against policy).
+    pub follow_redirects: bool,
+    /// Allowed URL schemes for discovered device XAddrs.
+    pub allowed_schemes: Vec<String>,
+    /// Allowed destination ports for discovered device XAddrs. Empty allows any.
+    pub allowed_ports: Vec<u16>,
+    /// Whether private (RFC 1918) addresses are allowed.
+    pub allow_private: bool,
+    /// Whether loopback addresses are allowed.
+    pub allow_loopback: bool,
+    /// Whether IPv4 link-local and IPv6 unicast link-local addresses are allowed.
+    pub allow_link_local: bool,
+    /// Whether `0.0.0.0` / `::` is allowed.
+    pub allow_unspecified: bool,
+    /// Whether domain-name hosts are allowed.
+    pub allow_domain_names: bool,
+    /// Multicast group for WS-Discovery Probe.
+    pub discovery_multicast: SocketAddr,
+    /// Local bind address for discovery sockets.
+    pub discovery_bind: SocketAddr,
+    /// Maximum XML body size accepted for parsing discovery datagrams.
+    pub discovery_max_datagram_bytes: usize,
+    /// Maximum XML element depth for discovery datagrams.
+    pub discovery_max_xml_depth: usize,
+    /// Maximum XML elements to visit while parsing a discovery datagram.
+    pub discovery_max_xml_nodes: usize,
+    /// Maximum matched devices returned from a single ProbeMatches.
+    pub discovery_max_matches: usize,
+    /// Per-source rate limit window in seconds.
+    pub discovery_rate_window_seconds: u64,
+    /// Maximum discovery datagrams per source IP within the window.
+    pub discovery_rate_max_per_source: u32,
+    /// Maximum distinct source IPs tracked by the discovery rate limiter.
+    pub discovery_rate_max_sources: usize,
+    /// Interval between discovery sweeps. Zero disables periodic discovery.
+    pub discovery_interval_ms: DurationMs,
+    /// Maximum concurrent device detail probes during a discovery sweep.
+    pub max_concurrent_probes: u32,
+    /// Optional default tenant UUID for discovered ONVIF devices.
+    pub default_tenant_id: Option<String>,
+}
+
+impl Default for OnvifConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            discovery_timeout_ms: DurationMs::from_millis(3_000),
+            probe_timeout_ms: DurationMs::from_millis(5_000),
+            connect_timeout_ms: DurationMs::from_millis(5_000),
+            request_timeout_ms: DurationMs::from_millis(15_000),
+            max_response_bytes: 2 * 1024 * 1024,
+            max_concurrent_requests: 32,
+            follow_redirects: false,
+            allowed_schemes: vec!["http".to_string(), "https".to_string()],
+            allowed_ports: vec![80, 443],
+            allow_private: false,
+            allow_loopback: false,
+            allow_link_local: false,
+            allow_unspecified: false,
+            allow_domain_names: false,
+            discovery_multicast: SocketAddr::from(([239, 255, 255, 250], 3702)),
+            discovery_bind: SocketAddr::from(([0, 0, 0, 0], 0)),
+            discovery_max_datagram_bytes: 65_536,
+            discovery_max_xml_depth: 64,
+            discovery_max_xml_nodes: 4_096,
+            discovery_max_matches: 256,
+            discovery_rate_window_seconds: 60,
+            discovery_rate_max_per_source: 120,
+            discovery_rate_max_sources: 1_024,
+            discovery_interval_ms: DurationMs::from_millis(0),
+            max_concurrent_probes: 8,
+            default_tenant_id: None,
+        }
+    }
 }
 
 /// Security configuration.

@@ -135,10 +135,60 @@ env_prefix = "CHEETAH_SECRET_"
 # file_dir = "/etc/cheetah/secrets"
 
 [onvif]
-# ONVIF discovery timeout in milliseconds. Default: 0.
-discovery_timeout_ms = 10000
-# ONVIF probe timeout in milliseconds. Default: 0.
+# Whether ONVIF discovery and command processing is enabled.
+enabled = false
+# ONVIF discovery timeout in milliseconds.
+discovery_timeout_ms = 3000
+# ONVIF probe timeout in milliseconds.
 probe_timeout_ms = 5000
+# HTTP connect timeout in milliseconds.
+connect_timeout_ms = 5000
+# HTTP request timeout (includes body download) in milliseconds.
+request_timeout_ms = 15000
+# Maximum response body size in bytes.
+max_response_bytes = 2097152
+# Maximum concurrent HTTP requests per driver client.
+max_concurrent_requests = 32
+# Whether to follow HTTP redirects (each hop re-checked against policy).
+follow_redirects = false
+# Allowed URL schemes for discovered device XAddrs.
+allowed_schemes = ["http", "https"]
+# Allowed destination ports for discovered device XAddrs. Empty allows any.
+allowed_ports = [80, 443]
+# Whether private (RFC 1918) addresses are allowed.
+allow_private = false
+# Whether loopback addresses are allowed.
+allow_loopback = false
+# Whether IPv4 link-local and IPv6 unicast link-local addresses are allowed.
+allow_link_local = false
+# Whether `0.0.0.0` / `::` is allowed.
+allow_unspecified = false
+# Whether domain-name hosts are allowed.
+allow_domain_names = false
+# Multicast group for WS-Discovery Probe. Default: 239.255.255.250:3702.
+discovery_multicast = "239.255.255.250:3702"
+# Local bind address for discovery sockets. Default: 0.0.0.0:0.
+discovery_bind = "0.0.0.0:0"
+# Maximum XML body size accepted for parsing discovery datagrams. Default: 65536.
+discovery_max_datagram_bytes = 65536
+# Maximum XML element depth for discovery datagrams. Default: 64.
+discovery_max_xml_depth = 64
+# Maximum XML elements to visit while parsing a discovery datagram. Default: 4096.
+discovery_max_xml_nodes = 4096
+# Maximum matched devices returned from a single ProbeMatches. Default: 256.
+discovery_max_matches = 256
+# Per-source rate limit window in seconds. Default: 60.
+discovery_rate_window_seconds = 60
+# Maximum discovery datagrams per source IP within the window. Default: 120.
+discovery_rate_max_per_source = 120
+# Maximum distinct source IPs tracked by the discovery rate limiter. Default: 1024.
+discovery_rate_max_sources = 1024
+# Interval between discovery sweeps in milliseconds. Zero disables periodic discovery. Default: 0.
+discovery_interval_ms = 0
+# Maximum concurrent device detail probes during a discovery sweep. Default: 8.
+max_concurrent_probes = 8
+# Optional default tenant UUID for discovered ONVIF devices. Required for provisioning.
+# default_tenant_id = "00000000-0000-0000-0000-000000000000"
 
 [security]
 # Reference to the JWT public key secret. Leave empty to disable JWT auth.
