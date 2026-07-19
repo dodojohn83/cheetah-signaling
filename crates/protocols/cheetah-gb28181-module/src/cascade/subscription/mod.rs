@@ -161,10 +161,33 @@ pub(crate) fn handle_subscribe<P: CascadeCredentialProvider>(
         .or_else(|| parse_uri_from_header(from))
         .unwrap_or_else(|| cascade.config.upstream.clone());
 
-    let requested_expiry = headers
-        .get(&HeaderName::Expires)
-        .and_then(|v| v.as_str().trim().parse::<u64>().ok())
-        .unwrap_or(cascade.config.subscription_default_expiry_seconds as u64);
+    let requested_expiry = match headers.get(&HeaderName::Expires) {
+        Some(value) => {
+            let trimmed = value.as_str().trim();
+            if trimmed.is_empty() {
+                return vec![CascadeOutput::SendResponse(build_response(
+                    &msg,
+                    400,
+                    "Bad Request",
+                    &response_tag,
+                    Vec::new(),
+                ))];
+            }
+            match trimmed.parse::<u64>() {
+                Ok(n) => n,
+                Err(_) => {
+                    return vec![CascadeOutput::SendResponse(build_response(
+                        &msg,
+                        400,
+                        "Bad Request",
+                        &response_tag,
+                        Vec::new(),
+                    ))];
+                }
+            }
+        }
+        None => cascade.config.subscription_default_expiry_seconds as u64,
+    };
 
     let key = subscription_key(&call_id, &remote_tag);
     let to_tag = headers.get(&HeaderName::To).and_then(extract_tag);
