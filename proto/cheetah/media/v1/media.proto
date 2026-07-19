@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package cheetah.media.v1;
 
+import "cheetah/foundation/v1/error.proto";
 import "cheetah/media/v1/media_context.proto";
 import "cheetah/media/v1/media_resource.proto";
 import "google/protobuf/timestamp.proto";
@@ -182,10 +183,28 @@ message MediaSessionRefStopped {
   string reason = 2;
 }
 
+// Stable outcome for a failed media operation.
+enum ErrorOutcome {
+  ERROR_OUTCOME_UNSPECIFIED = 0;
+  ERROR_OUTCOME_NOT_APPLIED = 1;
+  ERROR_OUTCOME_APPLIED = 2;
+  ERROR_OUTCOME_UNKNOWN = 3;
+}
+
+// Wire-safe error emitted by media processing.
 message MediaError {
-  MediaSessionRef session = 1;
-  string error_code = 2;
-  string error_message = 3;
+  // Deprecated: use resource_ref for the affected session reference.
+  MediaSessionRef session = 1 [deprecated = true];
+  // Deprecated: use status.code.
+  string error_code = 2 [deprecated = true];
+  // Deprecated: use status.message.
+  string error_message = 3 [deprecated = true];
+  // Shared safe error shape. New consumers should read status.code/message/retryable/violations.
+  cheetah.foundation.v1.ErrorStatus status = 4;
+  string request_id = 5;
+  string correlation_id = 6;
+  MediaSessionRef resource_ref = 7;
+  ErrorOutcome outcome = 8;
 }
 
 // Capacity advertised at registration.

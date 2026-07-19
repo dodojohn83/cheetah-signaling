@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package cheetah.foundation.v1;
+
+option go_package = "github.com/dodojohn83/cheetah-signaling/gen/go/cheetah/foundation/v1;foundationv1";
+
+// A field level validation failure.
+message FieldViolation {
+  string field = 1;
+  string description = 2;
+}
+
+// A safe error status suitable for wire responses.
+message ErrorStatus {
+  string code = 1;
+  string message = 2;
+  bool retryable = 3;
+  repeated FieldViolation violations = 4;
+}

@@ -18,6 +18,7 @@ fn main() -> io::Result<()> {
 
     let proto_files = [
         proto_dir.join("cheetah/common/v1/common.proto"),
+        proto_dir.join("cheetah/foundation/v1/error.proto"),
         proto_dir.join("cheetah/common/v1/services.proto"),
         proto_dir.join("cheetah/device/v1/device.proto"),
         proto_dir.join("cheetah/control/v1/control.proto"),
