@@ -17,8 +17,8 @@ use cheetah_gb28181_module::types::DeviceId as GbDeviceId;
 use cheetah_http_api::state::{ApiConfig, ApiServer, ApiState};
 use cheetah_media_client::{MediaClientConfig, MediaControlClient};
 use cheetah_media_scheduler::{
-    InMemoryMediaNodeRegistry, LeastLoadedScheduler, MediaRegistryConfig, SchedulerConfig,
-    SchedulerMediaPort,
+    InMemoryMediaNodeRegistry, LeastLoadedScheduler, MediaClusterRegistryService,
+    MediaRegistryConfig, SchedulerConfig, SchedulerMediaPort,
 };
 use cheetah_message_api::RawEventBus;
 use cheetah_message_api::publisher::publish_domain_event;
@@ -29,6 +29,7 @@ use cheetah_plugin_host::PluginHost;
 use cheetah_plugin_sdk::{PluginManifest, ProtocolDriverFactory};
 use cheetah_secret::{CompositeSecretStore, EnvSecretStore, FileSecretStore};
 use cheetah_signal_application::OutboxRelay;
+use cheetah_signal_contracts::cheetah::common::v1::media_cluster_registry_server::MediaClusterRegistryServer;
 use cheetah_signal_types::config::{MessagingBackend, SignalConfig, StorageBackend};
 use cheetah_signal_types::{
     ChannelId, Clock, DeviceId, DurationMs, Event, IdGenerator, MediaBindingId, MediaSessionId,
@@ -36,17 +37,41 @@ use cheetah_signal_types::{
 };
 use cheetah_storage_api::Storage;
 use cheetah_storage_sqlite::SqliteStorage;
+use futures::future::select_all;
 use secrecy::{ExposeSecret, SecretSlice, SecretString};
 use semver::Version;
-use std::net::SocketAddr;
+use std::collections::HashMap;
+use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 use time::{OffsetDateTime, UtcOffset};
 use tokio::task::JoinHandle;
+use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
+use tonic::transport::Server;
 use tracing::{info, warn};
 use uuid::Uuid;
+
+/// Health status of a single runtime component.
+#[derive(Clone, Debug)]
+#[allow(dead_code)]
+pub enum ComponentStatus {
+    /// Component is running.
+    Running,
+    /// Component stopped cleanly.
+    Stopped,
+    /// Component stopped with an error.
+    Failed(String),
+}
+
+/// Aggregated health of all supervised runtime components.
+#[derive(Clone, Debug, Default)]
+pub struct RuntimeHealth {
+    /// Component name to last observed status.
+    pub components: HashMap<String, ComponentStatus>,
+}
 
 /// Running signaling process handles.
 pub struct SignalingRuntime {
@@ -58,21 +83,76 @@ pub struct SignalingRuntime {
     pub http_addr: SocketAddr,
     /// Optional bound GB28181 SIP address.
     pub gb28181_addr: Option<SocketAddr>,
+    /// Bound internal gRPC address.
+    pub grpc_addr: SocketAddr,
     /// Plugin host with built-in factories and validated external manifests.
     #[allow(dead_code)]
     pub plugin_host: PluginHost,
+    /// Readiness flag: true only after all startup stages have completed.
+    pub ready: Arc<AtomicBool>,
+    /// Observed health of supervised background components.
+    pub health: Arc<Mutex<RuntimeHealth>>,
     /// Background worker handles (outbox, protocol drivers).
     workers: Vec<JoinHandle<()>>,
 }
 
 impl SignalingRuntime {
-    /// Stops background workers and the HTTP server.
-    pub fn shutdown(self) {
+    /// Gracefully shuts down the runtime.
+    ///
+    /// 1. Marks readiness false.
+    /// 2. Cancels all worker cancellation tokens.
+    /// 3. Waits for workers to finish within `worker_timeout`.
+    /// 4. Aborts any remaining workers and stops the HTTP server.
+    pub async fn shutdown(self, worker_timeout: Duration) -> RuntimeHealth {
+        self.ready.store(false, Ordering::SeqCst);
         self.cancel.cancel();
-        for handle in self.workers {
-            handle.abort();
+
+        let mut health = self
+            .health
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        let mut remaining: Vec<(usize, JoinHandle<()>)> =
+            self.workers.into_iter().enumerate().collect();
+        let deadline = tokio::time::Instant::now() + worker_timeout;
+
+        while !remaining.is_empty() {
+            let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if left.is_zero() {
+                break;
+            }
+
+            let handles: Vec<&mut JoinHandle<()>> = remaining.iter_mut().map(|(_, h)| h).collect();
+            let (result, idx, _) = match timeout(left, select_all(handles)).await {
+                Ok(r) => r,
+                Err(_) => break,
+            };
+
+            let (original_idx, handle) = remaining.remove(idx);
+            drop(handle);
+            let name = format!("worker-{original_idx}");
+            match result {
+                Ok(()) => {
+                    health.components.insert(name, ComponentStatus::Stopped);
+                }
+                Err(e) => {
+                    let msg = format!("{e}");
+                    warn!(component = %name, error = %msg, "worker exited with error");
+                    health.components.insert(name, ComponentStatus::Failed(msg));
+                }
+            }
         }
+
+        for (i, handle) in remaining {
+            handle.abort();
+            health.components.insert(
+                format!("worker-{i}"),
+                ComponentStatus::Failed("shutdown deadline exceeded; worker aborted".to_string()),
+            );
+        }
+
         self.http.shutdown();
+        health
     }
 }
 
@@ -412,9 +492,10 @@ pub async fn start(
     };
     let publisher: Arc<dyn EventPublisher> = Arc::new(EventBusPublisher::new(bus.clone()));
 
-    let media_registry = Arc::new(InMemoryMediaNodeRegistry::new(
-        MediaRegistryConfig::default(),
-    ));
+    let media_registry: Arc<dyn cheetah_media_scheduler::MediaNodeRegistry> = Arc::new(
+        InMemoryMediaNodeRegistry::new(MediaRegistryConfig::default()),
+    );
+    let media_registry_for_grpc = Arc::clone(&media_registry);
     let media_scheduler: Arc<dyn cheetah_media_scheduler::MediaScheduler> = Arc::new(
         LeastLoadedScheduler::new(media_registry, SchedulerConfig::default()),
     );
@@ -453,8 +534,8 @@ pub async fn start(
     let mut state = ApiState::new(
         api_config,
         storage.clone(),
-        clock,
-        id_generator,
+        clock.clone(),
+        id_generator.clone(),
         bus.clone(),
         owner_resolver,
         media_port,
@@ -564,16 +645,48 @@ pub async fn start(
         warn!("onvif.enabled is false; discovery worker not started");
     }
 
+    // Internal gRPC server for media node lifecycle (MediaClusterRegistry).
+    let grpc_ip = config
+        .grpc
+        .listen_addr
+        .parse::<IpAddr>()
+        .map_err(|e| format!("grpc.listen_addr is not a valid IP address: {e}"))?;
+    let grpc_addr = SocketAddr::new(grpc_ip, config.grpc.port);
+    let grpc_service = MediaClusterRegistryService::new(
+        media_registry_for_grpc,
+        clock.clone(),
+        id_generator.clone(),
+        MediaRegistryConfig::default(),
+    );
+    let grpc_cancel = cancel.child_token();
+    workers.push(tokio::spawn(async move {
+        let server = Server::builder()
+            .add_service(MediaClusterRegistryServer::new(grpc_service))
+            .serve_with_shutdown(grpc_addr, grpc_cancel.cancelled());
+        if let Err(e) = server.await {
+            warn!(error = %e, "internal gRPC server stopped with error");
+        }
+    }));
+    info!(%grpc_addr, "internal gRPC listening");
+
     let http = ApiServer::start(state).await?;
     let http_addr = http.local_addr;
     info!(%http_addr, "HTTP API listening");
+
+    let ready = Arc::new(AtomicBool::new(false));
+    let health = Arc::new(Mutex::new(RuntimeHealth::default()));
+    ready.store(true, Ordering::SeqCst);
+    info!("cheetah-signaling ready");
 
     Ok(SignalingRuntime {
         cancel,
         http,
         http_addr,
         gb28181_addr,
+        grpc_addr,
         plugin_host,
+        ready,
+        health,
         workers,
     })
 }
