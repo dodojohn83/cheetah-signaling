@@ -24,6 +24,15 @@ fn subscribe_request(event: &str, expires: u64) -> SipMessage {
 }
 
 fn subscribe_request_with_call_id(event: &str, expires: Option<u64>, call_id: &str) -> SipMessage {
+    subscribe_request_full(event, expires, call_id, None)
+}
+
+fn subscribe_request_full(
+    event: &str,
+    expires: Option<u64>,
+    call_id: &str,
+    to_tag: Option<&str>,
+) -> SipMessage {
     let mut headers = SipHeaders::new();
     headers.append(
         HeaderName::Via,
@@ -33,10 +42,12 @@ fn subscribe_request_with_call_id(event: &str, expires: Option<u64>, call_id: &s
         HeaderName::From,
         HeaderValue::new("<sip:34020000002000000001@upstream.example.com>;tag=remote-tag"),
     );
-    headers.append(
-        HeaderName::To,
-        HeaderValue::new("<sip:34020000001320000001@example.com>"),
-    );
+    let to = if let Some(tag) = to_tag {
+        format!("<sip:34020000001320000001@example.com>;tag={tag}")
+    } else {
+        "<sip:34020000001320000001@example.com>".to_string()
+    };
+    headers.append(HeaderName::To, HeaderValue::new(to));
     headers.append(HeaderName::CallId, HeaderValue::new(call_id.to_string()));
     headers.append(HeaderName::CSeq, HeaderValue::new("1 SUBSCRIBE"));
     headers.append(
@@ -527,4 +538,35 @@ fn subscribe_with_malformed_expires_returns_400() {
     let response = first_response(&outputs).expect("400 response");
     assert!(matches!(response, SipMessage::Response { line, .. } if line.code == 400));
     assert!(cascade.subscriptions.is_empty());
+}
+
+#[test]
+fn subscribe_renewal_preserves_existing_subscription_when_notify_build_fails() {
+    let mut cascade = Gb28181Cascade::new(test_config(), password_provider()).unwrap();
+    register_to_connected(&mut cascade);
+
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 2000,
+            event: CascadeEvent::Request(Box::new(subscribe_request("Catalog", 60))),
+        })
+        .unwrap();
+    let response = first_response(&outputs).expect("200 OK response");
+    assert!(matches!(response, SipMessage::Response { line, .. } if line.code == 200));
+    assert_eq!(cascade.subscriptions.len(), 1);
+
+    // Renewal with an invalid To tag. The cascade only rejects line-break injection
+    // in tags, so the request reaches subscription renewal. The resulting NOTIFY
+    // cannot be built because the tag is not a valid SIP token, but the existing
+    // subscription must not be destroyed.
+    let renewal = subscribe_request_full("Catalog", Some(60), "sub-call-id-1", Some("<bad"));
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 2001,
+            event: CascadeEvent::Request(Box::new(renewal)),
+        })
+        .unwrap();
+    let response = first_response(&outputs).expect("500 response");
+    assert!(matches!(response, SipMessage::Response { line, .. } if line.code == 500));
+    assert_eq!(cascade.subscriptions.len(), 1);
 }
