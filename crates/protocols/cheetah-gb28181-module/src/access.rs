@@ -218,12 +218,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                 now,
             )
         } else {
-            let challenge = self
-                .digest_context
-                .generate_challenge(now)
-                .map_err(|e| AccessError::Internal(e.to_string()))?;
-            let response = build_challenge_response(&message, &challenge, self.next_tag());
-            Ok(vec![AccessOutput::SendResponse(response)])
+            self.authentication_failure_response(&message, now, false)
         }
     }
 
