@@ -46,14 +46,18 @@ fn save_with_revision<K, V>(
 where
     K: Ord + Clone,
 {
-    let expected = revision(&value).0.saturating_sub(1);
+    let value_revision = revision(&value).0;
     match map.get(&key) {
-        Some(existing) if revision(existing).0 == expected => {
+        Some(existing) if value_revision == 0 => Err(DomainError::ConcurrentModification {
+            expected: 0,
+            found: revision(existing).0,
+        }),
+        Some(existing) if revision(existing).0 == value_revision - 1 => {
             map.insert(key, value);
             Ok(())
         }
         Some(existing) => Err(DomainError::ConcurrentModification {
-            expected,
+            expected: value_revision - 1,
             found: revision(existing).0,
         }),
         None => {
