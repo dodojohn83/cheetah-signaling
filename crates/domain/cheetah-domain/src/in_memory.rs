@@ -55,11 +55,12 @@ where
             expected,
             found: revision(existing).0,
         }),
-        None if expected == 0 => {
+        // A fresh insert has no conflict, so the SQL upsert does not evaluate the
+        // `WHERE revision = EXCLUDED.revision - 1` guard and accepts any revision.
+        None => {
             map.insert(key, value);
             Ok(())
         }
-        None => Err(DomainError::ConcurrentModification { expected, found: 0 }),
     }
 }
 
