@@ -356,3 +356,92 @@ fn dialog_extracts_uri_from_multibyte_header_params() {
     assert_eq!(dialog.remote_target().host(), "example.com");
     assert_eq!(dialog.route_set().len(), 2);
 }
+
+#[test]
+fn uac_dialog_rejects_malformed_record_route() {
+    // A proxy that inserts an unparseable URI into Record-Route must not be
+    // silently dropped: the dialog route set would be incomplete and future
+    // in-dialog requests could bypass required proxy hops.
+    let ok = parse(
+        "SIP/2.0 200 OK\r\n\
+        Via: SIP/2.0/UDP 192.168.1.1:5060;branch=z9hG4bKinvite\r\n\
+        From: <sip:alice@example.com>;tag=local-abc\r\n\
+        To: <sip:bob@example.com>;tag=remote-xyz\r\n\
+        Call-ID: call-dialog@example.com\r\n\
+        CSeq: 2 INVITE\r\n\
+        Contact: <sip:bob@example.com>\r\n\
+        Record-Route: <sip:proxy1.example.com;lr>, <not-a-valid-uri>\r\n\
+        Content-Length: 0\r\n\r\n",
+    );
+    let result = Dialog::new_uac(&invite_request(), &ok);
+    assert!(
+        result.is_err(),
+        "expected malformed Record-Route to be rejected, got {:?}",
+        result
+    );
+}
+
+#[test]
+fn uas_dialog_rejects_malformed_record_route() {
+    // The UAS must also reject an INVITE whose Record-Route contains an
+    // unparseable URI, otherwise the route set stored by the server is incomplete.
+    let invite = parse(
+        "INVITE sip:bob@example.com SIP/2.0\r\n\
+        Via: SIP/2.0/UDP 192.168.1.1:5060;branch=z9hG4bKinvite\r\n\
+        From: <sip:alice@example.com>;tag=local-abc\r\n\
+        To: <sip:bob@example.com>\r\n\
+        Call-ID: call-dialog@example.com\r\n\
+        CSeq: 2 INVITE\r\n\
+        Contact: <sip:alice@example.com>\r\n\
+        Record-Route: <sip:proxy1.example.com;lr>, <not-a-valid-uri>\r\n\
+        Content-Length: 0\r\n\r\n",
+    );
+    let result = Dialog::new_uas(&invite, "uas-local");
+    assert!(
+        result.is_err(),
+        "expected malformed Record-Route to be rejected, got {:?}",
+        result
+    );
+}
+
+#[test]
+fn uac_dialog_accepts_quoted_display_name_with_comma() {
+    // RFC 3261 allows quoted display names to contain commas; the split on
+    // Record-Route entries must not break inside the quotes.
+    let ok = parse(
+        "SIP/2.0 200 OK\r\n\
+        Via: SIP/2.0/UDP 192.168.1.1:5060;branch=z9hG4bKinvite\r\n\
+        From: <sip:alice@example.com>;tag=local-abc\r\n\
+        To: <sip:bob@example.com>;tag=remote-xyz\r\n\
+        Call-ID: call-dialog@example.com\r\n\
+        CSeq: 2 INVITE\r\n\
+        Contact: <sip:bob@example.com>\r\n\
+        Record-Route: \"Proxy, Inc\" <sip:proxy1.example.com;lr>, <sip:proxy2.example.com;lr>\r\n\
+        Content-Length: 0\r\n\r\n",
+    );
+    let dialog = Dialog::new_uac(&invite_request(), &ok).unwrap();
+    assert_eq!(dialog.route_set().len(), 2);
+    assert_eq!(dialog.route_set()[0].host(), "proxy2.example.com");
+    assert_eq!(dialog.route_set()[1].host(), "proxy1.example.com");
+}
+
+#[test]
+fn uac_dialog_accepts_escaped_quote_in_display_name() {
+    // Escaped quotes inside a quoted display name must not prematurely end
+    // the quoted string and cause a split on an internal comma.
+    let ok = parse(
+        "SIP/2.0 200 OK\r\n\
+        Via: SIP/2.0/UDP 192.168.1.1:5060;branch=z9hG4bKinvite\r\n\
+        From: <sip:alice@example.com>;tag=local-abc\r\n\
+        To: <sip:bob@example.com>;tag=remote-xyz\r\n\
+        Call-ID: call-dialog@example.com\r\n\
+        CSeq: 2 INVITE\r\n\
+        Contact: <sip:bob@example.com>\r\n\
+        Record-Route: \"Proxy \\\"X\\\", Inc\" <sip:proxy1.example.com;lr>, <sip:proxy2.example.com;lr>\r\n\
+        Content-Length: 0\r\n\r\n",
+    );
+    let dialog = Dialog::new_uac(&invite_request(), &ok).unwrap();
+    assert_eq!(dialog.route_set().len(), 2);
+    assert_eq!(dialog.route_set()[0].host(), "proxy2.example.com");
+    assert_eq!(dialog.route_set()[1].host(), "proxy1.example.com");
+}
