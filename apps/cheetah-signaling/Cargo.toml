@@ -28,7 +28,13 @@ cheetah-media-scheduler = { path = "../../crates/media/cheetah-media-scheduler" 
 cheetah-media-client = { path = "../../crates/media/cheetah-media-client" }
 cheetah-gb28181-module = { path = "../../crates/protocols/cheetah-gb28181-module" }
 cheetah-gb28181-driver-tokio = { path = "../../crates/protocols/cheetah-gb28181-driver-tokio" }
+cheetah-onvif-module = { path = "../../crates/protocols/cheetah-onvif-module" }
+cheetah-onvif-driver-tokio = { path = "../../crates/protocols/cheetah-onvif-driver-tokio" }
+cheetah-plugin-host = { path = "../../crates/plugin/cheetah-plugin-host" }
+cheetah-plugin-sdk = { path = "../../crates/plugin/cheetah-plugin-sdk" }
 cheetah-secret = { path = "../../crates/foundation/cheetah-secret" }
+semver = { workspace = true }
+url = { workspace = true }
 async-trait = { workspace = true }
 hex = { workspace = true }
 secrecy = { workspace = true }
