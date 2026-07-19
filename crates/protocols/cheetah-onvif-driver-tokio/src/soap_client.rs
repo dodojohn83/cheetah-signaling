@@ -152,13 +152,13 @@ impl SoapClient {
         }
 
         // HTTP 200 with SOAP Fault body.
-        if body.contains("Fault") {
-            if let Ok(fault) = soap::parse_fault(&body) {
-                return Err(DriverError::Http(format!(
-                    "SOAP Fault: code={}, reason={}",
-                    fault.code, fault.reason
-                )));
-            }
+        if body.contains("Fault")
+            && let Ok(fault) = soap::parse_fault(&body)
+        {
+            return Err(DriverError::Http(format!(
+                "SOAP Fault: code={}, reason={}",
+                fault.code, fault.reason
+            )));
         }
 
         let _ = StatusCode::from_u16(status.as_u16());

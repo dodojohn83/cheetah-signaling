@@ -465,6 +465,8 @@ pub fn redact_uri_userinfo(uri: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
     use super::*;
     use cheetah_onvif_core::discovery::XAddrPolicy;
 

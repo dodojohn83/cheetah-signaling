@@ -158,6 +158,8 @@ pub fn parse_get_imaging_settings_response(
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
     use super::*;
 
     #[test]
