@@ -11,12 +11,22 @@ use crate::xml::{
     parse_device_status, parse_keepalive, parse_mobile_position, parse_record_info, parse_xml,
 };
 use cheetah_gb28181_core::{
-    DigestChallenge, DigestContext, DigestQop, DigestReplayCache, DigestResponse, HeaderName,
-    HeaderValue, Method, SipHeaders, SipMessage, SipUri, StatusLine,
+    DigestContext, DigestQop, DigestReplayCache, HeaderName, Method, SipMessage,
 };
 use secrecy::ExposeSecret;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
+
+mod parse;
+mod response;
+
+use parse::{
+    device_id_from_request, parse_authorization, parse_contact_header, parse_expires_header,
+    resolve_expires,
+};
+use response::{
+    build_challenge_response, build_error_response, build_message_response, build_success_response,
+};
 
 /// An input to the GB28181 access module.
 #[derive(Clone)]
@@ -232,7 +242,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
     fn register_accepted(
         &mut self,
         message: &SipMessage,
-        contact_uri: &SipUri,
+        contact_uri: &cheetah_gb28181_core::SipUri,
         expires: u32,
         device_id: DeviceId,
         source: SocketAddr,
@@ -329,7 +339,8 @@ impl<P: CredentialProvider> Gb28181Access<P> {
             .get(&HeaderName::From)
             .map(|v| v.as_str())
             .ok_or(AccessError::InvalidDeviceId)?;
-        let from_device_id = device_from_address(from).ok_or(AccessError::InvalidDeviceId)?;
+        let from_device_id =
+            parse::device_from_address(from).ok_or(AccessError::InvalidDeviceId)?;
 
         let root = parse_xml(body, &XmlLimits::default())?;
         let cmd_type = root
@@ -549,275 +560,5 @@ impl<P: CredentialProvider> Gb28181Access<P> {
             &challenge,
             self.next_tag(),
         ))])
-    }
-}
-
-fn device_id_from_request(
-    request: &cheetah_gb28181_core::RequestLine,
-    headers: &SipHeaders,
-) -> Result<DeviceId, AccessError> {
-    if let Some(id) = request
-        .uri
-        .user()
-        .filter(|u| !u.is_empty())
-        .and_then(DeviceId::new)
-    {
-        return Ok(id);
-    }
-    if let Some(id) = headers
-        .get(&HeaderName::To)
-        .and_then(|v| device_from_address(v.as_str()))
-    {
-        return Ok(id);
-    }
-    if let Some(id) = headers
-        .get(&HeaderName::From)
-        .and_then(|v| device_from_address(v.as_str()))
-    {
-        return Ok(id);
-    }
-    Err(AccessError::InvalidDeviceId)
-}
-
-fn device_from_address(value: &str) -> Option<DeviceId> {
-    let value = value.trim();
-    let uri_text = if let Some(start) = value.find('<') {
-        let end = value.find('>')?;
-        value.get(start + 1..end)?
-    } else {
-        value.split(';').next()?
-    };
-    SipUri::parse(uri_text).ok().and_then(|u| {
-        u.user()
-            .filter(|u| !u.is_empty())
-            .map(str::to_string)
-            .and_then(DeviceId::new)
-    })
-}
-
-fn parse_contact_header(headers: &SipHeaders) -> Result<(SipUri, Option<u32>), AccessError> {
-    let value = headers
-        .get(&HeaderName::Contact)
-        .ok_or(AccessError::InvalidContact)?
-        .as_str();
-    parse_address_with_expires(value)
-}
-
-fn parse_address_with_expires(value: &str) -> Result<(SipUri, Option<u32>), AccessError> {
-    let value = value.trim();
-    let (uri_text, params_text) = if let Some(start) = value.find('<') {
-        let end = value.find('>').ok_or(AccessError::InvalidContact)?;
-        let uri_text = value
-            .get(start + 1..end)
-            .ok_or(AccessError::InvalidContact)?;
-        let after = value.get(end + 1..).unwrap_or("");
-        (uri_text, after.trim())
-    } else {
-        let parts: Vec<&str> = value.splitn(2, ';').collect();
-        (parts[0].trim(), parts.get(1).copied().unwrap_or(""))
-    };
-
-    let uri = SipUri::parse(uri_text).map_err(|_| AccessError::InvalidContact)?;
-    let mut expires = None;
-    for token in params_text.split(';') {
-        let token = token.trim();
-        if token.is_empty() {
-            continue;
-        }
-        if let Some(value) = token.strip_prefix("expires=") {
-            let value = value.trim();
-            if value.is_empty() {
-                return Err(AccessError::InvalidExpires);
-            }
-            expires = Some(
-                value
-                    .parse::<u32>()
-                    .map_err(|_| AccessError::InvalidExpires)?,
-            );
-        }
-    }
-    Ok((uri, expires))
-}
-
-fn parse_expires_header(headers: &SipHeaders) -> Result<Option<u32>, AccessError> {
-    let Some(value) = headers.get(&HeaderName::Expires) else {
-        return Ok(None);
-    };
-    let trimmed = value.as_str().trim();
-    if trimmed.is_empty() {
-        return Err(AccessError::InvalidExpires);
-    }
-    trimmed
-        .parse::<u32>()
-        .map(Some)
-        .map_err(|_| AccessError::InvalidExpires)
-}
-
-fn resolve_expires(
-    contact_expires: Option<u32>,
-    header_expires: Option<u32>,
-    config: &Gb28181DomainConfig,
-) -> u32 {
-    let requested = contact_expires
-        .or(header_expires)
-        .unwrap_or(config.default_expires_seconds());
-    requested.clamp(0, config.max_expires_seconds())
-}
-
-fn parse_authorization(value: &str) -> Result<DigestResponse, cheetah_gb28181_core::DigestError> {
-    DigestResponse::parse_with_limit(value, 4096)
-}
-
-fn build_challenge_response(
-    request: &SipMessage,
-    challenge: &DigestChallenge,
-    tag: String,
-) -> SipMessage {
-    let mut headers = copy_common_headers(request);
-    if let Some(to) = request.headers().get(&HeaderName::To) {
-        headers.append(
-            HeaderName::To,
-            HeaderValue::new(add_or_replace_tag(to.as_str(), &tag)),
-        );
-    }
-    headers.append(
-        HeaderName::WwwAuthenticate,
-        HeaderValue::new(challenge.to_header_value()),
-    );
-    headers.append(HeaderName::ContentLength, HeaderValue::new("0"));
-    SipMessage::Response {
-        line: StatusLine::new(401, "Unauthorized"),
-        headers,
-        body: Vec::new(),
-    }
-}
-
-fn build_error_response(request: &SipMessage, code: u16, reason: &str, tag: String) -> SipMessage {
-    let mut headers = copy_common_headers(request);
-    if let Some(to) = request.headers().get(&HeaderName::To) {
-        headers.append(
-            HeaderName::To,
-            HeaderValue::new(add_or_replace_tag(to.as_str(), &tag)),
-        );
-    }
-    headers.append(HeaderName::ContentLength, HeaderValue::new("0"));
-    SipMessage::Response {
-        line: StatusLine::new(code, reason),
-        headers,
-        body: Vec::new(),
-    }
-}
-
-fn build_success_response(
-    request: &SipMessage,
-    contact: &SipUri,
-    expires: u32,
-    tag: String,
-) -> SipMessage {
-    let mut headers = copy_common_headers(request);
-    if let Some(to) = request.headers().get(&HeaderName::To) {
-        headers.append(
-            HeaderName::To,
-            HeaderValue::new(add_or_replace_tag(to.as_str(), &tag)),
-        );
-    }
-    headers.append(
-        HeaderName::Contact,
-        HeaderValue::new(format!("<{}>;expires={}", contact.encode(), expires)),
-    );
-    headers.append(HeaderName::Expires, HeaderValue::new(expires.to_string()));
-    headers.append(HeaderName::ContentLength, HeaderValue::new("0"));
-    SipMessage::Response {
-        line: StatusLine::new(200, "OK"),
-        headers,
-        body: Vec::new(),
-    }
-}
-
-fn build_message_response(request: &SipMessage, tag: String) -> SipMessage {
-    let mut headers = copy_common_headers(request);
-    if let Some(to) = request.headers().get(&HeaderName::To) {
-        headers.append(
-            HeaderName::To,
-            HeaderValue::new(add_or_replace_tag(to.as_str(), &tag)),
-        );
-    }
-    headers.append(HeaderName::ContentLength, HeaderValue::new("0"));
-    SipMessage::Response {
-        line: StatusLine::new(200, "OK"),
-        headers,
-        body: Vec::new(),
-    }
-}
-
-fn copy_common_headers(request: &SipMessage) -> SipHeaders {
-    let mut headers = SipHeaders::new();
-    // Via may appear multiple times (one per proxy hop); copy all of them.
-    for value in request.headers().get_all(&HeaderName::Via) {
-        headers.append(HeaderName::Via.clone(), value.clone());
-    }
-    for name in [HeaderName::From, HeaderName::CallId, HeaderName::CSeq] {
-        if let Some(value) = request.headers().get(&name) {
-            headers.append(name, value.clone());
-        }
-    }
-    headers
-}
-
-fn add_or_replace_tag(value: &str, tag: &str) -> String {
-    let value = value.trim();
-    if value.is_empty() {
-        return String::new();
-    }
-    let without_tag = value
-        .split(';')
-        .filter(|part| !part.trim().starts_with("tag="))
-        .collect::<Vec<_>>()
-        .join(";");
-    if without_tag.is_empty() {
-        format!("tag={tag}")
-    } else {
-        format!("{without_tag};tag={tag}")
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used)]
-
-    use super::*;
-    use cheetah_gb28181_core::{HeaderName, HeaderValue, SipHeaders};
-
-    #[test]
-    fn parse_expires_header_rejects_non_numeric() {
-        let mut headers = SipHeaders::new();
-        headers.append(HeaderName::Expires, HeaderValue::new("not-a-number"));
-        assert!(matches!(
-            parse_expires_header(&headers),
-            Err(AccessError::InvalidExpires)
-        ));
-    }
-
-    #[test]
-    fn parse_expires_header_rejects_empty() {
-        let mut headers = SipHeaders::new();
-        headers.append(HeaderName::Expires, HeaderValue::new(""));
-        assert!(matches!(
-            parse_expires_header(&headers),
-            Err(AccessError::InvalidExpires)
-        ));
-    }
-
-    #[test]
-    fn parse_address_with_expires_rejects_non_numeric_param() {
-        let result = parse_address_with_expires("<sip:a@example.com>;expires=not-a-number");
-        assert!(matches!(result, Err(AccessError::InvalidExpires)));
-    }
-
-    #[test]
-    fn parse_address_with_expires_accepts_valid_param() {
-        let (uri, expires) = parse_address_with_expires("<sip:a@example.com>;expires=60").unwrap();
-        assert_eq!(expires, Some(60));
-        assert_eq!(uri.user(), Some("a"));
     }
 }
