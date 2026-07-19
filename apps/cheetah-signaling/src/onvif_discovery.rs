@@ -107,14 +107,17 @@ async fn run_discovery_sweep(
     driver: Arc<OnvifHttpDriver>,
     driver_config: &DriverConfig,
     max_concurrent: u32,
-    _cancel: CancellationToken,
+    cancel: CancellationToken,
 ) {
-    let result = match probe_once(driver_config).await {
-        Ok(r) => r,
-        Err(e) => {
-            warn!(error = %e, "onvif discovery probe failed");
-            return;
-        }
+    let result = tokio::select! {
+        _ = cancel.cancelled() => return,
+        r = probe_once(driver_config) => match r {
+            Ok(r) => r,
+            Err(e) => {
+                warn!(error = %e, "onvif discovery probe failed");
+                return;
+            }
+        },
     };
 
     if result.matches.is_empty() {
@@ -128,14 +131,24 @@ async fn run_discovery_sweep(
     // are tried sequentially so cameras advertising multiple addresses do not
     // collide on the unique device external-id index.
     for m in result.matches {
+        if cancel.is_cancelled() {
+            break;
+        }
         let endpoint_ref = m.endpoint_reference.0.to_string();
         let xaddrs = m.x_addrs.0;
         let permit = semaphore.clone();
         let driver = driver.clone();
         let state = state.clone();
+        let cancel = cancel.child_token();
         set.spawn(async move {
             let _permit = permit.acquire().await;
+            if cancel.is_cancelled() {
+                return;
+            }
             for xaddr in xaddrs {
+                if cancel.is_cancelled() {
+                    return;
+                }
                 match provision_device(
                     state.clone(),
                     node_id,
@@ -156,9 +169,18 @@ async fn run_discovery_sweep(
         });
     }
 
-    while let Some(res) = set.join_next().await {
-        if let Err(e) = res {
-            warn!(error = %e, "onvif discovery task panicked or aborted");
+    while !set.is_empty() {
+        tokio::select! {
+            _ = cancel.cancelled() => {
+                set.abort_all();
+                while set.join_next().await.is_some() {}
+                break;
+            }
+            res = set.join_next() => {
+                if let Some(Err(e)) = res {
+                    warn!(error = %e, "onvif discovery task panicked or aborted");
+                }
+            }
         }
     }
 }
