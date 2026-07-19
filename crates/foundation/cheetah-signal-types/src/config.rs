@@ -84,6 +84,18 @@ impl SignalConfig {
                 "runtime.queue_depth must be greater than zero",
             ));
         }
+        if self.gb28181.catalog_fragment_max_entries == 0 {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                "gb28181.catalog_fragment_max_entries must be greater than zero",
+            ));
+        }
+        if self.gb28181.catalog_fragment_max_items == 0 {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                "gb28181.catalog_fragment_max_items must be greater than zero",
+            ));
+        }
         if self.http.port == 0 {
             return Err(SignalError::new(
                 SignalErrorKind::InvalidArgument,
@@ -495,7 +507,7 @@ pub struct PluginsConfig {
 }
 
 /// GB28181 protocol configuration.
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 #[serde(deny_unknown_fields)]
 pub struct Gb28181Config {
@@ -514,6 +526,28 @@ pub struct Gb28181Config {
     /// mapping is configured. When omitted, GB28181 events that cannot be
     /// attributed to a tenant are dropped.
     pub default_tenant_id: Option<String>,
+    /// Maximum number of concurrent catalog fragment assemblies to keep in
+    /// memory. Each assembly is keyed by the SIP sequence number of a catalog
+    /// query response.
+    pub catalog_fragment_max_entries: u32,
+    /// Maximum number of catalog items that may be accumulated for a single
+    /// (tenant, device, sequence number) before the partial assembly is dropped.
+    pub catalog_fragment_max_items: u32,
+}
+
+impl Default for Gb28181Config {
+    fn default() -> Self {
+        Self {
+            sip_domain: String::new(),
+            sip_port: 0,
+            media_stream_timeout_ms: DurationMs::from_seconds(30),
+            digest_secret_ref: None,
+            device_password_ref: None,
+            default_tenant_id: None,
+            catalog_fragment_max_entries: 1024,
+            catalog_fragment_max_items: 8192,
+        }
+    }
 }
 
 /// ONVIF protocol configuration.

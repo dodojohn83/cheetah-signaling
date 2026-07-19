@@ -491,6 +491,8 @@ pub async fn start(
             node_id,
             default_tenant_id,
             config.runtime.queue_depth,
+            config.gb28181.catalog_fragment_max_entries as usize,
+            config.gb28181.catalog_fragment_max_items as usize,
             cancel.child_token(),
         );
         workers.push(gb_event_handle);

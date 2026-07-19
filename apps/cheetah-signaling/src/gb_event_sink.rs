@@ -49,12 +49,14 @@ pub fn spawn(
     node_id: NodeId,
     tenant_id: Option<TenantId>,
     queue_depth: usize,
+    catalog_max_entries: usize,
+    catalog_max_items: usize,
     cancel: tokio_util::sync::CancellationToken,
 ) -> (Arc<dyn EventSink>, tokio::task::JoinHandle<()>) {
     let queue_depth = queue_depth.max(1);
     let (tx, mut rx) = mpsc::channel(queue_depth);
     let sink = Arc::new(GbApplicationEventSink { tx }) as Arc<dyn EventSink>;
-    let mut catalog_buffer = CatalogBuffer::new();
+    let mut catalog_buffer = CatalogBuffer::new(catalog_max_entries, catalog_max_items);
     let mut cleanup = tokio::time::interval(CATALOG_CLEANUP_INTERVAL);
     cleanup.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let handle = tokio::spawn(async move {
@@ -305,6 +307,8 @@ const CATALOG_CLEANUP_INTERVAL: Duration = Duration::from_secs(30);
 /// the background worker cleanup tick.
 struct CatalogBuffer {
     entries: HashMap<CatalogKey, PartialCatalog>,
+    max_entries: usize,
+    max_items_per_entry: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
@@ -321,9 +325,11 @@ struct PartialCatalog {
 }
 
 impl CatalogBuffer {
-    fn new() -> Self {
+    fn new(max_entries: usize, max_items_per_entry: usize) -> Self {
         Self {
             entries: HashMap::new(),
+            max_entries,
+            max_items_per_entry,
         }
     }
 
@@ -339,21 +345,63 @@ impl CatalogBuffer {
             return Some(items);
         }
 
+        let expected_usize = expected as usize;
+        if expected_usize > self.max_items_per_entry {
+            warn!(
+                %device_id,
+                sn,
+                expected,
+                max_items_per_entry = self.max_items_per_entry,
+                "gb28181 catalog fragment declares more items than allowed; dropping"
+            );
+            return None;
+        }
+
         let key = CatalogKey {
             tenant_id,
             device_id: device_id.as_ref().to_string(),
             sn: sn.to_string(),
         };
 
+        if !self.entries.contains_key(&key) && self.entries.len() >= self.max_entries {
+            warn!(
+                sn,
+                max_entries = self.max_entries,
+                "gb28181 catalog fragment buffer full; dropping new fragment"
+            );
+            return None;
+        }
+
         if let Some(partial) = self.entries.get_mut(&key) {
+            let new_len = partial.items.len().saturating_add(items.len());
+            if new_len > self.max_items_per_entry {
+                warn!(
+                    %device_id,
+                    sn,
+                    accumulated = new_len,
+                    max_items_per_entry = self.max_items_per_entry,
+                    "gb28181 catalog fragment exceeded per-entry item limit; dropping partial"
+                );
+                self.entries.remove(&key);
+                return None;
+            }
             partial.items.extend(items);
             partial.last_seen = Instant::now();
             if partial.items.len() >= partial.expected as usize {
-                if let Some(complete) = self.entries.remove(&key) {
-                    return Some(complete.items);
-                }
-                return None;
+                return self.entries.remove(&key).map(|complete| complete.items);
             }
+            return None;
+        }
+
+        let new_len = items.len();
+        if new_len > self.max_items_per_entry {
+            warn!(
+                %device_id,
+                sn,
+                accumulated = new_len,
+                max_items_per_entry = self.max_items_per_entry,
+                "gb28181 catalog fragment exceeded per-entry item limit; dropping"
+            );
             return None;
         }
 
@@ -362,7 +410,7 @@ impl CatalogBuffer {
             expected,
             last_seen: Instant::now(),
         };
-        if partial.items.len() >= partial.expected as usize {
+        if partial.items.len() >= expected_usize {
             return Some(partial.items);
         }
         self.entries.insert(key, partial);

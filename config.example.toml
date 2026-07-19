@@ -119,6 +119,12 @@ digest_secret_ref = "gb28181.digest"
 # Optional default tenant UUID for incoming GB28181 devices.
 # When omitted, events that cannot be mapped to a tenant are dropped.
 # default_tenant_id = "018f3b0a-..."
+# Maximum concurrent catalog fragment assemblies held in memory.
+# Default: 1024.
+catalog_fragment_max_entries = 1024
+# Maximum catalog items accumulated for a single (device, sequence number).
+# Default: 8192.
+catalog_fragment_max_items = 8192
 # Media stream keep-alive timeout in milliseconds. Default: 0.
 media_stream_timeout_ms = 30000
 
