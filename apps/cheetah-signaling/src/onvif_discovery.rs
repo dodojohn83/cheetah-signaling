@@ -169,19 +169,18 @@ async fn run_discovery_sweep(
         });
     }
 
-    loop {
+    while !set.is_empty() {
         tokio::select! {
             _ = cancel.cancelled() => {
                 set.abort_all();
+                while set.join_next().await.is_some() {}
+                break;
             }
-            res = set.join_next(), if !set.is_empty() => {
-                match res {
-                    Some(Err(e)) => warn!(error = %e, "onvif discovery task panicked or aborted"),
-                    None => return,
-                    _ => {}
+            res = set.join_next() => {
+                if let Some(Err(e)) = res {
+                    warn!(error = %e, "onvif discovery task panicked or aborted");
                 }
             }
-            else => break,
         }
     }
 }
