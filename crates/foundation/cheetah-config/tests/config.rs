@@ -117,7 +117,37 @@ enabled = true
 
     let source = LayeredConfigSource::new().with_config_path(&path);
     let config = source.snapshot()?;
-    assert_eq!(config.system.profile, DeploymentProfile::Cluster);
+    assert_eq!(config.system.profile, Some(DeploymentProfile::Cluster));
+
+    let _ = fs::remove_file(&path);
+    Ok(())
+}
+
+#[test]
+fn cluster_profile_is_inferred_when_omitted() -> Result<(), SignalError> {
+    let path = temp_config_path("cluster-inferred");
+    let content = r#"
+[storage]
+backend = "postgres"
+postgres_url = "postgres://u:p@localhost/cheetah"
+
+[messaging]
+backend = "nats"
+
+[cluster]
+enabled = true
+"#;
+    fs::write(&path, content).map_err(|e| {
+        SignalError::new(
+            cheetah_signal_types::SignalErrorKind::Internal,
+            "failed to write temp file",
+        )
+        .with_source(e)
+    })?;
+
+    let source = LayeredConfigSource::new().with_config_path(&path);
+    let config = source.snapshot()?;
+    assert_eq!(config.system.profile, None);
 
     let _ = fs::remove_file(&path);
     Ok(())

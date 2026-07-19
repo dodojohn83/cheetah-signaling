@@ -144,7 +144,8 @@ impl SignalConfig {
                 "media.default_invite_timeout_ms must be greater than zero",
             ));
         }
-        match self.system.profile {
+        let inferred = self.infer_deployment_profile()?;
+        match inferred {
             DeploymentProfile::Edge => {
                 if self.storage.backend != StorageBackend::Sqlite {
                     return Err(SignalError::new(
@@ -189,6 +190,32 @@ impl SignalConfig {
         Ok(())
     }
 
+    /// Returns the effective deployment profile, inferring it from the other
+    /// backend settings when the profile is not explicitly set.
+    fn infer_deployment_profile(&self) -> Result<DeploymentProfile> {
+        match &self.system.profile {
+            Some(profile) => Ok(profile.clone()),
+            None => {
+                if self.storage.backend == StorageBackend::Postgres
+                    && self.messaging.backend == MessagingBackend::Nats
+                    && self.cluster.enabled
+                {
+                    Ok(DeploymentProfile::Cluster)
+                } else if self.storage.backend == StorageBackend::Sqlite
+                    && self.messaging.backend == MessagingBackend::Local
+                    && !self.cluster.enabled
+                {
+                    Ok(DeploymentProfile::Edge)
+                } else {
+                    Err(SignalError::new(
+                        SignalErrorKind::InvalidArgument,
+                        "could not infer deployment profile from storage/messaging/cluster settings; set system.profile explicitly",
+                    ))
+                }
+            }
+        }
+    }
+
     /// Generates a TOML example of the default configuration.
     pub fn example_toml() -> Result<String> {
         let example = Self::default();
@@ -227,8 +254,8 @@ pub struct SystemConfig {
     pub log_level: String,
     /// Optional node id for stable identity.
     pub node_id: Option<NodeId>,
-    /// Deployment profile.
-    pub profile: DeploymentProfile,
+    /// Deployment profile. If omitted, it is inferred from storage/messaging/cluster settings.
+    pub profile: Option<DeploymentProfile>,
 }
 
 impl Default for SystemConfig {
@@ -238,7 +265,7 @@ impl Default for SystemConfig {
             data_dir: String::new(),
             log_level: "info".to_string(),
             node_id: None,
-            profile: DeploymentProfile::Edge,
+            profile: None,
         }
     }
 }

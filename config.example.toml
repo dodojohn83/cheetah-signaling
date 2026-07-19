@@ -8,6 +8,7 @@
 # Deployment profile: "edge" or "cluster".
 # edge: SQLite + local bus, single-node, cluster disabled.
 # cluster: PostgreSQL + NATS + ownership, cluster enabled.
+# If omitted, the profile is inferred from storage/messaging/cluster settings.
 profile = "edge"
 # Human-readable node name. Default: "" (auto-generated).
 node_name = "cheetah-edge-01"
