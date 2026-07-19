@@ -360,6 +360,8 @@ impl Provisioner {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
     use super::*;
     use crate::types::DeviceInformation;
     use cheetah_signal_types::{

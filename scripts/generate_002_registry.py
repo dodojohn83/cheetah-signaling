@@ -1,0 +1,159 @@
+#!/usr/bin/env python3
+"""Generate stable 002 checkbox registry and markdown summary."""
+
+import json
+import re
+from pathlib import Path
+
+BASE = Path("dev-docs/002_vibe_coding_plan")
+OUT_JSON = Path("target/002_checkbox_registry.json")
+OUT_MD = Path("dev-docs/003_next_round_vibe_coding_plan/91_002_checkbox_registry.md")
+
+CHAPTER_TITLE = {
+    "01": "Execution Contract and Baseline",
+    "02": "Workspace Bootstrap and CI",
+    "03": "Crate Graph and Dependency Rules",
+    "04": "Foundation Types Errors Config",
+    "05": "Proto Contracts and Codegen",
+    "06": "Domain and Application Services",
+    "07": "Runtime Sharding and Timers",
+    "08": "Storage SQLite Postgres",
+    "09": "Messaging Outbox and Ownership",
+    "10": "Northbound HTTP and Events",
+    "11": "Media Registry Scheduler and Client",
+    "12": "GB28181 SIP Core",
+    "13": "GB28181 Device Access",
+    "14": "GB28181 Media Operations",
+    "15": "GB28181 Cascade and Compatibility",
+    "16": "ONVIF Core Discovery and Security",
+    "17": "ONVIF Services and Workflows",
+    "18": "Cluster HA and Reconciliation",
+    "19": "Plugin SDK and Host",
+    "20": "Security Observability and Operations",
+    "21": "Testing Simulators and Performance",
+    "22": "Packaging Migration and Release",
+}
+
+PHASE_003 = {
+    "01": ("BAS", "Execution contract: toolchain and environment baseline"),
+    "02": ("BAS", "Workspace and CI baseline"),
+    "03": ("BAS", "Crate graph and dependency gate"),
+    "04": ("BAS, PROD", "Foundation, secret and production assembly"),
+    "05": ("MED-C", "Proto contracts alignment with latest media API"),
+    "06": ("WF", "Domain and application real dispatch and Saga"),
+    "07": ("ASM, SYS", "Runtime and system assembly"),
+    "08": ("BAS, SYS", "Storage dual-backend baseline"),
+    "09": ("ASM, PROD", "Messaging and ownership assembly"),
+    "10": ("PROD", "Public API and event completion"),
+    "11": ("MED-C, MED-R, UP", "Media registry, scheduler, client and upstream"),
+    "12": ("GB, BAS", "GB28181 SIP core baseline"),
+    "13": ("GB", "GB28181 device access"),
+    "14": ("WF, GB, UP", "GB28181 media workflows and upstream"),
+    "15": ("GB, SYS", "GB28181 cascade and system interop"),
+    "16": ("ONVIF", "ONVIF core discovery and security"),
+    "17": ("ONVIF, WF, UP", "ONVIF workflows and upstream"),
+    "18": ("ASM, PROD, SYS", "Cluster HA assembly and system"),
+    "19": ("ASM, PROD", "Plugin SDK and host assembly"),
+    "20": ("PROD", "Security observability and operations"),
+    "21": ("SYS", "Testing simulators and performance"),
+    "22": ("SYS", "Packaging migration and release"),
+}
+
+
+def parse_checkboxes(text, chapter):
+    boxes = []
+    for i, line in enumerate(text.splitlines(), 1):
+        m = re.match(r"^(\s*)- \[(.)\]\s+(.*)$", line)
+        if not m:
+            continue
+        primary, note = PHASE_003.get(chapter, ("", ""))
+        if chapter == "README":
+            primary, note = "N/A", "README global DoD"
+        boxes.append(
+            {
+                "id": f"002-{chapter}-{len(boxes) + 1:03d}",
+                "line": i,
+                "checked": m.group(2) in "xX",
+                "text": m.group(3).strip(),
+                "phase_003_primary": primary,
+                "phase_003_note": note,
+            }
+        )
+    return boxes
+
+
+def build_registry():
+    registry = {"chapters": {}}
+    total, checked = 0, 0
+    for md in sorted(BASE.glob("*.md")):
+        chapter = "README" if md.name == "README.md" else md.stem.split("_")[0]
+        boxes = parse_checkboxes(md.read_text(encoding="utf-8"), chapter)
+        total += len(boxes)
+        checked += sum(1 for b in boxes if b["checked"])
+        registry["chapters"][chapter] = {
+            "title": CHAPTER_TITLE.get(chapter, md.stem),
+            "file": md.name,
+            "checkbox_count": len(boxes),
+            "checked_count": sum(1 for b in boxes if b["checked"]),
+            "unchecked_count": len(boxes)
+            - sum(1 for b in boxes if b["checked"]),
+            "checkboxes": boxes,
+        }
+    registry["generated_at"] = "2026-07-19"
+    registry["total_checkboxes"] = total
+    registry["total_checked"] = checked
+    registry["total_unchecked"] = total - checked
+    return registry
+
+
+def write_outputs(registry):
+    OUT_JSON.parent.mkdir(parents=True, exist_ok=True)
+    OUT_JSON.write_text(
+        json.dumps(registry, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
+    lines = ["# 002 Checkbox Registry (AUD-001)\n\n"]
+    lines.append("Stable references for every checkbox in `dev-docs/002_vibe_coding_plan`.\n\n")
+    lines.append(f"- **Generated**: {registry['generated_at']}\n")
+    lines.append(f"- **Total checkboxes**: {registry['total_checkboxes']}\n")
+    lines.append(f"- **Checked**: {registry['total_checked']}\n")
+    lines.append(f"- **Unchecked**: {registry['total_unchecked']}\n")
+    lines.append(f"- **Files**: {len(registry['chapters'])}\n\n")
+    lines.append("Generated by `scripts/generate_002_registry.py`.\n\n")
+
+    lines.append("## Summary by Chapter\n\n")
+    lines.append(
+        "| Chapter | File | Title | Count | Checked | Unchecked | 003 Primary |\n"
+    )
+    lines.append("| --- | --- | --- | ---: | ---: | ---: | --- |\n")
+    for ch in sorted(registry["chapters"].keys()):
+        c = registry["chapters"][ch]
+        primary = c["checkboxes"][0]["phase_003_primary"] if c["checkboxes"] else ""
+        lines.append(
+            f"| {ch} | {c['file']} | {c['title']} | {c['checkbox_count']} | "
+            f"{c['checked_count']} | {c['unchecked_count']} | {primary} |\n"
+        )
+
+    lines.append("\n## Registry Verification\n\n")
+    lines.append("Run `scripts/audit_002_registry.py` to verify:\n\n")
+    lines.append("1. The number of checkboxes in this registry matches the source files.\n")
+    lines.append("2. Every `002-<chapter>-<ordinal>` is unique and sequential.\n")
+    lines.append("3. The status breakdown equals `Checked + Unchecked`.\n\n")
+
+    OUT_MD.write_text("".join(lines), encoding="utf-8")
+
+
+def main():
+    registry = build_registry()
+    write_outputs(registry)
+    print(f"Wrote {OUT_JSON}")
+    print(f"Wrote {OUT_MD}")
+    print(
+        f"Total: {registry['total_checkboxes']}, "
+        f"checked: {registry['total_checked']}, "
+        f"unchecked: {registry['total_unchecked']}"
+    )
+
+
+if __name__ == "__main__":
+    main()

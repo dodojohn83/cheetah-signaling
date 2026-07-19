@@ -93,9 +93,8 @@ fn empty_body(dialect: MediaDialect, local: &str) -> Result<String, OnvifModuleE
     let mut element = BytesStart::new(&name);
     element.push_attribute((xmlns.as_str(), dialect.ns()));
     writer.write_event(Event::Empty(element))?;
-    String::from_utf8(cursor.into_inner()).map_err(|e| {
-        OnvifModuleError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string()))
-    })
+    String::from_utf8(cursor.into_inner())
+        .map_err(|e| OnvifModuleError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string())))
 }
 
 fn token_body(
@@ -118,9 +117,8 @@ fn token_body(
     writer.write_event(Event::End(BytesEnd::new(&token_name)))?;
     writer.write_event(Event::End(BytesEnd::new(&body_name)))?;
 
-    String::from_utf8(cursor.into_inner()).map_err(|e| {
-        OnvifModuleError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string()))
-    })
+    String::from_utf8(cursor.into_inner())
+        .map_err(|e| OnvifModuleError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string())))
 }
 
 /// Builds a `GetProfiles` request for Media1 or Media2.
@@ -169,9 +167,8 @@ pub fn get_stream_uri_request_media1(
 
     writer.write_event(Event::End(BytesEnd::new("trt:GetStreamUri")))?;
 
-    let body = String::from_utf8(cursor.into_inner()).map_err(|e| {
-        OnvifModuleError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string()))
-    })?;
+    let body = String::from_utf8(cursor.into_inner())
+        .map_err(|e| OnvifModuleError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string())))?;
     Envelope::new(GET_STREAM_URI_ACTION_M1, body)
         .with_message_id(message_id)
         .build()
@@ -198,9 +195,8 @@ pub fn get_stream_uri_request_media2(
     writer.write_event(Event::End(BytesEnd::new("tr2:ProfileToken")))?;
     writer.write_event(Event::End(BytesEnd::new("tr2:GetStreamUri")))?;
 
-    let body = String::from_utf8(cursor.into_inner()).map_err(|e| {
-        OnvifModuleError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string()))
-    })?;
+    let body = String::from_utf8(cursor.into_inner())
+        .map_err(|e| OnvifModuleError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string())))?;
     Envelope::new(GET_STREAM_URI_ACTION_M2, body)
         .with_message_id(message_id)
         .build()
@@ -257,8 +253,7 @@ pub fn parse_get_profiles_response(
                         let local = attr.key.local_name();
                         let key = String::from_utf8_lossy(local.as_ref());
                         if key == "token" {
-                            current_token =
-                                String::from_utf8_lossy(&attr.value).trim().to_string();
+                            current_token = String::from_utf8_lossy(&attr.value).trim().to_string();
                         } else if key == "fixed" {
                             fixed = parse_bool(&String::from_utf8_lossy(&attr.value));
                         }
@@ -312,18 +307,12 @@ pub fn parse_get_profiles_response(
                 } else if let Some(ref mut profile) = current {
                     match name.as_str() {
                         "Name"
-                            if matches!(
-                                parent.as_deref(),
-                                Some("Profiles") | Some("Profile")
-                            ) =>
+                            if matches!(parent.as_deref(), Some("Profiles") | Some("Profile")) =>
                         {
                             profile.name = text.trim().to_string();
                         }
                         "fixed"
-                            if matches!(
-                                parent.as_deref(),
-                                Some("Profiles") | Some("Profile")
-                            ) =>
+                            if matches!(parent.as_deref(), Some("Profiles") | Some("Profile")) =>
                         {
                             profile.fixed = parse_bool(&text);
                         }
@@ -426,9 +415,7 @@ pub fn validate_media_uri(uri: &str, base: &XAddrPolicy) -> Result<(), OnvifModu
     let mut sanitized = parsed;
     let _ = sanitized.set_username("");
     let _ = sanitized.set_password(None);
-    policy
-        .validate(&sanitized)
-        .map_err(OnvifModuleError::Onvif)
+    policy.validate(&sanitized).map_err(OnvifModuleError::Onvif)
 }
 
 /// Parses `GetStreamUriResponse`.
@@ -478,6 +465,8 @@ pub fn redact_uri_userinfo(uri: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
     use super::*;
     use cheetah_onvif_core::discovery::XAddrPolicy;
 

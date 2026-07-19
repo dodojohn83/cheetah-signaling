@@ -83,9 +83,7 @@ impl OnvifHttpDriver {
                 timeout,
             )
             .await?;
-        Ok(cheetah_onvif_module::services::parse_get_system_date_and_time_response(
-            &body,
-        )?)
+        Ok(cheetah_onvif_module::services::parse_get_system_date_and_time_response(&body)?)
     }
 
     /// Lists media profiles, preferring Media2 then falling back to Media1.
@@ -101,7 +99,10 @@ impl OnvifHttpDriver {
         };
         let mut last_err = None;
         for dialect in order {
-            match self.get_profiles_dialect(media_endpoint, dialect, timeout).await {
+            match self
+                .get_profiles_dialect(media_endpoint, dialect, timeout)
+                .await
+            {
                 Ok(profiles) if !profiles.is_empty() => return Ok((dialect, profiles)),
                 Ok(profiles) => return Ok((dialect, profiles)),
                 Err(e) => last_err = Some(e),
