@@ -7,6 +7,7 @@ pub mod migration;
 pub mod phase_migration;
 pub mod repository;
 pub mod storage;
+pub mod timestamp;
 
 pub use error::StorageError;
 pub use migration::{
