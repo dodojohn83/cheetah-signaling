@@ -9,6 +9,7 @@ use cheetah_domain::{Connectivity, Device, Protocol};
 use cheetah_gb28181_driver_tokio::sink::EventSink;
 use cheetah_gb28181_module::DeviceId as GbDeviceId;
 use cheetah_gb28181_module::Gb28181Event;
+use cheetah_gb28181_module::xml::CatalogItem as GbCatalogItem;
 use cheetah_http_api::state::ApiState;
 use cheetah_signal_application::{
     ChannelDescriptor, MarkDeviceOfflineRequest, MarkDeviceOnlineRequest, RegisterDeviceRequest,
@@ -18,8 +19,9 @@ use cheetah_signal_types::{
     ChannelId, CorrelationId, DeviceId, MessageId, NodeId, Principal, PrincipalKind,
     ProtocolIdentity, RequestContext, SignalError, SignalErrorKind, TenantId,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -52,13 +54,20 @@ pub fn spawn(
     let queue_depth = queue_depth.max(1);
     let (tx, mut rx) = mpsc::channel(queue_depth);
     let sink = Arc::new(GbApplicationEventSink { tx }) as Arc<dyn EventSink>;
+    let mut catalog_buffer = CatalogBuffer::new();
+    let mut cleanup = tokio::time::interval(CATALOG_CLEANUP_INTERVAL);
+    cleanup.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let handle = tokio::spawn(async move {
         loop {
             tokio::select! {
                 _ = cancel.cancelled() => break,
+                _ = cleanup.tick() => {
+                    catalog_buffer.evict();
+                    continue;
+                }
                 maybe_event = rx.recv() => {
                     match maybe_event {
-                        Some(event) => process_event(&state, node_id, tenant_id, event).await,
+                        Some(event) => process_event(&state, node_id, tenant_id, event, &mut catalog_buffer).await,
                         None => break,
                     }
                 }
@@ -74,6 +83,7 @@ async fn process_event(
     node_id: NodeId,
     tenant_id: Option<TenantId>,
     event: Gb28181Event,
+    catalog_buffer: &mut CatalogBuffer,
 ) {
     let tenant_id = match tenant_id {
         Some(id) => id,
@@ -85,12 +95,12 @@ async fn process_event(
 
     let context = build_context(state, node_id, tenant_id, &event);
 
-    let result = match &event {
+    let result = match event {
         Gb28181Event::DeviceRegistered { device_id, .. } => {
-            ensure_online(state, &context, tenant_id, device_id, true).await
+            ensure_online(state, &context, tenant_id, &device_id, true).await
         }
         Gb28181Event::DeviceUnregistered { device_id, .. } => {
-            mark_offline(state, &context, tenant_id, device_id).await
+            mark_offline(state, &context, tenant_id, &device_id).await
         }
         Gb28181Event::DevicePresenceChanged {
             device_id,
@@ -98,18 +108,25 @@ async fn process_event(
             ..
         } => match presence {
             cheetah_gb28181_module::DevicePresence::Online => {
-                ensure_online(state, &context, tenant_id, device_id, true).await
+                ensure_online(state, &context, tenant_id, &device_id, true).await
             }
             cheetah_gb28181_module::DevicePresence::Offline => {
-                mark_offline(state, &context, tenant_id, device_id).await
+                mark_offline(state, &context, tenant_id, &device_id).await
             }
         },
         Gb28181Event::Keepalive { device_id, .. } => {
-            ensure_online(state, &context, tenant_id, device_id, false).await
+            ensure_online(state, &context, tenant_id, &device_id, false).await
         }
         Gb28181Event::CatalogReceived {
-            device_id, items, ..
-        } => replace_catalog(state, &context, tenant_id, device_id, items).await,
+            device_id,
+            sn,
+            sum_num,
+            items,
+            ..
+        } => match catalog_buffer.accumulate(tenant_id, &device_id, &sn, sum_num, items) {
+            Some(merged) => replace_catalog(state, &context, tenant_id, &device_id, &merged).await,
+            None => Ok(()),
+        },
         Gb28181Event::DeviceInfoReceived {
             device_id,
             result,
@@ -131,7 +148,7 @@ async fn process_event(
             if let Some(v) = firmware {
                 metadata.insert("firmware".to_string(), v.clone());
             }
-            update_device_info(state, &context, tenant_id, device_id, metadata).await
+            update_device_info(state, &context, tenant_id, &device_id, metadata).await
         }
         Gb28181Event::DeviceStatusReceived {
             device_id,
@@ -158,7 +175,7 @@ async fn process_event(
             if let Some(v) = invalid_equip {
                 metadata.insert("invalid_equip".to_string(), v.clone());
             }
-            update_device_info(state, &context, tenant_id, device_id, metadata).await
+            update_device_info(state, &context, tenant_id, &device_id, metadata).await
         }
         Gb28181Event::AlarmReceived { device_id, .. } => {
             info!(%device_id, "gb28181 alarm received; no application handler wired yet");
@@ -273,6 +290,97 @@ fn event_source(event: &Gb28181Event) -> Option<&std::net::SocketAddr> {
         Gb28181Event::MediaSessionFailed { source, .. } => source.as_ref(),
         Gb28181Event::RecordInfoReceived { source, .. } => Some(source),
         _ => None,
+    }
+}
+
+const CATALOG_FRAGMENT_TTL: Duration = Duration::from_secs(60);
+const CATALOG_CLEANUP_INTERVAL: Duration = Duration::from_secs(30);
+
+/// In-memory accumulator for paginated GB28181 catalog fragments.
+///
+/// Devices may split a catalog response across multiple SIP MESSAGE bodies.
+/// Fragments are keyed by (tenant, device, sequence number) and merged into a
+/// single `replace_channel_catalog` call once `sum_num` items have been seen.
+/// Partial transfers expire after `CATALOG_FRAGMENT_TTL` and are evicted by
+/// the background worker cleanup tick.
+struct CatalogBuffer {
+    entries: HashMap<CatalogKey, PartialCatalog>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+struct CatalogKey {
+    tenant_id: TenantId,
+    device_id: String,
+    sn: String,
+}
+
+struct PartialCatalog {
+    items: Vec<GbCatalogItem>,
+    expected: u32,
+    last_seen: Instant,
+}
+
+impl CatalogBuffer {
+    fn new() -> Self {
+        Self {
+            entries: HashMap::new(),
+        }
+    }
+
+    fn accumulate(
+        &mut self,
+        tenant_id: TenantId,
+        device_id: &GbDeviceId,
+        sn: &str,
+        expected: u32,
+        items: Vec<GbCatalogItem>,
+    ) -> Option<Vec<GbCatalogItem>> {
+        if expected == 0 {
+            return Some(items);
+        }
+
+        let key = CatalogKey {
+            tenant_id,
+            device_id: device_id.as_ref().to_string(),
+            sn: sn.to_string(),
+        };
+
+        if let Some(partial) = self.entries.get_mut(&key) {
+            partial.items.extend(items);
+            partial.last_seen = Instant::now();
+            if partial.items.len() >= partial.expected as usize {
+                if let Some(complete) = self.entries.remove(&key) {
+                    return Some(complete.items);
+                }
+                return None;
+            }
+            return None;
+        }
+
+        let partial = PartialCatalog {
+            items,
+            expected,
+            last_seen: Instant::now(),
+        };
+        if partial.items.len() >= partial.expected as usize {
+            return Some(partial.items);
+        }
+        self.entries.insert(key, partial);
+        None
+    }
+
+    fn evict(&mut self) {
+        let now = Instant::now();
+        let before = self.entries.len();
+        self.entries
+            .retain(|_, partial| now.duration_since(partial.last_seen) <= CATALOG_FRAGMENT_TTL);
+        let dropped = before.saturating_sub(self.entries.len());
+        if dropped > 0 {
+            warn!(
+                dropped,
+                "gb28181 catalog fragment buffer evicted stale entries"
+            );
+        }
     }
 }
 
@@ -443,7 +551,7 @@ async fn replace_catalog(
     context: &RequestContext,
     tenant_id: TenantId,
     device_id: &GbDeviceId,
-    items: &[cheetah_gb28181_module::xml::CatalogItem],
+    items: &[GbCatalogItem],
 ) -> Result<(), SignalError> {
     let external_id = device_id.as_ref();
     let internal_id = match resolve_device_id(state, tenant_id, external_id).await {
