@@ -149,14 +149,17 @@ fn handle_invite<P: super::CascadeCredentialProvider>(
         return Vec::new();
     }
 
-    let Some(cseq) = msg.cseq().map(|(n, _)| n) else {
-        return vec![CascadeOutput::SendResponse(build_response(
-            &msg,
-            400,
-            "Bad Request",
-            &cascade.next_local_tag(now),
-            Vec::new(),
-        ))];
+    let cseq = match msg.cseq().map(|(n, _)| n) {
+        Ok(n) => n,
+        Err(_) => {
+            return vec![CascadeOutput::SendResponse(build_response(
+                &msg,
+                400,
+                "Bad Request",
+                &cascade.next_local_tag(now),
+                Vec::new(),
+            ))];
+        }
     };
 
     let target_user = match line.uri.user() {

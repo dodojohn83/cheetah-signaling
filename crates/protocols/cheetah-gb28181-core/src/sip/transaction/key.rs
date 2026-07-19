@@ -101,7 +101,7 @@ impl TransactionKey {
         }
 
         let call_id = message.call_id()?.to_string();
-        let (_, cseq_method) = message.cseq()?;
+        let (_, cseq_method) = message.cseq().ok()?;
 
         Some(Self {
             branch,

@@ -30,8 +30,7 @@ pub(super) fn on_message(
         // was already torn down.
         if msg
             .cseq()
-            .map(|(_, method)| method == Method::Bye || method == Method::Cancel)
-            .unwrap_or(false)
+            .is_ok_and(|(_, method)| method == Method::Bye || method == Method::Cancel)
         {
             return Ok(Vec::new());
         }
@@ -52,7 +51,7 @@ fn on_response(
 ) -> Result<Vec<MediaOutput>, MediaError> {
     let cseq = msg
         .cseq()
-        .ok_or_else(|| MediaError::MalformedSip("missing or malformed CSeq".to_string()))?;
+        .map_err(|e| MediaError::MalformedSip(e.to_string()))?;
 
     if cseq.1 == Method::Invite {
         let cseq_match = media

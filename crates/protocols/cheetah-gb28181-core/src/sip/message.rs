@@ -221,21 +221,54 @@ impl SipMessage {
             .and_then(|v| branch_value(v.as_str()))
     }
 
-    /// Returns the `CSeq` value as `(number, method)`, if parseable.
-    pub fn cseq(&self) -> Option<(u32, Method)> {
-        self.headers().get(&HeaderName::CSeq).and_then(|v| {
-            let mut parts = v.as_str().splitn(2, char::is_whitespace);
-            let num = parts.next()?.parse().ok()?;
-            let method = Method::parse(parts.next()?).ok()?;
-            Some((num, method))
-        })
+    /// Returns the `CSeq` value as `(number, method)`.
+    ///
+    /// Returns an error if the header is missing, has an invalid sequence
+    /// number, is missing the method token, or has an unknown method token.
+    pub fn cseq(&self) -> Result<(u32, Method), SipError> {
+        let value = self
+            .headers()
+            .get(&HeaderName::CSeq)
+            .ok_or_else(|| {
+                SipError::new(
+                    SipErrorKind::MissingRequiredHeader,
+                    None,
+                    "missing CSeq header",
+                )
+            })?
+            .as_str();
+        let mut parts = value.splitn(2, char::is_whitespace);
+        let num =
+            parts.next().unwrap_or(value).parse::<u32>().map_err(|_| {
+                SipError::new(SipErrorKind::InvalidHeader, None, "invalid CSeq number")
+            })?;
+        let method_str = parts.next().ok_or_else(|| {
+            SipError::new(SipErrorKind::InvalidHeader, None, "missing CSeq method")
+        })?;
+        let method = Method::parse(method_str)
+            .map_err(|_| SipError::new(SipErrorKind::InvalidHeader, None, "invalid CSeq method"))?;
+        Ok((num, method))
     }
 
-    /// Returns `Content-Length` header value, if present and valid.
-    pub fn content_length(&self) -> Option<usize> {
-        self.headers()
+    /// Returns `Content-Length` header value.
+    ///
+    /// Returns an error if the header is missing or has a non-numeric value.
+    pub fn content_length(&self) -> Result<usize, SipError> {
+        let value = self
+            .headers()
             .get(&HeaderName::ContentLength)
-            .and_then(|v| v.as_str().trim().parse().ok())
+            .ok_or_else(|| {
+                SipError::new(
+                    SipErrorKind::MissingRequiredHeader,
+                    None,
+                    "missing Content-Length header",
+                )
+            })?
+            .as_str()
+            .trim();
+        value
+            .parse::<usize>()
+            .map_err(|_| SipError::new(SipErrorKind::InvalidHeader, None, "invalid Content-Length"))
     }
 }
 
@@ -247,4 +280,110 @@ fn branch_value(via: &str) -> Option<&str> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::*;
+    use crate::sip::headers::HeaderValue;
+    use crate::sip::uri::SipUri;
+
+    fn message_with_cseq(value: &str) -> SipMessage {
+        let mut headers = SipHeaders::new();
+        headers.append(HeaderName::CallId, HeaderValue::new("call-1"));
+        headers.append(HeaderName::CSeq, HeaderValue::new(value));
+        SipMessage::Response {
+            line: StatusLine::new(200, "OK"),
+            headers,
+            body: Vec::new(),
+        }
+    }
+
+    fn message_with_content_length(value: &str) -> SipMessage {
+        let mut headers = SipHeaders::new();
+        headers.append(HeaderName::CallId, HeaderValue::new("call-1"));
+        headers.append(HeaderName::ContentLength, HeaderValue::new(value));
+        SipMessage::Request {
+            line: RequestLine::new(
+                Method::Invite,
+                SipUri::parse("sip:user@example.com").unwrap(),
+            ),
+            headers,
+            body: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn cseq_parses_valid_header() {
+        let msg = message_with_cseq("1 INVITE");
+        assert_eq!(msg.cseq().unwrap(), (1, Method::Invite));
+    }
+
+    #[test]
+    fn cseq_rejects_missing_header() {
+        let mut headers = SipHeaders::new();
+        headers.append(HeaderName::CallId, HeaderValue::new("call-1"));
+        let msg = SipMessage::Response {
+            line: StatusLine::new(200, "OK"),
+            headers,
+            body: Vec::new(),
+        };
+        assert_eq!(
+            msg.cseq().unwrap_err().kind,
+            SipErrorKind::MissingRequiredHeader
+        );
+    }
+
+    #[test]
+    fn cseq_rejects_invalid_number() {
+        let msg = message_with_cseq("abc INVITE");
+        assert_eq!(msg.cseq().unwrap_err().kind, SipErrorKind::InvalidHeader);
+    }
+
+    #[test]
+    fn cseq_rejects_missing_method() {
+        let msg = message_with_cseq("1");
+        assert_eq!(msg.cseq().unwrap_err().kind, SipErrorKind::InvalidHeader);
+    }
+
+    #[test]
+    fn cseq_rejects_invalid_method_token() {
+        let msg = message_with_cseq("1 foo bar");
+        assert_eq!(msg.cseq().unwrap_err().kind, SipErrorKind::InvalidHeader);
+    }
+
+    #[test]
+    fn content_length_parses_valid_header() {
+        let msg = message_with_content_length("42");
+        assert_eq!(msg.content_length().unwrap(), 42);
+    }
+
+    #[test]
+    fn content_length_rejects_missing_header() {
+        let mut headers = SipHeaders::new();
+        headers.append(HeaderName::CallId, HeaderValue::new("call-1"));
+        let msg = SipMessage::Request {
+            line: RequestLine::new(
+                Method::Invite,
+                SipUri::parse("sip:user@example.com").unwrap(),
+            ),
+            headers,
+            body: Vec::new(),
+        };
+        assert_eq!(
+            msg.content_length().unwrap_err().kind,
+            SipErrorKind::MissingRequiredHeader
+        );
+    }
+
+    #[test]
+    fn content_length_rejects_invalid_number() {
+        let msg = message_with_content_length("abc");
+        assert_eq!(
+            msg.content_length().unwrap_err().kind,
+            SipErrorKind::InvalidHeader
+        );
+    }
 }
