@@ -5,10 +5,7 @@
 
 use cheetah_cluster_ownership::lease::CachingDeviceOwnerResolver;
 use cheetah_domain::ports::{DeviceOwnerResolver, MediaPort};
-use cheetah_domain::{
-    DomainError, DomainEvent, EventPublisher, MediaNodeCommand, MediaNodeCommandResult,
-    MediaRequirements, MediaReservation,
-};
+use cheetah_domain::{DomainEvent, EventPublisher};
 use cheetah_gb28181_driver_tokio::Gb28181UdpDriver;
 use cheetah_gb28181_driver_tokio::config::DriverConfig as GbDriverConfig;
 use cheetah_gb28181_driver_tokio::sink::EventSink;
@@ -17,6 +14,11 @@ use cheetah_gb28181_module::events::Gb28181Event;
 use cheetah_gb28181_module::ports::CredentialProvider;
 use cheetah_gb28181_module::types::DeviceId as GbDeviceId;
 use cheetah_http_api::state::{ApiConfig, ApiServer, ApiState};
+use cheetah_media_client::{MediaClientConfig, MediaControlClient};
+use cheetah_media_scheduler::{
+    InMemoryMediaNodeRegistry, LeastLoadedScheduler, MediaRegistryConfig, SchedulerConfig,
+    SchedulerMediaPort,
+};
 use cheetah_message_api::RawEventBus;
 use cheetah_message_api::publisher::publish_domain_event;
 use cheetah_message_local::InProcessMessageBus;
@@ -26,7 +28,7 @@ use cheetah_signal_application::OutboxRelay;
 use cheetah_signal_types::config::{MessagingBackend, SignalConfig, StorageBackend};
 use cheetah_signal_types::{
     ChannelId, Clock, DeviceId, DurationMs, Event, IdGenerator, MediaBindingId, MediaSessionId,
-    NodeId, Page, PageRequest, SecretStore, TenantId, UtcTimestamp,
+    NodeId, SecretStore, UtcTimestamp,
 };
 use cheetah_storage_api::Storage;
 use cheetah_storage_sqlite::SqliteStorage;
@@ -153,99 +155,6 @@ impl IdGenerator for UuidIdGenerator {
     }
     fn generate_delivery_id(&self) -> cheetah_signal_types::DeliveryId {
         cheetah_signal_types::DeliveryId::from_uuid(Uuid::now_v7())
-    }
-}
-
-/// Media port that returns stable `Unsupported` until a real media client is wired.
-#[derive(Debug, Default)]
-struct UnsupportedMediaPort;
-
-#[async_trait::async_trait]
-impl MediaPort for UnsupportedMediaPort {
-    async fn reserve_live(
-        &self,
-        _tenant_id: TenantId,
-        _device_id: DeviceId,
-        _channel_id: ChannelId,
-        _media_session_id: MediaSessionId,
-        _media_binding_id: MediaBindingId,
-        _purpose: cheetah_domain::MediaPurpose,
-        _requirements: &MediaRequirements,
-        _clock: &dyn Clock,
-    ) -> cheetah_domain::Result<MediaReservation> {
-        Err(DomainError::not_supported(
-            "media plane client is not configured in this process assembly",
-        ))
-    }
-
-    async fn reserve_playback(
-        &self,
-        _tenant_id: TenantId,
-        _device_id: DeviceId,
-        _channel_id: ChannelId,
-        _media_session_id: MediaSessionId,
-        _media_binding_id: MediaBindingId,
-        _start_time: UtcTimestamp,
-        _end_time: UtcTimestamp,
-        _scale: f64,
-        _requirements: &MediaRequirements,
-        _clock: &dyn Clock,
-    ) -> cheetah_domain::Result<MediaReservation> {
-        Err(DomainError::not_supported(
-            "media plane client is not configured in this process assembly",
-        ))
-    }
-
-    async fn reserve_talk(
-        &self,
-        _tenant_id: TenantId,
-        _device_id: DeviceId,
-        _channel_id: ChannelId,
-        _media_session_id: MediaSessionId,
-        _media_binding_id: MediaBindingId,
-        _requirements: &MediaRequirements,
-        _clock: &dyn Clock,
-    ) -> cheetah_domain::Result<MediaReservation> {
-        Err(DomainError::not_supported(
-            "media plane client is not configured in this process assembly",
-        ))
-    }
-
-    async fn release(
-        &self,
-        _tenant_id: TenantId,
-        _media_binding_id: MediaBindingId,
-        _clock: &dyn Clock,
-    ) -> cheetah_domain::Result<()> {
-        Ok(())
-    }
-
-    async fn execute(
-        &self,
-        _command: MediaNodeCommand,
-        _clock: &dyn Clock,
-    ) -> cheetah_domain::Result<MediaNodeCommandResult> {
-        Err(DomainError::not_supported(
-            "media plane client is not configured in this process assembly",
-        ))
-    }
-
-    async fn list_nodes(
-        &self,
-        _tenant_id: TenantId,
-        _clock: &dyn Clock,
-    ) -> cheetah_domain::Result<Vec<NodeId>> {
-        Ok(Vec::new())
-    }
-
-    async fn list_sessions(
-        &self,
-        _tenant_id: TenantId,
-        _media_node_id: NodeId,
-        _page: PageRequest,
-        _clock: &dyn Clock,
-    ) -> cheetah_domain::Result<Page<cheetah_domain::MediaNodeSessionRef>> {
-        Ok(Page::new(Vec::new()))
     }
 }
 
@@ -505,7 +414,16 @@ pub async fn start(
     };
     let publisher: Arc<dyn EventPublisher> = Arc::new(EventBusPublisher::new(bus.clone()));
 
-    let media_port: Arc<dyn MediaPort> = Arc::new(UnsupportedMediaPort);
+    let media_registry = Arc::new(InMemoryMediaNodeRegistry::new(
+        MediaRegistryConfig::default(),
+    ));
+    let media_scheduler: Arc<dyn cheetah_media_scheduler::MediaScheduler> = Arc::new(
+        LeastLoadedScheduler::new(media_registry, SchedulerConfig::default()),
+    );
+    let media_client = MediaControlClient::new(MediaClientConfig::default())
+        .with_secret_store(secret_store.clone());
+    let media_port: Arc<dyn MediaPort> =
+        Arc::new(SchedulerMediaPort::new(media_scheduler, media_client));
 
     // Outbox relay: publish pending domain events without holding DB transactions
     // across the message bus I/O boundary.
