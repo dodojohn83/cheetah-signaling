@@ -250,14 +250,25 @@ impl<P: CredentialProvider> Gb28181Access<P> {
             ])
         } else {
             let contact = contact_uri.encode();
-            self.registrations.upsert(
+            if let Err(e) = self.registrations.upsert(
                 device_id.clone(),
                 source,
                 contact.clone(),
                 expires,
                 now,
                 user_agent.clone(),
-            )?;
+            ) {
+                return if matches!(e, AccessError::RegistrationTableFull) {
+                    Ok(vec![AccessOutput::SendResponse(build_error_response(
+                        message,
+                        503,
+                        "Service Unavailable",
+                        self.next_tag(),
+                    ))])
+                } else {
+                    Err(e)
+                };
+            }
             Ok(vec![
                 AccessOutput::SendResponse(response),
                 AccessOutput::EmitEvent(Gb28181Event::DeviceRegistered {

@@ -600,15 +600,19 @@ fn registration_table_respects_capacity_limit() {
     // table is at capacity.
     let other_request = make_register_request_for_id("34020000001320000002", 1, false, 3600);
 
-    let result = access.process(AccessInput {
-        source: "192.168.1.101:5060".parse().unwrap(),
-        now: 1000,
-        message: other_request,
-    });
-    assert!(matches!(
-        result,
-        Err(cheetah_gb28181_module::AccessError::RegistrationTableFull)
-    ));
+    let outputs = access
+        .process(AccessInput {
+            source: "192.168.1.101:5060".parse().unwrap(),
+            now: 1000,
+            message: other_request,
+        })
+        .unwrap();
+    assert_eq!(outputs.len(), 1);
+    let response = find_response(&outputs);
+    let SipMessage::Response { line, .. } = response else {
+        panic!("expected response");
+    };
+    assert_eq!(line.code, 503);
 }
 
 #[test]
