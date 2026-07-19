@@ -1,0 +1,59 @@
+syntax = "proto3";
+
+package cheetah.media.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/dodojohn83/cheetah-signaling/gen/go/cheetah/media/v1;mediav1";
+
+// Context shared by all mutating media RPCs.
+message MediaMutationContext {
+  // Tenant that owns the request. Required.
+  string tenant_id = 1;
+
+  // Request identifier for tracing and logging.
+  string request_id = 2;
+
+  // Cross-service correlation identifier.
+  string correlation_id = 3;
+
+  // Message identifier used for inbox/event de-duplication.
+  string message_id = 4;
+
+  // Idempotency key for the operation.
+  string idempotency_key = 5;
+
+  // Absolute UTC deadline after which no side effects should be applied.
+  google.protobuf.Timestamp deadline = 6;
+
+  // Signaling node that owns the device/session for this request.
+  string source_signaling_node_id = 7;
+
+  // Owner epoch used to fence stale device owners.
+  uint64 owner_epoch = 8;
+
+  // Target media node for the operation.
+  string target_media_node_id = 9;
+
+  // Media process instance epoch for fencing.
+  uint64 target_media_node_instance_epoch = 10;
+
+  // Saga operation identifier.
+  string operation_id = 11;
+
+  // Saga step identifier.
+  string operation_step_id = 12;
+
+  // Logical media session when one exists.
+  string media_session_id = 13;
+
+  // Physical media binding when one exists.
+  string media_binding_id = 14;
+
+  // Contract version negotiated between signaling and media.
+  uint64 contract_version = 15;
+
+  // W3C trace context.
+  string traceparent = 16;
+  string tracestate = 17;
+}

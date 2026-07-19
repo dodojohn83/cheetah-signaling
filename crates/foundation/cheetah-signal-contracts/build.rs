@@ -22,6 +22,7 @@ fn main() -> io::Result<()> {
         proto_dir.join("cheetah/device/v1/device.proto"),
         proto_dir.join("cheetah/control/v1/control.proto"),
         proto_dir.join("cheetah/media/v1/media.proto"),
+        proto_dir.join("cheetah/media/v1/media_context.proto"),
         proto_dir.join("cheetah/plugin/v1/plugin.proto"),
         proto_dir.join("cheetah/cluster/v1/cluster.proto"),
     ];
