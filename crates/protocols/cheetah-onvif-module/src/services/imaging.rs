@@ -47,9 +47,8 @@ fn video_source_body(local: &str, video_source_token: &str) -> Result<String, On
     writer.write_event(Event::Text(BytesText::new(video_source_token)))?;
     writer.write_event(Event::End(BytesEnd::new("timg:VideoSourceToken")))?;
     writer.write_event(Event::End(BytesEnd::new(&body_name)))?;
-    String::from_utf8(cursor.into_inner()).map_err(|e| {
-        OnvifModuleError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string()))
-    })
+    String::from_utf8(cursor.into_inner())
+        .map_err(|e| OnvifModuleError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string())))
 }
 
 /// Builds GetImagingSettings (read-only).
@@ -159,6 +158,8 @@ pub fn parse_get_imaging_settings_response(
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
     use super::*;
 
     #[test]
