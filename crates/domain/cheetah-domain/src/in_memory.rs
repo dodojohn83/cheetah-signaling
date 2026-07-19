@@ -32,10 +32,11 @@ fn lock_mutex<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     }
 }
 
-/// Inserts `value` into `map` only if the entry is absent and `value` has
-/// revision `0`, or if the existing entry's revision is exactly one less than
-/// `value`'s revision. This mirrors the SQL `ON CONFLICT ... WHERE revision =
-/// EXCLUDED.revision - 1` optimistic concurrency guard.
+/// Inserts `value` into `map`. A fresh insert (absent key) is always accepted,
+/// mirroring the SQL upsert whose `WHERE revision = EXCLUDED.revision - 1` guard
+/// is only evaluated on conflict. When the key already exists, the insert is
+/// accepted only if the existing entry's revision is exactly one less than
+/// `value`'s revision, mirroring the SQL optimistic concurrency guard.
 fn save_with_revision<K, V>(
     map: &mut BTreeMap<K, V>,
     key: K,
@@ -55,8 +56,6 @@ where
             expected,
             found: revision(existing).0,
         }),
-        // A fresh insert has no conflict, so the SQL upsert does not evaluate the
-        // `WHERE revision = EXCLUDED.revision - 1` guard and accepts any revision.
         None => {
             map.insert(key, value);
             Ok(())
