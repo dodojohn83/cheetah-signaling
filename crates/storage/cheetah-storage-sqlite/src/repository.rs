@@ -47,9 +47,7 @@ fn connectivity_kind(value: &cheetah_domain::Connectivity) -> Result<String, Dom
         .ok_or_else(|| DomainError::internal("missing connectivity kind"))
 }
 
-fn concurrent_modification_error(revision: cheetah_signal_types::Revision) -> DomainError {
-    let expected = revision.0.saturating_sub(1);
-    let found = revision.0;
+fn concurrent_modification_error(expected: u64, found: u64) -> DomainError {
     DomainError::ConcurrentModification { expected, found }
 }
 
@@ -146,7 +144,17 @@ impl DeviceRepository for SqliteUnitOfWork {
         .map_err(sqlx_to_domain)?;
 
         if result.rows_affected() != 1 {
-            return Err(concurrent_modification_error(device.revision()));
+            let found: Option<(i64,)> =
+                sqlx::query_as("SELECT revision FROM devices WHERE device_id = ?")
+                    .bind(device.device_id().as_uuid())
+                    .fetch_optional(self.tx().await?.as_mut())
+                    .await
+                    .map_err(sqlx_to_domain)?;
+            let found = found.and_then(|(r,)| u64::try_from(r).ok()).unwrap_or(0);
+            return Err(concurrent_modification_error(
+                device.revision().0.saturating_sub(1),
+                found,
+            ));
         }
         Ok(())
     }
@@ -251,7 +259,20 @@ impl ChannelRepository for SqliteUnitOfWork {
         .map_err(sqlx_to_domain)?;
 
         if result.rows_affected() != 1 {
-            return Err(concurrent_modification_error(channel.revision()));
+            let found: Option<(i64,)> = sqlx::query_as(
+                "SELECT revision FROM channels WHERE tenant_id = ? AND device_id = ? AND channel_id = ?",
+            )
+            .bind(channel.tenant_id().as_uuid())
+            .bind(channel.device_id().as_uuid())
+            .bind(channel.channel_id().as_uuid())
+            .fetch_optional(self.tx().await?.as_mut())
+            .await
+            .map_err(sqlx_to_domain)?;
+            let found = found.and_then(|(r,)| u64::try_from(r).ok()).unwrap_or(0);
+            return Err(concurrent_modification_error(
+                channel.revision().0.saturating_sub(1),
+                found,
+            ));
         }
         Ok(())
     }
@@ -284,10 +305,7 @@ impl ChannelRepository for SqliteUnitOfWork {
             .await
             .map_err(sqlx_to_domain)?;
             let found = found.and_then(|(r,)| u64::try_from(r).ok()).unwrap_or(0);
-            return Err(DomainError::ConcurrentModification {
-                expected: expected_revision.0,
-                found,
-            });
+            return Err(concurrent_modification_error(expected_revision.0, found));
         }
         Ok(())
     }
@@ -395,7 +413,17 @@ impl OperationRepository for SqliteUnitOfWork {
         .map_err(sqlx_to_domain)?;
 
         if result.rows_affected() != 1 {
-            return Err(concurrent_modification_error(operation.revision()));
+            let found: Option<(i64,)> =
+                sqlx::query_as("SELECT revision FROM operations WHERE operation_id = ?")
+                    .bind(operation.operation_id().as_uuid())
+                    .fetch_optional(self.tx().await?.as_mut())
+                    .await
+                    .map_err(sqlx_to_domain)?;
+            let found = found.and_then(|(r,)| u64::try_from(r).ok()).unwrap_or(0);
+            return Err(concurrent_modification_error(
+                operation.revision().0.saturating_sub(1),
+                found,
+            ));
         }
         Ok(())
     }
@@ -507,7 +535,17 @@ impl MediaSessionRepository for SqliteUnitOfWork {
         .map_err(sqlx_to_domain)?;
 
         if result.rows_affected() != 1 {
-            return Err(concurrent_modification_error(session.revision()));
+            let found: Option<(i64,)> =
+                sqlx::query_as("SELECT revision FROM media_sessions WHERE media_session_id = ?")
+                    .bind(session.media_session_id().as_uuid())
+                    .fetch_optional(self.tx().await?.as_mut())
+                    .await
+                    .map_err(sqlx_to_domain)?;
+            let found = found.and_then(|(r,)| u64::try_from(r).ok()).unwrap_or(0);
+            return Err(concurrent_modification_error(
+                session.revision().0.saturating_sub(1),
+                found,
+            ));
         }
         Ok(())
     }
@@ -613,7 +651,17 @@ impl MediaBindingRepository for SqliteUnitOfWork {
         .map_err(sqlx_to_domain)?;
 
         if result.rows_affected() != 1 {
-            return Err(concurrent_modification_error(binding.revision()));
+            let found: Option<(i64,)> =
+                sqlx::query_as("SELECT revision FROM media_bindings WHERE media_binding_id = ?")
+                    .bind(binding.media_binding_id().as_uuid())
+                    .fetch_optional(self.tx().await?.as_mut())
+                    .await
+                    .map_err(sqlx_to_domain)?;
+            let found = found.and_then(|(r,)| u64::try_from(r).ok()).unwrap_or(0);
+            return Err(concurrent_modification_error(
+                binding.revision().0.saturating_sub(1),
+                found,
+            ));
         }
         Ok(())
     }

@@ -89,8 +89,14 @@ async fn revision_concurrency(storage: &dyn Storage, fixtures: &Fixtures) -> Tes
     let mut uow = storage.begin().await?;
     let result = uow.operation_repository().save(&stale).await;
     assert!(
-        matches!(result, Err(DomainError::ConcurrentModification { .. })),
-        "saving a stale operation must fail, got {:?}",
+        matches!(
+            result,
+            Err(DomainError::ConcurrentModification {
+                expected: 0,
+                found: 1,
+            })
+        ),
+        "saving a stale operation must report expected=0 and found=1, got {:?}",
         result
     );
     uow.rollback().await?;

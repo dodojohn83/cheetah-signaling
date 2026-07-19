@@ -116,8 +116,14 @@ async fn concurrent_save(storage: &dyn Storage, fixtures: &Fixtures) -> TestResu
     let mut uow = storage.begin().await?;
     let result = uow.webhook_config_repository().save(&stale).await;
     assert!(
-        matches!(result, Err(DomainError::ConcurrentModification { .. })),
-        "saving stale webhook config must fail, got {:?}",
+        matches!(
+            result,
+            Err(DomainError::ConcurrentModification {
+                expected: 0,
+                found: 1,
+            })
+        ),
+        "saving stale webhook config must report expected=0 and found=1, got {:?}",
         result
     );
     uow.rollback().await?;
