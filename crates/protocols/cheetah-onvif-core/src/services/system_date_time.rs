@@ -36,16 +36,16 @@ impl DateTime {
     /// Returns an error if any component is out of range.
     pub fn to_primitive(&self) -> OnvifResult<PrimitiveDateTime> {
         let month = Month::try_from(self.month).map_err(|_| {
-            OnvifError::MissingField(format!("DateTime month out of range: {}", self.month))
+            OnvifError::InvalidField(format!("DateTime month out of range: {}", self.month))
         })?;
         let date = Date::from_calendar_date(self.year, month, self.day).map_err(|_| {
-            OnvifError::MissingField(format!(
+            OnvifError::InvalidField(format!(
                 "DateTime date out of range: {}-{}-{}",
                 self.year, self.month, self.day
             ))
         })?;
         let time = Time::from_hms(self.hour, self.minute, self.second).map_err(|_| {
-            OnvifError::MissingField(format!(
+            OnvifError::InvalidField(format!(
                 "DateTime time out of range: {}:{}:{}",
                 self.hour, self.minute, self.second
             ))
@@ -161,7 +161,15 @@ pub fn parse_get_system_date_and_time_response(xml: &str) -> OnvifResult<SystemD
                     utc = Some(utc_builder.build()?);
                     utc_builder = DateTimeBuilder::default();
                 } else if name == "LocalDateTime" {
-                    local = Some(local_builder.build()?);
+                    // LocalDateTime is optional; a malformed optional block is
+                    // ignored rather than failing the whole response.
+                    match local_builder.build() {
+                        Ok(d) => local = Some(d),
+                        Err(e) => {
+                            tracing::warn!("ignoring malformed optional LocalDateTime: {e}");
+                            local = None;
+                        }
+                    }
                     local_builder = DateTimeBuilder::default();
                 }
 
@@ -209,9 +217,7 @@ impl DateTimeBuilder {
             second: self.second.ok_or_else(|| missing("second"))?,
         };
         // Validate that the parsed components form a real calendar date/time.
-        date_time
-            .to_primitive()
-            .map_err(|_| OnvifError::MissingField("DateTime".to_string()))?;
+        date_time.to_primitive()?;
         Ok(date_time)
     }
 }
