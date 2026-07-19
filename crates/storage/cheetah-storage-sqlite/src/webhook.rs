@@ -96,8 +96,9 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use crate::SqliteStorage;
-    use cheetah_domain::in_memory::{InMemoryClock, InMemoryIdGenerator};
-    use cheetah_domain::{IdGenerator, WebhookConfig};
+    use cheetah_domain::WebhookConfig;
+    use cheetah_signal_types::IdGenerator;
+    use cheetah_signal_types::test_support::{FakeClock, FakeIdGenerator};
     use cheetah_storage_api::Storage;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -122,8 +123,8 @@ mod tests {
         let storage = SqliteStorage::new(&path).await.unwrap();
         storage.migration().run().await.unwrap();
 
-        let clock = InMemoryClock::new();
-        let id_generator = InMemoryIdGenerator::new();
+        let clock = FakeClock::new();
+        let id_generator = FakeIdGenerator::new();
         let tenant_id = id_generator.generate_tenant_id();
         let config = WebhookConfig::new(
             &clock,

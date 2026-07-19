@@ -24,7 +24,7 @@ async-trait = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
-cheetah-domain = { path = "../../domain/cheetah-domain", features = ["test-util"] }
+cheetah-signal-types = { path = "../../foundation/cheetah-signal-types", features = ["test-support"] }
 
 [lints]
 workspace = true
