@@ -107,7 +107,7 @@ pub(crate) fn build_200(expires: u32, call_id: &str, cseq: &str) -> SipMessage {
     }
 }
 
-fn challenge_ctx() -> DigestContext {
+pub(crate) fn challenge_ctx() -> DigestContext {
     DigestContext::new(
         "example.com",
         b"this-is-a-very-long-secret-used-for-testing-only",
@@ -560,7 +560,7 @@ fn redirect_response_is_treated_as_failure() {
     )));
 }
 
-fn toggling_provider(
+pub(crate) fn toggling_provider(
     enabled: Arc<AtomicBool>,
 ) -> impl Fn(&str) -> Option<SecretString> + Send + Sync {
     move |_: &str| {
@@ -573,7 +573,7 @@ fn toggling_provider(
 }
 
 #[test]
-fn refresh_propagates_error_when_credentials_disappear() {
+fn refresh_with_missing_credentials_does_not_send_unauthenticated_request() {
     let enabled = Arc::new(AtomicBool::new(true));
     let mut cascade = Gb28181Cascade::new(config(), toggling_provider(enabled.clone())).unwrap();
 
@@ -610,14 +610,21 @@ fn refresh_propagates_error_when_credentials_disappear() {
         event: CascadeEvent::Tick,
     });
     assert!(
-        matches!(result, Err(crate::cascade::CascadeError::NoCredentials)),
-        "refresh must fail when credentials disappear, got {:?}",
+        result.is_ok(),
+        "refresh must not return an error when credentials disappear: {:?}",
         result
+    );
+    // No unauthenticated REGISTER should be emitted.
+    let outputs = result.unwrap();
+    assert!(
+        outputs
+            .iter()
+            .all(|o| !matches!(o, CascadeOutput::SendRequest(_)))
     );
 }
 
 #[test]
-fn deregister_propagates_error_when_credentials_disappear() {
+fn deregister_with_missing_credentials_disconnects_without_unauthenticated_request() {
     let enabled = Arc::new(AtomicBool::new(true));
     let mut cascade = Gb28181Cascade::new(config(), toggling_provider(enabled.clone())).unwrap();
 
@@ -654,10 +661,20 @@ fn deregister_propagates_error_when_credentials_disappear() {
         event: CascadeEvent::Deregister,
     });
     assert!(
-        matches!(result, Err(crate::cascade::CascadeError::NoCredentials)),
-        "deregister must fail when credentials disappear, got {:?}",
+        result.is_ok(),
+        "deregister must not return an error when credentials disappear: {:?}",
         result
     );
+    let outputs = result.unwrap();
+    assert!(
+        outputs
+            .iter()
+            .all(|o| !matches!(o, CascadeOutput::SendRequest(_)))
+    );
+    assert!(outputs.iter().any(|o| matches!(
+        o,
+        CascadeOutput::EmitEvent(crate::events::Gb28181Event::CascadePlatformDisconnected { .. })
+    )));
 }
 
 mod bridge;
