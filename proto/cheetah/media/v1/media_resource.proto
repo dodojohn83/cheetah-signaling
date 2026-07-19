@@ -1,0 +1,110 @@
+syntax = "proto3";
+
+package cheetah.media.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/dodojohn83/cheetah-signaling/gen/go/cheetah/media/v1;mediav1";
+
+// Opaque handle returned by a media node for a created resource.
+message MediaHandle {
+  // Opaque handle value. Must be treated as an opaque blob by signaling.
+  string value = 1;
+}
+
+// Stable media key identifying a logical media stream within a tenant.
+message MediaKey {
+  // Key kind (e.g. "rtp", "proxy", "record", "snapshot", "playback").
+  string kind = 1;
+  // Stable encoded key value scoped by tenant and application.
+  string value = 2;
+}
+
+// Resource state and metadata shared by all media resource types.
+message MediaResourceState {
+  // Resource kind.
+  string kind = 1;
+
+  // High-level state (e.g. PENDING, ACTIVE, STOPPED, ERROR).
+  string state = 2;
+
+  // Monotonic generation, incremented when the resource is recreated.
+  uint64 generation = 3;
+
+  // Per-resource revision, incremented on every mutation.
+  uint64 revision = 4;
+
+  // Creation time.
+  google.protobuf.Timestamp created_at = 5;
+
+  // Last update time.
+  google.protobuf.Timestamp updated_at = 6;
+
+  // Media node that owns the resource.
+  string media_node_id = 7;
+
+  // Instance epoch of the media process that owns the resource.
+  uint64 media_node_instance_epoch = 8;
+
+  // Capability under which the resource was created.
+  string capability_protocol = 9;
+  repeated string capability_operations = 10;
+  map<string, string> capability_constraints = 11;
+
+  // Contract version under which the resource was created.
+  uint64 contract_version = 12;
+
+  // Last safe error for the resource, if any.
+  MediaLastError last_error = 13;
+}
+
+// A stream description within a negotiated RTP session.
+message RtpStream {
+  // Media kind (e.g. "video", "audio").
+  string media_kind = 1;
+
+  // RTP payload type.
+  uint32 payload_type = 2;
+
+  // Synchronization source identifier.
+  uint32 ssrc = 3;
+
+  // Local advertised address.
+  string local_address = 4;
+
+  // Local RTP port.
+  uint32 local_port = 5;
+
+  // Local RTCP port.
+  uint32 rtcp_port = 6;
+
+  // Transport mode: "active", "passive" or "actpass".
+  string transport_mode = 7;
+}
+
+// Result of negotiating a media session.
+message NegotiationResult {
+  // Local SDP offer/answer.
+  string local_sdp = 1;
+
+  // Remote SDP offer/answer.
+  string remote_sdp = 2;
+
+  // Negotiated transport mode.
+  string transport = 3;
+
+  // Negotiated streams.
+  repeated RtpStream streams = 4;
+}
+
+// Safe, wire-safe last error for a media resource.
+message MediaLastError {
+  // Stable error code.
+  string error_code = 1;
+
+  // Human-readable message that does not contain secrets or internal paths.
+  string safe_message = 2;
+
+  // Whether the operation may be retried.
+  bool retryable = 3;
+}
