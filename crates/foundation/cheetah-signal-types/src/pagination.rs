@@ -171,8 +171,11 @@ impl ListCursor {
     /// Decodes a cursor from its opaque string form and verifies version/checksum.
     pub fn decode(value: &str) -> Result<Self> {
         let cursor: Self = serde_json::from_str(value).map_err(|e| {
-            SignalError::new(SignalErrorKind::CursorExpired, "cursor has expired or is malformed")
-                .with_source(e)
+            SignalError::new(
+                SignalErrorKind::CursorExpired,
+                "cursor has expired or is malformed",
+            )
+            .with_source(e)
         })?;
 
         if cursor.version != CURSOR_VERSION {
@@ -197,8 +200,11 @@ impl ListCursor {
     pub fn parse(&self) -> Result<(UtcTimestamp, Uuid)> {
         let ts = UtcTimestamp::parse_rfc3339(&self.updated_at)?;
         let id = Uuid::parse_str(&self.id).map_err(|e| {
-            SignalError::new(SignalErrorKind::CursorExpired, "cursor has expired: invalid id")
-                .with_source(e)
+            SignalError::new(
+                SignalErrorKind::CursorExpired,
+                "cursor has expired: invalid id",
+            )
+            .with_source(e)
         })?;
         Ok((ts, id))
     }

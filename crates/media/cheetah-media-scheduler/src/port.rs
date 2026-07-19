@@ -150,7 +150,9 @@ impl MediaPort for SchedulerMediaPort {
         let payload = serde_json::to_vec(&command.payload).map_err(|e| {
             DomainError::internal(format!("failed to serialize media command payload: {e}"))
         })?;
-        let deadline = command.deadline.map(|d| d.as_timestamp().to_prost_timestamp());
+        let deadline = command
+            .deadline
+            .map(|d| d.as_timestamp().to_prost_timestamp());
         let context = MediaMutationContext {
             tenant_id: command.tenant_id.to_string(),
             request_id: command.request_id.clone(),
