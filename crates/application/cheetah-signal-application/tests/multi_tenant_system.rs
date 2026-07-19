@@ -55,23 +55,20 @@ async fn multi_tenant_postgres_nats_isolation() {
     let node_a = id_generator.generate_node_id();
     let node_b = id_generator.generate_node_id();
 
-    let owner_repo_a: Box<dyn OwnerRepository> = Box::new(PostgresOwnerRepository::new(
+    let owner_repo_a = Arc::new(tokio::sync::Mutex::new(PostgresOwnerRepository::new(
         storage.read_pool().clone(),
         storage.write_pool().clone(),
-        clock.clone(),
-    ));
-    let owner_repo_b: Box<dyn OwnerRepository> = Box::new(PostgresOwnerRepository::new(
+    ))) as Arc<tokio::sync::Mutex<dyn OwnerRepository>>;
+    let owner_repo_b = Arc::new(tokio::sync::Mutex::new(PostgresOwnerRepository::new(
         storage.read_pool().clone(),
         storage.write_pool().clone(),
-        clock.clone(),
-    ));
-    let lease_repo_a = Arc::new(tokio::sync::Mutex::new(owner_repo_a));
-    let lease_repo_b = Arc::new(tokio::sync::Mutex::new(owner_repo_b));
+    ))) as Arc<tokio::sync::Mutex<dyn OwnerRepository>>;
+    let lease_repo_a = owner_repo_a.clone();
+    let lease_repo_b = owner_repo_b.clone();
 
     let resolver_repo: Arc<dyn OwnerRepository> = Arc::new(PostgresOwnerRepository::new(
         storage.read_pool().clone(),
         storage.write_pool().clone(),
-        clock.clone(),
     ));
     let owner_resolver: Arc<dyn DeviceOwnerResolver> = Arc::new(CachingDeviceOwnerResolver::new(
         resolver_repo,

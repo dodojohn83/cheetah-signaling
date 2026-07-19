@@ -59,7 +59,10 @@ fn write_profile_token<W: std::io::Write>(
 
 fn f64_text(v: f64) -> String {
     // Avoid scientific notation for common PTZ ranges.
-    format!("{v:.6}").trim_end_matches('0').trim_end_matches('.').to_string()
+    format!("{v:.6}")
+        .trim_end_matches('0')
+        .trim_end_matches('.')
+        .to_string()
 }
 
 /// Builds a ContinuousMove request.
@@ -104,9 +107,8 @@ pub fn continuous_move_request(
     }
 
     writer.write_event(Event::End(BytesEnd::new("tptz:ContinuousMove")))?;
-    let body = String::from_utf8(cursor.into_inner()).map_err(|e| {
-        OnvifModuleError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string()))
-    })?;
+    let body = String::from_utf8(cursor.into_inner())
+        .map_err(|e| OnvifModuleError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string())))?;
     Envelope::new(CONTINUOUS_MOVE_ACTION, body)
         .with_message_id(message_id)
         .build()
@@ -179,9 +181,8 @@ fn move_with_vector(
     writer.write_event(Event::End(BytesEnd::new(&vector_el)))?;
     writer.write_event(Event::End(BytesEnd::new(&body_name)))?;
 
-    let body = String::from_utf8(cursor.into_inner()).map_err(|e| {
-        OnvifModuleError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string()))
-    })?;
+    let body = String::from_utf8(cursor.into_inner())
+        .map_err(|e| OnvifModuleError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string())))?;
     Envelope::new(action, body)
         .with_message_id(message_id)
         .build()
@@ -209,13 +210,16 @@ pub fn stop_request(
     })))?;
     writer.write_event(Event::End(BytesEnd::new("tptz:PanTilt")))?;
     writer.write_event(Event::Start(BytesStart::new("tptz:Zoom")))?;
-    writer.write_event(Event::Text(BytesText::new(if zoom { "true" } else { "false" })))?;
+    writer.write_event(Event::Text(BytesText::new(if zoom {
+        "true"
+    } else {
+        "false"
+    })))?;
     writer.write_event(Event::End(BytesEnd::new("tptz:Zoom")))?;
     writer.write_event(Event::End(BytesEnd::new("tptz:Stop")))?;
 
-    let body = String::from_utf8(cursor.into_inner()).map_err(|e| {
-        OnvifModuleError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string()))
-    })?;
+    let body = String::from_utf8(cursor.into_inner())
+        .map_err(|e| OnvifModuleError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string())))?;
     Envelope::new(STOP_ACTION, body)
         .with_message_id(message_id)
         .build()
@@ -234,9 +238,8 @@ pub fn get_presets_request(
     writer.write_event(Event::Start(body))?;
     write_profile_token(&mut writer, profile_token)?;
     writer.write_event(Event::End(BytesEnd::new("tptz:GetPresets")))?;
-    let body = String::from_utf8(cursor.into_inner()).map_err(|e| {
-        OnvifModuleError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string()))
-    })?;
+    let body = String::from_utf8(cursor.into_inner())
+        .map_err(|e| OnvifModuleError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string())))?;
     Envelope::new(GET_PRESETS_ACTION, body)
         .with_message_id(message_id)
         .build()
@@ -259,9 +262,8 @@ pub fn goto_preset_request(
     writer.write_event(Event::Text(BytesText::new(preset_token)))?;
     writer.write_event(Event::End(BytesEnd::new("tptz:PresetToken")))?;
     writer.write_event(Event::End(BytesEnd::new("tptz:GotoPreset")))?;
-    let body = String::from_utf8(cursor.into_inner()).map_err(|e| {
-        OnvifModuleError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string()))
-    })?;
+    let body = String::from_utf8(cursor.into_inner())
+        .map_err(|e| OnvifModuleError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string())))?;
     Envelope::new(GOTO_PRESET_ACTION, body)
         .with_message_id(message_id)
         .build()
@@ -317,10 +319,11 @@ pub fn parse_get_presets_response(
                         }
                         presets.push(preset);
                     }
-                } else if name == "Name" && parent.as_deref() == Some("Preset") {
-                    if let Some(ref mut preset) = current {
-                        preset.name = text.trim().to_string();
-                    }
+                } else if name == "Name"
+                    && parent.as_deref() == Some("Preset")
+                    && let Some(ref mut preset) = current
+                {
+                    preset.name = text.trim().to_string();
                 }
                 ctx.pop();
             }
@@ -344,6 +347,8 @@ pub fn clip_unit(value: f64) -> f64 {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
     use super::*;
 
     #[test]
