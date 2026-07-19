@@ -160,33 +160,32 @@ impl<P: CredentialProvider> Gb28181Access<P> {
         let mut authenticated = false;
         if let Some(auth_header) = headers.get(&HeaderName::Authorization) {
             if self.config.auth_policy() == AuthPolicy::Required {
-                let password = match self.credential_provider.password_for(&device_id) {
-                    Some(p) => p,
-                    None => return self.authentication_failure_response(&message, now),
-                };
                 let digest = match parse_authorization(auth_header.as_str()) {
                     Ok(d) => d,
                     Err(cheetah_gb28181_core::DigestError::Malformed(_)) => {
                         return Ok(self.bad_request_response(&message));
                     }
-                    Err(_) => return self.authentication_failure_response(&message, now),
+                    Err(_) => return self.authentication_failure_response(&message, now, false),
+                };
+                let password = match self.credential_provider.password_for(&device_id) {
+                    Some(p) => p,
+                    None => return self.authentication_failure_response(&message, now, false),
                 };
                 let request_uri = line.uri.encode();
-                if self
-                    .digest_context
-                    .validate(
-                        &digest,
-                        &Method::Register,
-                        &request_uri,
-                        &password,
-                        &mut self.replay_cache,
-                        now,
-                    )
-                    .is_err()
-                {
-                    return self.authentication_failure_response(&message, now);
+                match self.digest_context.validate(
+                    &digest,
+                    &Method::Register,
+                    &request_uri,
+                    &password,
+                    &mut self.replay_cache,
+                    now,
+                ) {
+                    Ok(()) => authenticated = true,
+                    Err(cheetah_gb28181_core::DigestError::StaleNonce) => {
+                        return self.authentication_failure_response(&message, now, true);
+                    }
+                    Err(_) => return self.authentication_failure_response(&message, now, false),
                 }
-                authenticated = true;
             } else if let Some(password) = self.credential_provider.password_for(&device_id)
                 && let Ok(digest) = parse_authorization(auth_header.as_str())
             {
@@ -494,11 +493,14 @@ impl<P: CredentialProvider> Gb28181Access<P> {
         &self,
         request: &SipMessage,
         now: u64,
+        stale: bool,
     ) -> Result<Vec<AccessOutput>, AccessError> {
-        let challenge = self
-            .digest_context
-            .generate_challenge(now)
-            .map_err(|e| AccessError::Internal(e.to_string()))?;
+        let challenge = if stale {
+            self.digest_context.generate_stale_challenge(now)
+        } else {
+            self.digest_context.generate_challenge(now)
+        }
+        .map_err(|e| AccessError::Internal(e.to_string()))?;
         Ok(vec![AccessOutput::SendResponse(build_challenge_response(
             request,
             &challenge,

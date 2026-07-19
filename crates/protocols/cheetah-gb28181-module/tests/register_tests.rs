@@ -1156,6 +1156,80 @@ fn register_required_rejects_invalid_credentials_with_401() {
     assert!(headers.get(&HeaderName::WwwAuthenticate).is_some());
 }
 
+#[test]
+fn register_required_unknown_device_malformed_authorization_returns_400() {
+    // Parsing the Authorization header must happen before the password lookup
+    // so that malformed authorization is rejected with 400 even for unknown devices.
+    let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec()).unwrap();
+    let provider = |_device: &DeviceId| None;
+    let mut access = Gb28181Access::new(config, provider).unwrap();
+
+    let mut request = make_request(1, false);
+    request.headers_mut().append(
+        HeaderName::Authorization,
+        HeaderValue::new("Basic dXNlcjpwYXNz"),
+    );
+    let outputs = access
+        .process(AccessInput {
+            source: "192.168.1.100:5060".parse().unwrap(),
+            now: 1000,
+            message: request,
+        })
+        .unwrap();
+    assert_eq!(outputs.len(), 1);
+    let response = find_response(&outputs);
+    let SipMessage::Response { line, .. } = response else {
+        panic!("expected response");
+    };
+    assert_eq!(line.code, 400);
+}
+
+#[test]
+fn register_required_rejects_stale_nonce_with_401_stale() {
+    let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec()).unwrap();
+    let provider = |device: &DeviceId| {
+        if device.as_ref() == DEVICE_ID {
+            Some(SecretString::from(PASSWORD))
+        } else {
+            None
+        }
+    };
+    let mut access = Gb28181Access::new(config, provider).unwrap();
+
+    // Generate a nonce signed at timestamp 0. The default nonce TTL is 300,
+    // so validating at now=400 must produce StaleNonce.
+    let ctx = DigestContext::new(REALM, SERVER_SECRET).unwrap();
+    let challenge = ctx.generate_challenge(0).unwrap();
+    let response = compute_response(&challenge.nonce);
+
+    let mut request = make_request(1, false);
+    request.headers_mut().append(
+        HeaderName::Authorization,
+        HeaderValue::new(format!(
+            r##"Digest username="{DEVICE_ID}", realm="{REALM}", nonce="{}", uri="sip:{DEVICE_ID}@{REALM}", response="{response}", cnonce="clientnonce", nc="00000001", qop="auth", algorithm="SHA-256""##,
+            challenge.nonce
+        )),
+    );
+    let outputs = access
+        .process(AccessInput {
+            source: "192.168.1.100:5060".parse().unwrap(),
+            now: 400,
+            message: request,
+        })
+        .unwrap();
+    assert_eq!(outputs.len(), 1);
+    let response = find_response(&outputs);
+    let SipMessage::Response { line, headers, .. } = response else {
+        panic!("expected response");
+    };
+    assert_eq!(line.code, 401);
+    let www_auth = headers
+        .get(&HeaderName::WwwAuthenticate)
+        .expect("WWW-Authenticate")
+        .as_str();
+    assert!(www_auth.contains("stale=true"));
+}
+
 fn make_register_request_without_device_id(cseq: u32, expires: u32) -> SipMessage {
     let mut headers = SipHeaders::new();
     headers.append(
