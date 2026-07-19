@@ -23,6 +23,8 @@ cheetah-storage-postgres = { path = "../../crates/storage/cheetah-storage-postgr
 cheetah-message-api = { path = "../../crates/messaging/cheetah-message-api" }
 cheetah-message-local = { path = "../../crates/messaging/cheetah-message-local" }
 cheetah-message-nats = { path = "../../crates/messaging/cheetah-message-nats" }
+cheetah-cluster-ownership = { path = "../../crates/cluster/cheetah-cluster-ownership" }
+cheetah-cluster-registry = { path = "../../crates/cluster/cheetah-cluster-registry" }
 cheetah-gb28181-module = { path = "../../crates/protocols/cheetah-gb28181-module" }
 cheetah-gb28181-driver-tokio = { path = "../../crates/protocols/cheetah-gb28181-driver-tokio" }
 cheetah-secret = { path = "../../crates/foundation/cheetah-secret" }

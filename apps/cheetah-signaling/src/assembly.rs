@@ -3,6 +3,7 @@
 //! Startup order (per AGENTS.md): config/secret → schema check → bus →
 //! repository → ownership → media → protocol → public listener → ready.
 
+use cheetah_cluster_ownership::lease::CachingDeviceOwnerResolver;
 use cheetah_domain::ports::{DeviceOwnerResolver, MediaPort};
 use cheetah_domain::{
     DomainError, DomainEvent, EventPublisher, MediaNodeCommand, MediaNodeCommandResult,
@@ -331,6 +332,47 @@ fn build_secret_store(config: &SignalConfig) -> Arc<dyn SecretStore> {
     Arc::new(CompositeSecretStore::new(stores)) as Arc<dyn SecretStore>
 }
 
+/// Resolves a stable node identity.
+///
+/// If `system.node_id` is configured it takes precedence. Otherwise the id is
+/// read from `<data_dir>/node_id`; when missing a new UUIDv7 is generated,
+/// written to disk, and reused on subsequent starts.
+fn resolve_node_id(
+    config: &SignalConfig,
+    id_generator: &dyn IdGenerator,
+) -> Result<NodeId, Box<dyn std::error::Error + Send + Sync>> {
+    if let Some(id) = config.system.node_id {
+        return Ok(id);
+    }
+
+    if !config.system.data_dir.is_empty() {
+        let mut path = PathBuf::from(&config.system.data_dir);
+        path.push("node_id");
+        if let Ok(text) = std::fs::read_to_string(&path) {
+            let text = text.trim();
+            if !text.is_empty() {
+                match text.parse::<NodeId>() {
+                    Ok(id) => return Ok(id),
+                    Err(e) => {
+                        warn!(path = %path.display(), error = %e, "invalid persisted node_id");
+                    }
+                }
+            }
+        }
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let id = id_generator.generate_node_id();
+        std::fs::write(&path, id.to_string())?;
+        info!(%id, path = %path.display(), "persisted generated node_id");
+        return Ok(id);
+    }
+
+    let id = id_generator.generate_node_id();
+    info!(%id, "generated transient node_id");
+    Ok(id)
+}
+
 /// Resolves the GB28181 SIP digest secret from the secret store.
 fn resolve_gb28181_digest_secret(
     secret_store: &dyn SecretStore,
@@ -363,11 +405,9 @@ pub async fn start(
     let cancel = CancellationToken::new();
     let mut workers = Vec::new();
 
-    let node_id = config.system.node_id.unwrap_or_else(|| {
-        let id = NodeId::from_uuid(Uuid::now_v7());
-        info!(%id, "generated transient node_id; set system.node_id for stable cluster identity");
-        id
-    });
+    let node_id = resolve_node_id(&config, id_generator.as_ref())?;
+    let node_instance_id = id_generator.generate_node_instance_id();
+    info!(%node_id, %node_instance_id, "node identity ready");
 
     let storage: Arc<dyn Storage> = match config.storage.backend {
         StorageBackend::Sqlite => {
@@ -407,10 +447,14 @@ pub async fn start(
         }
     };
 
-    let owner_resolver: Arc<dyn DeviceOwnerResolver> = Arc::new(StorageOwnerResolver {
-        storage: storage.clone(),
-        clock: clock.clone(),
-    });
+    let owner_repo: Arc<dyn cheetah_storage_api::OwnerRepository> =
+        storage.owner_repository().into();
+    let owner_resolver: Arc<dyn DeviceOwnerResolver> = Arc::new(CachingDeviceOwnerResolver::new(
+        owner_repo,
+        clock.clone(),
+        DurationMs::from_millis(1000),
+        1024,
+    ));
 
     let bus: Arc<dyn RawEventBus> = match config.messaging.backend {
         MessagingBackend::Local => Arc::new(InProcessMessageBus::new(
@@ -560,27 +604,4 @@ pub async fn start(
         gb28181_addr,
         workers,
     })
-}
-
-/// Owner resolver that reads from the shared storage owner repository.
-struct StorageOwnerResolver {
-    storage: Arc<dyn Storage>,
-    clock: Arc<dyn Clock>,
-}
-
-#[async_trait::async_trait]
-impl DeviceOwnerResolver for StorageOwnerResolver {
-    async fn resolve(
-        &self,
-        tenant_id: TenantId,
-        device_id: DeviceId,
-    ) -> cheetah_domain::Result<Option<cheetah_domain::OwnerInfo>> {
-        let repo = self.storage.owner_repository();
-        let owner = repo
-            .get(tenant_id, device_id)
-            .await
-            .map_err(DomainError::from)?;
-        let now = self.clock.now_wall();
-        Ok(owner.filter(|o| o.lease_until.is_none_or(|until| until > now)))
-    }
 }
