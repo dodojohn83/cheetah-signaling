@@ -5,8 +5,8 @@
 
 use cheetah_domain::ports::{DeviceOwnerResolver, MediaPort};
 use cheetah_domain::{
-    DomainError, EventPublisher, MediaNodeCommand, MediaNodeCommandResult, MediaRequirements,
-    MediaReservation,
+    DomainError, DomainEvent, EventPublisher, MediaNodeCommand, MediaNodeCommandResult,
+    MediaRequirements, MediaReservation,
 };
 use cheetah_gb28181_driver_tokio::Gb28181UdpDriver;
 use cheetah_gb28181_driver_tokio::config::DriverConfig as GbDriverConfig;
@@ -16,13 +16,16 @@ use cheetah_gb28181_module::events::Gb28181Event;
 use cheetah_gb28181_module::ports::CredentialProvider;
 use cheetah_gb28181_module::types::DeviceId as GbDeviceId;
 use cheetah_http_api::state::{ApiConfig, ApiServer, ApiState};
+use cheetah_message_api::RawEventBus;
+use cheetah_message_api::publisher::publish_domain_event;
 use cheetah_message_local::InProcessMessageBus;
+use cheetah_message_nats::NatsBus;
 use cheetah_secret::{CompositeSecretStore, EnvSecretStore, FileSecretStore};
 use cheetah_signal_application::OutboxRelay;
-use cheetah_signal_types::config::{SignalConfig, StorageBackend};
+use cheetah_signal_types::config::{MessagingBackend, SignalConfig, StorageBackend};
 use cheetah_signal_types::{
-    ChannelId, Clock, DeviceId, DurationMs, IdGenerator, MediaBindingId, MediaSessionId, NodeId,
-    Page, PageRequest, SecretStore, TenantId, UtcTimestamp,
+    ChannelId, Clock, DeviceId, DurationMs, Event, IdGenerator, MediaBindingId, MediaSessionId,
+    NodeId, Page, PageRequest, SecretStore, TenantId, UtcTimestamp,
 };
 use cheetah_storage_api::Storage;
 use cheetah_storage_sqlite::SqliteStorage;
@@ -282,6 +285,32 @@ impl CredentialProvider for SecretStoreCredentialProvider {
     }
 }
 
+/// Adapts a [`RawEventBus`] into a domain [`EventPublisher`] so it can be used
+/// by the outbox relay and any application service that expects the domain trait.
+#[derive(Clone)]
+struct EventBusPublisher {
+    bus: Arc<dyn RawEventBus>,
+}
+
+impl std::fmt::Debug for EventBusPublisher {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EventBusPublisher").finish_non_exhaustive()
+    }
+}
+
+impl EventBusPublisher {
+    fn new(bus: Arc<dyn RawEventBus>) -> Self {
+        Self { bus }
+    }
+}
+
+#[async_trait::async_trait]
+impl EventPublisher for EventBusPublisher {
+    async fn publish(&self, event: &Event<DomainEvent>) -> cheetah_domain::Result<()> {
+        publish_domain_event(&*self.bus, event).await
+    }
+}
+
 /// Logs GB28181 domain events without blocking the UDP loop.
 #[derive(Debug, Default)]
 struct TracingGbEventSink;
@@ -334,6 +363,12 @@ pub async fn start(
     let cancel = CancellationToken::new();
     let mut workers = Vec::new();
 
+    let node_id = config.system.node_id.unwrap_or_else(|| {
+        let id = NodeId::from_uuid(Uuid::now_v7());
+        info!(%id, "generated transient node_id; set system.node_id for stable cluster identity");
+        id
+    });
+
     let storage: Arc<dyn Storage> = match config.storage.backend {
         StorageBackend::Sqlite => {
             let path = PathBuf::from(&config.storage.sqlite_path);
@@ -372,16 +407,59 @@ pub async fn start(
         }
     };
 
-    let bus = Arc::new(InProcessMessageBus::new(
-        config.messaging.max_pending.max(64),
-        config.messaging.max_pending.max(64),
-    ));
-    let publisher: Arc<dyn EventPublisher> = bus.clone();
-
     let owner_resolver: Arc<dyn DeviceOwnerResolver> = Arc::new(StorageOwnerResolver {
         storage: storage.clone(),
         clock: clock.clone(),
     });
+
+    let bus: Arc<dyn RawEventBus> = match config.messaging.backend {
+        MessagingBackend::Local => Arc::new(InProcessMessageBus::new(
+            config.messaging.max_pending.max(64),
+            config.messaging.max_pending.max(64),
+        )),
+        MessagingBackend::Nats => {
+            let url = if let Some(ref_key) = config.messaging.nats_url_ref.as_deref() {
+                secret_store
+                    .get(ref_key)
+                    .map_err(|e| {
+                        format!("failed to resolve messaging.nats_url_ref ({ref_key}): {e}")
+                    })?
+                    .expose_secret()
+                    .to_string()
+            } else {
+                config.messaging.nats_url.clone()
+            };
+            if url.is_empty() {
+                return Err(
+                    "messaging.nats_url or messaging.nats_url_ref is required when backend=nats"
+                        .into(),
+                );
+            }
+            let scheme = url.split("://").next().unwrap_or(&url).to_lowercase();
+            if !matches!(scheme.as_str(), "tls" | "wss") {
+                return Err(
+                    "messaging.nats_url must use tls:// or wss:// scheme for cluster deployments"
+                        .into(),
+                );
+            }
+            let connect_timeout = Duration::from_secs(5);
+            let operation_timeout = Duration::from_secs(30);
+            Arc::new(
+                NatsBus::connect(
+                    url,
+                    node_id,
+                    owner_resolver.clone(),
+                    connect_timeout,
+                    operation_timeout,
+                )
+                .await?,
+            ) as Arc<dyn RawEventBus>
+        }
+        _ => {
+            return Err("unsupported messaging.backend; use local or nats".into());
+        }
+    };
+    let publisher: Arc<dyn EventPublisher> = Arc::new(EventBusPublisher::new(bus.clone()));
 
     let media_port: Arc<dyn MediaPort> = Arc::new(UnsupportedMediaPort);
 

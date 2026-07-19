@@ -22,7 +22,7 @@ async fn main() {
         config.observability.log_format,
     );
 
-    let runtime = match assembly::start(config).await {
+    let runtime = match Box::pin(assembly::start(config)).await {
         Ok(runtime) => runtime,
         Err(e) => {
             eprintln!("failed to start signaling process: {e:#}");
