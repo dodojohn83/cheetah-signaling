@@ -216,10 +216,6 @@ fn on_invite_success(
         return Ok(outputs);
     }
 
-    let session = media
-        .sessions
-        .get_mut(&sid)
-        .ok_or(MediaError::SessionNotFound)?;
     let remote_tag = remote_tag
         .ok_or_else(|| MediaError::MalformedSip("missing To tag in 200 OK".to_string()))?;
     let contact = contact?;
@@ -250,9 +246,27 @@ fn on_invite_success(
         .map(|c| c.address.clone())
         .unwrap_or_default();
 
-    session.remote_tag = Some(remote_tag.clone());
-    session.remote_target = Some(contact.clone());
+    // Validate the remote media address before mutating session state. A 200 OK
+    // with an unparseable SDP connection address is treated as a failure; the
+    // pending session is removed so it does not become an orphaned Active entry.
+    let source = match socket_addr(&remote_address, remote_port) {
+        Ok(s) => s,
+        Err(e) => {
+            let session = media
+                .remove_session(sid)
+                .ok_or(MediaError::SessionNotFound)?;
+            return Ok(vec![MediaOutput::EmitEvent(failed_event(
+                &session,
+                &media.config.domain_id,
+                &format!("invalid SDP media address: {e}"),
+            ))]);
+        }
+    };
 
+    let session = media
+        .sessions
+        .get(&sid)
+        .ok_or(MediaError::SessionNotFound)?;
     let ack_branch = format!("{}-ack", session.branch);
     let ack = build_ack(
         &media.config.local_sip_uri,
@@ -263,9 +277,13 @@ fn on_invite_success(
     )
     .map_err(|e| MediaError::MalformedSip(e.to_string()))?;
 
+    let session = media
+        .sessions
+        .get_mut(&sid)
+        .ok_or(MediaError::SessionNotFound)?;
+    session.remote_tag = Some(remote_tag);
+    session.remote_target = Some(contact);
     session.state = SessionState::Active;
-
-    let source = socket_addr(&remote_address, remote_port)?;
 
     let event = Gb28181Event::MediaSessionStarted {
         domain_id: media.config.domain_id.clone(),

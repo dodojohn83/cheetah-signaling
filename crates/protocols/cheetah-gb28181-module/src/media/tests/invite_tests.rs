@@ -57,6 +57,22 @@ fn two_hundred_ok_triggers_ack_and_started_event() {
 }
 
 #[test]
+fn two_hundred_ok_with_invalid_media_address_removes_session_and_emits_failed() {
+    let mut media = Gb28181Media::new(config());
+    let sid = MediaSessionId::generate();
+    media.process(MediaInput::Command(start_live(sid))).unwrap();
+
+    let ok = build_test_200_ok_with_connection("IN IP4 not-an-ip");
+    let outputs = media.process(MediaInput::Message(ok)).unwrap();
+    assert_eq!(outputs.len(), 1);
+    assert!(matches!(
+        &outputs[0],
+        MediaOutput::EmitEvent(Gb28181Event::MediaSessionFailed { .. })
+    ));
+    assert!(media.remove_session(sid).is_none());
+}
+
+#[test]
 fn retransmitted_two_hundred_ok_reacknowledges_active_session() {
     let mut media = Gb28181Media::new(config());
     let sid = MediaSessionId::generate();
