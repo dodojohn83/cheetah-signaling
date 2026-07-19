@@ -16,6 +16,21 @@ cheetah-signal-contracts = { path = "../../crates/foundation/cheetah-signal-cont
 cheetah-runtime-api = { path = "../../crates/runtime/cheetah-runtime-api" }
 cheetah-runtime-tokio = { path = "../../crates/runtime/cheetah-runtime-tokio" }
 cheetah-signal-application = { path = "../../crates/application/cheetah-signal-application" }
+cheetah-domain = { path = "../../crates/domain/cheetah-domain" }
+cheetah-storage-api = { path = "../../crates/storage/cheetah-storage-api" }
+cheetah-storage-sqlite = { path = "../../crates/storage/cheetah-storage-sqlite" }
+cheetah-storage-postgres = { path = "../../crates/storage/cheetah-storage-postgres" }
+cheetah-message-local = { path = "../../crates/messaging/cheetah-message-local" }
+cheetah-gb28181-module = { path = "../../crates/protocols/cheetah-gb28181-module" }
+cheetah-gb28181-driver-tokio = { path = "../../crates/protocols/cheetah-gb28181-driver-tokio" }
+async-trait = { workspace = true }
+hex = { workspace = true }
+secrecy = { workspace = true }
+time = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal", "sync", "time"] }
+tokio-util = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
 
 [lints]
 workspace = true

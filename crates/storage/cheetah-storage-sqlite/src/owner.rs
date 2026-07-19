@@ -1,13 +1,17 @@
 //! Owner repository and device owner resolver for SQLite.
 
 use crate::error::sqlx_to_domain;
-use cheetah_domain::ports::{Clock, DeviceOwnerResolver, OwnerInfo};
-use cheetah_signal_types::UtcTimestamp;
-use cheetah_storage_api::{OwnerRepository, StorageError};
+use cheetah_domain::ports::{DeviceOwnerResolver, OwnerInfo};
+use cheetah_signal_types::{ListCursor, Page, PageRequest, UtcTimestamp};
+use cheetah_storage_api::{OwnedDevice, OwnerRepository, StorageError};
 use sqlx::FromRow;
 use sqlx::SqlitePool;
-use std::sync::Arc;
 use time::OffsetDateTime;
+
+fn to_millis(ts: UtcTimestamp) -> i64 {
+    let offset = ts.as_offset();
+    offset.unix_timestamp() * 1000 + i64::from(offset.nanosecond()) / 1_000_000
+}
 
 #[derive(FromRow)]
 struct OwnerRow {
@@ -16,52 +20,30 @@ struct OwnerRow {
     expires_at: Option<OffsetDateTime>,
 }
 
+#[derive(FromRow)]
+struct OwnedDeviceRow {
+    tenant_id: uuid::Uuid,
+    device_id: uuid::Uuid,
+    owner_node_id: uuid::Uuid,
+    owner_epoch: i64,
+    expires_at: Option<OffsetDateTime>,
+    updated_at: OffsetDateTime,
+}
+
 /// SQLite owner repository.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct SqliteOwnerRepository {
     read_pool: SqlitePool,
     write_pool: SqlitePool,
-    clock: Arc<dyn Clock>,
 }
 
 impl SqliteOwnerRepository {
     /// Creates a new repository.
-    pub fn new(read_pool: SqlitePool, write_pool: SqlitePool, clock: Arc<dyn Clock>) -> Self {
+    pub const fn new(read_pool: SqlitePool, write_pool: SqlitePool) -> Self {
         Self {
             read_pool,
             write_pool,
-            clock,
         }
-    }
-
-    async fn check_device_tenant(
-        &self,
-        tenant_id: cheetah_signal_types::TenantId,
-        device_id: cheetah_signal_types::DeviceId,
-    ) -> Result<(), StorageError> {
-        let row: Option<(uuid::Uuid,)> =
-            sqlx::query_as("SELECT tenant_id FROM devices WHERE device_id = ?")
-                .bind(device_id.as_uuid())
-                .fetch_optional(&self.write_pool)
-                .await
-                .map_err(|e| StorageError::backend(e.to_string()))?;
-        match row {
-            Some((found,)) if found == tenant_id.as_uuid() => Ok(()),
-            Some(_) => Err(StorageError::invalid_argument(
-                "device does not belong to tenant",
-            )),
-            None => Err(StorageError::invalid_argument("device not found")),
-        }
-    }
-}
-
-impl std::fmt::Debug for SqliteOwnerRepository {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SqliteOwnerRepository")
-            .field("read_pool", &self.read_pool)
-            .field("write_pool", &self.write_pool)
-            .field("clock", &"<dyn Clock>")
-            .finish()
     }
 }
 
@@ -94,31 +76,25 @@ impl OwnerRepository for SqliteOwnerRepository {
         device_id: cheetah_signal_types::DeviceId,
         owner: OwnerInfo,
     ) -> Result<(), StorageError> {
-        self.check_device_tenant(tenant_id, device_id).await?;
-        let result = sqlx::query(
+        sqlx::query(
             "INSERT INTO device_owners (tenant_id, device_id, owner_node_id, owner_epoch, expires_at, updated_at)
              VALUES (?, ?, ?, ?, ?, ?)
              ON CONFLICT(device_id) DO UPDATE SET
+                 tenant_id = EXCLUDED.tenant_id,
                  owner_node_id = EXCLUDED.owner_node_id,
                  owner_epoch = EXCLUDED.owner_epoch,
                  expires_at = EXCLUDED.expires_at,
-                 updated_at = EXCLUDED.updated_at
-             WHERE device_owners.tenant_id = EXCLUDED.tenant_id",
+                 updated_at = EXCLUDED.updated_at",
         )
         .bind(tenant_id.as_uuid())
         .bind(device_id.as_uuid())
         .bind(owner.owner_node_id.as_uuid())
         .bind(owner.owner_epoch.0 as i64)
         .bind(owner.lease_until.map(|t| t.as_offset()))
-        .bind(self.clock.now_wall().as_offset())
+        .bind(OffsetDateTime::now_utc())
         .execute(&self.write_pool)
         .await
         .map_err(|e| StorageError::backend(e.to_string()))?;
-        if result.rows_affected() == 0 {
-            return Err(StorageError::invalid_argument(
-                "device owner does not belong to tenant",
-            ));
-        }
         Ok(())
     }
 
@@ -141,34 +117,35 @@ impl OwnerRepository for SqliteOwnerRepository {
         tenant_id: cheetah_signal_types::TenantId,
         device_id: cheetah_signal_types::DeviceId,
         node_id: cheetah_signal_types::NodeId,
+        now: cheetah_signal_types::UtcTimestamp,
         lease_until: cheetah_signal_types::UtcTimestamp,
     ) -> Result<OwnerInfo, StorageError> {
-        self.check_device_tenant(tenant_id, device_id)
-            .await
-            .map_err(|e| match e {
-                StorageError::InvalidArgument { .. } => {
-                    StorageError::unavailable("device not found or not owned by tenant")
-                }
-                other => other,
-            })?;
-        let updated_at = self.clock.now_wall().as_offset();
+        let updated_at = now.as_offset();
         sqlx::query(
             "INSERT INTO device_owners (tenant_id, device_id, owner_node_id, owner_epoch, expires_at, updated_at)
              VALUES (?, ?, ?, 1, ?, ?)
              ON CONFLICT(device_id) DO UPDATE SET
+                 tenant_id = EXCLUDED.tenant_id,
                  owner_node_id = EXCLUDED.owner_node_id,
                  owner_epoch = device_owners.owner_epoch + 1,
                  expires_at = EXCLUDED.expires_at,
                  updated_at = EXCLUDED.updated_at
-             WHERE device_owners.tenant_id = EXCLUDED.tenant_id
-                 AND ((device_owners.expires_at IS NOT NULL AND device_owners.expires_at <= EXCLUDED.updated_at)
-                   OR device_owners.owner_node_id = EXCLUDED.owner_node_id)",
+             WHERE (device_owners.expires_at IS NOT NULL AND device_owners.expires_at <= ?)
+                OR device_owners.owner_node_id = ?
+                OR NOT EXISTS (
+                    SELECT 1 FROM cluster_nodes
+                    WHERE node_id = device_owners.owner_node_id
+                      AND lease_until > ?
+                )",
         )
         .bind(tenant_id.as_uuid())
         .bind(device_id.as_uuid())
         .bind(node_id.as_uuid())
         .bind(lease_until.as_offset())
         .bind(updated_at)
+        .bind(updated_at)
+        .bind(node_id.as_uuid())
+        .bind(to_millis(now))
         .execute(&self.write_pool)
         .await
         .map_err(|e| StorageError::backend(e.to_string()))?;
@@ -201,7 +178,7 @@ impl OwnerRepository for SqliteOwnerRepository {
         node_id: cheetah_signal_types::NodeId,
         lease_until: cheetah_signal_types::UtcTimestamp,
     ) -> Result<Option<OwnerInfo>, StorageError> {
-        let now = self.clock.now_wall().as_offset();
+        let now = OffsetDateTime::now_utc();
         let result = sqlx::query(
             "UPDATE device_owners
              SET expires_at = ?, updated_at = ?
@@ -255,6 +232,89 @@ impl OwnerRepository for SqliteOwnerRepository {
         .await
         .map_err(|e| StorageError::backend(e.to_string()))?;
         Ok(())
+    }
+
+    async fn list_by_node(
+        &self,
+        node_id: cheetah_signal_types::NodeId,
+        page: PageRequest,
+    ) -> Result<Page<OwnedDevice>, StorageError> {
+        let page_size = page.page_size.max(1) as i64;
+        let cursor = match &page.cursor {
+            None => None,
+            Some(value) => {
+                let cursor = ListCursor::decode(value)
+                    .map_err(|e| StorageError::invalid_argument(format!("invalid cursor: {e}")))?;
+                Some(
+                    cursor.parse().map_err(|e| {
+                        StorageError::invalid_argument(format!("invalid cursor: {e}"))
+                    })?,
+                )
+            }
+        };
+
+        let rows: Vec<OwnedDeviceRow> = match cursor {
+            None => sqlx::query_as::<sqlx::Sqlite, OwnedDeviceRow>(
+                "SELECT tenant_id, device_id, owner_node_id, owner_epoch, expires_at, updated_at
+                     FROM device_owners
+                     WHERE owner_node_id = ?
+                     ORDER BY updated_at, device_id
+                     LIMIT ?",
+            )
+            .bind(node_id.as_uuid())
+            .bind(page_size + 1)
+            .fetch_all(&self.read_pool)
+            .await,
+            Some((updated_at, device_id)) => sqlx::query_as::<sqlx::Sqlite, OwnedDeviceRow>(
+                "SELECT tenant_id, device_id, owner_node_id, owner_epoch, expires_at, updated_at
+                     FROM device_owners
+                     WHERE owner_node_id = ?
+                       AND (updated_at > ? OR (updated_at = ? AND device_id > ?))
+                     ORDER BY updated_at, device_id
+                     LIMIT ?",
+            )
+            .bind(node_id.as_uuid())
+            .bind(updated_at.as_offset())
+            .bind(updated_at.as_offset())
+            .bind(device_id)
+            .bind(page_size + 1)
+            .fetch_all(&self.read_pool)
+            .await,
+        }
+        .map_err(|e| StorageError::backend(e.to_string()))?;
+
+        let has_more = rows.len() > page_size as usize;
+        let next_cursor = if has_more {
+            let last = &rows[page_size as usize - 1];
+            Some(
+                ListCursor::new(UtcTimestamp::from_offset(last.updated_at), last.device_id)
+                    .map_err(|e| StorageError::internal(format!("failed to encode cursor: {e}")))?
+                    .encode()
+                    .map_err(|e| StorageError::internal(format!("failed to encode cursor: {e}")))?,
+            )
+        } else {
+            None
+        };
+
+        let items: Vec<OwnedDevice> = rows
+            .into_iter()
+            .take(page_size as usize)
+            .map(|r| OwnedDevice {
+                tenant_id: r.tenant_id.into(),
+                device_id: r.device_id.into(),
+                owner: OwnerInfo {
+                    owner_node_id: r.owner_node_id.into(),
+                    owner_epoch: cheetah_signal_types::OwnerEpoch(r.owner_epoch as u64),
+                    lease_until: r.expires_at.map(UtcTimestamp::from_offset),
+                },
+            })
+            .collect();
+
+        let mut result = Page::new(items);
+        if let Some(cursor) = next_cursor {
+            result = result.with_next_cursor(cursor);
+        }
+        Ok(result)
     }
 }
 

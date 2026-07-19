@@ -6,10 +6,21 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+description = "Cluster node lease, registry, and assignment support for Cheetah Signaling."
 
 [dependencies]
+cheetah-domain = { path = "../../domain/cheetah-domain" }
+cheetah-signal-types = { path = "../../foundation/cheetah-signal-types" }
+cheetah-storage-api = { path = "../../storage/cheetah-storage-api" }
+async-trait = { workspace = true }
+semver = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["sync"] }
+tracing = { workspace = true }
 
 [dev-dependencies]
+cheetah-domain = { path = "../../domain/cheetah-domain", features = ["test-util"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [lints]
 workspace = true

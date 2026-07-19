@@ -2,18 +2,19 @@
 
 use crate::error::sqlx_to_storage;
 use crate::migration::SqliteMigration;
+use crate::node::SqliteNodeRepository;
 use crate::operation_step::SqliteOperationStepRepository;
 use crate::owner::{SqliteDeviceOwnerResolver, SqliteOwnerRepository};
 use crate::unit_of_work::SqliteUnitOfWork;
 use cheetah_domain::Clock;
 use cheetah_domain::ports::DeviceOwnerResolver;
 use cheetah_storage_api::{
-    Migration as MigrationTrait, OperationStepRepository, OwnerRepository, Storage, StorageError,
+    Migration as MigrationTrait, NodeRepository, OperationStepRepository, OwnerRepository, Storage,
+    StorageError,
 };
 use sqlx::SqlitePool;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use std::path::Path;
-use std::sync::Arc;
 use std::time::Duration;
 
 /// SQLite storage adapter.
@@ -94,16 +95,22 @@ impl Storage for SqliteStorage {
         Ok(Box::new(SqliteUnitOfWork::new(self.write_pool.clone(), tx)))
     }
 
-    fn owner_repository(&self, clock: Arc<dyn Clock>) -> Box<dyn OwnerRepository> {
+    fn owner_repository(&self) -> Box<dyn OwnerRepository> {
         Box::new(SqliteOwnerRepository::new(
             self.read_pool.clone(),
             self.write_pool.clone(),
-            clock,
         ))
     }
 
     fn operation_step_repository(&self) -> Box<dyn OperationStepRepository> {
         Box::new(SqliteOperationStepRepository::new(self.write_pool.clone()))
+    }
+
+    fn node_repository(&self) -> Box<dyn NodeRepository> {
+        Box::new(SqliteNodeRepository::new(
+            self.read_pool.clone(),
+            self.write_pool.clone(),
+        ))
     }
 
     async fn close(self) -> Result<(), StorageError> {

@@ -15,9 +15,9 @@ use crate::{
 };
 use cheetah_signal_types::{
     ChannelId, Clock, DeliveryId, DeviceId, DurationMs, Event, IdGenerator, ListCursor,
-    MediaBindingId, MediaNodeInstanceEpoch, MediaSessionId, MessageId, NodeId, OperationId, Page,
-    PageRequest, Principal, ProtocolIdentity, RequestContext, ResourceId, ResourceKind,
-    ResourceRef, Revision, TenantId, UtcTimestamp, WebhookId,
+    MediaBindingId, MediaNodeInstanceEpoch, MediaSessionId, MessageId, NodeId, OperationId,
+    OwnerEpoch, Page, PageRequest, Principal, ProtocolIdentity, RequestContext, ResourceId,
+    ResourceKind, ResourceRef, Revision, TenantId, UtcTimestamp, WebhookId,
 };
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -232,6 +232,10 @@ impl IdGenerator for InMemoryIdGenerator {
         NodeId::from_uuid(self.next_uuid())
     }
 
+    fn generate_node_instance_id(&self) -> cheetah_signal_types::NodeInstanceId {
+        cheetah_signal_types::NodeInstanceId::from_uuid(self.next_uuid())
+    }
+
     fn generate_plugin_id(&self) -> cheetah_signal_types::PluginId {
         cheetah_signal_types::PluginId::from_uuid(self.next_uuid())
     }
@@ -364,6 +368,37 @@ impl UnitOfWork for InMemoryUnitOfWork {
 
     fn outbox(&mut self) -> &mut dyn Outbox {
         self
+    }
+
+    async fn acquire_ownership(
+        &mut self,
+        tenant_id: TenantId,
+        device_id: DeviceId,
+        node_id: NodeId,
+        now: UtcTimestamp,
+        lease_until: UtcTimestamp,
+    ) -> crate::Result<Option<(OwnerInfo, Option<OwnerInfo>)>> {
+        let previous =
+            self.with_pending(|pending| pending.owners.get(&(tenant_id, device_id)).cloned());
+        let can_take = match &previous {
+            None => true,
+            Some(owner) => {
+                owner.lease_until.is_some_and(|lease| lease <= now) || owner.owner_node_id == node_id
+            }
+        };
+        if !can_take {
+            return Ok(None);
+        }
+        let epoch = previous.as_ref().map_or(1, |o| o.owner_epoch.0 + 1);
+        let owner = OwnerInfo {
+            owner_node_id: node_id,
+            owner_epoch: OwnerEpoch(epoch),
+            lease_until: Some(lease_until),
+        };
+        self.with_pending(|pending| {
+            pending.owners.insert((tenant_id, device_id), owner.clone());
+        });
+        Ok(Some((owner, previous)))
     }
 
     async fn commit(&mut self) -> crate::Result<()> {

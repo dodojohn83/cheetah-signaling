@@ -6,8 +6,8 @@
 use crate::{
     ChannelId, Clock, CorrelationId, DeliveryId, DeviceId, DurationMs, EndpointId, EventId,
     IdGenerator, MediaBindingId, MediaNodeInstanceEpoch, MediaSessionId, MessageId,
-    NetworkFaultPolicy, NodeId, OperationId, PluginId, ProtocolSessionId, RandomSource, TenantId,
-    UtcTimestamp, WebhookId,
+    NetworkFaultPolicy, NodeId, NodeInstanceId, OperationId, PluginId, ProtocolSessionId,
+    RandomSource, TenantId, UtcTimestamp, WebhookId,
 };
 use std::fmt;
 use std::str::FromStr;
@@ -154,6 +154,7 @@ impl IdGenerator for FakeIdGenerator {
 
     generate_id!(generate_operation_id -> OperationId);
     generate_id!(generate_node_id -> NodeId);
+    generate_id!(generate_node_instance_id -> NodeInstanceId);
     generate_id!(generate_plugin_id -> PluginId);
     generate_id!(generate_event_id -> EventId);
     generate_id!(generate_message_id -> MessageId);

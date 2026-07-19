@@ -2,8 +2,8 @@
 
 use crate::{
     ChannelId, CorrelationId, DeliveryId, DeviceId, DurationMs, EndpointId, EventId,
-    MediaBindingId, MediaNodeInstanceEpoch, MediaSessionId, MessageId, NodeId, OperationId,
-    PluginId, ProtocolSessionId, Result, TenantId, UtcTimestamp, WebhookId,
+    MediaBindingId, MediaNodeInstanceEpoch, MediaSessionId, MessageId, NodeId, NodeInstanceId,
+    OperationId, PluginId, ProtocolSessionId, Result, TenantId, UtcTimestamp, WebhookId,
 };
 use secrecy::SecretString;
 
@@ -41,6 +41,8 @@ pub trait IdGenerator: Send + Sync {
     fn generate_operation_id(&self) -> OperationId;
     /// Generates a new node identifier.
     fn generate_node_id(&self) -> NodeId;
+    /// Generates a new node instance (incarnation) identifier.
+    fn generate_node_instance_id(&self) -> NodeInstanceId;
     /// Generates a new plugin identifier.
     fn generate_plugin_id(&self) -> PluginId;
     /// Generates a new event identifier.

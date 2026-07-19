@@ -5,6 +5,7 @@
 mod error;
 mod list;
 mod migration;
+mod node;
 mod operation_step;
 mod owner;
 mod repository;
@@ -13,6 +14,7 @@ mod unit_of_work;
 mod webhook;
 
 pub use migration::PostgresMigration;
+pub use node::PostgresNodeRepository;
 pub use operation_step::PostgresOperationStepRepository;
 pub use owner::{PostgresDeviceOwnerResolver, PostgresOwnerRepository};
 pub use storage::PostgresStorage;

@@ -9,7 +9,7 @@ use tracing::{info, warn};
 
 /// Manages device owner leases for a single node.
 pub struct OwnerLeaseService {
-    repository: Arc<tokio::sync::Mutex<Box<dyn OwnerRepository>>>,
+    repository: Arc<tokio::sync::Mutex<dyn OwnerRepository>>,
     clock: Arc<dyn Clock>,
     this_node: NodeId,
     lease_duration: DurationMs,
@@ -18,7 +18,7 @@ pub struct OwnerLeaseService {
 impl OwnerLeaseService {
     /// Creates a new lease service.
     pub fn new(
-        repository: Arc<tokio::sync::Mutex<Box<dyn OwnerRepository>>>,
+        repository: Arc<tokio::sync::Mutex<dyn OwnerRepository>>,
         clock: Arc<dyn Clock>,
         this_node: NodeId,
         lease_duration: DurationMs,
@@ -44,10 +44,11 @@ impl OwnerLeaseService {
         tenant_id: TenantId,
         device_id: DeviceId,
     ) -> Result<OwnerInfo, StorageError> {
+        let now = self.clock.now_wall();
         let lease_until = self.lease_until()?;
         let mut repo = self.repository.lock().await;
         let owner = repo
-            .acquire(tenant_id, device_id, self.this_node, lease_until)
+            .acquire(tenant_id, device_id, self.this_node, now, lease_until)
             .await?;
         info!(
             tenant_id = %tenant_id.as_uuid(),

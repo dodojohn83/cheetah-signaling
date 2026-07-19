@@ -1,8 +1,21 @@
 //! Extension repository ports that do not belong to the domain UnitOfWork.
 
 use crate::StorageError;
-use cheetah_domain::OwnerInfo;
-use cheetah_signal_types::{DeviceId, NodeId, OperationId, TenantId};
+use cheetah_domain::{ClusterNode, NodeLoad, OwnerInfo};
+use cheetah_signal_types::{
+    DeviceId, NodeId, NodeInstanceId, OperationId, Page, PageRequest, TenantId, UtcTimestamp,
+};
+
+/// A device owned by a specific node, returned by paginated owner scans.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OwnedDevice {
+    /// Tenant identifier.
+    pub tenant_id: TenantId,
+    /// Device identifier.
+    pub device_id: DeviceId,
+    /// Current owner information.
+    pub owner: OwnerInfo,
+}
 
 /// Repository for device owner leases.
 #[async_trait::async_trait]
@@ -28,15 +41,16 @@ pub trait OwnerRepository: Send + Sync {
 
     /// Atomically acquires or re-acquires ownership of a device.
     ///
-    /// If the device has no owner or the existing lease has expired, the
-    /// `node_id` becomes the new owner and the epoch is incremented. Returns
-    /// the new [`OwnerInfo`] on success.
+    /// If the device has no owner, the existing lease has expired, the current
+    /// owner's node lease is dead, or the same node already owns the device, the
+    /// `node_id` becomes the new owner and the epoch is incremented.
     async fn acquire(
         &mut self,
         tenant_id: TenantId,
         device_id: DeviceId,
         node_id: NodeId,
-        lease_until: cheetah_signal_types::UtcTimestamp,
+        now: UtcTimestamp,
+        lease_until: UtcTimestamp,
     ) -> Result<OwnerInfo, StorageError>;
 
     /// Extends an existing lease if `node_id` still owns the device and the
@@ -46,7 +60,7 @@ pub trait OwnerRepository: Send + Sync {
         tenant_id: TenantId,
         device_id: DeviceId,
         node_id: NodeId,
-        lease_until: cheetah_signal_types::UtcTimestamp,
+        lease_until: UtcTimestamp,
     ) -> Result<Option<OwnerInfo>, StorageError>;
 
     /// Releases ownership if `node_id` and `epoch` match the current record.
@@ -57,6 +71,16 @@ pub trait OwnerRepository: Send + Sync {
         node_id: NodeId,
         epoch: cheetah_signal_types::OwnerEpoch,
     ) -> Result<(), StorageError>;
+
+    /// Lists devices owned by `node_id` with stable cursor pagination.
+    ///
+    /// The returned page is ordered by `updated_at` and then `device_id`. The
+    /// cursor is opaque and must be passed back unmodified.
+    async fn list_by_node(
+        &self,
+        node_id: NodeId,
+        page: PageRequest,
+    ) -> Result<Page<OwnedDevice>, StorageError>;
 }
 
 /// A single dispatch attempt for an operation.
@@ -110,4 +134,44 @@ pub trait OperationStepRepository: Send + Sync {
         tenant_id: TenantId,
         operation_id: OperationId,
     ) -> Result<Vec<OperationStep>, StorageError>;
+}
+
+/// Repository for cluster node registrations and leases.
+#[async_trait::async_trait]
+pub trait NodeRepository: Send + Sync {
+    /// Registers or re-registers a node. A re-registration with a new
+    /// `instance_id` overwrites the previous incarnation, fencing it.
+    async fn register(&mut self, node: ClusterNode) -> Result<(), StorageError>;
+
+    /// Extends the lease and updates load for `node_id`, but only if the
+    /// current `instance_id` matches. Returns the updated node, or `None` if
+    /// the node is unknown or has been fenced by another instance.
+    async fn heartbeat(
+        &mut self,
+        node_id: NodeId,
+        instance_id: NodeInstanceId,
+        lease_until: UtcTimestamp,
+        updated_at: UtcTimestamp,
+        load: NodeLoad,
+    ) -> Result<Option<ClusterNode>, StorageError>;
+
+    /// Returns the registered node, if any.
+    async fn get(&self, node_id: NodeId) -> Result<Option<ClusterNode>, StorageError>;
+
+    /// Lists nodes whose lease is still valid at `now`, paginated by cursor.
+    async fn list_alive(
+        &self,
+        now: UtcTimestamp,
+        page: PageRequest,
+    ) -> Result<Page<ClusterNode>, StorageError>;
+
+    /// Marks the node as draining if `instance_id` matches.
+    /// Returns `true` if the row was updated, or `false` if the node is
+    /// unknown or has been fenced by another instance.
+    async fn mark_draining(
+        &mut self,
+        node_id: NodeId,
+        instance_id: NodeInstanceId,
+        updated_at: UtcTimestamp,
+    ) -> Result<bool, StorageError>;
 }

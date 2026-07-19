@@ -18,8 +18,9 @@ tokio = { workspace = true, features = ["sync", "time"] }
 tracing = { workspace = true }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+cheetah-domain = { path = "../../domain/cheetah-domain", features = ["test-util"] }
 cheetah-storage-sqlite = { path = "../../storage/cheetah-storage-sqlite" }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [lints]
 workspace = true

@@ -1,8 +1,9 @@
 //! Storage factory port.
 
-use crate::{Migration, OperationStepRepository, OwnerRepository, StorageError};
-use cheetah_domain::{Clock, UnitOfWork};
-use std::sync::Arc;
+use crate::{
+    Migration, NodeRepository, OperationStepRepository, OwnerRepository, StorageError,
+};
+use cheetah_domain::UnitOfWork;
 
 /// Storage abstraction.
 ///
@@ -17,10 +18,13 @@ pub trait Storage: Send + Sync {
     async fn begin(&self) -> Result<Box<dyn UnitOfWork>, StorageError>;
 
     /// Returns the device owner repository backed by the storage pools.
-    fn owner_repository(&self, clock: Arc<dyn Clock>) -> Box<dyn OwnerRepository>;
+    fn owner_repository(&self) -> Box<dyn OwnerRepository>;
 
     /// Returns the operation step repository backed by the storage pools.
     fn operation_step_repository(&self) -> Box<dyn OperationStepRepository>;
+
+    /// Returns the cluster node repository backed by the storage pools.
+    fn node_repository(&self) -> Box<dyn NodeRepository>;
 
     /// Gracefully closes the storage.
     async fn close(self) -> Result<(), StorageError>;

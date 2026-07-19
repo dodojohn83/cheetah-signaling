@@ -19,5 +19,7 @@ pub use phase_migration::{
     AppliedMigration, PhaseMigrationBackend, PhaseMigrationPlanner, PhaseMigrationRunner,
     VersionedMigration,
 };
-pub use repository::{OperationStep, OperationStepRepository, OwnerRepository};
+pub use repository::{
+    NodeRepository, OperationStep, OperationStepRepository, OwnedDevice, OwnerRepository,
+};
 pub use storage::Storage;

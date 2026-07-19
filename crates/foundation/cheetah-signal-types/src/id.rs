@@ -155,6 +155,12 @@ uuid_id! {
 }
 
 uuid_id! {
+    /// Identifier for a single incarnation of a node in the cluster.
+    NodeInstanceId,
+    "Node instance identifier."
+}
+
+uuid_id! {
     /// Identifier for a plugin instance.
     PluginId,
     "Plugin identifier."

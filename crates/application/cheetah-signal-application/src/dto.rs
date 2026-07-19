@@ -659,3 +659,12 @@ pub struct ReconciliationReport {
     /// Number of orphan sessions detected but not yet cleaned.
     pub orphans_detected: u64,
 }
+
+/// Result of an operation reconciliation pass.
+#[derive(Clone, Debug, Default, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct OperationReconciliationReport {
+    /// Number of non-terminal operations scanned.
+    pub scanned: u64,
+    /// Number of operations that were timed out.
+    pub timed_out: u64,
+}

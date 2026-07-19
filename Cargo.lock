@@ -534,6 +534,16 @@ dependencies = [
 [[package]]
 name = "cheetah-cluster-registry"
 version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "cheetah-domain",
+ "cheetah-signal-types",
+ "cheetah-storage-api",
+ "semver",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
 
 [[package]]
 name = "cheetah-config"
@@ -820,21 +830,53 @@ dependencies = [
 [[package]]
 name = "cheetah-onvif-core"
 version = "0.1.0"
+dependencies = [
+ "base64",
+ "hex",
+ "hmac",
+ "md5",
+ "quick-xml",
+ "secrecy",
+ "sha1",
+ "sha2",
+ "thiserror",
+ "time",
+ "tracing",
+ "url",
+]
 
 [[package]]
 name = "cheetah-onvif-driver-tokio"
 version = "0.1.0"
+dependencies = [
+ "cheetah-onvif-core",
+ "cheetah-onvif-module",
+ "cheetah-signal-types",
+ "rand 0.8.7",
+ "reqwest",
+ "secrecy",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "url",
+ "uuid",
+]
 
 [[package]]
 name = "cheetah-onvif-module"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "cheetah-onvif-core",
  "cheetah-plugin-sdk",
  "cheetah-signal-types",
+ "quick-xml",
+ "secrecy",
  "serde_json",
  "thiserror",
  "tokio",
+ "url",
+ "uuid",
 ]
 
 [[package]]
@@ -1014,13 +1056,28 @@ dependencies = [
 name = "cheetah-signaling"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "cheetah-config",
+ "cheetah-domain",
+ "cheetah-gb28181-driver-tokio",
+ "cheetah-gb28181-module",
  "cheetah-http-api",
+ "cheetah-message-local",
  "cheetah-runtime-api",
  "cheetah-runtime-tokio",
  "cheetah-signal-application",
  "cheetah-signal-contracts",
  "cheetah-signal-types",
+ "cheetah-storage-api",
+ "cheetah-storage-postgres",
+ "cheetah-storage-sqlite",
+ "hex",
+ "secrecy",
+ "time",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

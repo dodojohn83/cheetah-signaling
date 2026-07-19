@@ -8,8 +8,20 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+cheetah-onvif-core = { path = "../cheetah-onvif-core" }
+cheetah-onvif-module = { path = "../cheetah-onvif-module" }
+cheetah-signal-types = { path = "../../foundation/cheetah-signal-types" }
+rand = { workspace = true }
+reqwest = { workspace = true }
+secrecy = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["net", "time", "rt", "macros", "sync"] }
+tracing = { workspace = true }
+url = { workspace = true }
+uuid = { workspace = true }
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [lints]
 workspace = true

@@ -2,18 +2,19 @@
 
 use crate::error::sqlx_to_storage;
 use crate::migration::PostgresMigration;
+use crate::node::PostgresNodeRepository;
 use crate::operation_step::PostgresOperationStepRepository;
 use crate::owner::{PostgresDeviceOwnerResolver, PostgresOwnerRepository};
 use crate::unit_of_work::PostgresUnitOfWork;
 use cheetah_domain::Clock;
 use cheetah_domain::ports::DeviceOwnerResolver;
 use cheetah_storage_api::{
-    Migration as MigrationTrait, OperationStepRepository, OwnerRepository, Storage, StorageError,
+    Migration as MigrationTrait, NodeRepository, OperationStepRepository, OwnerRepository, Storage,
+    StorageError,
 };
 use sqlx::PgPool;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use std::str::FromStr;
-use std::sync::Arc;
 use std::time::Duration;
 
 /// PostgreSQL storage adapter.
@@ -93,16 +94,22 @@ impl Storage for PostgresStorage {
         )))
     }
 
-    fn owner_repository(&self, clock: Arc<dyn Clock>) -> Box<dyn OwnerRepository> {
+    fn owner_repository(&self) -> Box<dyn OwnerRepository> {
         Box::new(PostgresOwnerRepository::new(
             self.read_pool.clone(),
             self.write_pool.clone(),
-            clock,
         ))
     }
 
     fn operation_step_repository(&self) -> Box<dyn OperationStepRepository> {
         Box::new(PostgresOperationStepRepository::new(
+            self.write_pool.clone(),
+        ))
+    }
+
+    fn node_repository(&self) -> Box<dyn NodeRepository> {
+        Box::new(PostgresNodeRepository::new(
+            self.read_pool.clone(),
             self.write_pool.clone(),
         ))
     }

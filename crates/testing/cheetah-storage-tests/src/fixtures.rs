@@ -1,14 +1,15 @@
 //! Test fixtures for repository contract tests.
 
 use cheetah_domain::{
-    Channel, ChannelKind, ChannelStatus, Clock, CommandPayload, Device, DeviceKind, DomainError,
-    MediaBinding, MediaPurpose, MediaSession, MediaSessionDesiredState, Operation, Protocol,
-    PtzCapabilities, PtzDirection, WebhookConfig,
+    Channel, ChannelKind, ChannelStatus, Clock, ClusterNode, CommandPayload, Device, DeviceKind,
+    DomainError, MediaBinding, MediaPurpose, MediaSession, MediaSessionDesiredState, NodeCapacity,
+    NodeLoad, Operation, Protocol, PtzCapabilities, PtzDirection, WebhookConfig,
     in_memory::{InMemoryClock, InMemoryIdGenerator},
 };
 use cheetah_signal_types::{
-    Deadline, DeviceId, DurationMs, IdGenerator, OwnerEpoch, Principal, PrincipalKind,
-    ProtocolIdentity, RequestContext, ResourceId, ResourceKind, ResourceRef, TenantId,
+    Deadline, DeviceId, DurationMs, IdGenerator, NodeId, NodeInstanceId, OwnerEpoch, Principal,
+    PrincipalKind, ProtocolIdentity, RequestContext, ResourceId, ResourceKind, ResourceRef,
+    TenantId,
 };
 use std::collections::BTreeMap;
 
@@ -51,6 +52,16 @@ impl Fixtures {
     /// Generates a new device id.
     pub fn device_id(&self) -> DeviceId {
         self.id_generator.generate_device_id()
+    }
+
+    /// Generates a new node id.
+    pub fn node_id(&self) -> NodeId {
+        self.id_generator.generate_node_id()
+    }
+
+    /// Generates a new node instance id.
+    pub fn node_instance_id(&self) -> NodeInstanceId {
+        self.id_generator.generate_node_instance_id()
     }
 
     /// Creates a request context for the given tenant.
@@ -206,6 +217,23 @@ impl Fixtures {
             self.id_generator.generate_media_node_instance_epoch(),
         )?;
         Ok(binding)
+    }
+
+    /// Creates a new cluster node aggregate.
+    pub fn node(
+        &self,
+        node_id: NodeId,
+        instance_id: NodeInstanceId,
+    ) -> cheetah_domain::Result<ClusterNode> {
+        let now = self.clock.now_wall();
+        let mut node = ClusterNode::new(node_id, instance_id, "zone-a", "0.1.0", now);
+        node.lease_until = now
+            .checked_add(DurationMs::from_millis(60_000))
+            .ok_or_else(|| DomainError::internal("node lease overflow"))?;
+        node.updated_at = now;
+        node.capacity = NodeCapacity { max_devices: 100 };
+        node.load = NodeLoad { devices: 0 };
+        Ok(node)
     }
 
     /// Creates a domain event suitable for the outbox.

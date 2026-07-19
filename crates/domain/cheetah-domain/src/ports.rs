@@ -523,6 +523,20 @@ pub trait UnitOfWork: Send {
     fn webhook_delivery_repository(&mut self) -> &mut dyn WebhookDeliveryRepository;
     /// Access the outbox.
     fn outbox(&mut self) -> &mut dyn Outbox;
+
+    /// Atomically acquires device ownership inside this unit of work.
+    ///
+    /// Returns `Some((new_owner, previous_owner))` when this node became the
+    /// owner, or `None` when a live remote owner still holds the lease.
+    async fn acquire_ownership(
+        &mut self,
+        tenant_id: TenantId,
+        device_id: DeviceId,
+        node_id: NodeId,
+        now: UtcTimestamp,
+        lease_until: UtcTimestamp,
+    ) -> Result<Option<(OwnerInfo, Option<OwnerInfo>)>>;
+
     /// Commit the unit of work.
     async fn commit(&mut self) -> Result<()>;
     /// Rollback the unit of work.

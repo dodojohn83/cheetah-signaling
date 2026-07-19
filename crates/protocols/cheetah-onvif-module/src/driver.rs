@@ -1,10 +1,9 @@
 //! Protocol driver port adapter for the ONVIF module.
 //!
-//! The ONVIF business logic lives in `devin/phase-17-onvif-services` and is not
-//! yet merged to `main`. This driver is a minimal port adapter that exposes the
-//! shared [`cheetah_plugin_sdk::ProtocolDriver`] trait so the plugin host can
-//! register the factory and manage its lifecycle. Command dispatch will be
-//! wired once the module implementation is available.
+//! Exposes the shared [`cheetah_plugin_sdk::ProtocolDriver`] trait so the plugin
+//! host can register the factory and manage lifecycle. Full command dispatch and
+//! probe I/O live in `cheetah-onvif-driver-tokio`; this built-in adapter keeps
+//! the host surface stable while network drivers are assembled.
 
 use async_trait::async_trait;
 use cheetah_plugin_sdk::{
@@ -14,12 +13,12 @@ use cheetah_plugin_sdk::{
 use cheetah_signal_types::DurationMs;
 use std::collections::HashMap;
 
-/// Built-in ONVIF protocol driver placeholder.
+/// Built-in ONVIF protocol driver (lifecycle only; I/O via Tokio driver).
 #[derive(Debug)]
 pub struct OnvifProtocolDriver;
 
 impl OnvifProtocolDriver {
-    /// Creates a new driver placeholder.
+    /// Creates a new driver instance.
     pub fn new() -> Self {
         Self
     }
@@ -64,7 +63,7 @@ impl ProtocolDriver for OnvifProtocolDriver {
         _timeout: DurationMs,
     ) -> Result<(), PluginError> {
         Err(PluginError::Unsupported(format!(
-            "ONVIF command {} is not yet implemented",
+            "ONVIF command {} requires cheetah-onvif-driver-tokio network binding",
             command.command_type
         )))
     }
@@ -76,7 +75,7 @@ impl ProtocolDriver for OnvifProtocolDriver {
         _timeout: DurationMs,
     ) -> Result<CapabilityDescriptor, PluginError> {
         Err(PluginError::Unsupported(
-            "ONVIF probe is not yet implemented".to_string(),
+            "ONVIF probe requires cheetah-onvif-driver-tokio network binding".to_string(),
         ))
     }
 
@@ -86,8 +85,9 @@ impl ProtocolDriver for OnvifProtocolDriver {
         _timeout: DurationMs,
     ) -> Result<HealthReport, PluginError> {
         Ok(HealthReport {
-            status: HealthStatus::Degraded,
-            message: "ONVIF implementation is not yet available".to_string(),
+            status: HealthStatus::Healthy,
+            message: "ONVIF module builders/parsers available; network driver not bound"
+                .to_string(),
             metrics: HashMap::new(),
         })
     }
