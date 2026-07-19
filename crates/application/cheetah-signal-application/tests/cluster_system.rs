@@ -55,21 +55,15 @@ async fn multi_node_postgres_nats_command_routing_and_takeover() {
     let node_b = id_generator.generate_node_id();
 
     // Build an owner repository and resolver shared by both nodes.
-    let pg_repo_a = PostgresOwnerRepository::new(
-        storage.read_pool().clone(),
-        storage.write_pool().clone(),
-        clock.clone(),
-    );
+    let pg_repo_a =
+        PostgresOwnerRepository::new(storage.read_pool().clone(), storage.write_pool().clone());
     let pg_repo_b = pg_repo_a.clone();
-    let owner_repo_a: Box<dyn OwnerRepository> = Box::new(pg_repo_a);
-    let owner_repo_b: Box<dyn OwnerRepository> = Box::new(pg_repo_b);
-    let lease_repo_a = Arc::new(tokio::sync::Mutex::new(owner_repo_a));
-    let lease_repo_b = Arc::new(tokio::sync::Mutex::new(owner_repo_b));
+    let lease_repo_a = Arc::new(tokio::sync::Mutex::new(pg_repo_a));
+    let lease_repo_b = Arc::new(tokio::sync::Mutex::new(pg_repo_b));
 
     let resolver_repo: Arc<dyn OwnerRepository> = Arc::new(PostgresOwnerRepository::new(
         storage.read_pool().clone(),
         storage.write_pool().clone(),
-        clock.clone(),
     ));
     let owner_resolver: Arc<dyn DeviceOwnerResolver> = Arc::new(CachingDeviceOwnerResolver::new(
         resolver_repo,

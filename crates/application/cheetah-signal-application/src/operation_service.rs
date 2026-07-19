@@ -243,7 +243,10 @@ pub(crate) fn wrap_event(
     )
 }
 
-pub(crate) fn operation_resource_ref(tenant_id: TenantId, operation_id: OperationId) -> ResourceRef {
+pub(crate) fn operation_resource_ref(
+    tenant_id: TenantId,
+    operation_id: OperationId,
+) -> ResourceRef {
     ResourceRef {
         tenant_id,
         kind: ResourceKind::Operation,

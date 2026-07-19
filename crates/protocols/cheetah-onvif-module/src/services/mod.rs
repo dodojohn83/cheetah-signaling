@@ -21,8 +21,7 @@ pub use events::{
 };
 pub use imaging::{
     ImagingSettings, get_imaging_options_request, get_imaging_settings_request,
-    parse_get_imaging_settings_response, set_imaging_settings_action,
-    set_imaging_settings_request,
+    parse_get_imaging_settings_response, set_imaging_settings_action, set_imaging_settings_request,
 };
 pub use media::{
     MediaDialect, MediaProfile, SnapshotUri, StreamUri, get_profiles_request,

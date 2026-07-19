@@ -55,11 +55,8 @@ async fn postgres_nats_brief_interruption_and_recovery() {
     let node_a = id_generator.generate_node_id();
     let node_b = id_generator.generate_node_id();
 
-    let owner_repo = PostgresOwnerRepository::new(
-        storage.read_pool().clone(),
-        storage.write_pool().clone(),
-        clock.clone(),
-    );
+    let owner_repo =
+        PostgresOwnerRepository::new(storage.read_pool().clone(), storage.write_pool().clone());
     let owner_repo_for_resolver: Arc<dyn OwnerRepository> = Arc::new(owner_repo.clone());
     let resolver: Arc<dyn DeviceOwnerResolver> = Arc::new(CachingDeviceOwnerResolver::new(
         owner_repo_for_resolver.clone(),
@@ -69,9 +66,7 @@ async fn postgres_nats_brief_interruption_and_recovery() {
     ));
 
     let lease_service = OwnerLeaseService::new(
-        Arc::new(tokio::sync::Mutex::new(
-            Box::new(owner_repo.clone()) as Box<dyn OwnerRepository>
-        )),
+        Arc::new(tokio::sync::Mutex::new(owner_repo.clone())),
         clock.clone(),
         node_a,
         DurationMs::from_millis(100),
@@ -310,7 +305,6 @@ async fn postgres_nats_brief_interruption_and_recovery() {
     let owner_repo_recovered = PostgresOwnerRepository::new(
         storage_recovered.read_pool().clone(),
         storage_recovered.write_pool().clone(),
-        clock.clone(),
     );
     let resolver_recovered: Arc<dyn DeviceOwnerResolver> =
         Arc::new(CachingDeviceOwnerResolver::new(

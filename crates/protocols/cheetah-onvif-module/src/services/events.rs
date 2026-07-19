@@ -12,7 +12,8 @@ use std::io::Cursor;
 const EVENTS_NS: &str = "http://www.onvif.org/ver10/events/wsdl";
 const CREATE_PULLPOINT_ACTION: &str =
     "http://www.onvif.org/ver10/events/wsdl/CreatePullPointSubscription";
-const PULL_MESSAGES_ACTION: &str = "http://www.onvif.org/ver10/events/wsdl/PullPointSubscription/PullMessages";
+const PULL_MESSAGES_ACTION: &str =
+    "http://www.onvif.org/ver10/events/wsdl/PullPointSubscription/PullMessages";
 const RENEW_ACTION: &str = "http://www.onvif.org/ver10/events/wsdl/PullPointSubscription/Renew";
 const UNSUBSCRIBE_ACTION: &str =
     "http://www.onvif.org/ver10/events/wsdl/PullPointSubscription/Unsubscribe";
@@ -55,9 +56,8 @@ pub fn create_pull_point_subscription_request(
     writer.write_event(Event::Text(BytesText::new(initial_termination_time)))?;
     writer.write_event(Event::End(BytesEnd::new("tev:InitialTerminationTime")))?;
     writer.write_event(Event::End(BytesEnd::new("tev:CreatePullPointSubscription")))?;
-    let body = String::from_utf8(cursor.into_inner()).map_err(|e| {
-        OnvifModuleError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string()))
-    })?;
+    let body = String::from_utf8(cursor.into_inner())
+        .map_err(|e| OnvifModuleError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string())))?;
     Envelope::new(CREATE_PULLPOINT_ACTION, body)
         .with_message_id(message_id)
         .build()
@@ -82,9 +82,8 @@ pub fn pull_messages_request(
     writer.write_event(Event::Text(BytesText::new(&message_limit.to_string())))?;
     writer.write_event(Event::End(BytesEnd::new("tev:MessageLimit")))?;
     writer.write_event(Event::End(BytesEnd::new("tev:PullMessages")))?;
-    let body = String::from_utf8(cursor.into_inner()).map_err(|e| {
-        OnvifModuleError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string()))
-    })?;
+    let body = String::from_utf8(cursor.into_inner())
+        .map_err(|e| OnvifModuleError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string())))?;
     Envelope::new(PULL_MESSAGES_ACTION, body)
         .with_message_id(message_id)
         .build()
@@ -105,9 +104,8 @@ pub fn renew_request(
     writer.write_event(Event::Text(BytesText::new(termination_time)))?;
     writer.write_event(Event::End(BytesEnd::new("wsnt:TerminationTime")))?;
     writer.write_event(Event::End(BytesEnd::new("tev:Renew")))?;
-    let body = String::from_utf8(cursor.into_inner()).map_err(|e| {
-        OnvifModuleError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string()))
-    })?;
+    let body = String::from_utf8(cursor.into_inner())
+        .map_err(|e| OnvifModuleError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string())))?;
     Envelope::new(RENEW_ACTION, body)
         .with_message_id(message_id)
         .build()
@@ -121,9 +119,8 @@ pub fn unsubscribe_request(message_id: impl Into<String>) -> Result<String, Onvi
     let mut body = BytesStart::new("tev:Unsubscribe");
     body.push_attribute(("xmlns:tev", EVENTS_NS));
     writer.write_event(Event::Empty(body))?;
-    let body = String::from_utf8(cursor.into_inner()).map_err(|e| {
-        OnvifModuleError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string()))
-    })?;
+    let body = String::from_utf8(cursor.into_inner())
+        .map_err(|e| OnvifModuleError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string())))?;
     Envelope::new(UNSUBSCRIBE_ACTION, body)
         .with_message_id(message_id)
         .build()
@@ -235,34 +232,32 @@ pub fn parse_pull_messages_response(
                         messages.push(msg);
                     }
                     in_notification = false;
-                } else if in_notification {
-                    if let Some(ref mut msg) = current {
-                        match name.as_str() {
-                            "Topic" => msg.topic = text.trim().to_string(),
-                            "UtcTime" | "UtcTimeAttr" => {
-                                msg.utc_time = Some(text.trim().to_string());
-                            }
-                            "PropertyOperation" => {
-                                msg.property_operation = Some(text.trim().to_string());
-                            }
-                            "Source" | "Key" | "Data"
-                                if parent.as_deref() == Some("Message")
-                                    || parent.as_deref() == Some("tt:Message") =>
-                            {
-                                // Keep a short raw marker rather than unbounded XML.
-                                let snippet = text.trim();
-                                if !snippet.is_empty() {
-                                    let existing = msg.extension_xml.get_or_insert_with(String::new);
-                                    if existing.len() < 512 {
-                                        if !existing.is_empty() {
-                                            existing.push(';');
-                                        }
-                                        existing.push_str(&snippet[..snippet.len().min(128)]);
+                } else if in_notification && let Some(ref mut msg) = current {
+                    match name.as_str() {
+                        "Topic" => msg.topic = text.trim().to_string(),
+                        "UtcTime" | "UtcTimeAttr" => {
+                            msg.utc_time = Some(text.trim().to_string());
+                        }
+                        "PropertyOperation" => {
+                            msg.property_operation = Some(text.trim().to_string());
+                        }
+                        "Source" | "Key" | "Data"
+                            if parent.as_deref() == Some("Message")
+                                || parent.as_deref() == Some("tt:Message") =>
+                        {
+                            // Keep a short raw marker rather than unbounded XML.
+                            let snippet = text.trim();
+                            if !snippet.is_empty() {
+                                let existing = msg.extension_xml.get_or_insert_with(String::new);
+                                if existing.len() < 512 {
+                                    if !existing.is_empty() {
+                                        existing.push(';');
                                     }
+                                    existing.push_str(&snippet[..snippet.len().min(128)]);
                                 }
                             }
-                            _ => {}
                         }
+                        _ => {}
                     }
                 }
                 ctx.pop();
@@ -283,12 +278,9 @@ pub fn parse_pull_messages_response(
 /// Maps a known ONVIF topic to a stable northbound event type, or vendor fallback.
 pub fn normalize_topic(topic: &str) -> String {
     let lower = topic.to_ascii_lowercase();
-    if lower.contains("motion") {
+    if lower.contains("motion") || lower.contains("cellmotion") {
         "device.motion_detected".into()
-    } else if lower.contains("cellmotion") {
-        "device.motion_detected".into()
-    } else if lower.contains("digitalinput") || lower.contains("tns1:device/trigger/digitalinput")
-    {
+    } else if lower.contains("digitalinput") || lower.contains("tns1:device/trigger/digitalinput") {
         "device.digital_input".into()
     } else if lower.contains("globalscenechange")
         || lower.contains("videoloss")
@@ -302,6 +294,8 @@ pub fn normalize_topic(topic: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
     use super::*;
     use cheetah_onvif_core::discovery::XAddrPolicy;
 

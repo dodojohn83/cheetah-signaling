@@ -86,6 +86,8 @@ pub fn inject_username_token(
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
     use super::*;
     use secrecy::SecretString;
 
