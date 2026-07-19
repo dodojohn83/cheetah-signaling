@@ -260,10 +260,29 @@ impl SipParser {
             if self.buffer[consumed] == b'\r' && self.buffer.get(consumed + 1) == Some(&b'\n') {
                 // End of headers
                 consumed += 2;
-                let content_length = headers
-                    .get(&HeaderName::ContentLength)
-                    .and_then(|v| v.as_str().trim().parse::<usize>().ok())
-                    .unwrap_or(0);
+                let content_length = match headers.get(&HeaderName::ContentLength) {
+                    Some(value) => {
+                        let trimmed = value.as_str().trim();
+                        if trimmed.is_empty() {
+                            return Some(Err(SipError::new(
+                                SipErrorKind::InvalidHeader,
+                                Some(consumed),
+                                "Content-Length header is empty",
+                            )));
+                        }
+                        match trimmed.parse::<usize>() {
+                            Ok(n) => n,
+                            Err(_) => {
+                                return Some(Err(SipError::new(
+                                    SipErrorKind::InvalidHeader,
+                                    Some(consumed),
+                                    "Content-Length header is not a non-negative integer",
+                                )));
+                            }
+                        }
+                    }
+                    None => 0,
+                };
                 if content_length > self.config.max_body_bytes {
                     return Some(Err(SipError::new(
                         SipErrorKind::BodyTooLarge,
