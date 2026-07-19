@@ -348,7 +348,9 @@ impl<P: CredentialProvider> Gb28181Access<P> {
         let cmd_type = root
             .child_text("CmdType")
             .ok_or_else(|| AccessError::InvalidXml("missing CmdType".to_string()))?;
-        let xml_device_id = root.child_text("DeviceID").unwrap_or_default();
+        let xml_device_id = root
+            .require_child_text("DeviceID")
+            .map_err(|_| AccessError::InvalidXml("missing DeviceID".to_string()))?;
 
         if from_device_id.as_ref() != xml_device_id {
             return Err(AccessError::InvalidDeviceId);
