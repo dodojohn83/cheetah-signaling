@@ -55,12 +55,14 @@ async fn postgres_nats_brief_interruption_and_recovery() {
     let node_a = id_generator.generate_node_id();
     let node_b = id_generator.generate_node_id();
 
-    let owner_repo = PostgresOwnerRepository::new(
+    let owner_repo = Arc::new(tokio::sync::Mutex::new(PostgresOwnerRepository::new(
         storage.read_pool().clone(),
         storage.write_pool().clone(),
-        clock.clone(),
-    );
-    let owner_repo_for_resolver: Arc<dyn OwnerRepository> = Arc::new(owner_repo.clone());
+    ))) as Arc<tokio::sync::Mutex<dyn OwnerRepository>>;
+    let owner_repo_for_resolver: Arc<dyn OwnerRepository> = Arc::new(PostgresOwnerRepository::new(
+        storage.read_pool().clone(),
+        storage.write_pool().clone(),
+    ));
     let resolver: Arc<dyn DeviceOwnerResolver> = Arc::new(CachingDeviceOwnerResolver::new(
         owner_repo_for_resolver.clone(),
         clock.clone(),
@@ -69,9 +71,7 @@ async fn postgres_nats_brief_interruption_and_recovery() {
     ));
 
     let lease_service = OwnerLeaseService::new(
-        Arc::new(tokio::sync::Mutex::new(
-            Box::new(owner_repo.clone()) as Box<dyn OwnerRepository>
-        )),
+        owner_repo.clone(),
         clock.clone(),
         node_a,
         DurationMs::from_millis(100),
@@ -307,20 +307,24 @@ async fn postgres_nats_brief_interruption_and_recovery() {
             .await
             .unwrap(),
     );
-    let owner_repo_recovered = PostgresOwnerRepository::new(
+    let owner_repo_recovered = Arc::new(tokio::sync::Mutex::new(PostgresOwnerRepository::new(
         storage_recovered.read_pool().clone(),
         storage_recovered.write_pool().clone(),
-        clock.clone(),
-    );
+    ))) as Arc<tokio::sync::Mutex<dyn OwnerRepository>>;
     let resolver_recovered: Arc<dyn DeviceOwnerResolver> =
         Arc::new(CachingDeviceOwnerResolver::new(
-            Arc::new(owner_repo_recovered.clone()) as Arc<dyn OwnerRepository>,
+            Arc::new(PostgresOwnerRepository::new(
+                storage_recovered.read_pool().clone(),
+                storage_recovered.write_pool().clone(),
+            )) as Arc<dyn OwnerRepository>,
             clock.clone(),
             DurationMs::from_millis(1),
             128,
         ));
 
     let recovered_owner = owner_repo_recovered
+        .lock()
+        .await
         .get(tenant, device_id)
         .await
         .unwrap()
