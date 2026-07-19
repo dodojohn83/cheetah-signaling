@@ -383,7 +383,8 @@ impl UnitOfWork for InMemoryUnitOfWork {
         let can_take = match &previous {
             None => true,
             Some(owner) => {
-                owner.lease_until.is_some_and(|lease| lease <= now) || owner.owner_node_id == node_id
+                owner.lease_until.is_some_and(|lease| lease <= now)
+                    || owner.owner_node_id == node_id
             }
         };
         if !can_take {

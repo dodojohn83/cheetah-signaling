@@ -87,11 +87,10 @@ impl SoapClient {
         envelope_xml: &str,
         timeout: Option<Duration>,
     ) -> DriverResult<String> {
-        let url = Url::parse(endpoint)
-            .map_err(|e| DriverError::Onvif(cheetah_onvif_core::OnvifError::InvalidXAddr(e.to_string())))?;
-        self.policy
-            .validate(&url)
-            .map_err(DriverError::Onvif)?;
+        let url = Url::parse(endpoint).map_err(|e| {
+            DriverError::Onvif(cheetah_onvif_core::OnvifError::InvalidXAddr(e.to_string()))
+        })?;
+        self.policy.validate(&url).map_err(DriverError::Onvif)?;
 
         let _permit = self
             .permits
@@ -108,16 +107,13 @@ impl SoapClient {
             .body(envelope_xml.to_string())
             .timeout(timeout);
 
-        let response = request
-            .send()
-            .await
-            .map_err(|e| {
-                if e.is_timeout() {
-                    DriverError::Timeout(e.to_string())
-                } else {
-                    DriverError::Http(e.to_string())
-                }
-            })?;
+        let response = request.send().await.map_err(|e| {
+            if e.is_timeout() {
+                DriverError::Timeout(e.to_string())
+            } else {
+                DriverError::Http(e.to_string())
+            }
+        })?;
 
         // Re-validate final URL after optional redirects.
         if self.follow_redirects {

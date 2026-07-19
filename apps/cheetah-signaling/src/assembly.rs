@@ -8,9 +8,9 @@ use cheetah_domain::{
     DomainError, EventPublisher, MediaNodeCommand, MediaNodeCommandResult, MediaRequirements,
     MediaReservation,
 };
+use cheetah_gb28181_driver_tokio::Gb28181UdpDriver;
 use cheetah_gb28181_driver_tokio::config::DriverConfig as GbDriverConfig;
 use cheetah_gb28181_driver_tokio::sink::EventSink;
-use cheetah_gb28181_driver_tokio::Gb28181UdpDriver;
 use cheetah_gb28181_module::config::{AuthPolicy, Gb28181DomainConfig};
 use cheetah_gb28181_module::events::Gb28181Event;
 use cheetah_gb28181_module::ports::CredentialProvider;
@@ -119,9 +119,7 @@ impl IdGenerator for UuidIdGenerator {
     fn generate_media_binding_id(&self) -> MediaBindingId {
         MediaBindingId::from_uuid(Uuid::now_v7())
     }
-    fn generate_media_node_instance_epoch(
-        &self,
-    ) -> cheetah_signal_types::MediaNodeInstanceEpoch {
+    fn generate_media_node_instance_epoch(&self) -> cheetah_signal_types::MediaNodeInstanceEpoch {
         cheetah_signal_types::MediaNodeInstanceEpoch(Uuid::now_v7().as_u128() as u64)
     }
     fn generate_operation_id(&self) -> cheetah_signal_types::OperationId {
@@ -272,9 +270,8 @@ impl EventSink for TracingGbEventSink {
 
 fn gb28181_digest_secret() -> Result<SecretSlice<u8>, Box<dyn std::error::Error + Send + Sync>> {
     if let Ok(hex_secret) = std::env::var("CHEETAH_GB28181_DIGEST_SECRET") {
-        let bytes = hex::decode(hex_secret.trim()).map_err(|e| {
-            format!("CHEETAH_GB28181_DIGEST_SECRET must be hex-encoded: {e}")
-        })?;
+        let bytes = hex::decode(hex_secret.trim())
+            .map_err(|e| format!("CHEETAH_GB28181_DIGEST_SECRET must be hex-encoded: {e}"))?;
         if bytes.len() < 32 {
             return Err("CHEETAH_GB28181_DIGEST_SECRET must decode to at least 32 bytes".into());
         }
@@ -380,14 +377,10 @@ pub async fn start(
         let bind = SocketAddr::from(([0, 0, 0, 0], config.gb28181.sip_port));
         let driver_config = GbDriverConfig::new(bind);
         let sink: Arc<dyn EventSink> = Arc::new(TracingGbEventSink);
-        let (driver, local) = Gb28181UdpDriver::bind(
-            driver_config,
-            domain_config,
-            NoPasswordProvider,
-            sink,
-        )
-        .await
-        .map_err(|e| format!("gb28181 bind failed: {e}"))?;
+        let (driver, local) =
+            Gb28181UdpDriver::bind(driver_config, domain_config, NoPasswordProvider, sink)
+                .await
+                .map_err(|e| format!("gb28181 bind failed: {e}"))?;
         gb28181_addr = Some(local);
         let worker_cancel = cancel.child_token();
         workers.push(tokio::spawn(async move {
