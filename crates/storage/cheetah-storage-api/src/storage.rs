@@ -1,8 +1,6 @@
 //! Storage factory port.
 
-use crate::{
-    Migration, NodeRepository, OperationStepRepository, OwnerRepository, StorageError,
-};
+use crate::{Migration, NodeRepository, OperationStepRepository, OwnerRepository, StorageError};
 use cheetah_domain::UnitOfWork;
 
 /// Storage abstraction.

@@ -86,6 +86,8 @@ pub fn inject_username_token(
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
     use super::*;
     use secrecy::SecretString;
 
@@ -98,10 +100,17 @@ mod tests {
             password_text: false,
             clock_offset_seconds: 0,
         };
-        let out = inject_username_token(envelope, &creds, Some(1_700_000_000)).unwrap();
+        let out = inject_username_token(envelope, &creds, Some(1_700_000_000))
+            .expect("username token injection should succeed");
         assert!(out.contains("wsse:UsernameToken"));
         assert!(out.contains("admin"));
         assert!(!out.contains("secret"));
-        assert!(out.find("wsse:Security").unwrap() < out.find("</s:Header>").unwrap());
+        let security_pos = out
+            .find("wsse:Security")
+            .expect("wsse:Security should be present");
+        let header_close_pos = out
+            .find("</s:Header>")
+            .expect("</s:Header> close tag should be present");
+        assert!(security_pos < header_close_pos);
     }
 }
