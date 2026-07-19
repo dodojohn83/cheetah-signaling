@@ -20,6 +20,11 @@ pub struct SipParserConfig {
     pub max_body_bytes: usize,
     /// Maximum total parser buffer size in bytes.
     pub max_buffer_bytes: usize,
+    /// Whether the input is a complete UDP datagram. In datagram mode a missing
+    /// `Content-Length` means the body is the remainder of the datagram; in stream
+    /// mode a missing `Content-Length` is an error because the parser cannot
+    /// determine message boundaries.
+    pub datagram_mode: bool,
 }
 
 impl Default for SipParserConfig {
@@ -31,6 +36,7 @@ impl Default for SipParserConfig {
             max_header_line_bytes: 4096,
             max_body_bytes: 2_097_152,
             max_buffer_bytes: 8_388_608,
+            datagram_mode: false,
         }
     }
 }
@@ -74,7 +80,11 @@ impl SipParser {
     /// # Errors
     ///
     /// Returns `SipError` for malformed or oversized messages.
-    pub fn parse_datagram(data: &[u8], config: SipParserConfig) -> Result<SipMessage, SipError> {
+    pub fn parse_datagram(
+        data: &[u8],
+        mut config: SipParserConfig,
+    ) -> Result<SipMessage, SipError> {
+        config.datagram_mode = true;
         let mut parser = Self::new(config);
         parser.feed(data)?;
         match parser.pop_message() {
@@ -281,7 +291,17 @@ impl SipParser {
                             }
                         }
                     }
-                    None => 0,
+                    None => {
+                        if self.config.datagram_mode {
+                            self.buffer.len().saturating_sub(consumed)
+                        } else {
+                            return Some(Err(SipError::new(
+                                SipErrorKind::InvalidFraming,
+                                Some(consumed),
+                                "Content-Length is required for stream framing",
+                            )));
+                        }
+                    }
                 };
                 if content_length > self.config.max_body_bytes {
                     return Some(Err(SipError::new(
