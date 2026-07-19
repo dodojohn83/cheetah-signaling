@@ -316,74 +316,64 @@ impl<P: CredentialProvider> Gb28181Access<P> {
             return Err(AccessError::NotRegistered);
         };
 
-        let mut outputs = Vec::with_capacity(3);
-        if was_offline {
-            outputs.push(AccessOutput::EmitEvent(
-                Gb28181Event::DevicePresenceChanged {
+        // Parse the command body before finalizing outputs. This lets us keep the
+        // device-online presence event even when the payload is malformed, because
+        // a registered device that reaches us is alive even if its message body
+        // fails validation.
+        let command_event = match cmd_type.as_str() {
+            "Keepalive" => {
+                let keepalive = parse_keepalive(body)?;
+                Ok(Gb28181Event::Keepalive {
                     domain_id: self.config.domain_id().clone(),
                     device_id: device_id.clone(),
                     source,
-                    presence: DevicePresence::Online,
-                },
-            ));
-        }
-
-        match cmd_type.as_str() {
-            "Keepalive" => {
-                let keepalive = parse_keepalive(body)?;
-                outputs.push(AccessOutput::EmitEvent(Gb28181Event::Keepalive {
-                    domain_id: self.config.domain_id().clone(),
-                    device_id,
-                    source,
                     status: keepalive.status,
-                }));
+                })
             }
             "Catalog" => {
                 let catalog = parse_catalog(body)?;
-                outputs.push(AccessOutput::EmitEvent(Gb28181Event::CatalogReceived {
+                Ok(Gb28181Event::CatalogReceived {
                     domain_id: self.config.domain_id().clone(),
-                    device_id,
+                    device_id: device_id.clone(),
                     source,
                     sn: catalog.sn,
                     sum_num: catalog.sum_num,
                     num: catalog.num,
                     items: catalog.items,
-                }));
+                })
             }
             "DeviceInfo" => {
                 let info = parse_device_info(body)?;
-                outputs.push(AccessOutput::EmitEvent(Gb28181Event::DeviceInfoReceived {
+                Ok(Gb28181Event::DeviceInfoReceived {
                     domain_id: self.config.domain_id().clone(),
-                    device_id,
+                    device_id: device_id.clone(),
                     source,
                     sn: info.sn,
                     result: info.result,
                     manufacturer: info.manufacturer,
                     model: info.model,
                     firmware: info.firmware,
-                }));
+                })
             }
             "DeviceStatus" => {
                 let status = parse_device_status(body)?;
-                outputs.push(AccessOutput::EmitEvent(
-                    Gb28181Event::DeviceStatusReceived {
-                        domain_id: self.config.domain_id().clone(),
-                        device_id,
-                        source,
-                        sn: status.sn,
-                        result: status.result,
-                        online: status.online,
-                        status: status.status,
-                        reason: status.reason,
-                        invalid_equip: status.invalid_equip,
-                    },
-                ));
+                Ok(Gb28181Event::DeviceStatusReceived {
+                    domain_id: self.config.domain_id().clone(),
+                    device_id: device_id.clone(),
+                    source,
+                    sn: status.sn,
+                    result: status.result,
+                    online: status.online,
+                    status: status.status,
+                    reason: status.reason,
+                    invalid_equip: status.invalid_equip,
+                })
             }
             "Alarm" => {
                 let alarm = parse_alarm(body)?;
-                outputs.push(AccessOutput::EmitEvent(Gb28181Event::AlarmReceived {
+                Ok(Gb28181Event::AlarmReceived {
                     domain_id: self.config.domain_id().clone(),
-                    device_id,
+                    device_id: device_id.clone(),
                     source,
                     sn: alarm.sn,
                     priority: alarm.priority,
@@ -391,58 +381,90 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                     alarm_type: alarm.alarm_type,
                     time: alarm.time,
                     info: alarm.info,
-                }));
+                })
             }
             "MobilePosition" => {
                 let pos = parse_mobile_position(body)?;
-                outputs.push(AccessOutput::EmitEvent(
-                    Gb28181Event::MobilePositionReceived {
-                        domain_id: self.config.domain_id().clone(),
-                        device_id,
-                        source,
-                        sn: pos.sn,
-                        time: pos.time,
-                        longitude: pos.longitude,
-                        latitude: pos.latitude,
-                        speed: pos.speed,
-                        direction: pos.direction,
-                        altitude: pos.altitude,
-                    },
-                ));
+                Ok(Gb28181Event::MobilePositionReceived {
+                    domain_id: self.config.domain_id().clone(),
+                    device_id: device_id.clone(),
+                    source,
+                    sn: pos.sn,
+                    time: pos.time,
+                    longitude: pos.longitude,
+                    latitude: pos.latitude,
+                    speed: pos.speed,
+                    direction: pos.direction,
+                    altitude: pos.altitude,
+                })
             }
             "RecordInfo" => {
                 let info = parse_record_info(body)?;
-                outputs.push(AccessOutput::EmitEvent(Gb28181Event::RecordInfoReceived {
+                Ok(Gb28181Event::RecordInfoReceived {
                     domain_id: self.config.domain_id().clone(),
-                    device_id,
+                    device_id: device_id.clone(),
                     source,
                     sn: info.sn,
                     name: info.name,
                     sum_num: info.sum_num,
                     num: info.num,
                     items: info.items,
-                }));
+                })
             }
             "DeviceControl" => {
                 let resp = parse_device_control_response(body)?;
-                outputs.push(AccessOutput::EmitEvent(
-                    Gb28181Event::DeviceControlResponseReceived {
-                        domain_id: self.config.domain_id().clone(),
-                        device_id,
-                        source,
-                        sn: resp.sn,
-                        result: resp.result,
-                    },
-                ));
+                Ok(Gb28181Event::DeviceControlResponseReceived {
+                    domain_id: self.config.domain_id().clone(),
+                    device_id: device_id.clone(),
+                    source,
+                    sn: resp.sn,
+                    result: resp.result,
+                })
             }
-            other => return Err(AccessError::UnsupportedCmdType(other.to_string())),
-        }
+            other => Err(AccessError::UnsupportedCmdType(other.to_string())),
+        };
 
-        outputs.push(AccessOutput::SendResponse(build_message_response(
-            &message,
-            self.next_tag(),
-        )));
-        Ok(outputs)
+        match command_event {
+            Ok(event) => {
+                let mut outputs = Vec::with_capacity(3);
+                if was_offline {
+                    outputs.push(AccessOutput::EmitEvent(
+                        Gb28181Event::DevicePresenceChanged {
+                            domain_id: self.config.domain_id().clone(),
+                            device_id: device_id.clone(),
+                            source,
+                            presence: DevicePresence::Online,
+                        },
+                    ));
+                }
+                outputs.push(AccessOutput::EmitEvent(event));
+                outputs.push(AccessOutput::SendResponse(build_message_response(
+                    &message,
+                    self.next_tag(),
+                )));
+                Ok(outputs)
+            }
+            Err(_) => {
+                let mut outputs = Vec::with_capacity(2);
+                if was_offline {
+                    outputs.push(AccessOutput::EmitEvent(
+                        Gb28181Event::DevicePresenceChanged {
+                            domain_id: self.config.domain_id().clone(),
+                            device_id: device_id.clone(),
+                            source,
+                            presence: DevicePresence::Online,
+                        },
+                    ));
+                }
+                outputs.push(AccessOutput::SendResponse(build_error_response(
+                    &message,
+                    400,
+                    "Bad Request",
+                    self.next_tag(),
+                )));
+                Ok(outputs)
+            }
+        }
     }
 
     /// Advances the registration timer wheel and returns any resulting events.
