@@ -232,8 +232,8 @@ pub fn parse_device_control_response(body: &[u8]) -> Result<DeviceControlRespons
     }
 
     Ok(DeviceControlResponse {
-        sn: root.child_text("SN").unwrap_or_default(),
-        device_id: root.child_text("DeviceID").unwrap_or_default(),
+        sn: root.require_child_text("SN")?,
+        device_id: root.require_child_text("DeviceID")?,
         result: root.child_text("Result"),
     })
 }

@@ -91,8 +91,8 @@ fn extract_mobile_position(root: &XmlElement) -> Result<MobilePositionInfo, Acce
     }
 
     Ok(MobilePositionInfo {
-        sn: root.child_text("SN").unwrap_or_default(),
-        device_id: root.child_text("DeviceID").unwrap_or_default(),
+        sn: root.require_child_text("SN")?,
+        device_id: root.require_child_text("DeviceID")?,
         time: root.child_text("Time"),
         longitude: root.child_text("Longitude"),
         latitude: root.child_text("Latitude"),

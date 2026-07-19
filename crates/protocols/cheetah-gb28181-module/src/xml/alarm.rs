@@ -83,8 +83,8 @@ fn extract_alarm(root: &XmlElement) -> Result<AlarmInfo, AccessError> {
     }
 
     Ok(AlarmInfo {
-        sn: root.child_text("SN").unwrap_or_default(),
-        device_id: root.child_text("DeviceID").unwrap_or_default(),
+        sn: root.require_child_text("SN")?,
+        device_id: root.require_child_text("DeviceID")?,
         priority: root.child_text("AlarmPriority"),
         method: root.child_text("AlarmMethod"),
         alarm_type: root.child_text("AlarmType"),

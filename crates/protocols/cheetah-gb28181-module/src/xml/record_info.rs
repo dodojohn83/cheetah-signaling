@@ -63,30 +63,31 @@ fn extract_record_info(root: &XmlElement) -> Result<RecordInfoResponse, AccessEr
         .child("RecordList")
         .ok_or_else(|| AccessError::InvalidXml("missing RecordList".to_string()))?;
 
-    let num = record_list
+    let num_attr = record_list
         .attributes
         .get("Num")
-        .map(|v| parse_u32(v))
-        .unwrap_or(0);
+        .ok_or_else(|| AccessError::InvalidXml("missing RecordList Num".to_string()))?;
+    let num = parse_u32(num_attr)?;
+    let sum_num = parse_u32(&root.require_child_text("SumNum")?)?;
 
     Ok(RecordInfoResponse {
-        sn: root.child_text("SN").unwrap_or_default(),
-        device_id: root.child_text("DeviceID").unwrap_or_default(),
+        sn: root.require_child_text("SN")?,
+        device_id: root.require_child_text("DeviceID")?,
         name: root.child_text("Name"),
-        sum_num: parse_u32(&root.child_text("SumNum").unwrap_or_default()),
+        sum_num,
         num,
         items: record_list
             .children
             .iter()
             .filter(|c| c.name == "Item")
             .map(parse_item)
-            .collect(),
+            .collect::<Result<Vec<_>, _>>()?,
     })
 }
 
-fn parse_item(item: &XmlElement) -> RecordItem {
-    RecordItem {
-        device_id: item.child_text("DeviceID").unwrap_or_default(),
+fn parse_item(item: &XmlElement) -> Result<RecordItem, AccessError> {
+    Ok(RecordItem {
+        device_id: item.require_child_text("DeviceID")?,
         name: item.child_text("Name"),
         file_path: item.child_text("FilePath"),
         start_time: item.child_text("StartTime"),
@@ -95,11 +96,14 @@ fn parse_item(item: &XmlElement) -> RecordItem {
         record_type: item.child_text("Type"),
         recorder_id: item.child_text("RecorderID"),
         file_size: item.child_text("FileSize"),
-    }
+    })
 }
 
-fn parse_u32(value: &str) -> u32 {
-    value.trim().parse().unwrap_or(0)
+fn parse_u32(value: &str) -> Result<u32, AccessError> {
+    value
+        .trim()
+        .parse()
+        .map_err(|_| AccessError::InvalidXml(format!("invalid numeric value: {value}")))
 }
 
 #[cfg(test)]
