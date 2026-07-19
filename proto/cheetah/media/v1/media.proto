@@ -182,10 +182,34 @@ message MediaSessionRefStopped {
   string reason = 2;
 }
 
+// Stable outcome for a failed media operation.
+enum ErrorOutcome {
+  ERROR_OUTCOME_UNSPECIFIED = 0;
+  ERROR_OUTCOME_NOT_APPLIED = 1;
+  ERROR_OUTCOME_APPLIED = 2;
+  ERROR_OUTCOME_UNKNOWN = 3;
+}
+
+// A field-level validation violation.
+message FieldViolation {
+  string field = 1;
+  string description = 2;
+}
+
+// Wire-safe error emitted by media processing.
 message MediaError {
-  MediaSessionRef session = 1;
+  // Deprecated: use resource_ref for the affected session reference.
+  MediaSessionRef session = 1 [deprecated = true];
   string error_code = 2;
-  string error_message = 3;
+  // Deprecated: use safe_message.
+  string error_message = 3 [deprecated = true];
+  string safe_message = 4;
+  bool retryable = 5;
+  repeated FieldViolation violations = 6;
+  string request_id = 7;
+  string correlation_id = 8;
+  MediaSessionRef resource_ref = 9;
+  ErrorOutcome outcome = 10;
 }
 
 // Capacity advertised at registration.
