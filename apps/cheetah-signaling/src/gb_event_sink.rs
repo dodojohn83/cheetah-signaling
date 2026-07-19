@@ -306,9 +306,11 @@ const CATALOG_CLEANUP_INTERVAL: Duration = Duration::from_secs(30);
 ///
 /// Devices may split a catalog response across multiple SIP MESSAGE bodies.
 /// Fragments are keyed by (tenant, device, sequence number) and merged into a
-/// single `replace_channel_catalog` call once `sum_num` items have been seen.
-/// Partial transfers expire after `CATALOG_FRAGMENT_TTL` and are evicted by
-/// the background worker cleanup tick.
+/// single `replace_channel_catalog` call once `sum_num` distinct channel ids
+/// have been seen. Items are de-duplicated by their channel `device_id` so
+/// retransmitted or overlapping fragments cannot prematurely complete the
+/// assembly. Partial transfers expire after `CATALOG_FRAGMENT_TTL` and are
+/// evicted by the background worker cleanup tick.
 struct CatalogBuffer {
     entries: HashMap<CatalogKey, PartialCatalog>,
     max_entries: usize,
@@ -323,7 +325,8 @@ struct CatalogKey {
 }
 
 struct PartialCatalog {
-    items: Vec<GbCatalogItem>,
+    /// Accumulated catalog items keyed by channel external id (`device_id`).
+    items: HashMap<String, GbCatalogItem>,
     expected: u32,
     last_seen: Instant,
 }
@@ -345,8 +348,14 @@ impl CatalogBuffer {
         expected: u32,
         items: Vec<GbCatalogItem>,
     ) -> Option<Vec<GbCatalogItem>> {
+        // De-duplicate within the incoming fragment before any size checks.
+        let mut batch = HashMap::with_capacity(items.len());
+        for item in items {
+            batch.insert(item.device_id.clone(), item);
+        }
+
         if expected == 0 {
-            return Some(items);
+            return Some(batch.into_values().collect());
         }
 
         let expected_usize = expected as usize;
@@ -377,45 +386,52 @@ impl CatalogBuffer {
         }
 
         if let Some(partial) = self.entries.get_mut(&key) {
-            let new_len = partial.items.len().saturating_add(items.len());
-            if new_len > self.max_items_per_entry {
+            let new_distinct = batch
+                .keys()
+                .filter(|k| !partial.items.contains_key(*k))
+                .count();
+            let total = partial.items.len().saturating_add(new_distinct);
+            if total > self.max_items_per_entry {
                 warn!(
                     %device_id,
                     sn,
-                    accumulated = new_len,
+                    accumulated = total,
                     max_items_per_entry = self.max_items_per_entry,
                     "gb28181 catalog fragment exceeded per-entry item limit; dropping partial"
                 );
                 self.entries.remove(&key);
                 return None;
             }
-            partial.items.extend(items);
+            partial.items.extend(batch);
             partial.last_seen = Instant::now();
             if partial.items.len() >= partial.expected as usize {
-                return self.entries.remove(&key).map(|complete| complete.items);
+                return self
+                    .entries
+                    .remove(&key)
+                    .map(|complete| complete.items.into_values().collect());
             }
             return None;
         }
 
-        let new_len = items.len();
-        if new_len > self.max_items_per_entry {
+        if batch.len() > self.max_items_per_entry {
             warn!(
                 %device_id,
                 sn,
-                accumulated = new_len,
+                accumulated = batch.len(),
                 max_items_per_entry = self.max_items_per_entry,
                 "gb28181 catalog fragment exceeded per-entry item limit; dropping"
             );
             return None;
         }
 
+        let complete = batch.len() >= expected_usize;
         let partial = PartialCatalog {
-            items,
+            items: batch,
             expected,
             last_seen: Instant::now(),
         };
-        if partial.items.len() >= expected_usize {
-            return Some(partial.items);
+        if complete {
+            return Some(partial.items.into_values().collect());
         }
         self.entries.insert(key, partial);
         None
