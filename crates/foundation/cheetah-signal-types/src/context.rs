@@ -176,6 +176,13 @@ impl MediaMutationContext {
     /// Returns `InvalidArgument` when required fields are missing, when the
     /// deadline has already passed, or when trace context values are malformed.
     pub fn validate(&self, now: UtcTimestamp) -> crate::Result<()> {
+        if self.tenant_id.as_uuid().is_nil() {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                "tenant_id is required",
+            )
+            .with_field_violation("tenant_id", "must not be nil"));
+        }
         if self.idempotency_key.is_empty() {
             return Err(SignalError::new(
                 SignalErrorKind::InvalidArgument,
@@ -287,6 +294,17 @@ mod tests {
     fn valid_context_passes() {
         let clock = FakeClock::new();
         assert!(valid_context(&clock).validate(clock.now_wall()).is_ok());
+    }
+
+    #[test]
+    fn nil_tenant_fails() {
+        let clock = FakeClock::new();
+        let mut ctx = valid_context(&clock);
+        ctx.tenant_id = TenantId::from_uuid(uuid::Uuid::nil());
+        let Err(err) = ctx.validate(clock.now_wall()) else {
+            panic!("expected validation to fail");
+        };
+        assert_eq!(err.kind(), SignalErrorKind::InvalidArgument);
     }
 
     #[test]
