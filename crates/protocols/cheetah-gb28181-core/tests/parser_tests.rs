@@ -241,3 +241,23 @@ fn empty_content_length_is_rejected() {
         .expect_err("empty Content-Length should fail");
     assert_eq!(err.kind, SipErrorKind::InvalidHeader);
 }
+
+#[test]
+fn datagram_without_content_length_uses_remaining_bytes_as_body() {
+    let data = "SIP/2.0 200 OK\r\nCall-ID: call-abc\r\n\r\nbody bytes";
+    let msg = SipParser::parse_datagram(data.as_bytes(), SipParserConfig::default())
+        .expect("datagram should parse");
+    assert_eq!(msg.body(), b"body bytes");
+}
+
+#[test]
+fn stream_without_content_length_is_rejected() {
+    let mut parser = SipParser::new(SipParserConfig::default());
+    let data = "SIP/2.0 200 OK\r\nCall-ID: call-abc\r\n\r\n";
+    parser.feed(data.as_bytes()).unwrap();
+    let err = parser
+        .pop_message()
+        .expect("should produce error")
+        .expect_err("stream missing Content-Length should fail");
+    assert_eq!(err.kind, SipErrorKind::InvalidFraming);
+}
