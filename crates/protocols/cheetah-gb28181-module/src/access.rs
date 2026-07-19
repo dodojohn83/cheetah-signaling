@@ -112,7 +112,9 @@ impl<P: CredentialProvider> Gb28181Access<P> {
             SipMessage::Request { line, .. } if line.method == Method::Message => {
                 self.process_message(input)
             }
-            SipMessage::Request { .. } => Err(AccessError::UnsupportedMethod),
+            SipMessage::Request { .. } => Ok(vec![AccessOutput::SendResponse(
+                build_error_response(&input.message, 501, "Not Implemented", self.next_tag()),
+            )]),
             SipMessage::Response { .. } => Ok(Vec::new()),
         }
     }
@@ -289,7 +291,37 @@ impl<P: CredentialProvider> Gb28181Access<P> {
             now,
             message,
         } = input;
-        let SipMessage::Request { headers, body, .. } = &message else {
+        let request = match &message {
+            SipMessage::Request { .. } => &message,
+            _ => return Err(AccessError::Internal("expected request".to_string())),
+        };
+
+        match self.process_message_body(source, now, request) {
+            Ok(outputs) => Ok(outputs),
+            Err(
+                AccessError::InvalidDeviceId
+                | AccessError::InvalidXml(_)
+                | AccessError::UnsupportedCmdType(_),
+            ) => Ok(vec![AccessOutput::SendResponse(build_error_response(
+                request,
+                400,
+                "Bad Request",
+                self.next_tag(),
+            ))]),
+            Err(AccessError::NotRegistered) => Ok(vec![AccessOutput::SendResponse(
+                build_error_response(request, 403, "Forbidden", self.next_tag()),
+            )]),
+            Err(e) => Err(e),
+        }
+    }
+
+    fn process_message_body(
+        &mut self,
+        source: SocketAddr,
+        now: u64,
+        message: &SipMessage,
+    ) -> Result<Vec<AccessOutput>, AccessError> {
+        let SipMessage::Request { headers, body, .. } = message else {
             return Err(AccessError::Internal("expected request".to_string()));
         };
 
@@ -439,7 +471,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
         }
 
         outputs.push(AccessOutput::SendResponse(build_message_response(
-            &message,
+            message,
             self.next_tag(),
         )));
         Ok(outputs)

@@ -433,7 +433,7 @@ fn challenge_optional_accepts_valid_credentials() {
 }
 
 #[test]
-fn keepalive_before_register_is_rejected() {
+fn keepalive_before_register_returns_403() {
     let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec())
         .unwrap()
         .with_auth_policy(AuthPolicy::ChallengeOptional);
@@ -441,16 +441,20 @@ fn keepalive_before_register_is_rejected() {
     let mut access = Gb28181Access::new(config, provider).unwrap();
 
     let request = make_message_request(&keepalive_body());
-    let result = access.process(AccessInput {
-        source: "192.168.1.100:5060".parse().unwrap(),
-        now: 1000,
-        message: request,
-    });
+    let outputs = access
+        .process(AccessInput {
+            source: "192.168.1.100:5060".parse().unwrap(),
+            now: 1000,
+            message: request,
+        })
+        .unwrap();
 
-    assert!(matches!(
-        result,
-        Err(cheetah_gb28181_module::AccessError::NotRegistered)
-    ));
+    assert_eq!(outputs.len(), 1);
+    let response = find_response(&outputs);
+    let SipMessage::Response { line, .. } = response else {
+        panic!("expected response");
+    };
+    assert_eq!(line.code, 403);
 }
 
 #[test]
@@ -567,15 +571,19 @@ fn registration_expiry_removes_registration() {
     // A keepalive after expiry should be rejected because the device is no
     // longer registered.
     let request = make_message_request(&keepalive_body());
-    let result = access.process(AccessInput {
-        source: "192.168.1.100:5060".parse().unwrap(),
-        now: 1006,
-        message: request,
-    });
-    assert!(matches!(
-        result,
-        Err(cheetah_gb28181_module::AccessError::NotRegistered)
-    ));
+    let outputs = access
+        .process(AccessInput {
+            source: "192.168.1.100:5060".parse().unwrap(),
+            now: 1006,
+            message: request,
+        })
+        .unwrap();
+    assert_eq!(outputs.len(), 1);
+    let response = find_response(&outputs);
+    let SipMessage::Response { line, .. } = response else {
+        panic!("expected response");
+    };
+    assert_eq!(line.code, 403);
 }
 
 #[test]
@@ -757,7 +765,7 @@ fn device_status_message_emits_device_status_received_event() {
 }
 
 #[test]
-fn unregistered_device_message_is_rejected() {
+fn unregistered_device_message_returns_403() {
     let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec())
         .unwrap()
         .with_auth_policy(AuthPolicy::ChallengeOptional);
@@ -772,19 +780,23 @@ fn unregistered_device_message_is_rejected() {
     <Status>OK</Status>
 </Notify>"#;
     let request = make_message_request(body);
-    let result = access.process(AccessInput {
-        source: "192.168.1.100:5060".parse().unwrap(),
-        now: 1000,
-        message: request,
-    });
-    assert!(matches!(
-        result,
-        Err(cheetah_gb28181_module::AccessError::NotRegistered)
-    ));
+    let outputs = access
+        .process(AccessInput {
+            source: "192.168.1.100:5060".parse().unwrap(),
+            now: 1000,
+            message: request,
+        })
+        .unwrap();
+    assert_eq!(outputs.len(), 1);
+    let response = find_response(&outputs);
+    let SipMessage::Response { line, .. } = response else {
+        panic!("expected response");
+    };
+    assert_eq!(line.code, 403);
 }
 
 #[test]
-fn mismatched_xml_device_id_is_rejected() {
+fn mismatched_xml_device_id_returns_400() {
     let (mut access, now) = make_registered_access();
     let body = br#"<?xml version="1.0"?>
 <Notify>
@@ -794,15 +806,19 @@ fn mismatched_xml_device_id_is_rejected() {
     <Status>OK</Status>
 </Notify>"#;
     let request = make_message_request(body);
-    let result = access.process(AccessInput {
-        source: "192.168.1.100:5060".parse().unwrap(),
-        now: now + 1,
-        message: request,
-    });
-    assert!(matches!(
-        result,
-        Err(cheetah_gb28181_module::AccessError::InvalidDeviceId)
-    ));
+    let outputs = access
+        .process(AccessInput {
+            source: "192.168.1.100:5060".parse().unwrap(),
+            now: now + 1,
+            message: request,
+        })
+        .unwrap();
+    assert_eq!(outputs.len(), 1);
+    let response = find_response(&outputs);
+    let SipMessage::Response { line, .. } = response else {
+        panic!("expected response");
+    };
+    assert_eq!(line.code, 400);
 }
 
 #[test]
@@ -1320,4 +1336,77 @@ fn make_register_request_without_device_id(cseq: u32, expires: u32) -> SipMessag
         headers,
         body: Vec::new(),
     }
+}
+
+#[test]
+fn unsupported_method_returns_501() {
+    let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec())
+        .unwrap()
+        .with_auth_policy(AuthPolicy::ChallengeOptional);
+    let provider = |_device: &DeviceId| None;
+    let mut access = Gb28181Access::new(config, provider).unwrap();
+
+    let mut headers = SipHeaders::new();
+    headers.append(
+        HeaderName::Via,
+        HeaderValue::new("SIP/2.0/UDP 192.168.1.100:5060;branch=z9hG4bKabc"),
+    );
+    headers.append(
+        HeaderName::From,
+        HeaderValue::new(format!("<sip:{DEVICE_ID}@{REALM}>;tag=fromtag")),
+    );
+    headers.append(
+        HeaderName::To,
+        HeaderValue::new(format!("<sip:{DEVICE_ID}@{REALM}>")),
+    );
+    headers.append(HeaderName::CallId, HeaderValue::new("call-id-options"));
+    headers.append(HeaderName::CSeq, HeaderValue::new("1 OPTIONS"));
+    headers.append(HeaderName::ContentLength, HeaderValue::new("0"));
+    let request = SipMessage::Request {
+        line: RequestLine::new(
+            Method::Options,
+            SipUri::parse(format!("sip:{DEVICE_ID}@{REALM}")).unwrap(),
+        ),
+        headers,
+        body: Vec::new(),
+    };
+
+    let outputs = access
+        .process(AccessInput {
+            source: "192.168.1.100:5060".parse().unwrap(),
+            now: 1000,
+            message: request,
+        })
+        .unwrap();
+    assert_eq!(outputs.len(), 1);
+    let response = find_response(&outputs);
+    let SipMessage::Response { line, .. } = response else {
+        panic!("expected response");
+    };
+    assert_eq!(line.code, 501);
+}
+
+#[test]
+fn unsupported_message_cmd_type_returns_400() {
+    let (mut access, now) = make_registered_access();
+    let body = br#"<?xml version="1.0"?>
+<Notify>
+    <CmdType>UnknownCmd</CmdType>
+    <SN>1</SN>
+    <DeviceID>34020000001320000001</DeviceID>
+</Notify>"#;
+    let request = make_message_request(body);
+    let outputs = access
+        .process(AccessInput {
+            source: "192.168.1.100:5060".parse().unwrap(),
+            now: now + 1,
+            message: request,
+        })
+        .unwrap();
+    assert_eq!(outputs.len(), 1);
+    let response = find_response(&outputs);
+    let SipMessage::Response { line, .. } = response else {
+        panic!("expected response");
+    };
+    assert_eq!(line.code, 400);
 }
