@@ -224,6 +224,12 @@ pub struct DeviceControlResponse {
 /// Parses a `DeviceControl` response body.
 pub fn parse_device_control_response(body: &[u8]) -> Result<DeviceControlResponse, AccessError> {
     let root = parse_xml(body, &XmlLimits::default())?;
+    extract_device_control_response(&root)
+}
+
+pub(crate) fn extract_device_control_response(
+    root: &XmlElement,
+) -> Result<DeviceControlResponse, AccessError> {
     let cmd_type = root
         .child_text("CmdType")
         .ok_or_else(|| AccessError::InvalidXml("missing CmdType".to_string()))?;
@@ -232,8 +238,8 @@ pub fn parse_device_control_response(body: &[u8]) -> Result<DeviceControlRespons
     }
 
     Ok(DeviceControlResponse {
-        sn: root.child_text("SN").unwrap_or_default(),
-        device_id: root.child_text("DeviceID").unwrap_or_default(),
+        sn: root.require_child_text("SN")?,
+        device_id: root.require_child_text("DeviceID")?,
         result: root.child_text("Result"),
     })
 }

@@ -60,7 +60,9 @@ pub fn build_device_status_notify(
     encode_xml(&root, true)
 }
 
-fn extract_device_status(root: &XmlElement) -> Result<DeviceStatusResponse, AccessError> {
+pub(crate) fn extract_device_status(
+    root: &XmlElement,
+) -> Result<DeviceStatusResponse, AccessError> {
     let cmd_type = root
         .child_text("CmdType")
         .ok_or_else(|| AccessError::InvalidXml("missing CmdType".to_string()))?;
@@ -69,8 +71,8 @@ fn extract_device_status(root: &XmlElement) -> Result<DeviceStatusResponse, Acce
     }
 
     Ok(DeviceStatusResponse {
-        sn: root.child_text("SN").unwrap_or_default(),
-        device_id: root.child_text("DeviceID").unwrap_or_default(),
+        sn: root.require_child_text("SN")?,
+        device_id: root.require_child_text("DeviceID")?,
         result: root.child_text("Result"),
         online: root.child_text("Online"),
         status: root.child_text("Status"),

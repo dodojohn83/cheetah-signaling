@@ -1,5 +1,6 @@
 //! Generic, bounded XML element tree used by the GB28181 XML codec.
 
+use crate::error::AccessError;
 use std::collections::HashMap;
 
 /// A generic XML element with attributes, text and child elements.
@@ -24,6 +25,14 @@ impl XmlElement {
     /// Returns the trimmed text of the first direct child with the given name.
     pub fn child_text(&self, name: &str) -> Option<String> {
         self.child(name).map(|c| c.text.trim().to_string())
+    }
+
+    /// Returns the non-empty trimmed text of the first direct child with the given name,
+    /// or an `InvalidXml` error if it is missing or empty.
+    pub fn require_child_text(&self, name: &str) -> Result<String, AccessError> {
+        self.child_text(name)
+            .filter(|t| !t.is_empty())
+            .ok_or_else(|| AccessError::InvalidXml(format!("missing {name}")))
     }
 
     /// Collects leaf children whose names are not in `known` into an extension

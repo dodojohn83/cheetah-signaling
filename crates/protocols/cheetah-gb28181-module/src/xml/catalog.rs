@@ -17,7 +17,9 @@ pub struct CatalogResponse {
     pub device_id: String,
     /// `SumNum` attribute declaring total item count across all fragments.
     pub sum_num: u32,
-    /// `Num` attribute declaring the number of items in this fragment.
+    /// Number of well-formed items actually parsed in this fragment. This may be
+    /// less than the `Num` attribute if some `Item` elements had missing or
+    /// empty `DeviceID` values and were dropped.
     pub num: u32,
     /// Items in this fragment.
     pub items: Vec<CatalogItem>,
@@ -78,7 +80,7 @@ pub fn parse_catalog(body: &[u8]) -> Result<CatalogResponse, AccessError> {
     extract_catalog(&root)
 }
 
-fn extract_catalog(root: &XmlElement) -> Result<CatalogResponse, AccessError> {
+pub(crate) fn extract_catalog(root: &XmlElement) -> Result<CatalogResponse, AccessError> {
     let cmd_type = root
         .child_text("CmdType")
         .ok_or_else(|| AccessError::InvalidXml("missing CmdType".to_string()))?;
@@ -90,29 +92,54 @@ fn extract_catalog(root: &XmlElement) -> Result<CatalogResponse, AccessError> {
         .child("DeviceList")
         .ok_or_else(|| AccessError::InvalidXml("missing DeviceList".to_string()))?;
 
-    let num = device_list
-        .attributes
-        .get("Num")
-        .map(|v| parse_u32(v))
-        .unwrap_or(0);
+    let sn = root.require_child_text("SN")?;
+    let device_id = root.require_child_text("DeviceID")?;
+    let sum_num = parse_u32(&root.require_child_text("SumNum")?)?;
+
+    let mut dropped = 0u32;
+    let items: Vec<CatalogItem> = device_list
+        .children
+        .iter()
+        .filter(|c| c.name == "Item")
+        .filter_map(|item| {
+            let parsed = parse_item(item);
+            if parsed.is_none() {
+                dropped += 1;
+            }
+            parsed
+        })
+        .collect();
+
+    if dropped > 0 {
+        tracing::warn!(
+            sn = %sn,
+            device_id = %device_id,
+            dropped,
+            "catalog item(s) dropped due to missing or empty DeviceID"
+        );
+    }
+
+    // Trust the number of well-formed items we actually parsed. A missing or
+    // malformed `Num` attribute is ignored so a single bad item cannot force
+    // the whole fragment to be rejected.
+    let num = items.len() as u32;
 
     Ok(CatalogResponse {
-        sn: root.child_text("SN").unwrap_or_default(),
-        device_id: root.child_text("DeviceID").unwrap_or_default(),
-        sum_num: parse_u32(&root.child_text("SumNum").unwrap_or_default()),
+        sn,
+        device_id,
+        sum_num,
         num,
-        items: device_list
-            .children
-            .iter()
-            .filter(|c| c.name == "Item")
-            .map(parse_item)
-            .collect(),
+        items,
     })
 }
 
-fn parse_item(item: &XmlElement) -> CatalogItem {
-    CatalogItem {
-        device_id: item.child_text("DeviceID").unwrap_or_default(),
+fn parse_item(item: &XmlElement) -> Option<CatalogItem> {
+    let device_id = item.child_text("DeviceID")?;
+    if device_id.is_empty() {
+        return None;
+    }
+    Some(CatalogItem {
+        device_id,
         name: item.child_text("Name"),
         manufacturer: item.child_text("Manufacturer"),
         model: item.child_text("Model"),
@@ -134,7 +161,7 @@ fn parse_item(item: &XmlElement) -> CatalogItem {
         status: item.child_text("Status"),
         longitude: item.child_text("Longitude"),
         latitude: item.child_text("Latitude"),
-    }
+    })
 }
 
 /// Parsed content of a GB28181 `Catalog` query from an upstream platform.
@@ -161,11 +188,9 @@ pub fn parse_catalog_query(body: &[u8]) -> Result<CatalogQuery, AccessError> {
     if cmd_type != "Catalog" {
         return Err(AccessError::UnsupportedCmdType(cmd_type));
     }
-    let device_id = root
-        .child_text("DeviceID")
-        .ok_or_else(|| AccessError::InvalidXml("missing DeviceID".to_string()))?;
+    let device_id = root.require_child_text("DeviceID")?;
     Ok(CatalogQuery {
-        sn: root.child_text("SN").unwrap_or_default(),
+        sn: root.require_child_text("SN")?,
         device_id,
     })
 }
@@ -235,8 +260,11 @@ pub fn build_catalog_response(
     encode_xml(&root, true)
 }
 
-fn parse_u32(value: &str) -> u32 {
-    value.trim().parse().unwrap_or(0)
+fn parse_u32(value: &str) -> Result<u32, AccessError> {
+    value
+        .trim()
+        .parse()
+        .map_err(|_| AccessError::InvalidXml(format!("invalid numeric value: {value}")))
 }
 
 #[cfg(test)]

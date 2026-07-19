@@ -67,7 +67,9 @@ pub fn parse_keepalive_response(body: &[u8]) -> Result<KeepaliveResponse, Access
     extract_keepalive_response(&root)
 }
 
-fn extract_keepalive_response(root: &XmlElement) -> Result<KeepaliveResponse, AccessError> {
+pub(crate) fn extract_keepalive_response(
+    root: &XmlElement,
+) -> Result<KeepaliveResponse, AccessError> {
     if root.name != "Response" {
         return Err(AccessError::InvalidXml(format!(
             "expected Response root, got {}",
@@ -82,14 +84,14 @@ fn extract_keepalive_response(root: &XmlElement) -> Result<KeepaliveResponse, Ac
     }
 
     Ok(KeepaliveResponse {
-        sn: root.child_text("SN").unwrap_or_default(),
-        device_id: root.child_text("DeviceID").unwrap_or_default(),
-        result: root.child_text("Result").unwrap_or_default(),
+        sn: root.require_child_text("SN")?,
+        device_id: root.require_child_text("DeviceID")?,
+        result: root.require_child_text("Result")?,
         extensions: root.extension_map(KNOWN_KEEPALIVE_RESPONSE_FIELDS),
     })
 }
 
-fn extract_keepalive(root: &XmlElement) -> Result<KeepaliveInfo, AccessError> {
+pub(crate) fn extract_keepalive(root: &XmlElement) -> Result<KeepaliveInfo, AccessError> {
     let cmd_type = root
         .child_text("CmdType")
         .ok_or_else(|| AccessError::InvalidXml("missing CmdType".to_string()))?;
@@ -98,9 +100,9 @@ fn extract_keepalive(root: &XmlElement) -> Result<KeepaliveInfo, AccessError> {
     }
 
     Ok(KeepaliveInfo {
-        sn: root.child_text("SN").unwrap_or_default(),
-        device_id: root.child_text("DeviceID").unwrap_or_default(),
-        status: root.child_text("Status").unwrap_or_default(),
+        sn: root.require_child_text("SN")?,
+        device_id: root.require_child_text("DeviceID")?,
+        status: root.require_child_text("Status")?,
         extensions: root.extension_map(KNOWN_KEEPALIVE_FIELDS),
     })
 }

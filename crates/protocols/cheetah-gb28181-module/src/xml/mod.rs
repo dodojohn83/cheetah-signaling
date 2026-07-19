@@ -36,6 +36,15 @@ pub use reader::parse_xml;
 pub use record_info::{RecordInfoResponse, RecordItem, parse_record_info};
 pub use writer::encode_xml;
 
+pub(crate) use alarm::extract_alarm;
+pub(crate) use catalog::extract_catalog;
+pub(crate) use device_control::extract_device_control_response;
+pub(crate) use device_info::extract_device_info;
+pub(crate) use device_status::extract_device_status;
+pub(crate) use keepalive::extract_keepalive;
+pub(crate) use mobile_position::extract_mobile_position;
+pub(crate) use record_info::extract_record_info;
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -202,5 +211,93 @@ mod tests {
 </Response>"#;
         let resp = parse_keepalive_response(body).unwrap();
         assert_eq!(resp.result, "ERROR");
+    }
+
+    #[test]
+    fn keepalive_rejects_missing_status() {
+        let body = br#"<?xml version="1.0"?>
+<Notify>
+    <CmdType>Keepalive</CmdType>
+    <SN>1</SN>
+    <DeviceID>34020000001320000001</DeviceID>
+</Notify>"#;
+        assert!(parse_keepalive(body).is_err());
+    }
+
+    #[test]
+    fn keepalive_rejects_missing_device_id() {
+        let body = br#"<?xml version="1.0"?>
+<Notify>
+    <CmdType>Keepalive</CmdType>
+    <SN>1</SN>
+    <Status>OK</Status>
+</Notify>"#;
+        assert!(parse_keepalive(body).is_err());
+    }
+
+    #[test]
+    fn catalog_ignores_invalid_num_attribute_and_counts_items() {
+        let body = br#"<?xml version="1.0"?>
+<Response>
+    <CmdType>Catalog</CmdType>
+    <SN>1</SN>
+    <DeviceID>34020000001320000001</DeviceID>
+    <SumNum>1</SumNum>
+    <DeviceList Num="not-a-number">
+        <Item>
+            <DeviceID>34020000001320000001</DeviceID>
+        </Item>
+    </DeviceList>
+</Response>"#;
+        let parsed = parse_catalog(body).unwrap();
+        assert_eq!(parsed.num, 1);
+        assert_eq!(parsed.items.len(), 1);
+    }
+
+    #[test]
+    fn catalog_rejects_missing_sum_num() {
+        let body = br#"<?xml version="1.0"?>
+<Response>
+    <CmdType>Catalog</CmdType>
+    <SN>1</SN>
+    <DeviceID>34020000001320000001</DeviceID>
+    <DeviceList Num="0">
+    </DeviceList>
+</Response>"#;
+        assert!(parse_catalog(body).is_err());
+    }
+
+    #[test]
+    fn record_info_ignores_invalid_num_attribute_and_counts_items() {
+        let body = br#"<?xml version="1.0"?>
+<Response>
+    <CmdType>RecordInfo</CmdType>
+    <SN>1</SN>
+    <DeviceID>34020000001320000001</DeviceID>
+    <Name>Camera 1</Name>
+    <SumNum>1</SumNum>
+    <RecordList Num="not-a-number">
+        <Item>
+            <DeviceID>34020000001320000001</DeviceID>
+        </Item>
+    </RecordList>
+</Response>"#;
+        let parsed = parse_record_info(body).unwrap();
+        assert_eq!(parsed.num, 1);
+        assert_eq!(parsed.items.len(), 1);
+    }
+
+    #[test]
+    fn record_info_rejects_missing_sum_num() {
+        let body = br#"<?xml version="1.0"?>
+<Response>
+    <CmdType>RecordInfo</CmdType>
+    <SN>1</SN>
+    <DeviceID>34020000001320000001</DeviceID>
+    <Name>Camera 1</Name>
+    <RecordList Num="0">
+    </RecordList>
+</Response>"#;
+        assert!(parse_record_info(body).is_err());
     }
 }

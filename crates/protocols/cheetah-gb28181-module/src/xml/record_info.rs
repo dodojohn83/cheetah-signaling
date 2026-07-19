@@ -16,7 +16,9 @@ pub struct RecordInfoResponse {
     pub name: Option<String>,
     /// `SumNum` declaring total record count across all fragments.
     pub sum_num: u32,
-    /// Number of records in this fragment (from `RecordList` attribute `Num`).
+    /// Number of well-formed records actually parsed in this fragment. This may
+    /// be less than the `Num` attribute if some `Item` elements had missing or
+    /// empty `DeviceID` values and were dropped.
     pub num: u32,
     /// Records in this fragment.
     pub items: Vec<RecordItem>,
@@ -51,7 +53,7 @@ pub fn parse_record_info(body: &[u8]) -> Result<RecordInfoResponse, AccessError>
     extract_record_info(&root)
 }
 
-fn extract_record_info(root: &XmlElement) -> Result<RecordInfoResponse, AccessError> {
+pub(crate) fn extract_record_info(root: &XmlElement) -> Result<RecordInfoResponse, AccessError> {
     let cmd_type = root
         .child_text("CmdType")
         .ok_or_else(|| AccessError::InvalidXml("missing CmdType".to_string()))?;
@@ -63,30 +65,55 @@ fn extract_record_info(root: &XmlElement) -> Result<RecordInfoResponse, AccessEr
         .child("RecordList")
         .ok_or_else(|| AccessError::InvalidXml("missing RecordList".to_string()))?;
 
-    let num = record_list
-        .attributes
-        .get("Num")
-        .map(|v| parse_u32(v))
-        .unwrap_or(0);
+    let sn = root.require_child_text("SN")?;
+    let device_id = root.require_child_text("DeviceID")?;
+    let name = root.child_text("Name");
+    let sum_num = parse_u32(&root.require_child_text("SumNum")?)?;
+
+    let mut dropped = 0u32;
+    let items: Vec<RecordItem> = record_list
+        .children
+        .iter()
+        .filter(|c| c.name == "Item")
+        .filter_map(|item| {
+            let parsed = parse_item(item);
+            if parsed.is_none() {
+                dropped += 1;
+            }
+            parsed
+        })
+        .collect();
+
+    if dropped > 0 {
+        tracing::warn!(
+            sn = %sn,
+            device_id = %device_id,
+            dropped,
+            "record info item(s) dropped due to missing or empty DeviceID"
+        );
+    }
+
+    // Ignore a missing or malformed `Num` attribute and use the number of
+    // well-formed items actually parsed.
+    let num = items.len() as u32;
 
     Ok(RecordInfoResponse {
-        sn: root.child_text("SN").unwrap_or_default(),
-        device_id: root.child_text("DeviceID").unwrap_or_default(),
-        name: root.child_text("Name"),
-        sum_num: parse_u32(&root.child_text("SumNum").unwrap_or_default()),
+        sn,
+        device_id,
+        name,
+        sum_num,
         num,
-        items: record_list
-            .children
-            .iter()
-            .filter(|c| c.name == "Item")
-            .map(parse_item)
-            .collect(),
+        items,
     })
 }
 
-fn parse_item(item: &XmlElement) -> RecordItem {
-    RecordItem {
-        device_id: item.child_text("DeviceID").unwrap_or_default(),
+fn parse_item(item: &XmlElement) -> Option<RecordItem> {
+    let device_id = item.child_text("DeviceID")?;
+    if device_id.is_empty() {
+        return None;
+    }
+    Some(RecordItem {
+        device_id,
         name: item.child_text("Name"),
         file_path: item.child_text("FilePath"),
         start_time: item.child_text("StartTime"),
@@ -95,11 +122,14 @@ fn parse_item(item: &XmlElement) -> RecordItem {
         record_type: item.child_text("Type"),
         recorder_id: item.child_text("RecorderID"),
         file_size: item.child_text("FileSize"),
-    }
+    })
 }
 
-fn parse_u32(value: &str) -> u32 {
-    value.trim().parse().unwrap_or(0)
+fn parse_u32(value: &str) -> Result<u32, AccessError> {
+    value
+        .trim()
+        .parse()
+        .map_err(|_| AccessError::InvalidXml(format!("invalid numeric value: {value}")))
 }
 
 #[cfg(test)]

@@ -82,7 +82,9 @@ pub fn build_mobile_position_notify(
     encode_xml(&root, true)
 }
 
-fn extract_mobile_position(root: &XmlElement) -> Result<MobilePositionInfo, AccessError> {
+pub(crate) fn extract_mobile_position(
+    root: &XmlElement,
+) -> Result<MobilePositionInfo, AccessError> {
     let cmd_type = root
         .child_text("CmdType")
         .ok_or_else(|| AccessError::InvalidXml("missing CmdType".to_string()))?;
@@ -91,8 +93,8 @@ fn extract_mobile_position(root: &XmlElement) -> Result<MobilePositionInfo, Acce
     }
 
     Ok(MobilePositionInfo {
-        sn: root.child_text("SN").unwrap_or_default(),
-        device_id: root.child_text("DeviceID").unwrap_or_default(),
+        sn: root.require_child_text("SN")?,
+        device_id: root.require_child_text("DeviceID")?,
         time: root.child_text("Time"),
         longitude: root.child_text("Longitude"),
         latitude: root.child_text("Latitude"),

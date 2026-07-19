@@ -7,8 +7,9 @@ use crate::ports::CredentialProvider;
 use crate::registration::RegistrationTable;
 use crate::types::DeviceId;
 use crate::xml::{
-    XmlLimits, parse_alarm, parse_catalog, parse_device_control_response, parse_device_info,
-    parse_device_status, parse_keepalive, parse_mobile_position, parse_record_info, parse_xml,
+    XmlLimits, extract_alarm, extract_catalog, extract_device_control_response,
+    extract_device_info, extract_device_status, extract_keepalive, extract_mobile_position,
+    extract_record_info, parse_xml,
 };
 use cheetah_gb28181_core::{
     DigestContext, DigestQop, DigestReplayCache, HeaderName, Method, SipMessage,
@@ -359,10 +360,10 @@ impl<P: CredentialProvider> Gb28181Access<P> {
         // Parse the command payload before touching the registration table.
         // A malformed or unknown command must not commit an online presence
         // transition whose event would then be discarded when we return a 400
-        // response.
+        // response. Re-use the already parsed XML tree to avoid double parsing.
         let event = match cmd_type.as_str() {
             "Keepalive" => {
-                let keepalive = parse_keepalive(body)?;
+                let keepalive = extract_keepalive(&root)?;
                 Gb28181Event::Keepalive {
                     domain_id: domain_id.clone(),
                     device_id: device_id.clone(),
@@ -371,7 +372,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                 }
             }
             "Catalog" => {
-                let catalog = parse_catalog(body)?;
+                let catalog = extract_catalog(&root)?;
                 Gb28181Event::CatalogReceived {
                     domain_id: domain_id.clone(),
                     device_id: device_id.clone(),
@@ -383,7 +384,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                 }
             }
             "DeviceInfo" => {
-                let info = parse_device_info(body)?;
+                let info = extract_device_info(&root)?;
                 Gb28181Event::DeviceInfoReceived {
                     domain_id: domain_id.clone(),
                     device_id: device_id.clone(),
@@ -396,7 +397,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                 }
             }
             "DeviceStatus" => {
-                let status = parse_device_status(body)?;
+                let status = extract_device_status(&root)?;
                 Gb28181Event::DeviceStatusReceived {
                     domain_id: domain_id.clone(),
                     device_id: device_id.clone(),
@@ -410,7 +411,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                 }
             }
             "Alarm" => {
-                let alarm = parse_alarm(body)?;
+                let alarm = extract_alarm(&root)?;
                 Gb28181Event::AlarmReceived {
                     domain_id: domain_id.clone(),
                     device_id: device_id.clone(),
@@ -424,7 +425,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                 }
             }
             "MobilePosition" => {
-                let pos = parse_mobile_position(body)?;
+                let pos = extract_mobile_position(&root)?;
                 Gb28181Event::MobilePositionReceived {
                     domain_id: domain_id.clone(),
                     device_id: device_id.clone(),
@@ -439,7 +440,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                 }
             }
             "RecordInfo" => {
-                let info = parse_record_info(body)?;
+                let info = extract_record_info(&root)?;
                 Gb28181Event::RecordInfoReceived {
                     domain_id: domain_id.clone(),
                     device_id: device_id.clone(),
@@ -452,7 +453,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                 }
             }
             "DeviceControl" => {
-                let resp = parse_device_control_response(body)?;
+                let resp = extract_device_control_response(&root)?;
                 Gb28181Event::DeviceControlResponseReceived {
                     domain_id: domain_id.clone(),
                     device_id: device_id.clone(),
