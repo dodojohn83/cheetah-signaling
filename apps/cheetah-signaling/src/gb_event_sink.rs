@@ -360,7 +360,10 @@ struct PartialCatalog {
 impl PartialCatalog {
     /// Sum of declared `Num` values for unique fragments received so far.
     fn received_num(&self) -> u32 {
-        self.fragments.values().copied().sum()
+        self.fragments
+            .values()
+            .copied()
+            .fold(0u32, |acc, v| acc.saturating_add(v))
     }
 
     fn is_complete(&self) -> bool {
