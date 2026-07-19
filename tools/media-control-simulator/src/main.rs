@@ -148,6 +148,7 @@ struct State {
 }
 
 impl State {
+    #[allow(deprecated)]
     fn new(config: Config) -> Self {
         let events = broadcast::channel(1024).0;
         let capabilities = vec![config.capability()];
@@ -156,6 +157,7 @@ impl State {
         let node_info = media::MediaNodeInfo {
             node_id: config.node_id.clone(),
             listen_addr: config.bind.to_string(),
+            capability: Some(config.capability()),
             capabilities,
             region: config.region.clone(),
             owner_epoch: 0,
@@ -508,6 +510,7 @@ impl MediaEventStream for State {
 
 #[tonic::async_trait]
 impl MediaClusterRegistry for State {
+    #[allow(deprecated)]
     async fn register_media_node(
         &self,
         request: Request<RegisterMediaNodeRequest>,
@@ -519,7 +522,12 @@ impl MediaClusterRegistry for State {
         let mut node_info = self.node_info.lock().await;
         node_info.node_id = registration.node_id.clone();
         node_info.listen_addr = registration.listen_addr.clone();
-        node_info.capabilities = registration.capabilities;
+        node_info.capabilities = if registration.capabilities.is_empty() {
+            registration.capability.into_iter().collect()
+        } else {
+            registration.capabilities
+        };
+        node_info.capability = node_info.capabilities.first().cloned();
         node_info.region = registration.region.clone();
         node_info.zone = registration.zone;
         node_info.network_zones = registration.network_zones;

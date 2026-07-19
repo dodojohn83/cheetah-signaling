@@ -202,20 +202,24 @@ message MediaNodeCapacity {
 message MediaNodeRegistration {
   string node_id = 1;
   string listen_addr = 2;
-  repeated MediaCapability capabilities = 3;
+  // Deprecated: use `capabilities` (field 9). Kept for backward-compatible readers.
+  MediaCapability capability = 3 [deprecated = true];
   string region = 4;
   MediaNodeCapacity capacity = 5;
-  string zone = 6;
-  repeated string network_zones = 7;
   // Stable identifier for this running media node process. If empty the server generates one.
-  string instance_id = 8;
+  string instance_id = 6;
+  // New fields are appended using fresh numbers.
+  string zone = 7;
+  repeated string network_zones = 8;
+  repeated MediaCapability capabilities = 9;
 }
 
 // Media node runtime information.
 message MediaNodeInfo {
   string node_id = 1;
   string listen_addr = 2;
-  repeated MediaCapability capabilities = 3;
+  // Deprecated: use `capabilities` (field 14). Kept for backward-compatible readers.
+  MediaCapability capability = 3 [deprecated = true];
   string region = 4;
   uint64 owner_epoch = 5;
   google.protobuf.Timestamp last_heartbeat_at = 6;
@@ -223,10 +227,12 @@ message MediaNodeInfo {
   MediaNodeCapacity capacity = 8;
   // Opaque instance identifier assigned during registration.
   string instance_id = 9;
+  // New fields are appended using fresh numbers.
   string zone = 10;
   repeated string network_zones = 11;
   uint64 load = 12;
   uint64 session_count = 13;
+  repeated MediaCapability capabilities = 14;
 }
 
 // Media node heartbeat payload.

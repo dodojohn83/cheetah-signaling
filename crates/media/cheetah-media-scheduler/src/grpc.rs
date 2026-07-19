@@ -55,6 +55,7 @@ impl MediaClusterRegistryService {
 
 #[async_trait::async_trait]
 impl MediaClusterRegistry for MediaClusterRegistryService {
+    #[allow(deprecated)]
     async fn register_media_node(
         &self,
         request: Request<RegisterMediaNodeRequest>,
@@ -88,11 +89,19 @@ impl MediaClusterRegistry for MediaClusterRegistryService {
             labels: std::collections::BTreeMap::new(),
             control_endpoint: registration.listen_addr,
             media_addresses: Vec::new(),
-            capabilities: registration
-                .capabilities
-                .into_iter()
-                .map(from_media_capability)
-                .collect(),
+            capabilities: if registration.capabilities.is_empty() {
+                registration
+                    .capability
+                    .into_iter()
+                    .map(from_media_capability)
+                    .collect()
+            } else {
+                registration
+                    .capabilities
+                    .into_iter()
+                    .map(from_media_capability)
+                    .collect()
+            },
             capacity: registration.capacity.map(from_media_capacity).unwrap_or(
                 crate::model::MediaNodeCapacity {
                     max_sessions: 1,
@@ -236,11 +245,14 @@ fn from_media_capacity(cap: media_proto::MediaNodeCapacity) -> MediaNodeCapacity
     }
 }
 
+#[allow(deprecated)]
 fn to_media_node_info(node: MediaNode) -> media_proto::MediaNodeInfo {
+    let capabilities: Vec<_> = node.capabilities.into_iter().map(to_media_capability).collect();
     media_proto::MediaNodeInfo {
         node_id: node.node_id.to_string(),
         listen_addr: node.control_endpoint,
-        capabilities: node.capabilities.into_iter().map(to_media_capability).collect(),
+        capability: capabilities.first().cloned(),
+        capabilities,
         region: node.region,
         owner_epoch: node.instance_epoch,
         last_heartbeat_at: node.last_heartbeat_at.map(|ts| ts.to_prost_timestamp()),
@@ -425,6 +437,7 @@ fn map_scheduler_error(e: SchedulerError) -> Status {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use crate::model::{MediaNode, MediaNodeCapacity, MediaNodeHealth, NodeStatus};
@@ -596,6 +609,7 @@ mod tests {
             node: Some(media_proto::MediaNodeRegistration {
                 node_id: node_id.to_string(),
                 listen_addr: "https://1.1.1.1:443".to_string(),
+                capability: None,
                 capabilities: vec![media_proto::MediaCapability {
                     protocol: "gb28181".to_string(),
                     operations: vec!["live".to_string()],
@@ -656,6 +670,7 @@ mod tests {
             node: Some(media_proto::MediaNodeRegistration {
                 node_id: node_id.to_string(),
                 listen_addr: "https://1.1.1.1:443".to_string(),
+                capability: None,
                 capabilities: vec![media_proto::MediaCapability {
                     protocol: "gb28181".to_string(),
                     operations: vec!["live".to_string()],
