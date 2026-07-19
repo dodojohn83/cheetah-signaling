@@ -45,15 +45,15 @@ message MediaMutationContext {
   string operation_step_id = 12;
 
   // Logical media session when one exists.
-  string media_session_id = 13;
+  optional string media_session_id = 13;
 
   // Physical media binding when one exists.
-  string media_binding_id = 14;
+  optional string media_binding_id = 14;
 
   // Contract version negotiated between signaling and media.
   uint64 contract_version = 15;
 
   // W3C trace context.
-  string traceparent = 16;
-  string tracestate = 17;
+  optional string traceparent = 16;
+  optional string tracestate = 17;
 }

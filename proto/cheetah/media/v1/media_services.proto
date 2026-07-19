@@ -1,0 +1,431 @@
+syntax = "proto3";
+
+package cheetah.media.v1;
+
+import "cheetah/media/v1/media.proto";
+import "cheetah/media/v1/media_context.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/dodojohn83/cheetah-signaling/gen/go/cheetah/media/v1;mediav1";
+
+// Pagination request parameters.
+message Pagination {
+  // Opaque cursor produced by a previous list response.
+  string cursor = 1;
+  // Maximum number of items to return in one page.
+  uint64 page_size = 2;
+}
+
+// Pagination metadata returned with list responses.
+message PageInfo {
+  // Cursor to retrieve the next page, empty when there is no next page.
+  string next_cursor = 1;
+  // True when more results are available.
+  bool has_more = 2;
+}
+
+// Typed capability query.
+message GetCapabilitiesRequest {
+  MediaMutationContext context = 1;
+}
+
+message GetCapabilitiesResponse {
+  repeated MediaCapability capabilities = 1;
+}
+
+// Capability discovery service.
+service MediaCapabilityService {
+  rpc GetCapabilities(GetCapabilitiesRequest) returns (GetCapabilitiesResponse);
+}
+
+// Query request payloads.
+message GetMediaRequest {
+  MediaMutationContext context = 1;
+  string media_session_id = 2;
+}
+
+message GetMediaResponse {
+  MediaSessionRef session = 1;
+  string state = 2;
+  MediaNodeInfo node = 3;
+}
+
+message IsMediaOnlineRequest {
+  MediaMutationContext context = 1;
+  string media_session_id = 2;
+}
+
+message IsMediaOnlineResponse {
+  bool online = 1;
+  uint64 owner_epoch = 2;
+}
+
+message ListSessionsRequest {
+  MediaMutationContext context = 1;
+  string device_id = 2;
+  string channel_id = 3;
+  Pagination pagination = 4;
+}
+
+message ListSessionsResponse {
+  repeated MediaSessionRef sessions = 1;
+  PageInfo page = 2;
+}
+
+// Media session query service.
+service MediaQueryService {
+  rpc GetMedia(GetMediaRequest) returns (GetMediaResponse);
+  rpc IsMediaOnline(IsMediaOnlineRequest) returns (IsMediaOnlineResponse);
+  rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse);
+}
+
+// RTP receiver parameters.
+message RtpReceiverParams {
+  string remote_sdp = 1;
+  repeated string media_kinds = 2;
+}
+
+// RTP sender parameters.
+message RtpSenderParams {
+  string remote_sdp = 1;
+  repeated string media_kinds = 2;
+}
+
+message OpenReceiverRequest {
+  MediaMutationContext context = 1;
+  string media_session_id = 2;
+  string device_id = 3;
+  string channel_id = 4;
+  RtpReceiverParams params = 5;
+}
+
+message ConnectReceiverRequest {
+  MediaMutationContext context = 1;
+  string media_session_id = 2;
+  string remote_sdp = 3;
+}
+
+message OpenSenderRequest {
+  MediaMutationContext context = 1;
+  string media_session_id = 2;
+  string device_id = 3;
+  string channel_id = 4;
+  RtpSenderParams params = 5;
+}
+
+message UpdateReceiverRequest {
+  MediaMutationContext context = 1;
+  string media_session_id = 2;
+  string remote_sdp = 3;
+}
+
+message UpdateSenderRequest {
+  MediaMutationContext context = 1;
+  string media_session_id = 2;
+  string remote_sdp = 3;
+}
+
+message GetRtpSessionRequest {
+  MediaMutationContext context = 1;
+  string media_session_id = 2;
+}
+
+message ListRtpSessionsRequest {
+  MediaMutationContext context = 1;
+  string device_id = 2;
+  string channel_id = 3;
+  Pagination pagination = 4;
+}
+
+message ListRtpSessionsResponse {
+  repeated RtpSession sessions = 1;
+  PageInfo page = 2;
+}
+
+message StopRtpRequest {
+  MediaMutationContext context = 1;
+  string media_session_id = 2;
+}
+
+// RTP media service.
+service MediaRtpService {
+  rpc OpenReceiver(OpenReceiverRequest) returns (RtpSession);
+  rpc ConnectReceiver(ConnectReceiverRequest) returns (RtpSession);
+  rpc OpenSender(OpenSenderRequest) returns (RtpSession);
+  rpc UpdateReceiver(UpdateReceiverRequest) returns (RtpSession);
+  rpc UpdateSender(UpdateSenderRequest) returns (RtpSession);
+  rpc GetRtpSession(GetRtpSessionRequest) returns (RtpSession);
+  rpc ListRtpSessions(ListRtpSessionsRequest) returns (ListRtpSessionsResponse);
+  rpc StopRtp(StopRtpRequest) returns (MediaSessionRefStopped);
+}
+
+// Proxy pull parameters.
+message ProxyPullParams {
+  string proxy_mode = 1;
+  string upstream_url = 2;
+}
+
+message CreatePullRequest {
+  MediaMutationContext context = 1;
+  string media_session_id = 2;
+  string device_id = 3;
+  string channel_id = 4;
+  ProxyPullParams params = 5;
+}
+
+message GetPullRequest {
+  MediaMutationContext context = 1;
+  string media_session_id = 2;
+}
+
+message ListPullRequest {
+  MediaMutationContext context = 1;
+  string device_id = 2;
+  string channel_id = 3;
+  Pagination pagination = 4;
+}
+
+message ListPullResponse {
+  repeated ProxySession sessions = 1;
+  PageInfo page = 2;
+}
+
+message DeletePullRequest {
+  MediaMutationContext context = 1;
+  string media_session_id = 2;
+}
+
+// Proxy media service.
+service MediaProxyService {
+  rpc CreatePull(CreatePullRequest) returns (ProxySession);
+  rpc GetPull(GetPullRequest) returns (ProxySession);
+  rpc ListPull(ListPullRequest) returns (ListPullResponse);
+  rpc DeletePull(DeletePullRequest) returns (MediaSessionRefStopped);
+}
+
+// Record file metadata.
+message RecordFile {
+  string record_id = 1;
+  string storage_path = 2;
+  int64 duration_ms = 3;
+  int64 size_bytes = 4;
+  google.protobuf.Timestamp started_at = 5;
+  google.protobuf.Timestamp stopped_at = 6;
+}
+
+message StartRecordRequest {
+  MediaMutationContext context = 1;
+  string media_session_id = 2;
+  string record_id = 3;
+  string storage_path = 4;
+  int64 timeout_ms = 5;
+}
+
+message StopRecordRequest {
+  MediaMutationContext context = 1;
+  string media_session_id = 2;
+  string record_id = 3;
+}
+
+message GetRecordRequest {
+  MediaMutationContext context = 1;
+  string media_session_id = 2;
+  string record_id = 3;
+}
+
+message ListTasksRequest {
+  MediaMutationContext context = 1;
+  string media_session_id = 2;
+  Pagination pagination = 3;
+}
+
+message ListTasksResponse {
+  repeated RecordSession tasks = 1;
+  PageInfo page = 2;
+}
+
+message ListFilesRequest {
+  MediaMutationContext context = 1;
+  string media_session_id = 2;
+  Pagination pagination = 3;
+}
+
+message ListFilesResponse {
+  repeated RecordFile files = 1;
+  PageInfo page = 2;
+}
+
+// Recording media service.
+service MediaRecordService {
+  rpc StartRecord(StartRecordRequest) returns (RecordSession);
+  rpc StopRecord(StopRecordRequest) returns (RecordSession);
+  rpc GetRecord(GetRecordRequest) returns (RecordSession);
+  rpc ListTasks(ListTasksRequest) returns (ListTasksResponse);
+  rpc ListFiles(ListFilesRequest) returns (ListFilesResponse);
+}
+
+// Snapshot image format.
+enum SnapshotFormat {
+  SNAPSHOT_FORMAT_UNSPECIFIED = 0;
+  SNAPSHOT_FORMAT_JPEG = 1;
+  SNAPSHOT_FORMAT_PNG = 2;
+}
+
+message TakeSnapshotRequest {
+  MediaMutationContext context = 1;
+  string media_session_id = 2;
+  string snapshot_id = 3;
+  SnapshotFormat format = 4;
+}
+
+message FetchSnapshotRequest {
+  MediaMutationContext context = 1;
+  string snapshot_id = 2;
+}
+
+message GetSnapshotRequest {
+  MediaMutationContext context = 1;
+  string snapshot_id = 2;
+}
+
+message ListSnapshotsRequest {
+  MediaMutationContext context = 1;
+  string media_session_id = 2;
+  Pagination pagination = 3;
+}
+
+message ListSnapshotsResponse {
+  repeated Snapshot snapshots = 1;
+  PageInfo page = 2;
+}
+
+// Snapshot media service.
+service MediaSnapshotService {
+  rpc TakeSnapshot(TakeSnapshotRequest) returns (Snapshot);
+  rpc FetchSnapshot(FetchSnapshotRequest) returns (Snapshot);
+  rpc GetSnapshot(GetSnapshotRequest) returns (Snapshot);
+  rpc ListSnapshots(ListSnapshotsRequest) returns (ListSnapshotsResponse);
+}
+
+// Playback control value.
+enum PlaybackControl {
+  PLAYBACK_CONTROL_UNSPECIFIED = 0;
+  PLAYBACK_CONTROL_PLAY = 1;
+  PLAYBACK_CONTROL_PAUSE = 2;
+  PLAYBACK_CONTROL_SEEK = 3;
+  PLAYBACK_CONTROL_STOP = 4;
+}
+
+message PlaybackSession {
+  string media_session_id = 1;
+  string playback_id = 2;
+  string source_url = 3;
+  string status = 4;
+  int64 position_ms = 5;
+  int64 duration_ms = 6;
+}
+
+message OpenPlaybackRequest {
+  MediaMutationContext context = 1;
+  string media_session_id = 2;
+  string device_id = 3;
+  string channel_id = 4;
+  string source_url = 5;
+  int64 start_position_ms = 6;
+}
+
+message GetPlaybackRequest {
+  MediaMutationContext context = 1;
+  string media_session_id = 2;
+}
+
+message ListPlaybacksRequest {
+  MediaMutationContext context = 1;
+  string device_id = 2;
+  string channel_id = 3;
+  Pagination pagination = 4;
+}
+
+message ListPlaybacksResponse {
+  repeated PlaybackSession sessions = 1;
+  PageInfo page = 2;
+}
+
+message ControlPlaybackRequest {
+  MediaMutationContext context = 1;
+  string media_session_id = 2;
+  PlaybackControl control = 3;
+  int64 seek_position_ms = 4;
+}
+
+message StopPlaybackRequest {
+  MediaMutationContext context = 1;
+  string media_session_id = 2;
+}
+
+// Playback media service.
+service MediaPlaybackService {
+  rpc OpenPlayback(OpenPlaybackRequest) returns (PlaybackSession);
+  rpc GetPlayback(GetPlaybackRequest) returns (PlaybackSession);
+  rpc ListPlaybacks(ListPlaybacksRequest) returns (ListPlaybacksResponse);
+  rpc ControlPlayback(ControlPlaybackRequest) returns (PlaybackSession);
+  rpc StopPlayback(StopPlaybackRequest) returns (MediaSessionRefStopped);
+}
+
+// Signed output URL parameters.
+message OutputUrlParams {
+  string protocol = 1;
+  int64 ttl_seconds = 2;
+  repeated string allowed_ips = 3;
+}
+
+message ResolveUrlsRequest {
+  MediaMutationContext context = 1;
+  string media_session_id = 2;
+  repeated OutputUrlParams params = 3;
+}
+
+message ResolvedUrl {
+  string protocol = 1;
+  string url = 2;
+  int64 expires_at_epoch_seconds = 3;
+}
+
+message ResolveUrlsResponse {
+  repeated ResolvedUrl urls = 1;
+}
+
+// Output URL service.
+service MediaOutputUrlService {
+  rpc ResolveUrls(ResolveUrlsRequest) returns (ResolveUrlsResponse);
+}
+
+// Media control commands.
+message RequestKeyframeRequest {
+  MediaMutationContext context = 1;
+  string media_session_id = 2;
+}
+
+message CloseSessionRequest {
+  MediaMutationContext context = 1;
+  string media_session_id = 2;
+}
+
+// Generic media control service.
+service MediaControlService {
+  rpc RequestKeyframe(RequestKeyframeRequest) returns (MediaSessionRef);
+  rpc CloseSession(CloseSessionRequest) returns (MediaSessionRefStopped);
+}
+
+// Subscription request for media events.
+message SubscribeRequest {
+  MediaMutationContext context = 1;
+  repeated string media_session_ids = 2;
+  string resume_cursor = 3;
+  uint64 max_batch_size = 4;
+}
+
+// Media event streaming service.
+service MediaEventStreamService {
+  rpc Subscribe(SubscribeRequest) returns (stream MediaEvent);
+}
