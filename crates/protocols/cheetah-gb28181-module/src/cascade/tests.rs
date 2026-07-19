@@ -298,6 +298,44 @@ fn deregister_sends_expires_zero() {
 }
 
 #[test]
+fn register_response_malformed_expires_returns_error() {
+    let mut cascade = Gb28181Cascade::new(config(), password_provider()).unwrap();
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 1000,
+            event: CascadeEvent::Register,
+        })
+        .unwrap();
+    let (call_id, cseq) = request_call_id_cseq(&outputs);
+
+    let mut headers = SipHeaders::new();
+    headers.append(HeaderName::CallId, HeaderValue::new(call_id.to_string()));
+    headers.append(HeaderName::CSeq, HeaderValue::new(cseq.to_string()));
+    headers.append(
+        HeaderName::To,
+        HeaderValue::new("<sip:34020000001320000001@example.com>;tag=abc".to_string()),
+    );
+    headers.append(
+        HeaderName::Expires,
+        HeaderValue::new("not-a-number".to_string()),
+    );
+    let response = SipMessage::Response {
+        line: StatusLine::new(200, "OK"),
+        headers,
+        body: Vec::new(),
+    };
+
+    let result = cascade.process(CascadeInput {
+        now: 1001,
+        event: CascadeEvent::Response(Box::new(response)),
+    });
+    assert!(matches!(
+        result,
+        Err(crate::cascade::CascadeError::MalformedSip(_))
+    ));
+}
+
+#[test]
 fn config_rejects_internal_upstream_ip() {
     let upstream = SipUri::parse("sip:registrar@127.0.0.1").unwrap();
     let result = CascadeConfig::with_options(

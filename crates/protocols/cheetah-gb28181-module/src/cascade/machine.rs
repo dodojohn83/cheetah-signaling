@@ -57,6 +57,11 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
     }
 
     /// Processes a single input and returns ordered outputs.
+    ///
+    /// Errors are non-fatal: the state machine is left unchanged and the caller
+    /// (typically a driver) should log the failure and continue. Retry and
+    /// timeout paths driven by `CascadeEvent::Tick` will eventually drive the
+    /// cascade forward.
     pub fn process(&mut self, input: CascadeInput) -> Result<Vec<CascadeOutput>, CascadeError> {
         match input.event {
             CascadeEvent::Register => self.on_register(input.now),
@@ -341,7 +346,7 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
         }
 
         if (200..300).contains(&status.code) {
-            let expires = parse_expires(&msg, self.config.register_interval_seconds);
+            let expires = parse_expires(&msg, self.config.register_interval_seconds)?;
             if expires == 0 {
                 // The upstream removed the binding; do not schedule a refresh.
                 self.subscriptions.clear();
@@ -779,9 +784,17 @@ fn extract_challenge(msg: &SipMessage) -> Result<Option<DigestChallenge>, Cascad
     }
 }
 
-fn parse_expires(msg: &SipMessage, default: u32) -> u32 {
-    msg.headers()
-        .get(&HeaderName::Expires)
-        .and_then(|v| v.as_str().trim().parse().ok())
-        .unwrap_or(default)
+fn parse_expires(msg: &SipMessage, default: u32) -> Result<u32, CascadeError> {
+    let Some(value) = msg.headers().get(&HeaderName::Expires) else {
+        return Ok(default);
+    };
+    let trimmed = value.as_str().trim();
+    if trimmed.is_empty() {
+        return Err(CascadeError::MalformedSip(
+            "empty Expires header".to_string(),
+        ));
+    }
+    trimmed
+        .parse::<u32>()
+        .map_err(|_| CascadeError::MalformedSip(format!("non-numeric Expires header: {trimmed}")))
 }
