@@ -600,15 +600,19 @@ fn registration_table_respects_capacity_limit() {
     // table is at capacity.
     let other_request = make_register_request_for_id("34020000001320000002", 1, false, 3600);
 
-    let result = access.process(AccessInput {
-        source: "192.168.1.101:5060".parse().unwrap(),
-        now: 1000,
-        message: other_request,
-    });
-    assert!(matches!(
-        result,
-        Err(cheetah_gb28181_module::AccessError::RegistrationTableFull)
-    ));
+    let outputs = access
+        .process(AccessInput {
+            source: "192.168.1.101:5060".parse().unwrap(),
+            now: 1000,
+            message: other_request,
+        })
+        .unwrap();
+    assert_eq!(outputs.len(), 1);
+    let response = find_response(&outputs);
+    let SipMessage::Response { line, .. } = response else {
+        panic!("expected response");
+    };
+    assert_eq!(line.code, 503);
 }
 
 #[test]
@@ -1062,4 +1066,258 @@ fn register_rejects_malformed_contact_expires_param() {
         &outputs[0],
         AccessOutput::SendResponse(SipMessage::Response { line, .. }) if line.code == 400
     ));
+}
+
+#[test]
+fn register_rejects_missing_device_id_with_400() {
+    let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec())
+        .unwrap()
+        .with_auth_policy(AuthPolicy::ChallengeOptional);
+    let provider = |_device: &DeviceId| None;
+    let mut access = Gb28181Access::new(config, provider).unwrap();
+
+    let request = make_register_request_without_device_id(1, 3600);
+    let outputs = access
+        .process(AccessInput {
+            source: "192.168.1.100:5060".parse().unwrap(),
+            now: 1000,
+            message: request,
+        })
+        .unwrap();
+    assert_eq!(outputs.len(), 1);
+    let response = find_response(&outputs);
+    let SipMessage::Response { line, .. } = response else {
+        panic!("expected response");
+    };
+    assert_eq!(line.code, 400);
+}
+
+#[test]
+fn register_required_rejects_malformed_authorization_with_400() {
+    let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec()).unwrap();
+    let provider = |device: &DeviceId| {
+        if device.as_ref() == DEVICE_ID {
+            Some(SecretString::from(PASSWORD))
+        } else {
+            None
+        }
+    };
+    let mut access = Gb28181Access::new(config, provider).unwrap();
+
+    let mut request = make_request(1, false);
+    request.headers_mut().append(
+        HeaderName::Authorization,
+        HeaderValue::new("Basic dXNlcjpwYXNz"),
+    );
+    let outputs = access
+        .process(AccessInput {
+            source: "192.168.1.100:5060".parse().unwrap(),
+            now: 1000,
+            message: request,
+        })
+        .unwrap();
+    assert_eq!(outputs.len(), 1);
+    let response = find_response(&outputs);
+    let SipMessage::Response { line, .. } = response else {
+        panic!("expected response");
+    };
+    assert_eq!(line.code, 400);
+}
+
+#[test]
+fn register_required_rejects_invalid_credentials_with_401() {
+    let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec()).unwrap();
+    let provider = |device: &DeviceId| {
+        if device.as_ref() == DEVICE_ID {
+            Some(SecretString::from(PASSWORD))
+        } else {
+            None
+        }
+    };
+    let mut access = Gb28181Access::new(config, provider).unwrap();
+
+    let mut request = make_request(1, false);
+    request.headers_mut().append(
+        HeaderName::Authorization,
+        HeaderValue::new(format!(
+            "username=\"{}\", realm=\"{}\", nonce=\"deadbeef\", uri=\"sip:{}@{}\", response=\"0000000000000000000000000000000000000000000000000000000000000000\", algorithm=\"SHA-256\"",
+            DEVICE_ID, REALM, DEVICE_ID, REALM
+        )),
+    );
+    let outputs = access
+        .process(AccessInput {
+            source: "192.168.1.100:5060".parse().unwrap(),
+            now: 1000,
+            message: request,
+        })
+        .unwrap();
+    assert_eq!(outputs.len(), 1);
+    let response = find_response(&outputs);
+    let SipMessage::Response { line, headers, .. } = response else {
+        panic!("expected response");
+    };
+    assert_eq!(line.code, 401);
+    assert!(headers.get(&HeaderName::WwwAuthenticate).is_some());
+}
+
+#[test]
+fn register_required_unknown_device_malformed_authorization_returns_400() {
+    // Parsing the Authorization header must happen before the password lookup
+    // so that malformed authorization is rejected with 400 even for unknown devices.
+    let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec()).unwrap();
+    let provider = |_device: &DeviceId| None;
+    let mut access = Gb28181Access::new(config, provider).unwrap();
+
+    let mut request = make_request(1, false);
+    request.headers_mut().append(
+        HeaderName::Authorization,
+        HeaderValue::new("Basic dXNlcjpwYXNz"),
+    );
+    let outputs = access
+        .process(AccessInput {
+            source: "192.168.1.100:5060".parse().unwrap(),
+            now: 1000,
+            message: request,
+        })
+        .unwrap();
+    assert_eq!(outputs.len(), 1);
+    let response = find_response(&outputs);
+    let SipMessage::Response { line, .. } = response else {
+        panic!("expected response");
+    };
+    assert_eq!(line.code, 400);
+}
+
+#[test]
+fn register_required_rejects_stale_nonce_with_401_stale() {
+    let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec()).unwrap();
+    let provider = |device: &DeviceId| {
+        if device.as_ref() == DEVICE_ID {
+            Some(SecretString::from(PASSWORD))
+        } else {
+            None
+        }
+    };
+    let mut access = Gb28181Access::new(config, provider).unwrap();
+
+    // Generate a nonce signed at timestamp 0. The default nonce TTL is 300,
+    // so validating at now=400 must produce StaleNonce.
+    let ctx = DigestContext::new(REALM, SERVER_SECRET).unwrap();
+    let challenge = ctx.generate_challenge(0).unwrap();
+    let response = compute_response(&challenge.nonce);
+
+    let mut request = make_request(1, false);
+    request.headers_mut().append(
+        HeaderName::Authorization,
+        HeaderValue::new(format!(
+            r##"Digest username="{DEVICE_ID}", realm="{REALM}", nonce="{}", uri="sip:{DEVICE_ID}@{REALM}", response="{response}", cnonce="clientnonce", nc="00000001", qop="auth", algorithm="SHA-256""##,
+            challenge.nonce
+        )),
+    );
+    let outputs = access
+        .process(AccessInput {
+            source: "192.168.1.100:5060".parse().unwrap(),
+            now: 400,
+            message: request,
+        })
+        .unwrap();
+    assert_eq!(outputs.len(), 1);
+    let response = find_response(&outputs);
+    let SipMessage::Response { line, headers, .. } = response else {
+        panic!("expected response");
+    };
+    assert_eq!(line.code, 401);
+    let www_auth = headers
+        .get(&HeaderName::WwwAuthenticate)
+        .expect("WWW-Authenticate")
+        .as_str();
+    assert!(www_auth.contains("stale=true"));
+}
+
+#[test]
+fn register_required_rejects_unknown_algorithm_with_400() {
+    let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec()).unwrap();
+    let provider = |_device: &DeviceId| None;
+    let mut access = Gb28181Access::new(config, provider).unwrap();
+
+    let mut request = make_request(1, false);
+    request.headers_mut().append(
+        HeaderName::Authorization,
+        HeaderValue::new(format!(
+            r##"Digest username="{DEVICE_ID}", realm="{REALM}", nonce="nonce", uri="sip:{DEVICE_ID}@{REALM}", response="ignored", algorithm="UNKNOWN""##
+        )),
+    );
+    let outputs = access
+        .process(AccessInput {
+            source: "192.168.1.100:5060".parse().unwrap(),
+            now: 1000,
+            message: request,
+        })
+        .unwrap();
+    assert_eq!(outputs.len(), 1);
+    let response = find_response(&outputs);
+    let SipMessage::Response { line, .. } = response else {
+        panic!("expected response");
+    };
+    assert_eq!(line.code, 400);
+}
+
+#[test]
+fn register_required_rejects_invalid_qop_with_400() {
+    let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec()).unwrap();
+    let provider = |_device: &DeviceId| None;
+    let mut access = Gb28181Access::new(config, provider).unwrap();
+
+    let mut request = make_request(1, false);
+    request.headers_mut().append(
+        HeaderName::Authorization,
+        HeaderValue::new(format!(
+            r##"Digest username="{DEVICE_ID}", realm="{REALM}", nonce="nonce", uri="sip:{DEVICE_ID}@{REALM}", response="ignored", qop="bad-qop""##
+        )),
+    );
+    let outputs = access
+        .process(AccessInput {
+            source: "192.168.1.100:5060".parse().unwrap(),
+            now: 1000,
+            message: request,
+        })
+        .unwrap();
+    assert_eq!(outputs.len(), 1);
+    let response = find_response(&outputs);
+    let SipMessage::Response { line, .. } = response else {
+        panic!("expected response");
+    };
+    assert_eq!(line.code, 400);
+}
+
+fn make_register_request_without_device_id(cseq: u32, expires: u32) -> SipMessage {
+    let mut headers = SipHeaders::new();
+    headers.append(
+        HeaderName::Via,
+        HeaderValue::new("SIP/2.0/UDP 192.168.1.100:5060;branch=z9hG4bKabc"),
+    );
+    headers.append(
+        HeaderName::From,
+        HeaderValue::new("<sip:example.com>;tag=fromtag"),
+    );
+    headers.append(HeaderName::To, HeaderValue::new("<sip:example.com>"));
+    headers.append(HeaderName::CallId, HeaderValue::new("call-id-no-device"));
+    headers.append(
+        HeaderName::CSeq,
+        HeaderValue::new(format!("{cseq} REGISTER")),
+    );
+    headers.append(
+        HeaderName::Contact,
+        HeaderValue::new(format!(
+            "<sip:{DEVICE_ID}@192.168.1.100:5060>;expires={expires}"
+        )),
+    );
+    headers.append(HeaderName::UserAgent, HeaderValue::new("IPC"));
+    headers.append(HeaderName::ContentLength, HeaderValue::new("0"));
+
+    SipMessage::Request {
+        line: RequestLine::new(Method::Register, SipUri::parse("sip:example.com").unwrap()),
+        headers,
+        body: Vec::new(),
+    }
 }
