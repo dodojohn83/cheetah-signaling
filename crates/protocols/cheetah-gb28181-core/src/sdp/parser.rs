@@ -429,17 +429,60 @@ fn parse_rtpmap(value: &str) -> Result<RtpMap, SdpError> {
         .to_string();
     let rest = parts
         .next()
-        .ok_or_else(|| SdpError::Malformed(format!("invalid rtpmap: {value}")))?;
-    let mut encoding_parts = rest.split('/');
-    let encoding = encoding_parts.next().unwrap_or("").to_string();
-    let clock = encoding_parts.next().unwrap_or("").to_string();
-    let params = encoding_parts.next().map(|s| s.to_string());
+        .ok_or_else(|| SdpError::Malformed(format!("invalid rtpmap: {value}")))?
+        .trim_start();
+    // encoding/clock are required; the remainder (if any) is the optional
+    // parameters field, which is opaque and may contain slashes (RFC 4566).
+    let mut parts = rest.splitn(3, '/');
+    let encoding = parts
+        .next()
+        .ok_or_else(|| SdpError::Malformed(format!("rtpmap missing encoding: {value}")))?;
+    if invalid_rtpmap_field(encoding) {
+        return Err(SdpError::Malformed(format!(
+            "rtpmap missing or invalid encoding: {value}"
+        )));
+    }
+    let clock = parts
+        .next()
+        .ok_or_else(|| SdpError::Malformed(format!("rtpmap missing clock rate: {value}")))?;
+    if invalid_rtpmap_field(clock) {
+        return Err(SdpError::Malformed(format!(
+            "rtpmap missing or invalid clock rate: {value}"
+        )));
+    }
+    if clock.parse::<u32>().is_err() {
+        return Err(SdpError::Malformed(format!(
+            "rtpmap invalid clock rate: {clock}"
+        )));
+    }
+    let params = parts.next().and_then(|s| {
+        if s.is_empty() {
+            None
+        } else if invalid_rtpmap_field(s) {
+            Some(Err(()))
+        } else {
+            Some(Ok(s.to_string()))
+        }
+    });
+    let params = match params {
+        None => None,
+        Some(Ok(s)) => Some(s),
+        Some(Err(())) => {
+            return Err(SdpError::Malformed(format!(
+                "rtpmap invalid parameters: {value}"
+            )));
+        }
+    };
     Ok(RtpMap {
         pt,
-        encoding,
-        clock,
+        encoding: encoding.to_string(),
+        clock: clock.to_string(),
         params,
     })
+}
+
+fn invalid_rtpmap_field(s: &str) -> bool {
+    s.is_empty() || s.chars().any(char::is_whitespace)
 }
 
 fn parse_fmtp(value: &str) -> Result<(String, String), SdpError> {
@@ -527,6 +570,82 @@ mod tests {
         for i in 0..SdpParserConfig::test().max_lines + 1 {
             write!(&mut body, "a=x:{i}\r\n").unwrap();
         }
+        assert!(parse_sdp(body.as_bytes(), &SdpParserConfig::test()).is_err());
+    }
+
+    #[test]
+    fn rejects_rtpmap_missing_encoding() {
+        let body = "v=0\r\n\
+                    o=- 0 0 IN IP4 0.0.0.0\r\n\
+                    s=Play\r\n\
+                    t=0 0\r\n\
+                    m=video 5000 TCP/RTP/AVP 96\r\n\
+                    a=rtpmap:96 /90000\r\n";
+        assert!(parse_sdp(body.as_bytes(), &SdpParserConfig::test()).is_err());
+    }
+
+    #[test]
+    fn rejects_rtpmap_missing_clock() {
+        let body = "v=0\r\n\
+                    o=- 0 0 IN IP4 0.0.0.0\r\n\
+                    s=Play\r\n\
+                    t=0 0\r\n\
+                    m=video 5000 TCP/RTP/AVP 96\r\n\
+                    a=rtpmap:96 PS\r\n";
+        assert!(parse_sdp(body.as_bytes(), &SdpParserConfig::test()).is_err());
+    }
+
+    #[test]
+    fn accepts_rtpmap_with_extra_slashes_in_params() {
+        // The third slash-separated field is the optional encoding parameters;
+        // per RFC 4566 this is an opaque trailing field and may itself contain
+        // slashes, so extra slashes are preserved rather than rejected.
+        let body = "v=0\r\n\
+                    o=- 0 0 IN IP4 0.0.0.0\r\n\
+                    s=Play\r\n\
+                    t=0 0\r\n\
+                    m=video 5000 TCP/RTP/AVP 96\r\n\
+                    a=rtpmap:96 PS/90000/extra/ignored\r\n";
+        let session = parse_sdp(body.as_bytes(), &SdpParserConfig::test()).unwrap();
+        let rtpmap = session.media[0].rtpmap_for("96").unwrap();
+        assert_eq!(rtpmap.encoding, "PS");
+        assert_eq!(rtpmap.clock, "90000");
+        assert_eq!(rtpmap.params.as_deref(), Some("extra/ignored"));
+    }
+
+    #[test]
+    fn accepts_rtpmap_with_multiple_spaces_after_payload_type() {
+        let body = "v=0\r\n\
+                    o=- 0 0 IN IP4 0.0.0.0\r\n\
+                    s=Play\r\n\
+                    t=0 0\r\n\
+                    m=video 5000 TCP/RTP/AVP 96\r\n\
+                    a=rtpmap:96  PS/90000\r\n";
+        let session = parse_sdp(body.as_bytes(), &SdpParserConfig::test()).unwrap();
+        let rtpmap = session.media[0].rtpmap_for("96").unwrap();
+        assert_eq!(rtpmap.encoding, "PS");
+        assert_eq!(rtpmap.clock, "90000");
+    }
+
+    #[test]
+    fn rejects_rtpmap_whitespace_around_slashes() {
+        let body = "v=0\r\n\
+                    o=- 0 0 IN IP4 0.0.0.0\r\n\
+                    s=Play\r\n\
+                    t=0 0\r\n\
+                    m=video 5000 TCP/RTP/AVP 96\r\n\
+                    a=rtpmap:96 PS / 90000\r\n";
+        assert!(parse_sdp(body.as_bytes(), &SdpParserConfig::test()).is_err());
+    }
+
+    #[test]
+    fn rejects_rtpmap_non_numeric_clock() {
+        let body = "v=0\r\n\
+                    o=- 0 0 IN IP4 0.0.0.0\r\n\
+                    s=Play\r\n\
+                    t=0 0\r\n\
+                    m=video 5000 TCP/RTP/AVP 96\r\n\
+                    a=rtpmap:96 PS/not-a-number\r\n";
         assert!(parse_sdp(body.as_bytes(), &SdpParserConfig::test()).is_err());
     }
 }
