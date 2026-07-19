@@ -162,7 +162,11 @@ impl<P: CredentialProvider> Gb28181Access<P> {
             if self.config.auth_policy() == AuthPolicy::Required {
                 let digest = match parse_authorization(auth_header.as_str()) {
                     Ok(d) => d,
-                    Err(cheetah_gb28181_core::DigestError::Malformed(_)) => {
+                    Err(
+                        cheetah_gb28181_core::DigestError::Malformed(_)
+                        | cheetah_gb28181_core::DigestError::UnknownAlgorithm
+                        | cheetah_gb28181_core::DigestError::InvalidQop,
+                    ) => {
                         return Ok(self.bad_request_response(&message));
                     }
                     Err(_) => return self.authentication_failure_response(&message, now, false),

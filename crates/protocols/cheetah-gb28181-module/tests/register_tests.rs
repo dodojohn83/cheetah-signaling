@@ -1230,6 +1230,62 @@ fn register_required_rejects_stale_nonce_with_401_stale() {
     assert!(www_auth.contains("stale=true"));
 }
 
+#[test]
+fn register_required_rejects_unknown_algorithm_with_400() {
+    let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec()).unwrap();
+    let provider = |_device: &DeviceId| None;
+    let mut access = Gb28181Access::new(config, provider).unwrap();
+
+    let mut request = make_request(1, false);
+    request.headers_mut().append(
+        HeaderName::Authorization,
+        HeaderValue::new(format!(
+            r##"Digest username="{DEVICE_ID}", realm="{REALM}", nonce="nonce", uri="sip:{DEVICE_ID}@{REALM}", response="ignored", algorithm="UNKNOWN""##
+        )),
+    );
+    let outputs = access
+        .process(AccessInput {
+            source: "192.168.1.100:5060".parse().unwrap(),
+            now: 1000,
+            message: request,
+        })
+        .unwrap();
+    assert_eq!(outputs.len(), 1);
+    let response = find_response(&outputs);
+    let SipMessage::Response { line, .. } = response else {
+        panic!("expected response");
+    };
+    assert_eq!(line.code, 400);
+}
+
+#[test]
+fn register_required_rejects_invalid_qop_with_400() {
+    let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec()).unwrap();
+    let provider = |_device: &DeviceId| None;
+    let mut access = Gb28181Access::new(config, provider).unwrap();
+
+    let mut request = make_request(1, false);
+    request.headers_mut().append(
+        HeaderName::Authorization,
+        HeaderValue::new(format!(
+            r##"Digest username="{DEVICE_ID}", realm="{REALM}", nonce="nonce", uri="sip:{DEVICE_ID}@{REALM}", response="ignored", qop="bad-qop""##
+        )),
+    );
+    let outputs = access
+        .process(AccessInput {
+            source: "192.168.1.100:5060".parse().unwrap(),
+            now: 1000,
+            message: request,
+        })
+        .unwrap();
+    assert_eq!(outputs.len(), 1);
+    let response = find_response(&outputs);
+    let SipMessage::Response { line, .. } = response else {
+        panic!("expected response");
+    };
+    assert_eq!(line.code, 400);
+}
+
 fn make_register_request_without_device_id(cseq: u32, expires: u32) -> SipMessage {
     let mut headers = SipHeaders::new();
     headers.append(
