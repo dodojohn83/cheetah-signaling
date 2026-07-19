@@ -1287,7 +1287,9 @@ impl crate::MediaPort for InMemoryMediaPort {
         let page_size = page.page_size as usize;
         let start = match &page.cursor {
             None => 0,
-            Some(value) => value.parse::<usize>().unwrap_or(0),
+            Some(value) => value
+                .parse::<usize>()
+                .map_err(|_| DomainError::invalid_argument("invalid page cursor"))?,
         };
         let start = start.min(all_items.len());
         let end = (start + page_size).min(all_items.len());
@@ -1372,5 +1374,32 @@ pub fn media_session_resource_ref(
         tenant_id,
         kind: ResourceKind::MediaSession,
         id: ResourceId::MediaSession(media_session_id),
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+    use crate::MediaPort;
+
+    #[test]
+    fn list_sessions_rejects_invalid_cursor() {
+        let id_generator = InMemoryIdGenerator::new();
+        let port = InMemoryMediaPort::new(Arc::new(id_generator));
+        let tenant_id = TenantId::from_uuid(uuid::Uuid::nil());
+        let node_id = NodeId::from_uuid(uuid::Uuid::nil());
+
+        let result = futures::executor::block_on(port.list_sessions(
+            tenant_id,
+            node_id,
+            PageRequest::new(10).unwrap().with_cursor("not-a-number"),
+            &InMemoryClock::new(),
+        ));
+        assert!(
+            matches!(result, Err(DomainError::InvalidArgument { .. })),
+            "invalid cursor must be rejected, got {:?}",
+            result
+        );
     }
 }
