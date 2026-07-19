@@ -28,6 +28,8 @@ pub struct RequestMetrics {
     pub responses_4xx: AtomicU64,
     /// Number of server error HTTP responses (5xx family).
     pub responses_5xx: AtomicU64,
+    /// Number of GB28181 events dropped because the application sink queue was full.
+    pub gb28181_events_dropped_total: AtomicU64,
     /// Sum of response durations in nanoseconds.
     response_duration_sum_ns: AtomicU64,
     /// Cumulative response-duration histogram buckets, ending with `+Inf`.
@@ -43,6 +45,7 @@ impl Default for RequestMetrics {
             responses_2xx: AtomicU64::new(0),
             responses_4xx: AtomicU64::new(0),
             responses_5xx: AtomicU64::new(0),
+            gb28181_events_dropped_total: AtomicU64::new(0),
             response_duration_sum_ns: AtomicU64::new(0),
             response_duration_buckets: (0..bucket_count).map(|_| AtomicU64::new(0)).collect(),
         }
@@ -65,6 +68,12 @@ impl RequestMetrics {
         } else if status.is_success() {
             self.responses_2xx.fetch_add(1, Ordering::Relaxed);
         }
+    }
+
+    /// Records a GB28181 event dropped due to a full sink queue.
+    pub fn record_gb28181_event_dropped(&self) {
+        self.gb28181_events_dropped_total
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     /// Records the duration of a completed response for the histogram.
@@ -99,6 +108,7 @@ pub fn metrics_response(metrics: Arc<RequestMetrics>) -> Response {
     let responses_2xx = metrics.responses_2xx.load(Ordering::Relaxed);
     let responses_4xx = metrics.responses_4xx.load(Ordering::Relaxed);
     let responses_5xx = metrics.responses_5xx.load(Ordering::Relaxed);
+    let gb28181_events_dropped_total = metrics.gb28181_events_dropped_total.load(Ordering::Relaxed);
 
     let sum_ns = metrics.response_duration_sum_ns.load(Ordering::Relaxed);
     let sum_seconds = (sum_ns as f64) / 1_000_000_000.0;
@@ -114,6 +124,8 @@ pub fn metrics_response(metrics: Arc<RequestMetrics>) -> Response {
          cheetah_http_responses_4xx_total {responses_4xx}\n\
          # TYPE cheetah_http_responses_5xx_total counter\n\
          cheetah_http_responses_5xx_total {responses_5xx}\n\
+         # TYPE cheetah_gb28181_events_dropped_total counter\n\
+         cheetah_gb28181_events_dropped_total {gb28181_events_dropped_total}\n\
          # TYPE cheetah_http_response_duration_seconds histogram\n"
     );
 

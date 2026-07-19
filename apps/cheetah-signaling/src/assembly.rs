@@ -3,14 +3,13 @@
 //! Startup order (per AGENTS.md): config/secret → schema check → bus →
 //! repository → ownership → media → protocol → public listener → ready.
 
+use crate::gb_event_sink;
 use cheetah_cluster_ownership::lease::CachingDeviceOwnerResolver;
 use cheetah_domain::ports::{DeviceOwnerResolver, MediaPort};
 use cheetah_domain::{DomainEvent, EventPublisher};
 use cheetah_gb28181_driver_tokio::Gb28181UdpDriver;
 use cheetah_gb28181_driver_tokio::config::DriverConfig as GbDriverConfig;
-use cheetah_gb28181_driver_tokio::sink::EventSink;
 use cheetah_gb28181_module::config::{AuthPolicy, Gb28181DomainConfig};
-use cheetah_gb28181_module::events::Gb28181Event;
 use cheetah_gb28181_module::ports::CredentialProvider;
 use cheetah_gb28181_module::types::DeviceId as GbDeviceId;
 use cheetah_http_api::state::{ApiConfig, ApiServer, ApiState};
@@ -28,7 +27,7 @@ use cheetah_signal_application::OutboxRelay;
 use cheetah_signal_types::config::{MessagingBackend, SignalConfig, StorageBackend};
 use cheetah_signal_types::{
     ChannelId, Clock, DeviceId, DurationMs, Event, IdGenerator, MediaBindingId, MediaSessionId,
-    NodeId, SecretStore, UtcTimestamp,
+    NodeId, SecretStore, TenantId, UtcTimestamp,
 };
 use cheetah_storage_api::Storage;
 use cheetah_storage_sqlite::SqliteStorage;
@@ -218,16 +217,6 @@ impl EventBusPublisher {
 impl EventPublisher for EventBusPublisher {
     async fn publish(&self, event: &Event<DomainEvent>) -> cheetah_domain::Result<()> {
         publish_domain_event(&*self.bus, event).await
-    }
-}
-
-/// Logs GB28181 domain events without blocking the UDP loop.
-#[derive(Debug, Default)]
-struct TracingGbEventSink;
-
-impl EventSink for TracingGbEventSink {
-    fn emit(&self, event: Gb28181Event) {
-        info!(?event, "gb28181 domain event");
     }
 }
 
@@ -449,6 +438,28 @@ pub async fn start(
         info!("outbox relay worker started");
     }
 
+    // Shared application state is constructed before protocol adapters so that
+    // inbound protocol events can be routed through application services.
+    let api_config = ApiConfig::from(&config);
+    let mut state = ApiState::new(
+        api_config,
+        storage.clone(),
+        clock,
+        id_generator,
+        bus.clone(),
+        owner_resolver,
+        media_port,
+    );
+    state.cancel = cancel.clone();
+
+    let default_tenant_id = config
+        .gb28181
+        .default_tenant_id
+        .as_ref()
+        .map(|s| s.parse::<TenantId>())
+        .transpose()
+        .map_err(|e| format!("gb28181.default_tenant_id is not a valid UUID: {e}"))?;
+
     // GB28181 UDP access listener.
     let mut gb28181_addr = None;
     if config.gb28181.sip_port > 0 {
@@ -475,7 +486,16 @@ pub async fn start(
 
         let bind = SocketAddr::from(([0, 0, 0, 0], config.gb28181.sip_port));
         let driver_config = GbDriverConfig::new(bind);
-        let sink: Arc<dyn EventSink> = Arc::new(TracingGbEventSink);
+        let (sink, gb_event_handle) = gb_event_sink::spawn(
+            state.clone(),
+            node_id,
+            default_tenant_id,
+            config.runtime.queue_depth,
+            config.gb28181.catalog_fragment_max_entries as usize,
+            config.gb28181.catalog_fragment_max_items as usize,
+            cancel.child_token(),
+        );
+        workers.push(gb_event_handle);
         let (driver, local) =
             Gb28181UdpDriver::bind(driver_config, domain_config, credential_provider, sink)
                 .await
@@ -498,18 +518,6 @@ pub async fn start(
     } else {
         warn!("gb28181.sip_port is 0; protocol UDP listener not started");
     }
-
-    let api_config = ApiConfig::from(&config);
-    let mut state = ApiState::new(
-        api_config,
-        storage.clone(),
-        clock,
-        id_generator,
-        bus.clone(),
-        owner_resolver,
-        media_port,
-    );
-    state.cancel = cancel.clone();
 
     let http = ApiServer::start(state).await?;
     let http_addr = http.local_addr;
