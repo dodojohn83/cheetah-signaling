@@ -111,8 +111,6 @@ pub(crate) async fn save_webhook_config(
 ) -> Result<()> {
     let new_revision = i64::try_from(config.revision().0)
         .map_err(|_| DomainError::internal("webhook config revision overflow"))?;
-    let previous_revision = i64::try_from(config.revision().0.saturating_sub(1))
-        .map_err(|_| DomainError::internal("webhook config previous revision overflow"))?;
     let data = Json(config.clone());
     let event_types = Json(config.event_types().to_vec());
 
@@ -132,7 +130,7 @@ pub(crate) async fn save_webhook_config(
             data = EXCLUDED.data, \
             schema_version = EXCLUDED.schema_version \
          WHERE webhook_configs.tenant_id = EXCLUDED.tenant_id \
-            AND webhook_configs.revision = $10",
+            AND webhook_configs.revision = EXCLUDED.revision - 1",
     )
     .bind(config.tenant_id().as_uuid())
     .bind(config.webhook_id().as_uuid())
@@ -143,7 +141,6 @@ pub(crate) async fn save_webhook_config(
     .bind(new_revision)
     .bind(config.updated_at().as_offset())
     .bind(data)
-    .bind(previous_revision)
     .execute(&mut *conn)
     .await
     .map_err(crate::error::sqlx_to_domain)?;
