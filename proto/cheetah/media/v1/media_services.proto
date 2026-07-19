@@ -4,6 +4,7 @@ package cheetah.media.v1;
 
 import "cheetah/media/v1/media.proto";
 import "cheetah/media/v1/media_context.proto";
+import "cheetah/media/v1/media_resource.proto";
 import "google/protobuf/timestamp.proto";
 
 option go_package = "github.com/dodojohn83/cheetah-signaling/gen/go/cheetah/media/v1;mediav1";
@@ -48,6 +49,7 @@ message GetMediaResponse {
   MediaSessionRef session = 1;
   string state = 2;
   MediaNodeInfo node = 3;
+  MediaResourceState resource_state = 4;
 }
 
 message IsMediaOnlineRequest {
@@ -323,6 +325,11 @@ message PlaybackSession {
   string status = 4;
   int64 position_ms = 5;
   int64 duration_ms = 6;
+
+  // Resource reference returned by the media node.
+  MediaHandle handle = 7;
+  MediaKey media_key = 8;
+  MediaResourceState resource_state = 9;
 }
 
 message OpenPlaybackRequest {

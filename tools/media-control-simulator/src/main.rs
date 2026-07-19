@@ -282,6 +282,7 @@ async fn handle_media_command(
                 remote_sdp: req.remote_sdp.clone(),
                 local_sdp: local_sdp.clone(),
                 status: "negotiated".to_string(),
+                ..Default::default()
             };
             let sim = SimSession {
                 status: "negotiated".to_string(),
@@ -321,6 +322,7 @@ async fn handle_media_command(
                 remote_sdp: req.remote_sdp.clone(),
                 local_sdp: req.local_sdp.clone(),
                 status: "active".to_string(),
+                ..Default::default()
             };
             state.emit_event(make_event(media::MediaEvent {
                 event: Some(media::media_event::Event::StreamStarted(rtp)),
@@ -364,6 +366,7 @@ async fn handle_media_command(
                 storage_path: req.storage_path.clone(),
                 duration_ms: 0,
                 status: "recording".to_string(),
+                ..Default::default()
             };
             state.emit_event(make_event(media::MediaEvent {
                 event: Some(media::media_event::Event::RecordStarted(session)),
@@ -377,6 +380,7 @@ async fn handle_media_command(
                 storage_path: "/tmp".to_string(),
                 duration_ms: 1000,
                 status: "stopped".to_string(),
+                ..Default::default()
             };
             state.emit_event(make_event(media::MediaEvent {
                 event: Some(media::media_event::Event::RecordStopped(session)),
@@ -389,6 +393,7 @@ async fn handle_media_command(
                 media_session_id: req.media_session_id.clone(),
                 image_url: format!("http://127.0.0.1:8080/snapshots/{}", req.snapshot_id),
                 created_at: now_timestamp(),
+                ..Default::default()
             };
             state.emit_event(make_event(media::MediaEvent {
                 event: Some(media::media_event::Event::SnapshotTaken(snapshot)),
@@ -436,6 +441,7 @@ impl MediaQuery for State {
                 media_session_id: result.media_session_id.clone(),
                 image_url: "http://127.0.0.1:8080/snapshots/sim-snapshot-0".to_string(),
                 created_at: now_timestamp(),
+                ..Default::default()
             });
         }
         Ok(Response::new(QueryResponse {
