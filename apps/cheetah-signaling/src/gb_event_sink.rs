@@ -127,9 +127,10 @@ async fn process_event(
             device_id,
             sn,
             sum_num,
+            num,
             items,
             ..
-        } => match catalog_buffer.accumulate(tenant_id, &device_id, &sn, sum_num, items) {
+        } => match catalog_buffer.accumulate(tenant_id, &device_id, &sn, sum_num, num, items) {
             Some(merged) => replace_catalog(state, &context, tenant_id, &device_id, &merged).await,
             None => Ok(()),
         },
@@ -327,8 +328,32 @@ struct CatalogKey {
 struct PartialCatalog {
     /// Accumulated catalog items keyed by channel external id (`device_id`).
     items: HashMap<String, GbCatalogItem>,
+    /// Declared total number of items across all fragments (`SumNum`).
     expected: u32,
+    /// Sum of declared `Num` counts received for this catalog. Completion is
+    /// triggered when this reaches `expected`, even if some malformed items
+    /// were dropped, so that a camera's channel list is not stalled by bad
+    /// entries.
+    received_num: u32,
     last_seen: Instant,
+}
+
+impl PartialCatalog {
+    fn is_complete(&self) -> bool {
+        if self.received_num >= self.expected || self.items.len() >= self.expected as usize {
+            if self.items.len() < self.expected as usize {
+                warn!(
+                    expected = self.expected,
+                    received_num = self.received_num,
+                    distinct = self.items.len(),
+                    "gb28181 catalog completed with fewer distinct channels than declared; some items may have been malformed"
+                );
+            }
+            true
+        } else {
+            false
+        }
+    }
 }
 
 impl CatalogBuffer {
@@ -346,6 +371,7 @@ impl CatalogBuffer {
         device_id: &GbDeviceId,
         sn: &str,
         expected: u32,
+        num: u32,
         items: Vec<GbCatalogItem>,
     ) -> Option<Vec<GbCatalogItem>> {
         // De-duplicate within the incoming fragment before any size checks.
@@ -402,9 +428,10 @@ impl CatalogBuffer {
                 self.entries.remove(&key);
                 return None;
             }
+            partial.received_num = partial.received_num.saturating_add(num);
             partial.items.extend(batch);
             partial.last_seen = Instant::now();
-            if partial.items.len() >= partial.expected as usize {
+            if partial.is_complete() {
                 return self
                     .entries
                     .remove(&key)
@@ -424,13 +451,13 @@ impl CatalogBuffer {
             return None;
         }
 
-        let complete = batch.len() >= expected_usize;
         let partial = PartialCatalog {
             items: batch,
             expected,
+            received_num: num,
             last_seen: Instant::now(),
         };
-        if complete {
+        if partial.is_complete() {
             return Some(partial.items.into_values().collect());
         }
         self.entries.insert(key, partial);
