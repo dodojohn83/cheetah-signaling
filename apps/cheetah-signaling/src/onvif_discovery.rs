@@ -124,22 +124,36 @@ async fn run_discovery_sweep(
     let semaphore = Arc::new(Semaphore::new(max_concurrent as usize));
     let mut set = JoinSet::new();
 
+    // Each discovered device is provisioned at most once per sweep. Its XAddrs
+    // are tried sequentially so cameras advertising multiple addresses do not
+    // collide on the unique device external-id index.
     for m in result.matches {
-        let endpoint_ref = m.endpoint_reference.0;
-        for xaddr in m.x_addrs.0 {
-            let permit = semaphore.clone();
-            let driver = driver.clone();
-            let state = state.clone();
-            let endpoint_ref = endpoint_ref.clone();
-            set.spawn(async move {
-                let _permit = permit.acquire().await;
-                if let Err(e) =
-                    provision_device(state, node_id, tenant_id, driver, &endpoint_ref, &xaddr).await
+        let endpoint_ref = m.endpoint_reference.0.to_string();
+        let xaddrs = m.x_addrs.0;
+        let permit = semaphore.clone();
+        let driver = driver.clone();
+        let state = state.clone();
+        set.spawn(async move {
+            let _permit = permit.acquire().await;
+            for xaddr in xaddrs {
+                match provision_device(
+                    state.clone(),
+                    node_id,
+                    tenant_id,
+                    driver.clone(),
+                    &endpoint_ref,
+                    &xaddr,
+                )
+                .await
                 {
-                    warn!(xaddr = %xaddr, error = %e, "onvif device provisioning failed");
+                    Ok(()) => return,
+                    Err(e) => {
+                        warn!(xaddr = %xaddr, error = %e, "onvif xaddr provisioning attempt failed");
+                    }
                 }
-            });
-        }
+            }
+            warn!(endpoint_ref = %endpoint_ref, "all onvif xaddrs failed for device");
+        });
     }
 
     while let Some(res) = set.join_next().await {
