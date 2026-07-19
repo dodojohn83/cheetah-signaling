@@ -44,5 +44,5 @@ Run `scripts/audit_002_registry.py` to verify:
 
 1. The number of checkboxes in this registry matches the source files.
 2. Every `002-<chapter>-<ordinal>` is unique and sequential.
-3. The status breakdown equals `Checked + Unchecked + Superseded`.
+3. The status breakdown equals `Checked + Unchecked`.
 

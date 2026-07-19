@@ -138,7 +138,7 @@ def write_outputs(registry):
     lines.append("Run `scripts/audit_002_registry.py` to verify:\n\n")
     lines.append("1. The number of checkboxes in this registry matches the source files.\n")
     lines.append("2. Every `002-<chapter>-<ordinal>` is unique and sequential.\n")
-    lines.append("3. The status breakdown equals `Checked + Unchecked + Superseded`.\n\n")
+    lines.append("3. The status breakdown equals `Checked + Unchecked`.\n\n")
 
     OUT_MD.write_text("".join(lines), encoding="utf-8")
 
