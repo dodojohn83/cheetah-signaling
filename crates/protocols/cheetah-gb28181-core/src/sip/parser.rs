@@ -292,15 +292,19 @@ impl SipParser {
                         }
                     }
                     None => {
-                        if self.config.datagram_mode {
-                            self.buffer.len().saturating_sub(consumed)
-                        } else {
+                        if !self.config.datagram_mode {
                             return Some(Err(SipError::new(
                                 SipErrorKind::InvalidFraming,
                                 Some(consumed),
                                 "Content-Length is required for stream framing",
                             )));
                         }
+                        let inferred = self.buffer.len().saturating_sub(consumed);
+                        headers.append(
+                            HeaderName::ContentLength,
+                            HeaderValue::new(inferred.to_string()),
+                        );
+                        inferred
                     }
                 };
                 if content_length > self.config.max_body_bytes {
