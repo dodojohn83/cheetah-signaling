@@ -16,19 +16,52 @@ use cheetah_signal_types::config::OnvifConfig;
 use secrecy::SecretString;
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::fmt;
+use std::sync::Mutex;
 use std::time::Duration;
 use tracing::{debug, warn};
 
 const PROTOCOL: &str = "onvif";
 
 /// Tokio-backed ONVIF protocol driver.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct OnvifTokioProtocolDriver;
+pub struct OnvifTokioProtocolDriver {
+    // Shared driver instance built lazily from the supplied plugin context.
+    // Reusing the same `OnvifHttpDriver` preserves the underlying reqwest
+    // connection pool and enforces the configured concurrency limit.
+    driver: Mutex<Option<OnvifHttpDriver>>,
+}
+
+impl fmt::Debug for OnvifTokioProtocolDriver {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OnvifTokioProtocolDriver").finish_non_exhaustive()
+    }
+}
 
 impl OnvifTokioProtocolDriver {
     /// Creates a new driver instance.
     pub fn new() -> Self {
-        Self
+        Self {
+            driver: Mutex::new(None),
+        }
+    }
+
+    fn driver(&self, ctx: &dyn DriverContext) -> Result<OnvifHttpDriver, PluginError> {
+        let mut guard = self
+            .driver
+            .lock()
+            .map_err(|e| PluginError::Driver(format!("onvif driver lock poisoned: {e}")))?;
+        if let Some(driver) = guard.as_ref() {
+            return Ok(driver.clone());
+        }
+        let driver = build_driver(ctx)?;
+        let _ = guard.insert(driver.clone());
+        Ok(driver)
+    }
+}
+
+impl Default for OnvifTokioProtocolDriver {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -39,8 +72,8 @@ impl ProtocolDriver for OnvifTokioProtocolDriver {
         ctx: &dyn DriverContext,
         _timeout: DurationMs,
     ) -> Result<(), PluginError> {
-        // Validate that the supplied configuration can build a driver.
-        let _driver = build_driver(ctx)?;
+        // Validate that the supplied configuration can build a driver and cache it.
+        let _driver = self.driver(ctx)?;
         debug!("onvif tokio driver started");
         Ok(())
     }
@@ -67,7 +100,7 @@ impl ProtocolDriver for OnvifTokioProtocolDriver {
         command: DriverCommand,
         timeout: DurationMs,
     ) -> Result<(), PluginError> {
-        let driver = build_driver(ctx)?;
+        let driver = self.driver(ctx)?;
         let timeout = effective_timeout(timeout, &driver);
         dispatch_command(&driver, &command, timeout).await
     }
@@ -78,7 +111,7 @@ impl ProtocolDriver for OnvifTokioProtocolDriver {
         target: &str,
         timeout: DurationMs,
     ) -> Result<CapabilityDescriptor, PluginError> {
-        let driver = build_driver(ctx)?;
+        let driver = self.driver(ctx)?;
         let timeout = effective_timeout(timeout, &driver);
         driver
             .get_system_date_and_time(target, timeout)
@@ -96,7 +129,7 @@ impl ProtocolDriver for OnvifTokioProtocolDriver {
         ctx: &dyn DriverContext,
         _timeout: DurationMs,
     ) -> Result<HealthReport, PluginError> {
-        match build_driver(ctx) {
+        match self.driver(ctx) {
             Ok(_) => Ok(HealthReport {
                 status: HealthStatus::Healthy,
                 message: "ONVIF Tokio driver config valid".to_string(),
