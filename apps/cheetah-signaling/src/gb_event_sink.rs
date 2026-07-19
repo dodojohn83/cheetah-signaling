@@ -10,6 +10,7 @@ use cheetah_gb28181_driver_tokio::sink::EventSink;
 use cheetah_gb28181_module::DeviceId as GbDeviceId;
 use cheetah_gb28181_module::Gb28181Event;
 use cheetah_gb28181_module::xml::CatalogItem as GbCatalogItem;
+use cheetah_http_api::metrics::RequestMetrics;
 use cheetah_http_api::state::ApiState;
 use cheetah_signal_application::{
     ChannelDescriptor, MarkDeviceOfflineRequest, MarkDeviceOnlineRequest, RegisterDeviceRequest,
@@ -31,11 +32,13 @@ use uuid::Uuid;
 #[derive(Clone, Debug)]
 pub struct GbApplicationEventSink {
     tx: mpsc::Sender<Gb28181Event>,
+    metrics: Arc<RequestMetrics>,
 }
 
 impl EventSink for GbApplicationEventSink {
     fn emit(&self, event: Gb28181Event) {
         if let Err(e) = self.tx.try_send(event) {
+            self.metrics.record_gb28181_event_dropped();
             warn!(error = %e, "gb28181 event sink full; dropping event");
         }
     }
@@ -55,7 +58,8 @@ pub fn spawn(
 ) -> (Arc<dyn EventSink>, tokio::task::JoinHandle<()>) {
     let queue_depth = queue_depth.max(1);
     let (tx, mut rx) = mpsc::channel(queue_depth);
-    let sink = Arc::new(GbApplicationEventSink { tx }) as Arc<dyn EventSink>;
+    let metrics = state.metrics.clone();
+    let sink = Arc::new(GbApplicationEventSink { tx, metrics }) as Arc<dyn EventSink>;
     let mut catalog_buffer = CatalogBuffer::new(catalog_max_entries, catalog_max_items);
     let mut cleanup = tokio::time::interval(CATALOG_CLEANUP_INTERVAL);
     cleanup.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -576,21 +580,29 @@ async fn update_device_info(
     metadata: BTreeMap<String, String>,
 ) -> Result<(), SignalError> {
     let external_id = device_id.as_ref();
-    if let Some(internal_id) = resolve_device_id(state, tenant_id, external_id).await {
-        let mut uow = state.storage.begin().await.map_err(storage_error)?;
-        let _ = state
-            .device_service
-            .update_device_capabilities(
-                context,
-                &mut *uow,
-                internal_id,
-                UpdateDeviceCapabilitiesRequest {
-                    capabilities: None,
-                    metadata: Some(metadata),
-                },
-            )
-            .await?;
+    let device = match resolve_device(state, tenant_id, external_id).await {
+        Some(d) => d,
+        None => return Ok(()),
+    };
+
+    let mut merged = device.metadata().clone();
+    for (k, v) in metadata {
+        merged.insert(k, v);
     }
+
+    let mut uow = state.storage.begin().await.map_err(storage_error)?;
+    let _ = state
+        .device_service
+        .update_device_capabilities(
+            context,
+            &mut *uow,
+            device.device_id(),
+            UpdateDeviceCapabilitiesRequest {
+                capabilities: None,
+                metadata: Some(merged),
+            },
+        )
+        .await?;
     Ok(())
 }
 
