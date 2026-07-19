@@ -3,6 +3,7 @@
 
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -10,30 +11,33 @@ REGISTRY_PATH = Path("target/002_checkbox_registry.json")
 SOURCE_DIR = Path("dev-docs/002_vibe_coding_plan")
 
 
+def ensure_registry():
+    if not REGISTRY_PATH.exists():
+        print("Registry missing; running scripts/generate_002_registry.py...", file=sys.stderr)
+        result = subprocess.run(
+            [sys.executable, "scripts/generate_002_registry.py"], capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            print(result.stderr, file=sys.stderr)
+            return False
+    return True
+
+
 def parse_source_checkboxes():
     counts = {}
     for md in sorted(SOURCE_DIR.glob("*.md")):
-        if md.name == "README.md":
-            chapter = "README"
-        else:
-            chapter = md.stem.split("_")[0]
+        chapter = "README" if md.name == "README.md" else md.stem.split("_")[0]
         text = md.read_text(encoding="utf-8")
         boxes = []
         for line in text.splitlines():
             if re.match(r"^\s*- \[.\]\s+", line):
                 boxes.append(line)
-        counts[chapter] = {
-            "file": md.name,
-            "count": len(boxes),
-            "checkboxes": boxes,
-        }
+        counts[chapter] = {"file": md.name, "count": len(boxes), "checkboxes": boxes}
     return counts
 
 
 def main():
-    if not REGISTRY_PATH.exists():
-        print(f"Missing registry: {REGISTRY_PATH}", file=sys.stderr)
-        print("Run the generator first.", file=sys.stderr)
+    if not ensure_registry():
         return 1
 
     registry = json.loads(REGISTRY_PATH.read_text(encoding="utf-8"))
@@ -45,9 +49,7 @@ def main():
     total_source = sum(c["count"] for c in source.values())
 
     if total_registry != total_source:
-        errors.append(
-            f"registry total {total_registry} != source total {total_source}"
-        )
+        errors.append(f"registry total {total_registry} != source total {total_source}")
 
     for chapter, data in source.items():
         reg = reg_chapters.get(chapter)
