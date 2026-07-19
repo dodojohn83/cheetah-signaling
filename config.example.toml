@@ -116,6 +116,9 @@ sip_port = 5060
 digest_secret_ref = "gb28181.digest"
 # Optional secret reference template for per-device passwords. {device_id} is replaced.
 # device_password_ref = "gb28181.devices.{device_id}.password"
+# Optional default tenant UUID for incoming GB28181 devices.
+# When omitted, events that cannot be mapped to a tenant are dropped.
+# default_tenant_id = "018f3b0a-..."
 # Media stream keep-alive timeout in milliseconds. Default: 0.
 media_stream_timeout_ms = 30000
 

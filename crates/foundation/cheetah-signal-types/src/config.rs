@@ -504,6 +504,10 @@ pub struct Gb28181Config {
     /// Optional secret reference template for per-device SIP passwords.
     /// `{device_id}` is replaced with the GB device ID.
     pub device_password_ref: Option<String>,
+    /// Optional default tenant UUID for SIP devices when no domain-to-tenant
+    /// mapping is configured. When omitted, GB28181 events that cannot be
+    /// attributed to a tenant are dropped.
+    pub default_tenant_id: Option<String>,
 }
 
 /// ONVIF protocol configuration.

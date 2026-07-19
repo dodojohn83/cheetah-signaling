@@ -1,6 +1,7 @@
 //! Cheetah Signaling application binary.
 
 mod assembly;
+mod gb_event_sink;
 
 use cheetah_signal_types::config::ConfigSource;
 use tracing::info;
