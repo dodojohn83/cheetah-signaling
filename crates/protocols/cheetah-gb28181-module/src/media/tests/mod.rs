@@ -79,6 +79,50 @@ fn build_test_200_ok() -> SipMessage {
     build_test_200_ok_with(1, "<sip:34020000001320000001@192.168.1.20:5061>")
 }
 
+fn build_test_200_ok_with_connection(connection: &str) -> SipMessage {
+    let sdp = format!(
+        "v=0\r\n\
+         o=- 0 0 IN IP4 0.0.0.0\r\n\
+         s=Play\r\n\
+         c={connection}\r\n\
+         t=0 0\r\n\
+         m=video 6000 TCP/RTP/AVP 96\r\n\
+         a=setup:active\r\n\
+         a=connection:new\r\n\
+         a=rtpmap:96 PS/90000\r\n\
+         a=y:0200000001"
+    );
+    let mut headers = SipHeaders::new();
+    headers.append(
+        HeaderName::Via,
+        HeaderValue::new("SIP/2.0/UDP 192.168.1.10:5060;branch=z9hG4bK1234"),
+    );
+    headers.append(
+        HeaderName::From,
+        HeaderValue::new("<sip:server@192.168.1.10:5060>;tag=tag-local"),
+    );
+    headers.append(
+        HeaderName::To,
+        HeaderValue::new("<sip:34020000001320000001@192.168.1.20:5060>;tag=tag-remote"),
+    );
+    headers.append(HeaderName::CallId, HeaderValue::new("call-1"));
+    headers.append(HeaderName::CSeq, HeaderValue::new("1 INVITE"));
+    headers.append(
+        HeaderName::Contact,
+        HeaderValue::new("<sip:34020000001320000001@192.168.1.20:5061>"),
+    );
+    headers.append(HeaderName::ContentType, HeaderValue::new("application/sdp"));
+    headers.append(
+        HeaderName::ContentLength,
+        HeaderValue::new(sdp.len().to_string()),
+    );
+    SipMessage::Response {
+        line: StatusLine::new(200, "OK"),
+        headers,
+        body: sdp.into_bytes(),
+    }
+}
+
 fn build_response_to_bye() -> SipMessage {
     let mut headers = SipHeaders::new();
     headers.append(

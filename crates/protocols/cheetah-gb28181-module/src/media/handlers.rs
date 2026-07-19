@@ -5,7 +5,6 @@ use super::session::{SessionState, failed_event, socket_addr, stopped_event};
 use super::{Gb28181Media, MediaError, MediaOutput};
 use crate::events::Gb28181Event;
 use cheetah_gb28181_core::{HeaderName, Method, SdpParserConfig, SipMessage};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 /// Conservative SDP parser limits for bodies received from remote devices.
 const REMOTE_SDP_CONFIG: SdpParserConfig = SdpParserConfig {
@@ -217,10 +216,6 @@ fn on_invite_success(
         return Ok(outputs);
     }
 
-    let session = media
-        .sessions
-        .get_mut(&sid)
-        .ok_or(MediaError::SessionNotFound)?;
     let remote_tag = remote_tag
         .ok_or_else(|| MediaError::MalformedSip("missing To tag in 200 OK".to_string()))?;
     let contact = contact?;
@@ -251,9 +246,62 @@ fn on_invite_success(
         .map(|c| c.address.clone())
         .unwrap_or_default();
 
-    session.remote_tag = Some(remote_tag.clone());
-    session.remote_target = Some(contact.clone());
+    // Validate the remote media address before mutating session state. A 200 OK
+    // with an unparseable SDP connection address is treated as a failure. Per RFC
+    // 3261 the response is still acknowledged and the accidental dialog is torn
+    // down before the failure is reported.
+    let source = match socket_addr(&remote_address, remote_port) {
+        Ok(s) => s,
+        Err(e) => {
+            let session = media
+                .sessions
+                .get(&sid)
+                .ok_or(MediaError::SessionNotFound)?;
+            let ack_branch = format!("{}-ack", session.branch);
+            let ack = build_ack(
+                &media.config.local_sip_uri,
+                session,
+                Some(&remote_tag),
+                &contact,
+                &ack_branch,
+            )
+            .map_err(|e| MediaError::MalformedSip(e.to_string()))?;
 
+            let mut bye_session = session.clone();
+            bye_session.remote_tag = Some(remote_tag.clone());
+            bye_session.cseq = bye_session
+                .cseq
+                .checked_add(1)
+                .ok_or_else(|| MediaError::InvalidState("CSeq overflow".to_string()))?;
+            let bye_branch = format!("{}-bye", session.branch);
+            let bye = build_bye(
+                &media.config.local_sip_uri,
+                &bye_session,
+                bye_session.cseq,
+                &bye_branch,
+                &contact,
+            )
+            .map_err(|e| MediaError::MalformedSip(e.to_string()))?;
+
+            let session = media
+                .remove_session(sid)
+                .ok_or(MediaError::SessionNotFound)?;
+            return Ok(vec![
+                MediaOutput::SendMessage(ack),
+                MediaOutput::SendMessage(bye),
+                MediaOutput::EmitEvent(failed_event(
+                    &session,
+                    &media.config.domain_id,
+                    &format!("invalid SDP media address: {e}"),
+                )),
+            ]);
+        }
+    };
+
+    let session = media
+        .sessions
+        .get(&sid)
+        .ok_or(MediaError::SessionNotFound)?;
     let ack_branch = format!("{}-ack", session.branch);
     let ack = build_ack(
         &media.config.local_sip_uri,
@@ -264,10 +312,13 @@ fn on_invite_success(
     )
     .map_err(|e| MediaError::MalformedSip(e.to_string()))?;
 
+    let session = media
+        .sessions
+        .get_mut(&sid)
+        .ok_or(MediaError::SessionNotFound)?;
+    session.remote_tag = Some(remote_tag);
+    session.remote_target = Some(contact);
     session.state = SessionState::Active;
-
-    let source = socket_addr(&remote_address, remote_port)
-        .unwrap_or(SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0));
 
     let event = Gb28181Event::MediaSessionStarted {
         domain_id: media.config.domain_id.clone(),

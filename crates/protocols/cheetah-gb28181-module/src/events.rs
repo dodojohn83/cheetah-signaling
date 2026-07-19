@@ -228,8 +228,8 @@ pub enum Gb28181Event {
         channel_id: ChannelId,
         /// Device identifier.
         device_id: DeviceId,
-        /// Remote address that was used for the session.
-        source: SocketAddr,
+        /// Remote address that was used for the session, if it could be parsed.
+        source: Option<SocketAddr>,
     },
     /// An upstream GB28181 cascade platform registered or refreshed.
     CascadePlatformConnected {
