@@ -29,10 +29,21 @@ def parse_source_checkboxes():
         chapter = "README" if md.name == "README.md" else md.stem.split("_")[0]
         text = md.read_text(encoding="utf-8")
         boxes = []
+        checked = 0
         for line in text.splitlines():
-            if re.match(r"^\s*- \[.\]\s+", line):
-                boxes.append(line)
-        counts[chapter] = {"file": md.name, "count": len(boxes), "checkboxes": boxes}
+            m = re.match(r"^\s*- \[(.)\]\s+", line)
+            if not m:
+                continue
+            boxes.append(line)
+            if m.group(1) in "xX":
+                checked += 1
+        counts[chapter] = {
+            "file": md.name,
+            "count": len(boxes),
+            "checked": checked,
+            "unchecked": len(boxes) - checked,
+            "checkboxes": boxes,
+        }
     return counts
 
 
@@ -47,9 +58,28 @@ def main():
     reg_chapters = registry.get("chapters", {})
     total_registry = sum(c["checkbox_count"] for c in reg_chapters.values())
     total_source = sum(c["count"] for c in source.values())
+    total_checked_source = sum(c["checked"] for c in source.values())
+    total_unchecked_source = sum(c["unchecked"] for c in source.values())
 
     if total_registry != total_source:
         errors.append(f"registry total {total_registry} != source total {total_source}")
+
+    if registry.get("total_checked") != total_checked_source:
+        errors.append(
+            f"registry total_checked {registry.get('total_checked')} != source {total_checked_source}"
+        )
+
+    if registry.get("total_unchecked") != total_unchecked_source:
+        errors.append(
+            f"registry total_unchecked {registry.get('total_unchecked')} != source {total_unchecked_source}"
+        )
+
+    if registry.get("total_checkboxes") != registry.get("total_checked", 0) + registry.get(
+        "total_unchecked", 0
+    ):
+        errors.append(
+            "registry total_checkboxes != total_checked + total_unchecked"
+        )
 
     for chapter, data in source.items():
         reg = reg_chapters.get(chapter)
@@ -59,6 +89,14 @@ def main():
         if reg["checkbox_count"] != data["count"]:
             errors.append(
                 f"chapter {chapter} registry {reg['checkbox_count']} != source {data['count']}"
+            )
+        if reg["checked_count"] != data["checked"]:
+            errors.append(
+                f"chapter {chapter} registry checked_count {reg['checked_count']} != source {data['checked']}"
+            )
+        if reg["unchecked_count"] != data["unchecked"]:
+            errors.append(
+                f"chapter {chapter} registry unchecked_count {reg['unchecked_count']} != source {data['unchecked']}"
             )
         seen = set()
         for box in reg["checkboxes"]:
