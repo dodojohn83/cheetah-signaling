@@ -22,7 +22,7 @@ pub mod time;
 pub mod trace_context;
 
 pub use audit::{AuditEvent, AuditLog, AuditOutcome, NoOpAuditLog};
-pub use config::{ConfigSource, SignalConfig};
+pub use config::{ConfigSource, DeploymentProfile, SignalConfig};
 pub use context::{
     Principal, PrincipalKind, RequestContext, ResourceId, ResourceKind, ResourceRef,
 };

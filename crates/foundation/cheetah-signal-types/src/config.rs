@@ -144,6 +144,48 @@ impl SignalConfig {
                 "media.default_invite_timeout_ms must be greater than zero",
             ));
         }
+        match self.system.profile {
+            DeploymentProfile::Edge => {
+                if self.storage.backend != StorageBackend::Sqlite {
+                    return Err(SignalError::new(
+                        SignalErrorKind::InvalidArgument,
+                        "edge profile requires storage.backend = \"sqlite\"",
+                    ));
+                }
+                if self.messaging.backend != MessagingBackend::Local {
+                    return Err(SignalError::new(
+                        SignalErrorKind::InvalidArgument,
+                        "edge profile requires messaging.backend = \"local\"",
+                    ));
+                }
+                if self.cluster.enabled {
+                    return Err(SignalError::new(
+                        SignalErrorKind::InvalidArgument,
+                        "edge profile requires cluster.enabled = false",
+                    ));
+                }
+            }
+            DeploymentProfile::Cluster => {
+                if self.storage.backend != StorageBackend::Postgres {
+                    return Err(SignalError::new(
+                        SignalErrorKind::InvalidArgument,
+                        "cluster profile requires storage.backend = \"postgres\"",
+                    ));
+                }
+                if self.messaging.backend != MessagingBackend::Nats {
+                    return Err(SignalError::new(
+                        SignalErrorKind::InvalidArgument,
+                        "cluster profile requires messaging.backend = \"nats\"",
+                    ));
+                }
+                if !self.cluster.enabled {
+                    return Err(SignalError::new(
+                        SignalErrorKind::InvalidArgument,
+                        "cluster profile requires cluster.enabled = true",
+                    ));
+                }
+            }
+        }
         Ok(())
     }
 
@@ -160,6 +202,18 @@ impl SignalConfig {
     }
 }
 
+/// Deployment profile for the signaling process.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, Eq, PartialEq, Hash)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum DeploymentProfile {
+    /// Single-node edge deployment with SQLite and local bus.
+    #[default]
+    Edge,
+    /// Clustered deployment with PostgreSQL, NATS and ownership.
+    Cluster,
+}
+
 /// System level configuration.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
@@ -173,6 +227,8 @@ pub struct SystemConfig {
     pub log_level: String,
     /// Optional node id for stable identity.
     pub node_id: Option<NodeId>,
+    /// Deployment profile.
+    pub profile: DeploymentProfile,
 }
 
 impl Default for SystemConfig {
@@ -182,6 +238,7 @@ impl Default for SystemConfig {
             data_dir: String::new(),
             log_level: "info".to_string(),
             node_id: None,
+            profile: DeploymentProfile::Edge,
         }
     }
 }
