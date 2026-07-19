@@ -1,5 +1,6 @@
 //! PostgreSQL migration runner with expand / migrate / backfill / switch / contract phases.
 
+use cheetah_storage_api::timestamp::{offset_to_system_time, system_time_to_offset};
 use cheetah_storage_api::{
     AppliedMigration, BackfillJob, BackfillProgress, Migration, MigrationInfo, MigrationPhase,
     MigrationStatus, PhaseMigrationBackend, PhaseMigrationPlanner, PhaseMigrationRunner,
@@ -9,7 +10,6 @@ use sqlx::pool::PoolConnection;
 use sqlx::types::time::OffsetDateTime;
 use sqlx::{PgPool, Postgres, migrate::Migration as SqlxMigration};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 
 /// Postgres advisory lock key for migration serialization.
@@ -280,11 +280,11 @@ impl PhaseMigrationBackend for PostgresMigration {
         .await
         .map_err(|e| StorageError::backend(e.to_string()))?;
 
-        Ok(row.map(|r| r.into_job()))
+        row.map(|r| r.into_job()).transpose()
     }
 
     async fn save_backfill_job(&self, job: &BackfillJob) -> Result<(), StorageError> {
-        let updated_at = system_time_to_offset(job.updated_at);
+        let updated_at = system_time_to_offset(job.updated_at)?;
         sqlx::query(
             "INSERT INTO _cheetah_backfill_jobs
              (version, description, processed_rows, finished, updated_at)
@@ -357,9 +357,11 @@ impl Migration for PostgresMigration {
         .await
         .map_err(|e| StorageError::backend(e.to_string()))?;
 
-        Ok(BackfillProgress::new(
-            rows.into_iter().map(|r| r.into_job()).collect(),
-        ))
+        let jobs: Vec<BackfillJob> = rows
+            .into_iter()
+            .map(|r| r.into_job())
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(BackfillProgress::new(jobs))
     }
 }
 
@@ -373,21 +375,11 @@ struct BackfillJobRow {
 }
 
 impl BackfillJobRow {
-    fn into_job(self) -> BackfillJob {
+    fn into_job(self) -> Result<BackfillJob, StorageError> {
         let mut job = BackfillJob::new(self.version, self.description);
         job.processed_rows = self.processed_rows as u64;
         job.finished = self.finished;
-        let nanos = self.updated_at.unix_timestamp_nanos();
-        job.updated_at = if nanos < 0 {
-            UNIX_EPOCH
-        } else {
-            UNIX_EPOCH + Duration::from_nanos(nanos as u64)
-        };
-        job
+        job.updated_at = offset_to_system_time(self.updated_at)?;
+        Ok(job)
     }
-}
-
-fn system_time_to_offset(t: SystemTime) -> OffsetDateTime {
-    let nanos = t.duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos() as i128;
-    OffsetDateTime::from_unix_timestamp_nanos(nanos).unwrap_or(OffsetDateTime::UNIX_EPOCH)
 }

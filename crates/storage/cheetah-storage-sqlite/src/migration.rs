@@ -1,5 +1,6 @@
 //! SQLite migration runner with expand / migrate / backfill / switch / contract phases.
 
+use cheetah_storage_api::timestamp::{rfc3339_to_system_time, system_time_to_rfc3339};
 use cheetah_storage_api::{
     AppliedMigration, BackfillJob, BackfillProgress, Migration, MigrationInfo, MigrationPhase,
     MigrationStatus, PhaseMigrationBackend, PhaseMigrationPlanner, PhaseMigrationRunner,
@@ -7,9 +8,6 @@ use cheetah_storage_api::{
 };
 use sqlx::{SqlitePool, migrate::Migration as SqlxMigration};
 use std::pin::Pin;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use time::OffsetDateTime;
-use time::format_description::well_known::Rfc3339;
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("../../../migrations/sqlite");
 
@@ -233,11 +231,11 @@ impl PhaseMigrationBackend for SqliteMigration {
         .await
         .map_err(|e| StorageError::backend(e.to_string()))?;
 
-        Ok(row.map(|r| r.into_job()))
+        row.map(|r| r.into_job()).transpose()
     }
 
     async fn save_backfill_job(&self, job: &BackfillJob) -> Result<(), StorageError> {
-        let updated = humantime_since(job.updated_at);
+        let updated = system_time_to_rfc3339(job.updated_at)?;
         sqlx::query(
             "INSERT OR REPLACE INTO _cheetah_backfill_jobs
              (version, description, processed_rows, finished, updated_at)
@@ -305,9 +303,11 @@ impl Migration for SqliteMigration {
         .await
         .map_err(|e| StorageError::backend(e.to_string()))?;
 
-        Ok(BackfillProgress::new(
-            rows.into_iter().map(|r| r.into_job()).collect(),
-        ))
+        let jobs: Vec<BackfillJob> = rows
+            .into_iter()
+            .map(|r| r.into_job())
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(BackfillProgress::new(jobs))
     }
 }
 
@@ -321,28 +321,11 @@ struct BackfillJobRow {
 }
 
 impl BackfillJobRow {
-    fn into_job(self) -> BackfillJob {
+    fn into_job(self) -> Result<BackfillJob, StorageError> {
         let mut job = BackfillJob::new(self.version, self.description);
         job.processed_rows = self.processed_rows as u64;
         job.finished = self.finished != 0;
-        job.updated_at = parse_humantime(&self.updated_at).unwrap_or(UNIX_EPOCH);
-        job
+        job.updated_at = rfc3339_to_system_time(&self.updated_at)?;
+        Ok(job)
     }
-}
-
-fn humantime_since(t: SystemTime) -> String {
-    let nanos = t.duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos() as i128;
-    OffsetDateTime::from_unix_timestamp_nanos(nanos)
-        .unwrap_or(OffsetDateTime::UNIX_EPOCH)
-        .format(&Rfc3339)
-        .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string())
-}
-
-fn parse_humantime(s: &str) -> Option<SystemTime> {
-    let dt = OffsetDateTime::parse(s, &Rfc3339).ok()?;
-    let nanos = dt.unix_timestamp_nanos();
-    if nanos < 0 {
-        return Some(UNIX_EPOCH);
-    }
-    Some(UNIX_EPOCH + Duration::from_nanos(nanos as u64))
 }

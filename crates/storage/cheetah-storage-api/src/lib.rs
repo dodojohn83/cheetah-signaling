@@ -8,6 +8,7 @@ pub mod phase_migration;
 pub mod repository;
 pub mod revision;
 pub mod storage;
+pub mod timestamp;
 
 pub use revision::stored_revision_as_u64;
 

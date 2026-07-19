@@ -1089,6 +1089,7 @@ dependencies = [
  "cheetah-signal-types",
  "serde",
  "thiserror",
+ "time",
  "tokio",
 ]
 
