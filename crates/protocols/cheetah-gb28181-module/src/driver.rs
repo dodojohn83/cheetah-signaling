@@ -545,7 +545,7 @@ fn gb28181_event_to_protocol(event: &Gb28181Event) -> ProtocolEvent {
             "media_session_id": media_session_id.to_string(),
             "channel_id": channel_id.to_string(),
             "device_id": device_id.to_string(),
-            "source": source.to_string(),
+            "source": source.map(|s| s.to_string()),
         }),
         Gb28181Event::MediaSessionFailed {
             domain_id,

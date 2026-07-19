@@ -5,7 +5,6 @@ use super::session::{SessionState, failed_event, socket_addr, stopped_event};
 use super::{Gb28181Media, MediaError, MediaOutput};
 use crate::events::Gb28181Event;
 use cheetah_gb28181_core::{HeaderName, Method, SdpParserConfig, SipMessage};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 /// Conservative SDP parser limits for bodies received from remote devices.
 const REMOTE_SDP_CONFIG: SdpParserConfig = SdpParserConfig {
@@ -266,8 +265,7 @@ fn on_invite_success(
 
     session.state = SessionState::Active;
 
-    let source = socket_addr(&remote_address, remote_port)
-        .unwrap_or(SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0));
+    let source = socket_addr(&remote_address, remote_port)?;
 
     let event = Gb28181Event::MediaSessionStarted {
         domain_id: media.config.domain_id.clone(),

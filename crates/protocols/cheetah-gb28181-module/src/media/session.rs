@@ -4,7 +4,7 @@ use crate::events::Gb28181Event;
 use crate::types::{DeviceId, DomainId};
 use cheetah_gb28181_core::SipUri;
 use cheetah_signal_types::{ChannelId, MediaSessionId};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, SocketAddr};
 
 /// Lifecycle state of a tracked media session.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -52,8 +52,7 @@ pub fn socket_addr(host: &str, port: u16) -> Result<SocketAddr, super::MediaErro
 
 /// Builds a `MediaSessionStopped` event from session state.
 pub fn stopped_event(session: &Session, domain_id: &DomainId) -> Gb28181Event {
-    let source = socket_addr(&session.media_address, session.media_port)
-        .unwrap_or(SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0));
+    let source = socket_addr(&session.media_address, session.media_port).ok();
 
     Gb28181Event::MediaSessionStopped {
         domain_id: domain_id.clone(),
