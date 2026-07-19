@@ -5,6 +5,7 @@
 
 use crate::gb_event_sink;
 use crate::onvif_discovery;
+use ::time::{OffsetDateTime, UtcOffset};
 use cheetah_cluster_ownership::lease::CachingDeviceOwnerResolver;
 use cheetah_domain::ports::{DeviceOwnerResolver, MediaPort};
 use cheetah_domain::{DomainEvent, EventPublisher};
@@ -18,7 +19,7 @@ use cheetah_http_api::state::{ApiConfig, ApiServer, ApiState};
 use cheetah_media_client::{MediaClientConfig, MediaControlClient};
 use cheetah_media_scheduler::{
     InMemoryMediaNodeRegistry, LeastLoadedScheduler, MediaClusterRegistryService,
-    MediaRegistryConfig, SchedulerConfig, SchedulerMediaPort,
+    MediaRegistryConfig, PeerIdentity, SchedulerConfig, SchedulerMediaPort,
 };
 use cheetah_message_api::RawEventBus;
 use cheetah_message_api::publisher::publish_domain_event;
@@ -46,13 +47,14 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
-use time::{OffsetDateTime, UtcOffset};
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
-use tonic::transport::Server;
+use tonic::service::InterceptorLayer;
+use tonic::transport::{Certificate, Identity, Server, ServerTlsConfig, server::TcpIncoming};
 use tracing::{info, warn};
 use uuid::Uuid;
+use x509_parser::prelude::{FromDer, X509Certificate};
 
 /// Health status of a single runtime component.
 #[derive(Clone, Debug)]
@@ -646,23 +648,52 @@ pub async fn start(
     }
 
     // Internal gRPC server for media node lifecycle (MediaClusterRegistry).
+    // Binds the port eagerly so startup fails fast; TLS/mTLS is configured
+    // when the corresponding secret references are provided.
     let grpc_ip = config
         .grpc
         .listen_addr
         .parse::<IpAddr>()
         .map_err(|e| format!("grpc.listen_addr is not a valid IP address: {e}"))?;
     let grpc_addr = SocketAddr::new(grpc_ip, config.grpc.port);
+    let (grpc_identity, grpc_client_ca, grpc_require_mtls) =
+        configure_grpc_tls(&*secret_store, &config.grpc)?;
+    let mut media_registry_config = MediaRegistryConfig::production();
+    media_registry_config.require_mtls = grpc_require_mtls;
     let grpc_service = MediaClusterRegistryService::new(
         media_registry_for_grpc,
         clock.clone(),
         id_generator.clone(),
-        MediaRegistryConfig::default(),
+        media_registry_config,
     );
+    let tcp_incoming = TcpIncoming::bind(grpc_addr)
+        .map_err(|e| format!("failed to bind internal gRPC listener: {e}"))?;
+    let grpc_addr = tcp_incoming
+        .local_addr()
+        .map_err(|e| format!("failed to get gRPC local address: {e}"))?;
     let grpc_cancel = cancel.child_token();
     workers.push(tokio::spawn(async move {
-        let server = Server::builder()
-            .add_service(MediaClusterRegistryServer::new(grpc_service))
-            .serve_with_shutdown(grpc_addr, grpc_cancel.cancelled());
+        let server = Server::builder();
+        let server = match grpc_identity {
+            Some(identity) => {
+                let mut tls = ServerTlsConfig::new().identity(identity);
+                if let Some(client_ca) = grpc_client_ca {
+                    tls = tls.client_ca_root(client_ca).client_auth_optional(false);
+                }
+                match server.tls_config(tls) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        warn!(error = %e, "failed to configure gRPC TLS; server not started");
+                        return;
+                    }
+                }
+            }
+            None => server,
+        };
+        let router = server
+            .layer(InterceptorLayer::new(mtls_identity_interceptor))
+            .add_service(MediaClusterRegistryServer::new(grpc_service));
+        let server = router.serve_with_incoming_shutdown(tcp_incoming, grpc_cancel.cancelled());
         if let Err(e) = server.await {
             warn!(error = %e, "internal gRPC server stopped with error");
         }
@@ -761,4 +792,71 @@ async fn validate_external_plugins(
     }
 
     Ok(())
+}
+
+/// Builds TLS identity and optional client CA from secret references.
+///
+/// Returns `(server_identity, client_ca, require_mtls)`. `require_mtls` is only
+/// true when a client CA is configured, which forces the registry to require a
+/// peer certificate identity matching the claimed node id.
+fn configure_grpc_tls(
+    secret_store: &dyn SecretStore,
+    grpc: &cheetah_signal_types::config::GrpcConfig,
+) -> Result<(Option<Identity>, Option<Certificate>, bool), String> {
+    let Some(cert_ref) = grpc.tls_cert_ref.as_ref() else {
+        if grpc.mtls_client_ca_ref.is_some() {
+            return Err("grpc.mtls_client_ca_ref requires grpc.tls_cert_ref".to_string());
+        }
+        return Ok((None, None, false));
+    };
+    let Some(key_ref) = grpc.tls_key_ref.as_ref() else {
+        return Err("grpc.tls_key_ref is required when grpc.tls_cert_ref is set".to_string());
+    };
+    let cert_pem = secret_store
+        .get(cert_ref)
+        .map_err(|e| format!("failed to load grpc.tls_cert_ref: {e}"))?
+        .expose_secret()
+        .to_string();
+    let key_pem = secret_store
+        .get(key_ref)
+        .map_err(|e| format!("failed to load grpc.tls_key_ref: {e}"))?
+        .expose_secret()
+        .to_string();
+    let identity = Identity::from_pem(cert_pem, key_pem);
+
+    let mut client_ca: Option<Certificate> = None;
+    if let Some(ca_ref) = grpc.mtls_client_ca_ref.as_ref() {
+        let ca_pem = secret_store
+            .get(ca_ref)
+            .map_err(|e| format!("failed to load grpc.mtls_client_ca_ref: {e}"))?
+            .expose_secret()
+            .to_string();
+        client_ca = Some(Certificate::from_pem(ca_pem));
+    }
+
+    Ok((Some(identity), client_ca, grpc.mtls_client_ca_ref.is_some()))
+}
+
+/// gRPC interceptor that extracts the mTLS peer common name and inserts it as a
+/// [`PeerIdentity`] request extension so the registry can match the caller to a
+/// media node id.
+#[allow(clippy::unnecessary_wraps)]
+fn mtls_identity_interceptor(
+    mut req: tonic::Request<()>,
+) -> Result<tonic::Request<()>, tonic::Status> {
+    if let Some(tls_info) = req
+        .extensions()
+        .get::<tonic::transport::server::TlsConnectInfo<tonic::transport::server::TcpConnectInfo>>()
+        && let Some(certs) = tls_info.peer_certs()
+        && let Some(cert) = certs.first()
+        && let Ok((_, x509)) = X509Certificate::from_der(cert.as_ref())
+        && let Some(cn) = x509
+            .subject()
+            .iter_common_name()
+            .next()
+            .and_then(|attr| attr.as_str().ok())
+    {
+        req.extensions_mut().insert(PeerIdentity(cn.to_string()));
+    }
+    Ok(req)
 }

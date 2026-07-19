@@ -155,6 +155,20 @@ impl SignalConfig {
                 "grpc.port must not be zero",
             ));
         }
+        if self.grpc.mtls_client_ca_ref.is_some()
+            && (self.grpc.tls_cert_ref.is_none() || self.grpc.tls_key_ref.is_none())
+        {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                "grpc.mtls_client_ca_ref requires both grpc.tls_cert_ref and grpc.tls_key_ref",
+            ));
+        }
+        if self.grpc.tls_cert_ref.is_some() != self.grpc.tls_key_ref.is_some() {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                "grpc.tls_cert_ref and grpc.tls_key_ref must both be set or both be unset",
+            ));
+        }
         if self.http.read_timeout_ms.as_millis() <= 0 {
             return Err(SignalError::new(
                 SignalErrorKind::InvalidArgument,
@@ -414,6 +428,9 @@ pub struct GrpcConfig {
     pub tls_cert_ref: Option<String>,
     /// Reference to the TLS key secret.
     pub tls_key_ref: Option<String>,
+    /// Reference to the mTLS client CA certificate secret.
+    /// When set, the gRPC server requires a client certificate.
+    pub mtls_client_ca_ref: Option<String>,
 }
 
 impl Default for GrpcConfig {
@@ -423,6 +440,7 @@ impl Default for GrpcConfig {
             port: 50_051,
             tls_cert_ref: None,
             tls_key_ref: None,
+            mtls_client_ca_ref: None,
         }
     }
 }
