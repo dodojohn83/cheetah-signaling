@@ -540,7 +540,7 @@ impl Default for Gb28181Config {
         Self {
             sip_domain: String::new(),
             sip_port: 0,
-            media_stream_timeout_ms: DurationMs::from_seconds(30),
+            media_stream_timeout_ms: DurationMs::from_millis(0),
             digest_secret_ref: None,
             device_password_ref: None,
             default_tenant_id: None,
