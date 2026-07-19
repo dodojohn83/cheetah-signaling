@@ -17,9 +17,10 @@ pub struct CatalogResponse {
     pub device_id: String,
     /// `SumNum` attribute declaring total item count across all fragments.
     pub sum_num: u32,
-    /// Number of well-formed items actually parsed in this fragment. This may be
-    /// less than the `Num` attribute if some `Item` elements had missing or
-    /// empty `DeviceID` values and were dropped.
+    /// Declared number of items in this fragment from the `Num` attribute. This
+    /// may be greater than the length of `items` when some `Item` elements had
+    /// missing or empty `DeviceID` values and were dropped. When the `Num`
+    /// attribute is missing or invalid this falls back to the well-formed count.
     pub num: u32,
     /// Items in this fragment.
     pub items: Vec<CatalogItem>,
@@ -119,16 +120,22 @@ pub(crate) fn extract_catalog(root: &XmlElement) -> Result<CatalogResponse, Acce
         );
     }
 
-    // Trust the number of well-formed items we actually parsed. A missing or
-    // malformed `Num` attribute is ignored so a single bad item cannot force
-    // the whole fragment to be rejected.
-    let num = items.len() as u32;
+    // Use the declared `Num` attribute when present and valid so that
+    // downstream fragment assembly can detect the final fragment even when some
+    // `Item` elements are malformed and dropped. Fall back to the number of
+    // well-formed items we actually parsed when the attribute is missing or
+    // invalid.
+    let declared_num = device_list
+        .attributes
+        .get("Num")
+        .and_then(|v| parse_u32(v).ok())
+        .unwrap_or(items.len() as u32);
 
     Ok(CatalogResponse {
         sn,
         device_id,
         sum_num,
-        num,
+        num: declared_num,
         items,
     })
 }

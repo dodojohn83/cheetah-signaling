@@ -127,9 +127,10 @@ async fn process_event(
             device_id,
             sn,
             sum_num,
+            num,
             items,
             ..
-        } => match catalog_buffer.accumulate(tenant_id, &device_id, &sn, sum_num, items) {
+        } => match catalog_buffer.accumulate(tenant_id, &device_id, &sn, sum_num, num, items) {
             Some(merged) => replace_catalog(state, &context, tenant_id, &device_id, &merged).await,
             None => Ok(()),
         },
@@ -299,6 +300,18 @@ fn event_source(event: &Gb28181Event) -> Option<&std::net::SocketAddr> {
     }
 }
 
+/// Creates a stable key for a catalog fragment from the sorted set of channel
+/// external ids it contains. Retransmissions of the same fragment will share
+/// the same key and therefore contribute their declared `Num` only once.
+fn fragment_key(batch: &HashMap<String, GbCatalogItem>) -> String {
+    if batch.is_empty() {
+        return "empty".to_string();
+    }
+    let mut ids: Vec<_> = batch.keys().map(String::as_str).collect();
+    ids.sort();
+    ids.join(",")
+}
+
 const CATALOG_FRAGMENT_TTL: Duration = Duration::from_secs(60);
 const CATALOG_CLEANUP_INTERVAL: Duration = Duration::from_secs(30);
 
@@ -307,9 +320,15 @@ const CATALOG_CLEANUP_INTERVAL: Duration = Duration::from_secs(30);
 /// Devices may split a catalog response across multiple SIP MESSAGE bodies.
 /// Fragments are keyed by (tenant, device, sequence number) and merged into a
 /// single `replace_channel_catalog` call once `sum_num` distinct channel ids
-/// have been seen. Items are de-duplicated by their channel `device_id` so
-/// retransmitted or overlapping fragments cannot prematurely complete the
-/// assembly. Partial transfers expire after `CATALOG_FRAGMENT_TTL` and are
+/// have been seen. Items are de-duplicated by their channel `device_id`.
+///
+/// To avoid stalling when a camera drops malformed items, completion also falls
+/// back to the sum of declared `Num` values for each *unique* fragment content
+/// (retransmissions are ignored). If the unique fragment count equals `sum_num`
+/// but fewer distinct channels were collected, the partial catalog is emitted as
+/// a best-effort replacement and a warning is logged. Overlapping fragments that
+/// would push the unique declared count above `sum_num` are not used to trigger
+/// completion. Partial transfers expire after `CATALOG_FRAGMENT_TTL` and are
 /// evicted by the background worker cleanup tick.
 struct CatalogBuffer {
     entries: HashMap<CatalogKey, PartialCatalog>,
@@ -327,8 +346,60 @@ struct CatalogKey {
 struct PartialCatalog {
     /// Accumulated catalog items keyed by channel external id (`device_id`).
     items: HashMap<String, GbCatalogItem>,
+    /// Declared total number of items across all fragments (`SumNum`).
     expected: u32,
+    /// Declared `Num` values keyed by a digest of the fragment's channel ids.
+    ///
+    /// Retransmissions of the same fragment share the same key and do not
+    /// contribute multiple times. For each unique fragment the largest `Num`
+    /// value observed is kept.
+    fragments: HashMap<String, u32>,
     last_seen: Instant,
+}
+
+impl PartialCatalog {
+    /// Sum of declared `Num` values for unique fragments received so far.
+    fn received_num(&self) -> u32 {
+        self.fragments
+            .values()
+            .copied()
+            .fold(0u32, |acc, v| acc.saturating_add(v))
+    }
+
+    fn is_complete(&self) -> bool {
+        let distinct = self.items.len();
+        if distinct >= self.expected as usize {
+            if distinct > self.expected as usize {
+                warn!(
+                    expected = self.expected,
+                    distinct, "gb28181 catalog has more distinct channels than declared"
+                );
+            }
+            return true;
+        }
+
+        let received = self.received_num();
+        if received == self.expected {
+            warn!(
+                expected = self.expected,
+                distinct,
+                received,
+                "gb28181 catalog unique fragment count reached sum_num with fewer distinct channels; some items may have been malformed or dropped"
+            );
+            return true;
+        }
+
+        if received > self.expected {
+            warn!(
+                expected = self.expected,
+                distinct,
+                received,
+                "gb28181 catalog fragments overlap or repeat declared counts; waiting for distinct channel ids"
+            );
+        }
+
+        false
+    }
 }
 
 impl CatalogBuffer {
@@ -346,6 +417,7 @@ impl CatalogBuffer {
         device_id: &GbDeviceId,
         sn: &str,
         expected: u32,
+        num: u32,
         items: Vec<GbCatalogItem>,
     ) -> Option<Vec<GbCatalogItem>> {
         // De-duplicate within the incoming fragment before any size checks.
@@ -402,9 +474,14 @@ impl CatalogBuffer {
                 self.entries.remove(&key);
                 return None;
             }
+            partial
+                .fragments
+                .entry(fragment_key(&batch))
+                .and_modify(|v| *v = num.max(*v))
+                .or_insert(num);
             partial.items.extend(batch);
             partial.last_seen = Instant::now();
-            if partial.items.len() >= partial.expected as usize {
+            if partial.is_complete() {
                 return self
                     .entries
                     .remove(&key)
@@ -424,13 +501,17 @@ impl CatalogBuffer {
             return None;
         }
 
-        let complete = batch.len() >= expected_usize;
+        let mut fragments = HashMap::new();
+        if num > 0 || !batch.is_empty() {
+            fragments.insert(fragment_key(&batch), num);
+        }
         let partial = PartialCatalog {
             items: batch,
             expected,
+            fragments,
             last_seen: Instant::now(),
         };
-        if complete {
+        if partial.is_complete() {
             return Some(partial.items.into_values().collect());
         }
         self.entries.insert(key, partial);
