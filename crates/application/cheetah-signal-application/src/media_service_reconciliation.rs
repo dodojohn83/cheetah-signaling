@@ -62,15 +62,7 @@ impl MediaService {
         }
 
         for (session, binding) in &mut to_release {
-            let session_state_before = session.state();
-            let binding_state_before = binding.state();
             self.release_binding(context, uow, session, binding).await?;
-            if session.state() != session_state_before {
-                uow.media_session_repository().save(session).await?;
-            }
-            if binding.state() != binding_state_before {
-                uow.media_binding_repository().save(binding).await?;
-            }
             reservations_to_release.push(binding.media_binding_id());
             report.missing_released += 1;
         }
@@ -110,8 +102,6 @@ impl MediaService {
             report.sessions_found += reported.len() as u64;
 
             for (mut session, mut binding) in local_list {
-                let session_state_before = session.state();
-                let binding_state_before = binding.state();
                 match reported.get(&session.media_session_id()) {
                     Some(report_ref) => {
                         if report_ref.media_node_instance_epoch
@@ -147,12 +137,6 @@ impl MediaService {
                         report.missing_failed += 1;
                     }
                 }
-                if session.state() != session_state_before {
-                    uow.media_session_repository().save(&session).await?;
-                }
-                if binding.state() != binding_state_before {
-                    uow.media_binding_repository().save(&binding).await?;
-                }
             }
 
             for id in reported.keys() {
@@ -172,8 +156,6 @@ impl MediaService {
         // no longer active in the cluster (crashed, deregistered, or expired).
         for (_node_id, sessions) in active_by_node {
             for (mut session, mut binding) in sessions {
-                let session_state_before = session.state();
-                let binding_state_before = binding.state();
                 self.fail_session(
                     context,
                     uow,
@@ -183,12 +165,6 @@ impl MediaService {
                     "media node no longer active",
                 )
                 .await?;
-                if session.state() != session_state_before {
-                    uow.media_session_repository().save(&session).await?;
-                }
-                if binding.state() != binding_state_before {
-                    uow.media_binding_repository().save(&binding).await?;
-                }
                 reservations_to_release.push(binding.media_binding_id());
                 report.missing_failed += 1;
             }
@@ -223,19 +199,18 @@ impl MediaService {
         if !session.is_terminal() {
             let ev = session.stop(self.clock.as_ref())?;
             append_session_event(self, context, uow, session, ev).await?;
-            if session.state() == MediaSessionState::Stopping {
-                let ev = session.stopped(self.clock.as_ref())?;
-                append_session_event(self, context, uow, session, ev).await?;
-            }
+            uow.media_session_repository().save(session).await?;
         }
 
         if !binding.is_terminal() {
             if binding.state() != MediaBindingState::Releasing {
                 let ev = binding.release(self.clock.as_ref())?;
                 append_binding_event(self, context, uow, binding, ev).await?;
+                uow.media_binding_repository().save(binding).await?;
             }
             let ev = binding.released(self.clock.as_ref())?;
             append_binding_event(self, context, uow, binding, ev).await?;
+            uow.media_binding_repository().save(binding).await?;
         }
 
         Ok(())
@@ -253,11 +228,13 @@ impl MediaService {
         if !session.is_terminal() {
             let ev = session.failed(MediaSessionError::new(code, message), self.clock.as_ref())?;
             append_session_event(self, context, uow, session, ev).await?;
+            uow.media_session_repository().save(session).await?;
         }
 
         if !binding.is_terminal() {
             let ev = binding.failed(MediaBindingError::new(code, message), self.clock.as_ref())?;
             append_binding_event(self, context, uow, binding, ev).await?;
+            uow.media_binding_repository().save(binding).await?;
         }
 
         Ok(())
@@ -274,20 +251,26 @@ impl MediaService {
             MediaSessionState::Requested => {
                 let ev = session.allocating(self.clock.as_ref())?;
                 append_session_event(self, context, uow, session, ev).await?;
+                uow.media_session_repository().save(session).await?;
                 let ev = session.inviting(self.clock.as_ref())?;
                 append_session_event(self, context, uow, session, ev).await?;
+                uow.media_session_repository().save(session).await?;
                 let ev = session.active(self.clock.as_ref())?;
                 append_session_event(self, context, uow, session, ev).await?;
+                uow.media_session_repository().save(session).await?;
             }
             MediaSessionState::Allocating => {
                 let ev = session.inviting(self.clock.as_ref())?;
                 append_session_event(self, context, uow, session, ev).await?;
+                uow.media_session_repository().save(session).await?;
                 let ev = session.active(self.clock.as_ref())?;
                 append_session_event(self, context, uow, session, ev).await?;
+                uow.media_session_repository().save(session).await?;
             }
             MediaSessionState::Inviting => {
                 let ev = session.active(self.clock.as_ref())?;
                 append_session_event(self, context, uow, session, ev).await?;
+                uow.media_session_repository().save(session).await?;
             }
             MediaSessionState::Active => {}
             _ => {
@@ -302,6 +285,7 @@ impl MediaService {
         if binding.state() == MediaBindingState::Reserved {
             let ev = binding.activate(self.clock.as_ref())?;
             append_binding_event(self, context, uow, binding, ev).await?;
+            uow.media_binding_repository().save(binding).await?;
         }
 
         Ok(())
