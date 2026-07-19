@@ -1044,12 +1044,14 @@ dependencies = [
 name = "cheetah-signal-types"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "fastrand",
  "proptest",
  "prost-types",
  "secrecy",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror",
  "time",
  "toml 0.8.23",
