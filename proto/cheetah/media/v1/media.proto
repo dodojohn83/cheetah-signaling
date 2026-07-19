@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package cheetah.media.v1;
 
+import "cheetah/media/v1/media_context.proto";
 import "google/protobuf/timestamp.proto";
 
 option go_package = "github.com/dodojohn83/cheetah-signaling/gen/go/cheetah/media/v1;mediav1";
@@ -132,6 +133,9 @@ message MediaCommand {
 
   // Fencing: the media node instance epoch targeted by this command.
   uint64 target_media_node_instance_epoch = 11;
+
+  // Shared mutation context for idempotency, deadline, tenant and trace.
+  MediaMutationContext context = 12;
 }
 
 // An event emitted by media processing.

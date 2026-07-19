@@ -1046,6 +1046,7 @@ version = "0.1.0"
 dependencies = [
  "fastrand",
  "proptest",
+ "prost-types",
  "secrecy",
  "serde",
  "serde_json",
