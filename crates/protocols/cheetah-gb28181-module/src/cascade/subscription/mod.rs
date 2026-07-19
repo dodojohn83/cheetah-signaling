@@ -331,8 +331,8 @@ pub(crate) fn handle_response<P: CascadeCredentialProvider>(
     let (status_code, cseq_num, call_id) = match &msg {
         SipMessage::Response { line, .. } => {
             let cseq = match msg.cseq() {
-                Some(c) => c,
-                None => return Vec::new(),
+                Ok(c) => c,
+                Err(_) => return Vec::new(),
             };
             let call_id = match msg.call_id() {
                 Some(c) => c.to_string(),

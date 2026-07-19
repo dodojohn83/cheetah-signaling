@@ -259,7 +259,7 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
             SipMessage::Response { .. } => {
                 let cseq = msg
                     .cseq()
-                    .ok_or_else(|| CascadeError::MalformedSip("missing CSeq header".to_string()))?;
+                    .map_err(|e| CascadeError::MalformedSip(e.to_string()))?;
                 let call_id = msg.call_id().ok_or_else(|| {
                     CascadeError::MalformedSip("missing Call-ID header".to_string())
                 })?;

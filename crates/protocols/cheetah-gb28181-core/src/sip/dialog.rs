@@ -229,8 +229,9 @@ impl Dialog {
             _ => return Vec::new(),
         };
 
-        let Some((cseq, _)) = req.cseq() else {
-            return vec![DialogOutput::Failure(SipErrorKind::MissingRequiredHeader)];
+        let (cseq, _) = match req.cseq() {
+            Ok(c) => c,
+            Err(e) => return vec![DialogOutput::Failure(e.kind)],
         };
 
         let remote_cseq = self.remote_cseq.unwrap_or(0);
@@ -289,8 +290,9 @@ impl Dialog {
             _ => return Vec::new(),
         };
 
-        let Some((cseq, method)) = resp.cseq() else {
-            return vec![DialogOutput::Failure(SipErrorKind::MissingRequiredHeader)];
+        let (cseq, method) = match resp.cseq() {
+            Ok(c) => c,
+            Err(e) => return vec![DialogOutput::Failure(e.kind)],
         };
 
         if method == Method::Bye && (200..300).contains(&code) {
@@ -326,9 +328,7 @@ fn require_header<'a>(msg: &'a SipMessage, name: &HeaderName) -> Result<&'a str,
 }
 
 fn cseq_number(msg: &SipMessage) -> Result<u32, SipError> {
-    msg.cseq()
-        .map(|(n, _)| n)
-        .ok_or_else(|| SipError::new(SipErrorKind::InvalidHeader, None, "invalid CSeq"))
+    msg.cseq().map(|(n, _)| n)
 }
 
 fn extract_tag(value: &str) -> Option<&str> {
