@@ -1419,15 +1419,14 @@ fn malformed_message_does_not_commit_online_presence_transition() {
     // Trigger offline state.
     let _offline_outputs = access.tick(now + heartbeat_timeout + 1);
 
-    // A malformed keepalive (mismatched DeviceID) returns 400 but must not
+    // An unsupported command with a matching DeviceID returns 400 but must not
     // mark the device online, otherwise the next valid keepalive would not
     // emit a presence transition event.
     let bad_body = br#"<?xml version="1.0"?>
 <Notify>
-    <CmdType>Keepalive</CmdType>
+    <CmdType>UnknownCmd</CmdType>
     <SN>1</SN>
-    <DeviceID>34020000001320000002</DeviceID>
-    <Status>OK</Status>
+    <DeviceID>34020000001320000001</DeviceID>
 </Notify>"#;
     let bad_request = make_message_request(bad_body);
     let outputs = access
