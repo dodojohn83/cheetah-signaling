@@ -245,7 +245,7 @@ mod tests {
 
     use super::super::parser::parse_sdp;
     use super::super::session::{
-        SdpAttribute, SdpConnection, SdpDirection, SdpMedia, SdpOrigin, SdpSession, SdpTime,
+        RtpMap, SdpAttribute, SdpConnection, SdpDirection, SdpMedia, SdpOrigin, SdpSession, SdpTime,
     };
     use super::*;
 
@@ -283,6 +283,80 @@ mod tests {
         )
         .unwrap();
         assert_eq!(reparsed, session);
+    }
+
+    #[test]
+    fn round_trip_sdp_with_rtpmap() {
+        let session = SdpSession {
+            version: "0".to_string(),
+            origin: SdpOrigin {
+                username: "-".to_string(),
+                sess_id: "0".to_string(),
+                sess_version: "0".to_string(),
+                nettype: "IN".to_string(),
+                addrtype: "IP4".to_string(),
+                address: "0.0.0.0".to_string(),
+            },
+            name: "Play".to_string(),
+            connection: Some(SdpConnection {
+                nettype: "IN".to_string(),
+                addrtype: "IP4".to_string(),
+                address: "192.168.1.100".to_string(),
+            }),
+            times: vec![SdpTime {
+                start: "0".to_string(),
+                stop: "0".to_string(),
+            }],
+            media: vec![SdpMedia {
+                media_type: "video".to_string(),
+                port: 5000,
+                proto: "TCP/RTP/AVP".to_string(),
+                formats: vec!["96".to_string(), "98".to_string()],
+                attributes: vec![
+                    SdpAttribute::RtpMap(RtpMap {
+                        pt: "96".to_string(),
+                        encoding: "PS".to_string(),
+                        clock: "90000".to_string(),
+                        params: None,
+                    }),
+                    SdpAttribute::RtpMap(RtpMap {
+                        pt: "98".to_string(),
+                        encoding: "mpeg4-generic".to_string(),
+                        clock: "48000".to_string(),
+                        params: Some("2".to_string()),
+                    }),
+                ],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let encoded = encode_sdp(&session).unwrap();
+        assert!(encoded.contains("a=rtpmap:96 PS/90000\r\n"));
+        assert!(encoded.contains("a=rtpmap:98 mpeg4-generic/48000/2\r\n"));
+
+        // Parsing the encoded output must yield the same normalized session.
+        let reparsed = parse_sdp(
+            encoded.as_bytes(),
+            &super::super::parser::SdpParserConfig::default(),
+        )
+        .unwrap();
+        assert_eq!(reparsed, session);
+
+        // Whitespace around the slash separator is malformed and rejected.
+        let whitespace_input = "v=0\r\n\
+            o=- 0 0 IN IP4 0.0.0.0\r\n\
+            s=Play\r\n\
+            c=IN IP4 192.168.1.100\r\n\
+            t=0 0\r\n\
+            m=video 5000 TCP/RTP/AVP 96\r\n\
+            a=rtpmap:96 PS / 90000\r\n";
+        assert!(
+            parse_sdp(
+                whitespace_input.as_bytes(),
+                &super::super::parser::SdpParserConfig::default(),
+            )
+            .is_err()
+        );
     }
 
     #[test]

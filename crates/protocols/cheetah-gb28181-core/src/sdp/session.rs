@@ -95,6 +95,10 @@ impl Default for SdpMedia {
 }
 
 /// RTP mapping for a payload type (`a=rtpmap:`).
+///
+/// Per RFC 4566, the rtpmap value has the form `pt encoding/clock/parameters`,
+/// where `parameters` is an opaque optional trailing field and may itself
+/// contain slash characters.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RtpMap {
     /// Payload type number.
@@ -103,7 +107,7 @@ pub struct RtpMap {
     pub encoding: String,
     /// Clock rate in Hz.
     pub clock: String,
-    /// Optional encoding parameters, e.g. number of channels.
+    /// Optional encoding parameters (opaque trailing field, per RFC 4566).
     pub params: Option<String>,
 }
 
