@@ -149,9 +149,16 @@ pub(crate) async fn save_webhook_config(
     .map_err(crate::error::sqlx_to_domain)?;
 
     if result.rows_affected() != 1 {
-        let placeholder = if IS_POSTGRES { "$1" } else { "?" };
-        let query = format!("SELECT revision FROM webhook_configs WHERE webhook_id = {placeholder}");
+        let (tenant_placeholder, webhook_placeholder) = if IS_POSTGRES {
+            ("$1", "$2")
+        } else {
+            ("?", "?")
+        };
+        let query = format!(
+            "SELECT revision FROM webhook_configs WHERE tenant_id = {tenant_placeholder} AND webhook_id = {webhook_placeholder}"
+        );
         let found: Option<(i64,)> = sqlx::query_as(&query)
+            .bind(config.tenant_id().as_uuid())
             .bind(config.webhook_id().as_uuid())
             .fetch_optional(&mut *conn)
             .await

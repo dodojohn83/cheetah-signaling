@@ -18,6 +18,7 @@ pub(crate) mod processed_message;
 pub(crate) mod step;
 pub(crate) mod transaction;
 pub(crate) mod unicode;
+pub(crate) mod webhook;
 
 /// Result alias used by contract tests.
 pub(crate) type TestResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
@@ -36,6 +37,7 @@ pub async fn run_all(storage: &dyn Storage, fixtures: &Fixtures) -> TestResult<(
     transaction::run(storage, fixtures).await?;
     processed_message::run(storage, fixtures).await?;
     owner::run(storage, fixtures).await?;
+    webhook::run(storage, fixtures).await?;
     step::run(storage, fixtures).await?;
     unicode::run(storage, fixtures).await?;
 
