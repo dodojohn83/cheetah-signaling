@@ -64,9 +64,20 @@ fn two_hundred_ok_with_invalid_media_address_removes_session_and_emits_failed() 
 
     let ok = build_test_200_ok_with_connection("IN IP4 not-an-ip");
     let outputs = media.process(MediaInput::Message(ok)).unwrap();
-    assert_eq!(outputs.len(), 1);
+    assert_eq!(outputs.len(), 3);
+
+    let MediaOutput::SendMessage(ack) = &outputs[0] else {
+        panic!("expected ACK");
+    };
+    assert!(matches!(ack, SipMessage::Request { line, .. } if line.method == Method::Ack));
+
+    let MediaOutput::SendMessage(bye) = &outputs[1] else {
+        panic!("expected BYE");
+    };
+    assert!(matches!(bye, SipMessage::Request { line, .. } if line.method == Method::Bye));
+
     assert!(matches!(
-        &outputs[0],
+        &outputs[2],
         MediaOutput::EmitEvent(Gb28181Event::MediaSessionFailed { .. })
     ));
     assert!(media.remove_session(sid).is_none());

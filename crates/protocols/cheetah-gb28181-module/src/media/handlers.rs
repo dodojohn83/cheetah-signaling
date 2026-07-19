@@ -247,19 +247,54 @@ fn on_invite_success(
         .unwrap_or_default();
 
     // Validate the remote media address before mutating session state. A 200 OK
-    // with an unparseable SDP connection address is treated as a failure; the
-    // pending session is removed so it does not become an orphaned Active entry.
+    // with an unparseable SDP connection address is treated as a failure. Per RFC
+    // 3261 the response is still acknowledged and the accidental dialog is torn
+    // down before the failure is reported.
     let source = match socket_addr(&remote_address, remote_port) {
         Ok(s) => s,
         Err(e) => {
             let session = media
+                .sessions
+                .get(&sid)
+                .ok_or(MediaError::SessionNotFound)?;
+            let ack_branch = format!("{}-ack", session.branch);
+            let ack = build_ack(
+                &media.config.local_sip_uri,
+                session,
+                Some(&remote_tag),
+                &contact,
+                &ack_branch,
+            )
+            .map_err(|e| MediaError::MalformedSip(e.to_string()))?;
+
+            let mut bye_session = session.clone();
+            bye_session.remote_tag = Some(remote_tag.clone());
+            bye_session.cseq = bye_session
+                .cseq
+                .checked_add(1)
+                .ok_or_else(|| MediaError::InvalidState("CSeq overflow".to_string()))?;
+            let bye_branch = format!("{}-bye", session.branch);
+            let bye = build_bye(
+                &media.config.local_sip_uri,
+                &bye_session,
+                bye_session.cseq,
+                &bye_branch,
+                &contact,
+            )
+            .map_err(|e| MediaError::MalformedSip(e.to_string()))?;
+
+            let session = media
                 .remove_session(sid)
                 .ok_or(MediaError::SessionNotFound)?;
-            return Ok(vec![MediaOutput::EmitEvent(failed_event(
-                &session,
-                &media.config.domain_id,
-                &format!("invalid SDP media address: {e}"),
-            ))]);
+            return Ok(vec![
+                MediaOutput::SendMessage(ack),
+                MediaOutput::SendMessage(bye),
+                MediaOutput::EmitEvent(failed_event(
+                    &session,
+                    &media.config.domain_id,
+                    &format!("invalid SDP media address: {e}"),
+                )),
+            ]);
         }
     };
 
