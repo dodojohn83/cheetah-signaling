@@ -139,9 +139,9 @@ pub struct MediaMutationContext {
     /// Request identifier for tracing.
     pub request_id: String,
     /// Cross-service correlation identifier.
-    pub correlation_id: String,
+    pub correlation_id: CorrelationId,
     /// Message identifier used for inbox/event de-duplication.
-    pub message_id: String,
+    pub message_id: MessageId,
     /// Idempotency key for the operation.
     pub idempotency_key: String,
     /// Absolute UTC deadline after which no side effects should be applied.
@@ -272,8 +272,8 @@ mod tests {
         MediaMutationContext {
             tenant_id: TenantId::generate(),
             request_id: "request-1".to_string(),
-            correlation_id: "correlation-1".to_string(),
-            message_id: "message-1".to_string(),
+            correlation_id: CorrelationId::generate(),
+            message_id: MessageId::generate(),
             idempotency_key: "idem-1".to_string(),
             deadline: Deadline::from_now(clock.now_wall(), DurationMs::from_millis(1000)),
             source_signaling_node_id: NodeId::generate(),
