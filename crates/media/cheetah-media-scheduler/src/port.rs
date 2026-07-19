@@ -17,7 +17,6 @@ use cheetah_signal_types::{
     ChannelId, Clock, DeviceId, MediaBindingId, MediaSessionId, MessageId, NodeId, PageRequest,
     TenantId, UtcTimestamp,
 };
-use prost_types::Timestamp;
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -151,11 +150,7 @@ impl MediaPort for SchedulerMediaPort {
         let payload = serde_json::to_vec(&command.payload).map_err(|e| {
             DomainError::internal(format!("failed to serialize media command payload: {e}"))
         })?;
-        let deadline = command
-            .deadline
-            .map(|d| to_timestamp(d.as_timestamp()))
-            .transpose()
-            .map_err(|e| DomainError::internal(format!("invalid media command deadline: {e}")))?;
+        let deadline = command.deadline.map(|d| d.as_timestamp().to_prost_timestamp());
         let context = MediaMutationContext {
             tenant_id: command.tenant_id.to_string(),
             request_id: command.request_id.clone(),
@@ -358,15 +353,6 @@ async fn reserve(
     Err(DomainError::unavailable(
         "no media node had capacity after retries",
     ))
-}
-
-fn to_timestamp(ts: UtcTimestamp) -> Result<Timestamp, String> {
-    let offset = ts.as_offset();
-    Ok(Timestamp {
-        seconds: offset.unix_timestamp(),
-        nanos: i32::try_from(offset.nanosecond())
-            .map_err(|_| "nanoseconds out of range".to_string())?,
-    })
 }
 
 fn map_scheduler_error(e: crate::error::SchedulerError) -> DomainError {
