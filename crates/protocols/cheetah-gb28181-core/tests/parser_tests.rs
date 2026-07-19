@@ -3,7 +3,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use cheetah_gb28181_core::{
-    HeaderName, Method, ResponseClass, SipMessage, SipParser, SipParserConfig, encode_message,
+    HeaderName, Method, ResponseClass, SipErrorKind, SipMessage, SipParser, SipParserConfig,
+    encode_message,
 };
 
 const REGISTER: &str = "REGISTER sip:registrar.example.com SIP/2.0\r\n\
@@ -223,4 +224,20 @@ fn unknown_header_is_preserved() {
         .expect("should parse");
     let name = HeaderName::Other("X-Custom".to_string());
     assert_eq!(msg.headers().get(&name).unwrap().as_str(), "value");
+}
+
+#[test]
+fn invalid_content_length_is_rejected() {
+    let data = "SIP/2.0 200 OK\r\nCall-ID: call-abc\r\nContent-Length: not-a-number\r\n\r\n";
+    let err = SipParser::parse_datagram(data.as_bytes(), SipParserConfig::default())
+        .expect_err("non-numeric Content-Length should fail");
+    assert_eq!(err.kind, SipErrorKind::InvalidHeader);
+}
+
+#[test]
+fn empty_content_length_is_rejected() {
+    let data = "SIP/2.0 200 OK\r\nCall-ID: call-abc\r\nContent-Length:\r\n\r\n";
+    let err = SipParser::parse_datagram(data.as_bytes(), SipParserConfig::default())
+        .expect_err("empty Content-Length should fail");
+    assert_eq!(err.kind, SipErrorKind::InvalidHeader);
 }
