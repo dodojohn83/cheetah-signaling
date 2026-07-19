@@ -349,7 +349,7 @@ mod tests {
             &mut self,
             _node: cheetah_domain::ClusterNode,
         ) -> Result<(), StorageError> {
-            unimplemented!("not used in tests")
+            Err(StorageError::internal("test fake: not implemented"))
         }
 
         async fn heartbeat(
@@ -360,7 +360,7 @@ mod tests {
             _updated_at: UtcTimestamp,
             _load: NodeLoad,
         ) -> Result<Option<cheetah_domain::ClusterNode>, StorageError> {
-            unimplemented!("not used in tests")
+            Err(StorageError::internal("test fake: not implemented"))
         }
 
         async fn get(
@@ -497,7 +497,7 @@ mod tests {
             _node_id: NodeId,
             _lease_until: UtcTimestamp,
         ) -> Result<Option<OwnerInfo>, StorageError> {
-            unimplemented!("not used in tests")
+            Err(StorageError::internal("test fake: not implemented"))
         }
 
         async fn release(
@@ -507,7 +507,7 @@ mod tests {
             _node_id: NodeId,
             _epoch: OwnerEpoch,
         ) -> Result<(), StorageError> {
-            unimplemented!("not used in tests")
+            Err(StorageError::internal("test fake: not implemented"))
         }
 
         async fn list_by_node(
@@ -800,7 +800,7 @@ mod tests {
             _now: UtcTimestamp,
             _lease_until: UtcTimestamp,
         ) -> Result<OwnerInfo, StorageError> {
-            unimplemented!("not used in this test")
+            Err(StorageError::internal("test fake: not implemented"))
         }
 
         async fn renew(
@@ -810,7 +810,7 @@ mod tests {
             _node_id: NodeId,
             _lease_until: UtcTimestamp,
         ) -> Result<Option<OwnerInfo>, StorageError> {
-            unimplemented!("not used in this test")
+            Err(StorageError::internal("test fake: not implemented"))
         }
 
         async fn release(
@@ -820,7 +820,7 @@ mod tests {
             _node_id: NodeId,
             _epoch: OwnerEpoch,
         ) -> Result<(), StorageError> {
-            unimplemented!("not used in this test")
+            Err(StorageError::internal("test fake: not implemented"))
         }
 
         async fn list_by_node(

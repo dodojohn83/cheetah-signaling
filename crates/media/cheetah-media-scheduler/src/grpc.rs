@@ -466,20 +466,31 @@ mod tests {
         async fn heartbeat(
             &self,
             _node_id: NodeId,
-            _load: u64,
-            _session_count: u64,
+            load: u64,
+            session_count: u64,
             _clock: &dyn Clock,
         ) -> Result<MediaNode, SchedulerError> {
-            unimplemented!()
+            let mut guard = self.lock_node();
+            let node = guard.as_mut().ok_or_else(|| {
+                SchedulerError::NodeNotFound("test fake: node not registered".into())
+            })?;
+            node.load = load;
+            node.session_count = session_count;
+            Ok(node.clone())
         }
 
         async fn drain(
             &self,
             _node_id: NodeId,
-            _drain: bool,
+            drain: bool,
             _clock: &dyn Clock,
         ) -> Result<MediaNode, SchedulerError> {
-            unimplemented!()
+            let mut guard = self.lock_node();
+            let node = guard.as_mut().ok_or_else(|| {
+                SchedulerError::NodeNotFound("test fake: node not registered".into())
+            })?;
+            node.draining = drain;
+            Ok(node.clone())
         }
 
         async fn deregister(
@@ -487,7 +498,11 @@ mod tests {
             _node_id: NodeId,
             _clock: &dyn Clock,
         ) -> Result<MediaNode, SchedulerError> {
-            unimplemented!()
+            let mut guard = self.lock_node();
+            let node = guard.take().ok_or_else(|| {
+                SchedulerError::NodeNotFound("test fake: node not registered".into())
+            })?;
+            Ok(node)
         }
 
         async fn get(&self, _node_id: NodeId, _clock: &dyn Clock) -> Option<MediaNode> {
@@ -495,7 +510,12 @@ mod tests {
         }
 
         async fn list_active(&self, _clock: &dyn Clock) -> Vec<MediaNode> {
-            unimplemented!()
+            self.lock_node()
+                .as_ref()
+                .filter(|n| !n.draining)
+                .cloned()
+                .into_iter()
+                .collect()
         }
 
         async fn reserve(
@@ -505,7 +525,11 @@ mod tests {
             _binding_id: MediaBindingId,
             _clock: &dyn Clock,
         ) -> Result<MediaNode, SchedulerError> {
-            unimplemented!()
+            let guard = self.lock_node();
+            let node = guard.as_ref().ok_or_else(|| {
+                SchedulerError::NodeNotFound("test fake: node not registered".into())
+            })?;
+            Ok(node.clone())
         }
 
         async fn release(
@@ -515,7 +539,11 @@ mod tests {
             _binding_id: MediaBindingId,
             _clock: &dyn Clock,
         ) -> Result<MediaNode, SchedulerError> {
-            unimplemented!()
+            let guard = self.lock_node();
+            let node = guard.as_ref().ok_or_else(|| {
+                SchedulerError::NodeNotFound("test fake: node not registered".into())
+            })?;
+            Ok(node.clone())
         }
     }
 
