@@ -9,11 +9,12 @@ use cheetah_onvif_driver_tokio::{DriverConfig, OnvifHttpDriver, probe_once};
 use cheetah_onvif_module::DeviceInformation;
 use cheetah_signal_application::{
     CapabilityDto, CapabilityValueDto, MarkDeviceOnlineRequest, RegisterDeviceRequest,
-    ReplaceChannelCatalogRequest,
 };
 use cheetah_signal_types::config::OnvifConfig;
+use cheetah_domain::{Connectivity, DeviceLifecycle, Protocol};
 use cheetah_signal_types::{
-    CorrelationId, MessageId, NodeId, Principal, PrincipalKind, RequestContext, TenantId,
+    CorrelationId, MessageId, NodeId, Principal, PrincipalKind, ProtocolIdentity, RequestContext,
+    TenantId,
 };
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -222,6 +223,52 @@ async fn provision_device(
         metadata.insert("hardware_id".to_string(), info.hardware_id.clone());
     }
 
+    let mut uow = state
+        .storage
+        .begin()
+        .await
+        .map_err(|e| format!("storage begin failed: {e}"))?;
+    let existing = uow
+        .device_repository()
+        .get_by_external_id(
+            tenant_id,
+            Protocol::Onvif,
+            ProtocolIdentity::new(endpoint_ref)?,
+        )
+        .await?;
+
+    if let Some(device) = existing {
+        if device.metadata() == &metadata
+            && device.name() == name
+            && device.lifecycle() == DeviceLifecycle::Active
+            && matches!(device.connectivity(), Connectivity::Online)
+        {
+            info!(device_id = %device.device_id(), xaddr = %xaddr, "onvif device already provisioned and online");
+            return Ok(());
+        }
+        if device.metadata() == &metadata && device.name() == name {
+            // Same metadata, just offline; mark online without re-registering.
+            let mut uow = state
+                .storage
+                .begin()
+                .await
+                .map_err(|e| format!("storage begin failed: {e}"))?;
+            state
+                .device_service
+                .mark_device_online(
+                    &context,
+                    &mut *uow,
+                    device.device_id(),
+                    MarkDeviceOnlineRequest {
+                        reason: Some("onvif discovery".to_string()),
+                    },
+                )
+                .await?;
+            info!(device_id = %device.device_id(), xaddr = %xaddr, "onvif device marked online");
+            return Ok(());
+        }
+    }
+
     let capabilities = Some(vec![CapabilityDto {
         key: "onvif".to_string(),
         value: CapabilityValueDto::Boolean(true),
@@ -247,25 +294,8 @@ async fn provision_device(
         .register_or_update_device(&context, &mut *uow, register_request)
         .await?;
 
-    // Best-effort channel catalog from media profiles. Media endpoint discovery
-    // requires GetCapabilities/GetServices which is not yet wired, so we leave
-    // the channel list empty for now and only mark the device online.
-    let replace_request = ReplaceChannelCatalogRequest { channels: vec![] };
-    let mut uow = state
-        .storage
-        .begin()
-        .await
-        .map_err(|e| format!("storage begin failed: {e}"))?;
-    state
-        .device_service
-        .replace_channel_catalog(
-            &context,
-            &mut *uow,
-            device.device.device_id,
-            replace_request,
-        )
-        .await?;
-
+    // Channel catalog is not populated until ONVIF media endpoint discovery is
+    // wired, so avoid replacing an existing catalog with an empty list.
     let mut uow = state
         .storage
         .begin()
