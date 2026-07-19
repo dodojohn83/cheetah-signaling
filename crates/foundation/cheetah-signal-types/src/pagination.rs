@@ -129,8 +129,10 @@ impl<T> Default for Page<T> {
 ///
 /// The cursor captures the `updated_at` and resource id of the last item on the
 /// current page so the next page can continue with `WHERE (updated_at, id) > ...`.
-/// It includes a version and integrity checksum so a server restart or a stale
-/// cursor is detected explicitly.
+/// It includes a version and a checksum so accidental corruption or cursor format
+/// drift (for example after a server restart that changes the sort key) is
+/// detected explicitly. The checksum is not a keyed MAC; cursors are opaque
+/// continuation tokens and the tenant filter is enforced separately server-side.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ListCursor {
     /// Cursor format version; changes invalidate previously issued cursors.
@@ -140,7 +142,7 @@ pub struct ListCursor {
     pub updated_at: String,
     /// String form of the resource identifier.
     pub id: String,
-    /// Integrity checksum over version, updated_at and id.
+    /// Checksum over version, updated_at and id.
     #[serde(default)]
     pub checksum: String,
 }
@@ -168,7 +170,7 @@ impl ListCursor {
         })
     }
 
-    /// Decodes a cursor from its opaque string form and verifies version/checksum.
+    /// Decodes a cursor from its opaque string form and verifies version and checksum.
     pub fn decode(value: &str) -> Result<Self> {
         let cursor: Self = serde_json::from_str(value).map_err(|e| {
             SignalError::new(
@@ -189,7 +191,7 @@ impl ListCursor {
         if cursor.checksum != expected {
             return Err(SignalError::new(
                 SignalErrorKind::CursorExpired,
-                "cursor has expired: integrity check failed",
+                "cursor has expired: checksum mismatch",
             ));
         }
 
@@ -209,7 +211,7 @@ impl ListCursor {
         Ok((ts, id))
     }
 
-    /// Computes a stable checksum over the cursor payload.
+    /// Computes a stable, keyless checksum over the cursor payload.
     fn compute_checksum(&self) -> String {
         let payload = format!("{}:{}:{}", self.version, self.updated_at, self.id);
         let digest = sha2::Sha256::digest(payload.as_bytes());
@@ -245,7 +247,7 @@ mod tests {
     }
 
     #[test]
-    fn list_cursor_rejects_tampered_checksum() {
+    fn list_cursor_rejects_corrupted_checksum() {
         let ts = UtcTimestamp::from_offset(time::OffsetDateTime::UNIX_EPOCH);
         let id = Uuid::from_u128(42);
         let mut cursor = ListCursor::new(ts, id).unwrap();
