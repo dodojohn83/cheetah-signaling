@@ -1533,3 +1533,29 @@ fn malformed_message_does_not_commit_online_presence_transition() {
     );
     assert!(keepalive_seen);
 }
+
+#[test]
+fn message_missing_device_id_returns_400() {
+    let (mut access, now) = make_registered_access();
+
+    let body = br#"<?xml version="1.0"?>
+<Notify>
+    <CmdType>Keepalive</CmdType>
+    <SN>1</SN>
+    <Status>OK</Status>
+</Notify>"#;
+    let request = make_message_request(body);
+    let outputs = access
+        .process(AccessInput {
+            source: "192.168.1.100:5060".parse().unwrap(),
+            now,
+            message: request,
+        })
+        .unwrap();
+
+    let response = find_response(&outputs);
+    let SipMessage::Response { line, .. } = response else {
+        panic!("expected response");
+    };
+    assert_eq!(line.code, 400);
+}
