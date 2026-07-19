@@ -90,3 +90,85 @@ impl WebhookDeliveryRepository for SqliteUnitOfWork {
         pending_webhook_deliveries(self.tx().await?.as_mut(), now, limit).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use crate::SqliteStorage;
+    use cheetah_domain::in_memory::{InMemoryClock, InMemoryIdGenerator};
+    use cheetah_domain::{IdGenerator, WebhookConfig};
+    use cheetah_storage_api::Storage;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct RemoveOnDrop(PathBuf);
+    impl Drop for RemoveOnDrop {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    #[tokio::test]
+    async fn save_webhook_config_rejects_negative_stored_revision() {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let mut path = std::env::temp_dir();
+        path.push(format!("cheetah-webhook-negative-revision-{suffix}.db"));
+        let _guard = RemoveOnDrop(path.clone());
+
+        let storage = SqliteStorage::new(&path).await.unwrap();
+        storage.migration().run().await.unwrap();
+
+        let clock = InMemoryClock::new();
+        let id_generator = InMemoryIdGenerator::new();
+        let tenant_id = id_generator.generate_tenant_id();
+        let config = WebhookConfig::new(
+            &clock,
+            &id_generator,
+            tenant_id,
+            "https://example.com/webhook".to_string(),
+            "secret://test".to_string(),
+            vec!["device.online".to_string()],
+        )
+        .unwrap();
+
+        let mut uow = storage.begin().await.unwrap();
+        uow.webhook_config_repository().save(&config).await.unwrap();
+        uow.commit().await.unwrap();
+
+        // Simulate database corruption: set the stored revision to a negative value.
+        {
+            let mut conn = storage.write_pool().acquire().await.unwrap();
+            sqlx::query(
+                "UPDATE webhook_configs SET revision = -1 WHERE tenant_id = ? AND webhook_id = ?",
+            )
+            .bind(tenant_id.as_uuid())
+            .bind(config.webhook_id().as_uuid())
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        }
+
+        let mut stale = config.clone();
+        stale
+            .update(
+                &clock,
+                Some("https://example.com/updated".to_string()),
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+
+        let mut uow = storage.begin().await.unwrap();
+        let result = uow.webhook_config_repository().save(&stale).await;
+        assert!(
+            matches!(result, Err(cheetah_domain::DomainError::Internal { .. })),
+            "expected internal error for corrupt negative stored revision, got {:?}",
+            result
+        );
+    }
+}
