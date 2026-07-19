@@ -5,7 +5,7 @@
 //! when the bounded channel is full and processes them asynchronously in a
 //! background worker.
 
-use cheetah_domain::Protocol;
+use cheetah_domain::{Connectivity, Device, Protocol};
 use cheetah_gb28181_driver_tokio::sink::EventSink;
 use cheetah_gb28181_module::DeviceId as GbDeviceId;
 use cheetah_gb28181_module::Gb28181Event;
@@ -49,6 +49,7 @@ pub fn spawn(
     queue_depth: usize,
     cancel: tokio_util::sync::CancellationToken,
 ) -> (Arc<dyn EventSink>, tokio::task::JoinHandle<()>) {
+    let queue_depth = queue_depth.max(1);
     let (tx, mut rx) = mpsc::channel(queue_depth);
     let sink = Arc::new(GbApplicationEventSink { tx }) as Arc<dyn EventSink>;
     let handle = tokio::spawn(async move {
@@ -86,7 +87,7 @@ async fn process_event(
 
     let result = match &event {
         Gb28181Event::DeviceRegistered { device_id, .. } => {
-            ensure_online(state, &context, tenant_id, device_id).await
+            ensure_online(state, &context, tenant_id, device_id, true).await
         }
         Gb28181Event::DeviceUnregistered { device_id, .. } => {
             mark_offline(state, &context, tenant_id, device_id).await
@@ -97,14 +98,14 @@ async fn process_event(
             ..
         } => match presence {
             cheetah_gb28181_module::DevicePresence::Online => {
-                ensure_online(state, &context, tenant_id, device_id).await
+                ensure_online(state, &context, tenant_id, device_id, true).await
             }
             cheetah_gb28181_module::DevicePresence::Offline => {
                 mark_offline(state, &context, tenant_id, device_id).await
             }
         },
         Gb28181Event::Keepalive { device_id, .. } => {
-            ensure_online(state, &context, tenant_id, device_id).await
+            ensure_online(state, &context, tenant_id, device_id, false).await
         }
         Gb28181Event::CatalogReceived {
             device_id, items, ..
@@ -237,7 +238,7 @@ fn build_context(
     tenant_id: TenantId,
     event: &Gb28181Event,
 ) -> RequestContext {
-    let source_ip = event_source(event).map(|s| s.to_string());
+    let source_ip = event_source(event).map(|s| s.ip().to_string());
     RequestContext {
         tenant_id,
         principal: Principal {
@@ -282,11 +283,11 @@ fn storage_error(e: cheetah_storage_api::StorageError) -> SignalError {
     )
 }
 
-async fn resolve_device_id(
+async fn resolve_device(
     state: &ApiState,
     tenant_id: TenantId,
     external_id: &str,
-) -> Option<DeviceId> {
+) -> Option<Device> {
     let mut uow = match state.storage.begin().await {
         Ok(u) => u,
         Err(e) => {
@@ -306,8 +307,7 @@ async fn resolve_device_id(
         .get_by_external_id(tenant_id, Protocol::Gb28181, identity)
         .await
     {
-        Ok(Some(device)) => Some(device.device_id()),
-        Ok(None) => None,
+        Ok(device) => device,
         Err(e) => {
             warn!(error = %e, external_id, "failed to resolve gb28181 device");
             None
@@ -315,26 +315,43 @@ async fn resolve_device_id(
     }
 }
 
+async fn resolve_device_id(
+    state: &ApiState,
+    tenant_id: TenantId,
+    external_id: &str,
+) -> Option<DeviceId> {
+    resolve_device(state, tenant_id, external_id)
+        .await
+        .map(|d| d.device_id())
+}
+
 async fn ensure_online(
     state: &ApiState,
     context: &RequestContext,
     tenant_id: TenantId,
     device_id: &GbDeviceId,
+    force: bool,
 ) -> Result<(), SignalError> {
     let external_id = device_id.as_ref();
-    if let Some(internal_id) = resolve_device_id(state, tenant_id, external_id).await {
-        let mut uow = state.storage.begin().await.map_err(storage_error)?;
-        let _ = state
-            .device_service
-            .mark_device_online(
-                context,
-                &mut *uow,
-                internal_id,
-                MarkDeviceOnlineRequest {
-                    reason: Some("gb28181 online".to_string()),
-                },
-            )
-            .await?;
+    if let Some(device) = resolve_device(state, tenant_id, external_id).await {
+        if force || !matches!(device.connectivity(), Connectivity::Online) {
+            let mut uow = state.storage.begin().await.map_err(storage_error)?;
+            let _ = state
+                .device_service
+                .mark_device_online(
+                    context,
+                    &mut *uow,
+                    device.device_id(),
+                    MarkDeviceOnlineRequest {
+                        reason: Some("gb28181 online".to_string()),
+                    },
+                )
+                .await?;
+        }
+        return Ok(());
+    }
+
+    if !force {
         return Ok(());
     }
 

@@ -78,6 +78,12 @@ impl SignalConfig {
                 "runtime.worker_threads must be greater than zero",
             ));
         }
+        if self.runtime.queue_depth == 0 {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                "runtime.queue_depth must be greater than zero",
+            ));
+        }
         if self.http.port == 0 {
             return Err(SignalError::new(
                 SignalErrorKind::InvalidArgument,
