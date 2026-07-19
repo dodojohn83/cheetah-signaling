@@ -8,10 +8,13 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # Canonical Buf version for reproducible proto lint/format.
+  BUF_VERSION: "1.50.0"
 
 jobs:
   fmt-check:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -22,6 +25,7 @@ jobs:
 
   clippy:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -37,6 +41,7 @@ jobs:
 
   nextest:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -52,6 +57,7 @@ jobs:
 
   deny:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -62,12 +68,14 @@ jobs:
 
   proto:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - uses: bufbuild/buf-action@v1
         with:
+          version: ${{ env.BUF_VERSION }}
           lint: true
           format: true
           breaking: false
