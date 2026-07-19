@@ -24,7 +24,8 @@ pub mod trace_context;
 pub use audit::{AuditEvent, AuditLog, AuditOutcome, NoOpAuditLog};
 pub use config::{ConfigSource, DeploymentProfile, SignalConfig};
 pub use context::{
-    Principal, PrincipalKind, RequestContext, ResourceId, ResourceKind, ResourceRef,
+    MediaMutationContext, Principal, PrincipalKind, RequestContext, ResourceId, ResourceKind,
+    ResourceRef,
 };
 pub use error::{FieldViolation, Result, SignalError, SignalErrorKind};
 pub use event::Event;
