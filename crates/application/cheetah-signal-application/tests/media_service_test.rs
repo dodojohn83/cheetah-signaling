@@ -591,6 +591,11 @@ async fn media_service_reconcile_handles_mid_release_binding() {
 
     let clock = ctx.clock.as_ref();
     media_session.active(clock).unwrap();
+    ctx.uow
+        .media_session_repository()
+        .save(&media_session)
+        .await
+        .unwrap();
     media_session.stopping(clock).unwrap();
     binding.release(clock).unwrap();
 
