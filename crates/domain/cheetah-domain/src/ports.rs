@@ -7,7 +7,7 @@ use crate::{
 use cheetah_signal_types::{
     ChannelId, Deadline, DeliveryId, DeviceId, Event, EventId, MediaBindingId,
     MediaNodeInstanceEpoch, MediaSessionId, MessageId, NodeId, OperationId, OwnerEpoch, Page,
-    PageRequest, ProtocolIdentity, TenantId, UtcTimestamp, WebhookId,
+    PageRequest, ProtocolIdentity, Revision, TenantId, UtcTimestamp, WebhookId,
 };
 
 pub use cheetah_signal_types::{Clock, IdGenerator};
@@ -170,12 +170,13 @@ pub trait ChannelRepository: Send {
     ) -> Result<Vec<Channel>>;
     /// Saves a channel.
     async fn save(&mut self, channel: &Channel) -> Result<()>;
-    /// Removes a channel.
+    /// Removes a channel if its current revision matches `expected_revision`.
     async fn remove(
         &mut self,
         tenant_id: TenantId,
         device_id: DeviceId,
         channel_id: ChannelId,
+        expected_revision: Revision,
     ) -> Result<()>;
     /// Lists channels for a device with optional filters and stable cursor pagination.
     async fn list(

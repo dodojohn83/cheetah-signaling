@@ -248,7 +248,7 @@ impl DeviceService {
                 );
                 uow.outbox().append(event).await?;
                 uow.channel_repository()
-                    .remove(tenant_id, device_id, channel_id)
+                    .remove(tenant_id, device_id, channel_id, revision)
                     .await?;
             }
         }

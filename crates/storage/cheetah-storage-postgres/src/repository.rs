@@ -5,9 +5,9 @@ use crate::list;
 use crate::unit_of_work::PostgresUnitOfWork;
 use cheetah_domain::Protocol;
 use cheetah_domain::{
-    Channel, ChannelRepository, Device, DeviceRepository, DomainError, MediaBinding,
-    MediaBindingRepository, MediaSession, MediaSessionRepository, Operation, OperationRepository,
-    Outbox, OutboxEntry, ProcessedMessageRecord, ProcessedMessageRepository,
+    Channel, ChannelRepository, Device, DeviceLifecycle, DeviceRepository, DomainError,
+    MediaBinding, MediaBindingRepository, MediaSession, MediaSessionRepository, Operation,
+    OperationRepository, Outbox, OutboxEntry, ProcessedMessageRecord, ProcessedMessageRepository,
     ProcessedMessageStatus,
 };
 use cheetah_signal_types::{DeviceId, Event, MessageId, Page, PageRequest, TenantId, UtcTimestamp};
@@ -134,7 +134,7 @@ impl DeviceRepository for PostgresUnitOfWork {
         .bind(device.revision().0 as i64)
         .bind(device.created_at().as_offset())
         .bind(device.updated_at().as_offset())
-        .bind(false)
+        .bind(device.lifecycle() == DeviceLifecycle::Retired)
         .bind(Json(device))
         .bind(1i32)
         .execute(self.tx().await?.as_mut())
@@ -257,17 +257,34 @@ impl ChannelRepository for PostgresUnitOfWork {
         tenant_id: cheetah_signal_types::TenantId,
         device_id: cheetah_signal_types::DeviceId,
         channel_id: cheetah_signal_types::ChannelId,
+        expected_revision: cheetah_signal_types::Revision,
     ) -> cheetah_domain::Result<()> {
-        sqlx::query(
-            "UPDATE channels SET deleted = true, updated_at = $1 WHERE tenant_id = $2 AND device_id = $3 AND channel_id = $4",
+        let result = sqlx::query(
+            "DELETE FROM channels WHERE tenant_id = $1 AND device_id = $2 AND channel_id = $3 AND revision = $4",
         )
-        .bind(OffsetDateTime::now_utc())
         .bind(tenant_id.as_uuid())
         .bind(device_id.as_uuid())
         .bind(channel_id.as_uuid())
+        .bind(expected_revision.0 as i64)
         .execute(self.tx().await?.as_mut())
         .await
         .map_err(sqlx_to_domain)?;
+        if result.rows_affected() != 1 {
+            let found: Option<(i64,)> = sqlx::query_as(
+                "SELECT revision FROM channels WHERE tenant_id = $1 AND device_id = $2 AND channel_id = $3",
+            )
+            .bind(tenant_id.as_uuid())
+            .bind(device_id.as_uuid())
+            .bind(channel_id.as_uuid())
+            .fetch_optional(self.tx().await?.as_mut())
+            .await
+            .map_err(sqlx_to_domain)?;
+            let found = found.and_then(|(r,)| u64::try_from(r).ok()).unwrap_or(0);
+            return Err(DomainError::ConcurrentModification {
+                expected: expected_revision.0,
+                found,
+            });
+        }
         Ok(())
     }
 

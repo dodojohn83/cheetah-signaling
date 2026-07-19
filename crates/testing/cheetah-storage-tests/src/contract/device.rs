@@ -2,13 +2,14 @@
 
 use crate::{contract::TestResult, fixtures::Fixtures};
 use cheetah_domain::DomainError;
-use cheetah_signal_types::TenantId;
+use cheetah_signal_types::{PageRequest, TenantId};
 use cheetah_storage_api::Storage;
 
 pub async fn run(storage: &dyn Storage, fixtures: &Fixtures) -> TestResult<()> {
     crud(storage, fixtures).await?;
     get_by_external_id(storage, fixtures).await?;
     revision_concurrency(storage, fixtures).await?;
+    retired_device_is_hidden(storage, fixtures).await?;
     tenant_isolation(storage, fixtures).await?;
     Ok(())
 }
@@ -130,6 +131,50 @@ async fn tenant_isolation(storage: &dyn Storage, fixtures: &Fixtures) -> TestRes
     assert_eq!(b.tenant_id(), tenant_b);
     assert!(a_cross.is_none(), "tenant_a must not see tenant_b's device");
     assert!(b_cross.is_none(), "tenant_b must not see tenant_a's device");
+
+    Ok(())
+}
+
+async fn retired_device_is_hidden(storage: &dyn Storage, fixtures: &Fixtures) -> TestResult<()> {
+    let tenant_id = fixtures.tenant_id();
+    let device_id = fixtures.device_id();
+    let mut device = fixtures.device(tenant_id, device_id)?;
+    device.mark_online(fixtures.clock(), None)?;
+
+    let mut uow = storage.begin().await?;
+    uow.device_repository().save(&device).await?;
+    uow.commit().await?;
+
+    device.retire(fixtures.clock())?;
+
+    let mut uow = storage.begin().await?;
+    uow.device_repository().save(&device).await?;
+    uow.commit().await?;
+
+    let mut uow = storage.begin().await?;
+    let loaded = uow.device_repository().get(tenant_id, device_id).await?;
+    let by_external = uow
+        .device_repository()
+        .get_by_external_id(tenant_id, device.protocol(), device.external_id().clone())
+        .await?;
+    let listed = uow
+        .device_repository()
+        .list(tenant_id, None, None, None, None, PageRequest::new(10)?)
+        .await?;
+    uow.commit().await?;
+
+    assert!(
+        loaded.is_none(),
+        "retired device must not be returned by get"
+    );
+    assert!(
+        by_external.is_none(),
+        "retired device must not be returned by external id"
+    );
+    assert!(
+        listed.items.is_empty(),
+        "retired device must not appear in list"
+    );
 
     Ok(())
 }
