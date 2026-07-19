@@ -223,19 +223,20 @@ async fn provision_device(
         metadata.insert("hardware_id".to_string(), info.hardware_id.clone());
     }
 
-    let mut uow = state
-        .storage
-        .begin()
-        .await
-        .map_err(|e| format!("storage begin failed: {e}"))?;
-    let existing = uow
-        .device_repository()
-        .get_by_external_id(
-            tenant_id,
-            Protocol::Onvif,
-            ProtocolIdentity::new(endpoint_ref)?,
-        )
-        .await?;
+    let existing = {
+        let mut uow = state
+            .storage
+            .begin()
+            .await
+            .map_err(|e| format!("storage begin failed: {e}"))?;
+        uow.device_repository()
+            .get_by_external_id(
+                tenant_id,
+                Protocol::Onvif,
+                ProtocolIdentity::new(endpoint_ref)?,
+            )
+            .await?
+    };
 
     if let Some(device) = existing {
         if device.metadata() == &metadata
