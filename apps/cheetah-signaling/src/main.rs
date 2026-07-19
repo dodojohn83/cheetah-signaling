@@ -2,6 +2,7 @@
 
 mod assembly;
 mod gb_event_sink;
+mod onvif_discovery;
 
 use cheetah_signal_types::config::ConfigSource;
 use tracing::info;

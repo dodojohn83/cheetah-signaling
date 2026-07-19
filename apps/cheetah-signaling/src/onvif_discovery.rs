@@ -11,10 +11,10 @@ use cheetah_signal_application::{
     CapabilityDto, CapabilityValueDto, MarkDeviceOnlineRequest, RegisterDeviceRequest,
     ReplaceChannelCatalogRequest,
 };
+use cheetah_signal_types::config::OnvifConfig;
 use cheetah_signal_types::{
     CorrelationId, MessageId, NodeId, Principal, PrincipalKind, RequestContext, TenantId,
 };
-use cheetah_signal_types::config::OnvifConfig;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -64,7 +64,8 @@ pub fn spawn(
             }
         };
 
-        let interval = Duration::from_millis(config.discovery_interval_ms.as_millis().max(0) as u64);
+        let interval =
+            Duration::from_millis(config.discovery_interval_ms.as_millis().max(0) as u64);
         let single_sweep = interval.is_zero();
 
         loop {
@@ -132,7 +133,9 @@ async fn run_discovery_sweep(
             let endpoint_ref = endpoint_ref.clone();
             set.spawn(async move {
                 let _permit = permit.acquire().await;
-                if let Err(e) = provision_device(state, node_id, tenant_id, driver, &endpoint_ref, &xaddr).await {
+                if let Err(e) =
+                    provision_device(state, node_id, tenant_id, driver, &endpoint_ref, &xaddr).await
+                {
                     warn!(xaddr = %xaddr, error = %e, "onvif device provisioning failed");
                 }
             });
@@ -154,7 +157,7 @@ async fn provision_device(
     endpoint_ref: &str,
     xaddr: &str,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let timeout = Some(driver_config_timeout(driver));
+    let timeout = Some(Duration::from_secs(10));
     let info = driver
         .get_device_information(xaddr, None, timeout)
         .await
@@ -173,7 +176,10 @@ async fn provision_device(
         metadata.insert("model".to_string(), info.model.clone());
     }
     if !info.firmware_version.is_empty() {
-        metadata.insert("firmware_version".to_string(), info.firmware_version.clone());
+        metadata.insert(
+            "firmware_version".to_string(),
+            info.firmware_version.clone(),
+        );
     }
     if !info.serial_number.is_empty() {
         metadata.insert("serial_number".to_string(), info.serial_number.clone());
@@ -197,42 +203,54 @@ async fn provision_device(
         metadata: Some(metadata),
     };
 
-    let mut uow = state.storage.begin().await?;
+    let mut uow = state
+        .storage
+        .begin()
+        .await
+        .map_err(|e| format!("storage begin failed: {e}"))?;
     let device = state
         .device_service
-        .register_or_update_device(&context, &mut uow, register_request)
+        .register_or_update_device(&context, &mut *uow, register_request)
         .await?;
 
     // Best-effort channel catalog from media profiles. Media endpoint discovery
     // requires GetCapabilities/GetServices which is not yet wired, so we leave
     // the channel list empty for now and only mark the device online.
     let replace_request = ReplaceChannelCatalogRequest { channels: vec![] };
-    let mut uow = state.storage.begin().await?;
+    let mut uow = state
+        .storage
+        .begin()
+        .await
+        .map_err(|e| format!("storage begin failed: {e}"))?;
     state
         .device_service
-        .replace_channel_catalog(&context, &mut uow, device.device_id, replace_request)
+        .replace_channel_catalog(
+            &context,
+            &mut *uow,
+            device.device.device_id,
+            replace_request,
+        )
         .await?;
 
-    let mut uow = state.storage.begin().await?;
+    let mut uow = state
+        .storage
+        .begin()
+        .await
+        .map_err(|e| format!("storage begin failed: {e}"))?;
     state
         .device_service
         .mark_device_online(
             &context,
-            &mut uow,
-            device.device_id,
+            &mut *uow,
+            device.device.device_id,
             MarkDeviceOnlineRequest {
                 reason: Some("onvif discovery".to_string()),
             },
         )
         .await?;
 
-    info!(%device.device_id, xaddr = %xaddr, "onvif device provisioned");
+    info!(%device.device.device_id, xaddr = %xaddr, "onvif device provisioned");
     Ok(())
-}
-
-fn driver_config_timeout(driver: &OnvifHttpDriver) -> Duration {
-    let _ = driver;
-    Duration::from_secs(10)
 }
 
 fn source_ip_from_xaddr(xaddr: &str) -> Option<String> {
@@ -242,25 +260,28 @@ fn source_ip_from_xaddr(xaddr: &str) -> Option<String> {
 }
 
 fn device_name(info: &DeviceInformation, fallback: &str) -> String {
-    let parts = [
-        &info.manufacturer,
-        &info.model,
-        &info.serial_number,
-    ];
-    let joined: String = parts
-        .iter()
-        .filter(|s| !s.is_empty())
-        .cloned()
-        .collect::<Vec<_>>()
-        .join(" ");
-    if joined.is_empty() {
+    let mut parts = Vec::new();
+    if !info.manufacturer.is_empty() {
+        parts.push(info.manufacturer.as_str());
+    }
+    if !info.model.is_empty() {
+        parts.push(info.model.as_str());
+    }
+    if !info.serial_number.is_empty() {
+        parts.push(info.serial_number.as_str());
+    }
+    if parts.is_empty() {
         fallback.to_string()
     } else {
-        joined
+        parts.join(" ")
     }
 }
 
-fn build_context(node_id: NodeId, tenant_id: TenantId, source_ip: Option<String>) -> RequestContext {
+fn build_context(
+    node_id: NodeId,
+    tenant_id: TenantId,
+    source_ip: Option<String>,
+) -> RequestContext {
     RequestContext {
         tenant_id,
         principal: Principal {

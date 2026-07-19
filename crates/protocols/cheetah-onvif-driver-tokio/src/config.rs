@@ -1,8 +1,8 @@
 //! Driver configuration.
 
 use cheetah_onvif_core::discovery::{DiscoveryLimits, RateLimitConfig, XAddrPolicy};
-use cheetah_signal_types::config::OnvifConfig;
 use cheetah_signal_types::DurationMs;
+use cheetah_signal_types::config::OnvifConfig;
 use std::net::SocketAddr;
 use std::time::Duration;
 
@@ -52,8 +52,12 @@ impl Default for DriverConfig {
 impl From<&OnvifConfig> for DriverConfig {
     fn from(config: &OnvifConfig) -> Self {
         Self {
-            connect_timeout: Duration::from_millis(config.connect_timeout_ms.as_millis().max(0) as u64),
-            request_timeout: Duration::from_millis(config.request_timeout_ms.as_millis().max(0) as u64),
+            connect_timeout: Duration::from_millis(
+                config.connect_timeout_ms.as_millis().max(0) as u64
+            ),
+            request_timeout: Duration::from_millis(
+                config.request_timeout_ms.as_millis().max(0) as u64
+            ),
             max_response_bytes: config.max_response_bytes,
             max_concurrent_requests: config.max_concurrent_requests,
             xaddr_policy: XAddrPolicy {

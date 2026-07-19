@@ -6,9 +6,9 @@
 
 use crate::error::{Result, SignalError, SignalErrorKind};
 use crate::{DurationMs, NodeId};
-use std::net::SocketAddr;
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::net::SocketAddr;
 
 /// Serializes a `SecretString` as a redacted placeholder, preserving empty defaults.
 ///

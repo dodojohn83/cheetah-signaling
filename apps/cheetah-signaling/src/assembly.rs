@@ -4,11 +4,13 @@
 //! repository → ownership → media → protocol → public listener → ready.
 
 use crate::gb_event_sink;
+use crate::onvif_discovery;
 use cheetah_cluster_ownership::lease::CachingDeviceOwnerResolver;
 use cheetah_domain::ports::{DeviceOwnerResolver, MediaPort};
 use cheetah_domain::{DomainEvent, EventPublisher};
 use cheetah_gb28181_driver_tokio::Gb28181UdpDriver;
 use cheetah_gb28181_driver_tokio::config::DriverConfig as GbDriverConfig;
+use cheetah_gb28181_module::Gb28181DriverFactory;
 use cheetah_gb28181_module::config::{AuthPolicy, Gb28181DomainConfig};
 use cheetah_gb28181_module::ports::CredentialProvider;
 use cheetah_gb28181_module::types::DeviceId as GbDeviceId;
@@ -22,6 +24,9 @@ use cheetah_message_api::RawEventBus;
 use cheetah_message_api::publisher::publish_domain_event;
 use cheetah_message_local::InProcessMessageBus;
 use cheetah_message_nats::NatsBus;
+use cheetah_onvif_driver_tokio::OnvifTokioDriverFactory;
+use cheetah_plugin_host::PluginHost;
+use cheetah_plugin_sdk::{PluginManifest, ProtocolDriverFactory};
 use cheetah_secret::{CompositeSecretStore, EnvSecretStore, FileSecretStore};
 use cheetah_signal_application::OutboxRelay;
 use cheetah_signal_types::config::{MessagingBackend, SignalConfig, StorageBackend};
@@ -32,6 +37,7 @@ use cheetah_signal_types::{
 use cheetah_storage_api::Storage;
 use cheetah_storage_sqlite::SqliteStorage;
 use secrecy::{ExposeSecret, SecretSlice, SecretString};
+use semver::Version;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -52,6 +58,9 @@ pub struct SignalingRuntime {
     pub http_addr: SocketAddr,
     /// Optional bound GB28181 SIP address.
     pub gb28181_addr: Option<SocketAddr>,
+    /// Plugin host with built-in factories and validated external manifests.
+    #[allow(dead_code)]
+    pub plugin_host: PluginHost,
     /// Background worker handles (outbox, protocol drivers).
     workers: Vec<JoinHandle<()>>,
 }
@@ -452,6 +461,28 @@ pub async fn start(
     );
     state.cancel = cancel.clone();
 
+    // Plugin host: register built-in GB28181 and ONVIF factories and validate
+    // any external plugin manifests before protocol workers start.
+    let host_sdk_version = Version::new(0, 1, 0);
+    let mut plugin_host = PluginHost::new(host_sdk_version, config.onvif.request_timeout_ms);
+    let gb_factory = Gb28181DriverFactory::new();
+    plugin_host
+        .register_builtin(gb_factory.name(), Box::new(gb_factory))
+        .map_err(|e| format!("failed to register gb28181 plugin factory: {e}"))?;
+    let onvif_factory = OnvifTokioDriverFactory::new();
+    plugin_host
+        .register_builtin(onvif_factory.name(), Box::new(onvif_factory))
+        .map_err(|e| format!("failed to register onvif plugin factory: {e}"))?;
+
+    if config.plugins.enabled {
+        validate_external_plugins(
+            &plugin_host,
+            &config.plugins.plugin_dir,
+            config.plugins.max_plugin_instances,
+        )
+        .await?;
+    }
+
     let default_tenant_id = config
         .gb28181
         .default_tenant_id
@@ -519,6 +550,20 @@ pub async fn start(
         warn!("gb28181.sip_port is 0; protocol UDP listener not started");
     }
 
+    // ONVIF WS-Discovery worker: periodically probes the network for cameras
+    // and provisions them through the application DeviceService.
+    if config.onvif.enabled {
+        workers.push(onvif_discovery::spawn(
+            state.clone(),
+            node_id,
+            config.onvif.clone(),
+            cancel.child_token(),
+        ));
+        info!("onvif discovery worker started");
+    } else {
+        warn!("onvif.enabled is false; discovery worker not started");
+    }
+
     let http = ApiServer::start(state).await?;
     let http_addr = http.local_addr;
     info!(%http_addr, "HTTP API listening");
@@ -528,6 +573,79 @@ pub async fn start(
         http,
         http_addr,
         gb28181_addr,
+        plugin_host,
         workers,
     })
+}
+
+/// Validates external plugin manifests in `plugin_dir` without activating them.
+///
+/// Each `.json` file is parsed as a [`PluginManifest`] and checked against the
+/// host SDK version and checksum by the plugin host. The number of validated
+/// manifests is bounded by `max_instances`.
+async fn validate_external_plugins(
+    plugin_host: &PluginHost,
+    plugin_dir: &str,
+    max_instances: u32,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if plugin_dir.is_empty() {
+        warn!(
+            "plugins.enabled is true but plugins.plugin_dir is empty; skipping external plugin validation"
+        );
+        return Ok(());
+    }
+
+    let dir = PathBuf::from(plugin_dir);
+    if !dir.is_dir() {
+        warn!(path = %dir.display(), "plugins.plugin_dir does not exist; skipping external plugin validation");
+        return Ok(());
+    }
+
+    let mut validated = 0u32;
+    for entry in std::fs::read_dir(&dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("json") {
+            continue;
+        }
+
+        let payload = std::fs::read(&path)?;
+        let manifest: PluginManifest = match serde_json::from_slice(&payload) {
+            Ok(m) => m,
+            Err(e) => {
+                warn!(path = %path.display(), error = %e, "skipping invalid external plugin manifest");
+                continue;
+            }
+        };
+
+        match plugin_host.validate_manifest(&manifest, &payload) {
+            Ok(validated_manifest) => {
+                validated += 1;
+                info!(
+                    plugin = %validated_manifest.manifest.name,
+                    version = %validated_manifest.plugin_version,
+                    sdk = %validated_manifest.sdk_version,
+                    "external plugin manifest validated"
+                );
+            }
+            Err(e) => {
+                warn!(path = %path.display(), error = %e, "external plugin manifest validation failed");
+            }
+        }
+
+        if validated > max_instances {
+            return Err(format!(
+                "external plugin manifest count exceeds plugins.max_plugin_instances ({max_instances})"
+            )
+            .into());
+        }
+    }
+
+    if validated == 0 {
+        warn!(path = %dir.display(), "no external plugin manifests validated");
+    } else {
+        info!(validated, "external plugin manifests validated");
+    }
+
+    Ok(())
 }

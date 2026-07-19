@@ -34,6 +34,7 @@ cheetah-plugin-host = { path = "../../crates/plugin/cheetah-plugin-host" }
 cheetah-plugin-sdk = { path = "../../crates/plugin/cheetah-plugin-sdk" }
 cheetah-secret = { path = "../../crates/foundation/cheetah-secret" }
 semver = { workspace = true }
+serde_json = { workspace = true }
 url = { workspace = true }
 async-trait = { workspace = true }
 hex = { workspace = true }

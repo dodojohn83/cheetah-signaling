@@ -11,8 +11,8 @@ use cheetah_plugin_sdk::{
     CapabilityDescriptor, DriverCommand, DriverContext, HealthReport, HealthStatus, PluginError,
     PluginName, ProtocolCapability, ProtocolDirection, ProtocolDriver, ProtocolDriverFactory,
 };
-use cheetah_signal_types::config::OnvifConfig;
 use cheetah_signal_types::DurationMs;
+use cheetah_signal_types::config::OnvifConfig;
 use secrecy::SecretString;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -199,7 +199,12 @@ async fn dispatch_command(
             let cmd: MediaCommand = parse_payload(&command.payload)?;
             let timeout = cmd.command_timeout(timeout);
             driver
-                .get_profiles(&cmd.media_endpoint, cmd.dialect(), cmd.credentials().as_ref(), timeout)
+                .get_profiles(
+                    &cmd.media_endpoint,
+                    cmd.dialect(),
+                    cmd.credentials().as_ref(),
+                    timeout,
+                )
                 .await
                 .map_err(plugin_error_from_driver_error)?;
         }
@@ -242,10 +247,11 @@ async fn dispatch_command(
     Ok(())
 }
 
-fn parse_payload<T: for<'de> Deserialize<'de>>(payload: &serde_json::Value) -> Result<T, PluginError> {
-    serde_json::from_value(payload.clone()).map_err(|e| {
-        PluginError::Driver(format!("invalid onvif command payload: {e}"))
-    })
+fn parse_payload<T: for<'de> Deserialize<'de>>(
+    payload: &serde_json::Value,
+) -> Result<T, PluginError> {
+    serde_json::from_value(payload.clone())
+        .map_err(|e| PluginError::Driver(format!("invalid onvif command payload: {e}")))
 }
 
 fn plugin_error_from_driver_error(e: DriverError) -> PluginError {
