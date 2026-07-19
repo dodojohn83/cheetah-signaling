@@ -88,7 +88,7 @@ def check_dependency_direction(metadata):
     for pkg in metadata["packages"]:
         for dep in pkg.get("dependencies", []):
             key = (pkg["id"], dep["name"])
-            dep_kinds[key] = dep.get("kind", None)
+            dep_kinds.setdefault(key, set()).add(dep.get("kind", None))
 
     for node in metadata["resolve"]["nodes"]:
         pkg = packages_by_id.get(node["id"])
@@ -102,8 +102,8 @@ def check_dependency_direction(metadata):
             dep_pkg = packages_by_id.get(dep_id)
             dep_name = dep_pkg["name"] if dep_pkg else dep_id.split(" ")[0]
             dep_layer = layer_of(dep_name)
-            kind = dep_kinds.get((node["id"], dep_name))
-            if kind in ("dev", "build"):
+            kinds = dep_kinds.get((node["id"], dep_name), set())
+            if kinds and kinds.issubset({"dev", "build"}):
                 continue
             if dep_layer is not None and dep_layer < src_layer:
                 errors.append(

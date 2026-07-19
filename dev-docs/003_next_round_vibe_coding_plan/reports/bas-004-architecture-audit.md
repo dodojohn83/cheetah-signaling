@@ -1,7 +1,7 @@
 # BAS-004: Architecture and Placeholder Audit
 
 - Dependency layer violations: 3
-- Forbidden dependency warnings: 2
+- Forbidden dependency warnings: 3
 - Production `todo!` / `unimplemented!` hits: 0
 - Production `panic!` warnings: 1
 - Test-fake `todo!` / `unimplemented!` hits: 0
@@ -15,6 +15,7 @@
 
 ## Forbidden dependency warnings
 
+- FORBIDDEN DEP: cheetah-cluster-registry (layer 6) -> tokio
 - FORBIDDEN DEP: cheetah-signal-contracts (layer 6) -> tonic
 - FORBIDDEN DEP: cheetah-signal-contracts (layer 6) -> tonic-prost
 
