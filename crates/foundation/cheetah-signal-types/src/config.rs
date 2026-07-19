@@ -266,6 +266,15 @@ impl SignalConfig {
                         "cluster profile requires cluster.enabled = true",
                     ));
                 }
+                if self.grpc.tls_cert_ref.is_none()
+                    || self.grpc.tls_key_ref.is_none()
+                    || self.grpc.mtls_client_ca_ref.is_none()
+                {
+                    return Err(SignalError::new(
+                        SignalErrorKind::InvalidArgument,
+                        "cluster profile requires grpc.tls_cert_ref, tls_key_ref and mtls_client_ca_ref",
+                    ));
+                }
             }
         }
         Ok(())
