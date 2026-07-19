@@ -12,6 +12,10 @@ use cheetah_gb28181_core::{
     DigestContext, HeaderName, HeaderValue, Method, SipHeaders, SipMessage, SipUri, StatusLine,
 };
 use secrecy::SecretString;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
 pub(crate) fn domain_id() -> DomainId {
     DomainId::new("3402000000").unwrap()
@@ -554,6 +558,106 @@ fn redirect_response_is_treated_as_failure() {
         o,
         CascadeOutput::EmitEvent(crate::events::Gb28181Event::CascadePlatformConnected { .. })
     )));
+}
+
+fn toggling_provider(
+    enabled: Arc<AtomicBool>,
+) -> impl Fn(&str) -> Option<SecretString> + Send + Sync {
+    move |_: &str| {
+        if enabled.load(Ordering::SeqCst) {
+            Some(SecretString::new("secret".into()))
+        } else {
+            None
+        }
+    }
+}
+
+#[test]
+fn refresh_propagates_error_when_credentials_disappear() {
+    let enabled = Arc::new(AtomicBool::new(true));
+    let mut cascade = Gb28181Cascade::new(config(), toggling_provider(enabled.clone())).unwrap();
+
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 1000,
+            event: CascadeEvent::Register,
+        })
+        .unwrap();
+    let (call_id, cseq) = request_call_id_cseq(&outputs);
+
+    let challenge = challenge_ctx().generate_challenge(1000).unwrap();
+    let response_401 = build_401(&challenge.to_header_value(), &call_id, &cseq);
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 1001,
+            event: CascadeEvent::Response(Box::new(response_401)),
+        })
+        .unwrap();
+    let (call_id, cseq) = request_call_id_cseq(&outputs);
+
+    cascade
+        .process(CascadeInput {
+            now: 1002,
+            event: CascadeEvent::Response(Box::new(build_200(60, &call_id, &cseq))),
+        })
+        .unwrap();
+
+    // Credentials are removed before the scheduled refresh.
+    enabled.store(false, Ordering::SeqCst);
+
+    let result = cascade.process(CascadeInput {
+        now: 1032,
+        event: CascadeEvent::Tick,
+    });
+    assert!(
+        matches!(result, Err(crate::cascade::CascadeError::NoCredentials)),
+        "refresh must fail when credentials disappear, got {:?}",
+        result
+    );
+}
+
+#[test]
+fn deregister_propagates_error_when_credentials_disappear() {
+    let enabled = Arc::new(AtomicBool::new(true));
+    let mut cascade = Gb28181Cascade::new(config(), toggling_provider(enabled.clone())).unwrap();
+
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 1000,
+            event: CascadeEvent::Register,
+        })
+        .unwrap();
+    let (call_id, cseq) = request_call_id_cseq(&outputs);
+
+    let challenge = challenge_ctx().generate_challenge(1000).unwrap();
+    let response_401 = build_401(&challenge.to_header_value(), &call_id, &cseq);
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 1001,
+            event: CascadeEvent::Response(Box::new(response_401)),
+        })
+        .unwrap();
+    let (call_id, cseq) = request_call_id_cseq(&outputs);
+
+    cascade
+        .process(CascadeInput {
+            now: 1002,
+            event: CascadeEvent::Response(Box::new(build_200(60, &call_id, &cseq))),
+        })
+        .unwrap();
+
+    // Credentials are removed before deregister.
+    enabled.store(false, Ordering::SeqCst);
+
+    let result = cascade.process(CascadeInput {
+        now: 1003,
+        event: CascadeEvent::Deregister,
+    });
+    assert!(
+        matches!(result, Err(crate::cascade::CascadeError::NoCredentials)),
+        "deregister must fail when credentials disappear, got {:?}",
+        result
+    );
 }
 
 mod bridge;

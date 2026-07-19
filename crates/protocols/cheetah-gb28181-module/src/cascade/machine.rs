@@ -99,10 +99,11 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
             State::Registered(prev) => {
                 let prev = prev.clone();
                 let reg = self.start_registering(now, false, Some(prev.clone()))?;
-                let auth = prev.challenge.as_ref().and_then(|challenge| {
-                    self.build_authorization(challenge, reg.cseq, reg.attempt, now)
-                        .ok()
-                });
+                let auth = if let Some(challenge) = prev.challenge.as_ref() {
+                    Some(self.build_authorization(challenge, reg.cseq, reg.attempt, now)?)
+                } else {
+                    None
+                };
                 let msg = build_register_request(
                     &self.config,
                     &reg.call_id,
@@ -127,10 +128,11 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
             State::Registered(prev) => {
                 let prev = prev.clone();
                 let mut reg = self.start_registering(now, true, Some(prev.clone()))?;
-                let auth = prev.challenge.as_ref().and_then(|challenge| {
-                    self.build_authorization(challenge, reg.cseq, reg.attempt, now)
-                        .ok()
-                });
+                let auth = if let Some(challenge) = prev.challenge.as_ref() {
+                    Some(self.build_authorization(challenge, reg.cseq, reg.attempt, now)?)
+                } else {
+                    None
+                };
                 reg.is_deregister = true;
                 let msg = build_register_request(
                     &self.config,
