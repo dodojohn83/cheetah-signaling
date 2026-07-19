@@ -152,8 +152,14 @@ async fn remove_concurrency(storage: &dyn Storage, fixtures: &Fixtures) -> TestR
         .remove(tenant_id, device_id, channel.channel_id(), stale_revision)
         .await;
     assert!(
-        matches!(result, Err(DomainError::ConcurrentModification { .. })),
-        "removing a channel with a stale revision must fail, got {:?}",
+        matches!(
+            result,
+            Err(DomainError::ConcurrentModification {
+                expected: 1,
+                found: 0,
+            })
+        ),
+        "removing a channel with a stale revision must report expected=1 and found=0, got {:?}",
         result
     );
     uow.rollback().await?;
