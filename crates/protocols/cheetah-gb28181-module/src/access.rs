@@ -344,12 +344,6 @@ impl<P: CredentialProvider> Gb28181Access<P> {
         let from_device_id =
             parse::device_from_address(from).ok_or(AccessError::InvalidDeviceId)?;
 
-        // Reject business messages from unregistered devices before doing any
-        // expensive XML parsing.
-        if !self.registrations.is_registered(&from_device_id) {
-            return Err(AccessError::NotRegistered);
-        }
-
         let root = parse_xml(body, &XmlLimits::default())?;
         let cmd_type = root
             .child_text("CmdType")
@@ -359,6 +353,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
         if from_device_id.as_ref() != xml_device_id {
             return Err(AccessError::InvalidDeviceId);
         }
+        let device_id = DeviceId::new(&xml_device_id).ok_or(AccessError::InvalidDeviceId)?;
 
         let domain_id = self.config.domain_id().clone();
 
@@ -371,7 +366,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                 let keepalive = extract_keepalive(&root)?;
                 Gb28181Event::Keepalive {
                     domain_id: domain_id.clone(),
-                    device_id: from_device_id.clone(),
+                    device_id: device_id.clone(),
                     source,
                     status: keepalive.status,
                 }
@@ -380,7 +375,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                 let catalog = extract_catalog(&root)?;
                 Gb28181Event::CatalogReceived {
                     domain_id: domain_id.clone(),
-                    device_id: from_device_id.clone(),
+                    device_id: device_id.clone(),
                     source,
                     sn: catalog.sn,
                     sum_num: catalog.sum_num,
@@ -392,7 +387,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                 let info = extract_device_info(&root)?;
                 Gb28181Event::DeviceInfoReceived {
                     domain_id: domain_id.clone(),
-                    device_id: from_device_id.clone(),
+                    device_id: device_id.clone(),
                     source,
                     sn: info.sn,
                     result: info.result,
@@ -405,7 +400,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                 let status = extract_device_status(&root)?;
                 Gb28181Event::DeviceStatusReceived {
                     domain_id: domain_id.clone(),
-                    device_id: from_device_id.clone(),
+                    device_id: device_id.clone(),
                     source,
                     sn: status.sn,
                     result: status.result,
@@ -419,7 +414,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                 let alarm = extract_alarm(&root)?;
                 Gb28181Event::AlarmReceived {
                     domain_id: domain_id.clone(),
-                    device_id: from_device_id.clone(),
+                    device_id: device_id.clone(),
                     source,
                     sn: alarm.sn,
                     priority: alarm.priority,
@@ -433,7 +428,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                 let pos = extract_mobile_position(&root)?;
                 Gb28181Event::MobilePositionReceived {
                     domain_id: domain_id.clone(),
-                    device_id: from_device_id.clone(),
+                    device_id: device_id.clone(),
                     source,
                     sn: pos.sn,
                     time: pos.time,
@@ -448,7 +443,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                 let info = extract_record_info(&root)?;
                 Gb28181Event::RecordInfoReceived {
                     domain_id: domain_id.clone(),
-                    device_id: from_device_id.clone(),
+                    device_id: device_id.clone(),
                     source,
                     sn: info.sn,
                     name: info.name,
@@ -461,7 +456,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                 let resp = extract_device_control_response(&root)?;
                 Gb28181Event::DeviceControlResponseReceived {
                     domain_id: domain_id.clone(),
-                    device_id: from_device_id.clone(),
+                    device_id: device_id.clone(),
                     source,
                     sn: resp.sn,
                     result: resp.result,
@@ -470,7 +465,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
             other => return Err(AccessError::UnsupportedCmdType(other.to_string())),
         };
 
-        let Some(was_offline) = self.registrations.touch(&from_device_id, source, now) else {
+        let Some(was_offline) = self.registrations.touch(&device_id, source, now) else {
             // Business messages from a device that is not currently registered
             // must not bypass the registration policy.
             return Err(AccessError::NotRegistered);
@@ -481,7 +476,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
             outputs.push(AccessOutput::EmitEvent(
                 Gb28181Event::DevicePresenceChanged {
                     domain_id,
-                    device_id: from_device_id.clone(),
+                    device_id: device_id.clone(),
                     source,
                     presence: DevicePresence::Online,
                 },
