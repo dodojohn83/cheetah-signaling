@@ -19,9 +19,6 @@ pub mod cheetah {
         #[allow(missing_docs, missing_debug_implementations, clippy::large_enum_variant)]
         pub mod v1 {
             include!(concat!(env!("OUT_DIR"), "/cheetah.common.v1.rs"));
-            // Re-export foundation error types so existing consumers that imported
-            // them from cheetah.common.v1 keep compiling.
-            pub use super::super::foundation::v1::{ErrorStatus, FieldViolation};
         }
     }
 
