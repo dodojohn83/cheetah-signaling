@@ -649,7 +649,9 @@ pub async fn start(
 
     // Internal gRPC server for media node lifecycle (MediaClusterRegistry).
     // Binds the port eagerly so startup fails fast; TLS/mTLS is configured
-    // when the corresponding secret references are provided.
+    // when the corresponding secret references are provided. The router and its
+    // TLS config are built synchronously so any misconfiguration fails startup
+    // before readiness is advertised.
     let grpc_ip = config
         .grpc
         .listen_addr
@@ -671,30 +673,24 @@ pub async fn start(
     let grpc_addr = tcp_incoming
         .local_addr()
         .map_err(|e| format!("failed to get gRPC local address: {e}"))?;
-    let grpc_cancel = cancel.child_token();
+
+    let mut server = Server::builder();
+    if let Some(identity) = grpc_identity {
+        let mut tls = ServerTlsConfig::new().identity(identity);
+        if let Some(client_ca) = grpc_client_ca {
+            tls = tls.client_ca_root(client_ca).client_auth_optional(false);
+        }
+        server = server
+            .tls_config(tls)
+            .map_err(|e| format!("failed to configure gRPC TLS: {e}"))?;
+    }
+    let grpc_router = server
+        .layer(InterceptorLayer::new(mtls_identity_interceptor))
+        .add_service(MediaClusterRegistryServer::new(grpc_service));
+    let grpc_server = grpc_router
+        .serve_with_incoming_shutdown(tcp_incoming, cancel.child_token().cancelled_owned());
     workers.push(tokio::spawn(async move {
-        let server = Server::builder();
-        let server = match grpc_identity {
-            Some(identity) => {
-                let mut tls = ServerTlsConfig::new().identity(identity);
-                if let Some(client_ca) = grpc_client_ca {
-                    tls = tls.client_ca_root(client_ca).client_auth_optional(false);
-                }
-                match server.tls_config(tls) {
-                    Ok(b) => b,
-                    Err(e) => {
-                        warn!(error = %e, "failed to configure gRPC TLS; server not started");
-                        return;
-                    }
-                }
-            }
-            None => server,
-        };
-        let router = server
-            .layer(InterceptorLayer::new(mtls_identity_interceptor))
-            .add_service(MediaClusterRegistryServer::new(grpc_service));
-        let server = router.serve_with_incoming_shutdown(tcp_incoming, grpc_cancel.cancelled());
-        if let Err(e) = server.await {
+        if let Err(e) = grpc_server.await {
             warn!(error = %e, "internal gRPC server stopped with error");
         }
     }));
