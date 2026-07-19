@@ -249,9 +249,9 @@ impl<P: CredentialProvider> Gb28181Access<P> {
         user_agent: Option<String>,
         now: u64,
     ) -> Result<Vec<AccessOutput>, AccessError> {
-        let response = build_success_response(message, contact_uri, expires, self.next_tag());
         if expires == 0 {
             self.registrations.remove(&device_id);
+            let response = build_success_response(message, contact_uri, expires, self.next_tag());
             Ok(vec![
                 AccessOutput::SendResponse(response),
                 AccessOutput::EmitEvent(Gb28181Event::DeviceUnregistered {
@@ -281,6 +281,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                     Err(e)
                 };
             }
+            let response = build_success_response(message, contact_uri, expires, self.next_tag());
             Ok(vec![
                 AccessOutput::SendResponse(response),
                 AccessOutput::EmitEvent(Gb28181Event::DeviceRegistered {
