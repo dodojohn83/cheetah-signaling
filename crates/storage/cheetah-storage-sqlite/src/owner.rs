@@ -33,6 +33,26 @@ impl SqliteOwnerRepository {
             clock,
         }
     }
+
+    async fn check_device_tenant(
+        &self,
+        tenant_id: cheetah_signal_types::TenantId,
+        device_id: cheetah_signal_types::DeviceId,
+    ) -> Result<(), StorageError> {
+        let row: Option<(uuid::Uuid,)> =
+            sqlx::query_as("SELECT tenant_id FROM devices WHERE device_id = ?")
+                .bind(device_id.as_uuid())
+                .fetch_optional(&self.write_pool)
+                .await
+                .map_err(|e| StorageError::backend(e.to_string()))?;
+        match row {
+            Some((found,)) if found == tenant_id.as_uuid() => Ok(()),
+            Some(_) => Err(StorageError::invalid_argument(
+                "device does not belong to tenant",
+            )),
+            None => Err(StorageError::invalid_argument("device not found")),
+        }
+    }
 }
 
 impl std::fmt::Debug for SqliteOwnerRepository {
@@ -74,15 +94,16 @@ impl OwnerRepository for SqliteOwnerRepository {
         device_id: cheetah_signal_types::DeviceId,
         owner: OwnerInfo,
     ) -> Result<(), StorageError> {
-        sqlx::query(
+        self.check_device_tenant(tenant_id, device_id).await?;
+        let result = sqlx::query(
             "INSERT INTO device_owners (tenant_id, device_id, owner_node_id, owner_epoch, expires_at, updated_at)
              VALUES (?, ?, ?, ?, ?, ?)
              ON CONFLICT(device_id) DO UPDATE SET
-                 tenant_id = EXCLUDED.tenant_id,
                  owner_node_id = EXCLUDED.owner_node_id,
                  owner_epoch = EXCLUDED.owner_epoch,
                  expires_at = EXCLUDED.expires_at,
-                 updated_at = EXCLUDED.updated_at",
+                 updated_at = EXCLUDED.updated_at
+             WHERE device_owners.tenant_id = EXCLUDED.tenant_id",
         )
         .bind(tenant_id.as_uuid())
         .bind(device_id.as_uuid())
@@ -93,6 +114,11 @@ impl OwnerRepository for SqliteOwnerRepository {
         .execute(&self.write_pool)
         .await
         .map_err(|e| StorageError::backend(e.to_string()))?;
+        if result.rows_affected() == 0 {
+            return Err(StorageError::invalid_argument(
+                "device owner does not belong to tenant",
+            ));
+        }
         Ok(())
     }
 
@@ -117,18 +143,26 @@ impl OwnerRepository for SqliteOwnerRepository {
         node_id: cheetah_signal_types::NodeId,
         lease_until: cheetah_signal_types::UtcTimestamp,
     ) -> Result<OwnerInfo, StorageError> {
+        self.check_device_tenant(tenant_id, device_id)
+            .await
+            .map_err(|e| match e {
+                StorageError::InvalidArgument { .. } => {
+                    StorageError::unavailable("device not found or not owned by tenant")
+                }
+                other => other,
+            })?;
         let updated_at = self.clock.now_wall().as_offset();
         sqlx::query(
             "INSERT INTO device_owners (tenant_id, device_id, owner_node_id, owner_epoch, expires_at, updated_at)
              VALUES (?, ?, ?, 1, ?, ?)
              ON CONFLICT(device_id) DO UPDATE SET
-                 tenant_id = EXCLUDED.tenant_id,
                  owner_node_id = EXCLUDED.owner_node_id,
                  owner_epoch = device_owners.owner_epoch + 1,
                  expires_at = EXCLUDED.expires_at,
                  updated_at = EXCLUDED.updated_at
-             WHERE (device_owners.expires_at IS NOT NULL AND device_owners.expires_at <= EXCLUDED.updated_at)
-                OR device_owners.owner_node_id = EXCLUDED.owner_node_id",
+             WHERE device_owners.tenant_id = EXCLUDED.tenant_id
+                 AND ((device_owners.expires_at IS NOT NULL AND device_owners.expires_at <= EXCLUDED.updated_at)
+                   OR device_owners.owner_node_id = EXCLUDED.owner_node_id)",
         )
         .bind(tenant_id.as_uuid())
         .bind(device_id.as_uuid())
