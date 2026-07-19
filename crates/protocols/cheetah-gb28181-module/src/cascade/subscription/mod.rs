@@ -206,30 +206,6 @@ pub(crate) fn handle_subscribe<P: CascadeCredentialProvider>(
         to_tag.unwrap_or_else(|| cascade.next_local_tag(now))
     };
 
-    if requested_expiry == 0 {
-        let final_notify = cascade.subscriptions.remove(&key).and_then(|sub| {
-            let cseq = sub.next_cseq;
-            let branch = cascade.next_branch(&sub.call_id, cseq);
-            build_notify(
-                cascade,
-                &sub,
-                cseq,
-                &branch,
-                "terminated;reason=timeout",
-                now,
-            )
-            .ok()
-        });
-        let mut ok = build_ok_response(&msg, &local_tag);
-        ok.headers_mut()
-            .append(HeaderName::Expires, HeaderValue::new("0"));
-        let mut outputs = vec![CascadeOutput::SendResponse(ok)];
-        if let Some(n) = final_notify {
-            outputs.push(CascadeOutput::SendRequest(n));
-        }
-        return outputs;
-    }
-
     let min_expiry = cascade.config.subscription_min_expiry_seconds as u64;
     let max_expiry = cascade.config.subscription_max_expiry_seconds as u64;
     let granted_expiry =
@@ -247,66 +223,91 @@ pub(crate) fn handle_subscribe<P: CascadeCredentialProvider>(
         ))];
     }
 
+    if requested_expiry == 0 {
+        let final_notify = if let Some(sub) = cascade.subscriptions.get(&key).cloned() {
+            let cseq = sub.next_cseq;
+            let branch = cascade.next_branch(&sub.call_id, cseq);
+            match build_notify(
+                cascade,
+                &sub,
+                cseq,
+                &branch,
+                "terminated;reason=timeout",
+                now,
+            ) {
+                Ok(n) => Some(n),
+                Err(e) => {
+                    tracing::warn!("failed to build final NOTIFY for subscription {key}: {e}");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        cascade.subscriptions.remove(&key);
+        let mut ok = build_ok_response(&msg, &local_tag);
+        ok.headers_mut()
+            .append(HeaderName::Expires, HeaderValue::new("0"));
+        let mut outputs = vec![CascadeOutput::SendResponse(ok)];
+        if let Some(n) = final_notify {
+            outputs.push(CascadeOutput::SendRequest(n));
+        }
+        return outputs;
+    }
+
+    let next_cseq = cascade
+        .subscriptions
+        .get(&key)
+        .map(|s| s.next_cseq)
+        .unwrap_or(1);
+    let branch = cascade.next_branch(&call_id, next_cseq);
+    let expires_at = now.saturating_add(granted_expiry);
+    let temp_sub = Subscription {
+        call_id: call_id.clone(),
+        local_tag: local_tag.clone(),
+        remote_tag: remote_tag.clone(),
+        remote_uri: remote_uri.clone(),
+        event_package: event_package.clone(),
+        expires_at,
+        next_cseq,
+        pending_notify: None,
+        last_active_at: now,
+    };
+
+    let notify = match build_notify(
+        &*cascade,
+        &temp_sub,
+        next_cseq,
+        &branch,
+        &format!("active;expires={granted_expiry}"),
+        now,
+    ) {
+        Ok(n) => n,
+        Err(e) => {
+            tracing::warn!("failed to build initial NOTIFY for subscription {key}: {e}");
+            let mut err_response =
+                build_response(&msg, 500, "Internal Server Error", &local_tag, Vec::new());
+            err_response
+                .headers_mut()
+                .append(HeaderName::Expires, HeaderValue::new("0"));
+            return vec![CascadeOutput::SendResponse(err_response)];
+        }
+    };
+
     let mut outputs = Vec::new();
     if let Some(evicted) = enforce_subscription_capacity(cascade, &key, now) {
         outputs.push(evicted);
     }
 
-    let mut sub = cascade
-        .subscriptions
-        .remove(&key)
-        .unwrap_or_else(|| Subscription {
-            call_id: call_id.clone(),
-            local_tag: local_tag.clone(),
-            remote_tag: remote_tag.clone(),
-            remote_uri: remote_uri.clone(),
-            event_package: event_package.clone(),
-            expires_at: 0,
-            next_cseq: 1,
-            pending_notify: None,
-            last_active_at: 0,
-        });
-    sub.local_tag = local_tag.clone();
-    sub.remote_uri = remote_uri;
-    sub.event_package = event_package;
-    sub.expires_at = now.saturating_add(granted_expiry);
-    sub.pending_notify = None;
-    sub.last_active_at = now;
-
-    let notify = {
-        let cseq = sub.next_cseq;
-        sub.next_cseq = sub.next_cseq.saturating_add(1);
-        let branch = cascade.next_branch(&sub.call_id, cseq);
-        let remaining = sub.expires_at.saturating_sub(now);
-        match build_notify(
-            cascade,
-            &sub,
-            cseq,
-            &branch,
-            &format!("active;expires={remaining}"),
-            now,
-        ) {
-            Ok(n) => {
-                sub.pending_notify = Some(PendingNotify {
-                    cseq,
-                    branch,
-                    sent_at: now,
-                    retry_count: 0,
-                });
-                Some(n)
-            }
-            Err(e) => {
-                tracing::warn!("failed to encode initial NOTIFY: {e}");
-                let mut err_response =
-                    build_response(&msg, 500, "Internal Server Error", &local_tag, Vec::new());
-                err_response
-                    .headers_mut()
-                    .append(HeaderName::Expires, HeaderValue::new("0"));
-                return vec![CascadeOutput::SendResponse(err_response)];
-            }
-        }
-    };
-
+    let mut sub = temp_sub;
+    sub.next_cseq = next_cseq.saturating_add(1);
+    sub.pending_notify = Some(PendingNotify {
+        cseq: next_cseq,
+        branch,
+        sent_at: now,
+        retry_count: 0,
+    });
+    cascade.subscriptions.remove(&key);
     cascade.subscriptions.insert(key, sub);
 
     let mut ok = build_ok_response(&msg, &local_tag);
@@ -316,9 +317,7 @@ pub(crate) fn handle_subscribe<P: CascadeCredentialProvider>(
     );
 
     outputs.push(CascadeOutput::SendResponse(ok));
-    if let Some(n) = notify {
-        outputs.push(CascadeOutput::SendRequest(n));
-    }
+    outputs.push(CascadeOutput::SendRequest(notify));
     outputs
 }
 
@@ -388,7 +387,7 @@ pub(crate) fn on_tick<P: CascadeCredentialProvider>(
         if expired {
             let cseq = sub.next_cseq;
             let branch = cascade.next_branch(&sub.call_id, cseq);
-            if let Ok(notify) = build_notify(
+            match build_notify(
                 cascade,
                 &sub,
                 cseq,
@@ -396,7 +395,8 @@ pub(crate) fn on_tick<P: CascadeCredentialProvider>(
                 "terminated;reason=timeout",
                 now,
             ) {
-                outputs.push(CascadeOutput::SendRequest(notify));
+                Ok(notify) => outputs.push(CascadeOutput::SendRequest(notify)),
+                Err(e) => tracing::warn!("failed to build expiry NOTIFY for {key}: {e}"),
             }
             continue;
         }
@@ -407,7 +407,7 @@ pub(crate) fn on_tick<P: CascadeCredentialProvider>(
             if pending.retry_count >= NOTIFY_MAX_RETRIES {
                 let cseq = sub.next_cseq;
                 let branch = cascade.next_branch(&sub.call_id, cseq);
-                if let Ok(notify) = build_notify(
+                match build_notify(
                     cascade,
                     &sub,
                     cseq,
@@ -415,7 +415,8 @@ pub(crate) fn on_tick<P: CascadeCredentialProvider>(
                     "terminated;reason=timeout",
                     now,
                 ) {
-                    outputs.push(CascadeOutput::SendRequest(notify));
+                    Ok(notify) => outputs.push(CascadeOutput::SendRequest(notify)),
+                    Err(e) => tracing::warn!("failed to build timeout NOTIFY for {key}: {e}"),
                 }
                 continue;
             }
@@ -493,19 +494,26 @@ fn enforce_subscription_capacity<P: CascadeCredentialProvider>(
         .iter()
         .min_by_key(|(_, s)| s.last_active_at)
         .map(|(k, _)| k.clone())?;
-    let sub = cascade.subscriptions.remove(&oldest)?;
+    let sub = cascade.subscriptions.get(&oldest)?.clone();
     let cseq = sub.next_cseq;
     let branch = cascade.next_branch(&sub.call_id, cseq);
-    build_notify(
+    match build_notify(
         cascade,
         &sub,
         cseq,
         &branch,
         "terminated;reason=timeout",
         now,
-    )
-    .ok()
-    .map(CascadeOutput::SendRequest)
+    ) {
+        Ok(notify) => {
+            cascade.subscriptions.remove(&oldest);
+            Some(CascadeOutput::SendRequest(notify))
+        }
+        Err(e) => {
+            tracing::warn!("failed to build capacity-eviction NOTIFY for {oldest}: {e}");
+            None
+        }
+    }
 }
 
 mod notify;

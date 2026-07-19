@@ -10,7 +10,7 @@ use crate::xml::{build_alarm_notify, build_catalog_response, build_mobile_positi
 
 /// Builds an outbound `NOTIFY` request for the supplied subscription.
 pub(super) fn build_notify<P: CascadeCredentialProvider>(
-    cascade: &mut Gb28181Cascade<P>,
+    cascade: &Gb28181Cascade<P>,
     sub: &Subscription,
     cseq: u32,
     branch: &str,
