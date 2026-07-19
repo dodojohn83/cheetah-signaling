@@ -32,6 +32,37 @@ fn lock_mutex<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     }
 }
 
+/// Inserts `value` into `map` only if the entry is absent and `value` has
+/// revision `0`, or if the existing entry's revision is exactly one less than
+/// `value`'s revision. This mirrors the SQL `ON CONFLICT ... WHERE revision =
+/// EXCLUDED.revision - 1` optimistic concurrency guard.
+fn save_with_revision<K, V>(
+    map: &mut BTreeMap<K, V>,
+    key: K,
+    value: V,
+    revision: impl Fn(&V) -> Revision,
+) -> crate::Result<()>
+where
+    K: Ord + Clone,
+{
+    let expected = revision(&value).0.saturating_sub(1);
+    match map.get(&key) {
+        Some(existing) if revision(existing).0 == expected => {
+            map.insert(key, value);
+            Ok(())
+        }
+        Some(existing) => Err(DomainError::ConcurrentModification {
+            expected,
+            found: revision(existing).0,
+        }),
+        None if expected == 0 => {
+            map.insert(key, value);
+            Ok(())
+        }
+        None => Err(DomainError::ConcurrentModification { expected, found: 0 }),
+    }
+}
+
 /// Decodes an opaque list cursor into the UUID it represents.
 fn decode_cursor(cursor: &Option<String>) -> crate::Result<Option<uuid::Uuid>> {
     match cursor {
@@ -382,11 +413,13 @@ impl DeviceRepository for InMemoryUnitOfWork {
 
     async fn save(&mut self, device: &Device) -> crate::Result<()> {
         self.with_pending(|pending| {
-            pending
-                .devices
-                .insert((device.tenant_id(), device.device_id()), device.clone());
-        });
-        Ok(())
+            save_with_revision(
+                &mut pending.devices,
+                (device.tenant_id(), device.device_id()),
+                device.clone(),
+                Device::revision,
+            )
+        })
     }
 
     async fn list(
@@ -457,16 +490,17 @@ impl ChannelRepository for InMemoryUnitOfWork {
 
     async fn save(&mut self, channel: &Channel) -> crate::Result<()> {
         self.with_pending(|pending| {
-            pending.channels.insert(
+            save_with_revision(
+                &mut pending.channels,
                 (
                     channel.tenant_id(),
                     channel.device_id(),
                     channel.channel_id(),
                 ),
                 channel.clone(),
-            );
-        });
-        Ok(())
+                Channel::revision,
+            )
+        })
     }
 
     async fn remove(
@@ -551,12 +585,13 @@ impl OperationRepository for InMemoryUnitOfWork {
 
     async fn save(&mut self, operation: &Operation) -> crate::Result<()> {
         self.with_pending(|pending| {
-            pending.operations.insert(
+            save_with_revision(
+                &mut pending.operations,
                 (operation.tenant_id(), operation.operation_id()),
                 operation.clone(),
-            );
-        });
-        Ok(())
+                Operation::revision,
+            )
+        })
     }
 
     async fn list(
@@ -618,12 +653,13 @@ impl MediaSessionRepository for InMemoryUnitOfWork {
 
     async fn save(&mut self, session: &MediaSession) -> crate::Result<()> {
         self.with_pending(|pending| {
-            pending.sessions.insert(
+            save_with_revision(
+                &mut pending.sessions,
                 (session.tenant_id(), session.media_session_id()),
                 session.clone(),
-            );
-        });
-        Ok(())
+                MediaSession::revision,
+            )
+        })
     }
 
     async fn list(
@@ -693,12 +729,13 @@ impl MediaBindingRepository for InMemoryUnitOfWork {
 
     async fn save(&mut self, binding: &MediaBinding) -> crate::Result<()> {
         self.with_pending(|pending| {
-            pending.bindings.insert(
+            save_with_revision(
+                &mut pending.bindings,
                 (binding.tenant_id(), binding.media_binding_id()),
                 binding.clone(),
-            );
-        });
-        Ok(())
+                MediaBinding::revision,
+            )
+        })
     }
 }
 
@@ -764,22 +801,12 @@ impl WebhookConfigRepository for InMemoryUnitOfWork {
 
     async fn save(&mut self, config: &WebhookConfig) -> crate::Result<()> {
         self.with_pending(|pending| {
-            if let Some(existing) = pending
-                .webhook_configs
-                .get(&(config.tenant_id(), config.webhook_id()))
-            {
-                let expected = config.revision().0.saturating_sub(1);
-                if existing.revision().0 != expected {
-                    return Err(DomainError::ConcurrentModification {
-                        expected,
-                        found: existing.revision().0,
-                    });
-                }
-            }
-            pending
-                .webhook_configs
-                .insert((config.tenant_id(), config.webhook_id()), config.clone());
-            Ok(())
+            save_with_revision(
+                &mut pending.webhook_configs,
+                (config.tenant_id(), config.webhook_id()),
+                config.clone(),
+                WebhookConfig::revision,
+            )
         })
     }
 
