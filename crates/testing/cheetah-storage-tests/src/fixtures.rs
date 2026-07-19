@@ -3,7 +3,7 @@
 use cheetah_domain::{
     Channel, ChannelKind, ChannelStatus, Clock, CommandPayload, Device, DeviceKind, DomainError,
     MediaBinding, MediaPurpose, MediaSession, MediaSessionDesiredState, Operation, Protocol,
-    PtzCapabilities, PtzDirection,
+    PtzCapabilities, PtzDirection, WebhookConfig,
     in_memory::{InMemoryClock, InMemoryIdGenerator},
 };
 use cheetah_signal_types::{
@@ -232,6 +232,18 @@ impl Fixtures {
                 lifecycle: cheetah_domain::DeviceLifecycle::Active,
                 reason: None,
             },
+        )
+    }
+
+    /// Creates a new webhook configuration aggregate.
+    pub fn webhook_config(&self, tenant_id: TenantId) -> cheetah_domain::Result<WebhookConfig> {
+        WebhookConfig::new(
+            self.clock(),
+            self.id_generator(),
+            tenant_id,
+            "https://example.com/webhook".to_string(),
+            "secret://test".to_string(),
+            vec!["device.online".to_string()],
         )
     }
 }
