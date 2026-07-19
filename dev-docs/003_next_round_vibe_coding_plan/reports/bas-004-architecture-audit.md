@@ -2,7 +2,8 @@
 
 - Dependency layer violations: 3
 - Forbidden dependency warnings: 2
-- Production `todo!` / `unimplemented!` / `panic!` hits: 0
+- Production `todo!` / `unimplemented!` hits: 0
+- Production `panic!` warnings: 1
 - Test-fake `todo!` / `unimplemented!` hits: 0
 - Direct SQL outside storage crates: 0
 
@@ -17,8 +18,12 @@
 - FORBIDDEN DEP: cheetah-signal-contracts (layer 6) -> tonic
 - FORBIDDEN DEP: cheetah-signal-contracts (layer 6) -> tonic-prost
 
-## Production placeholder hits
+## Production todo! / unimplemented! hits
 
+
+## Production panic! warnings
+
+- `crates/storage/cheetah-storage-api/src/phase_migration.rs:105` `panic!`
 
 ## Test-fake placeholder hits
 

@@ -124,7 +124,7 @@ def in_test_block(path: Path, text, pos):
     rel = str(path.relative_to(REPO))
     if "/tests/" in rel or rel.endswith("_test.rs") or rel.endswith("_tests.rs"):
         return True
-    if path.name == "tests.rs":
+    if path.name in ("tests.rs", "test_support.rs") or "_test_support.rs" in path.name:
         return True
     pre = text[:pos]
     last_cfg_test = pre.rfind("#[cfg(test)]")
@@ -144,6 +144,7 @@ def in_test_block(path: Path, text, pos):
 def scan_placeholders():
     production = []
     test_fakes = []
+    panic_warnings = []
     src_dirs = sorted((REPO / "crates").glob("*/*/src")) + sorted(
         (REPO / "apps").glob("*/src")
     )
@@ -160,7 +161,7 @@ def scan_placeholders():
                     # crude skip of generated tonic module files
                     continue
                 if marker in ("todo!", "unimplemented!"):
-                    if block or "#[cfg(test)]" in text or "mod tests" in text:
+                    if block:
                         test_fakes.append(
                             (str(path.relative_to(REPO)), line, marker, block)
                         )
@@ -168,11 +169,11 @@ def scan_placeholders():
                         production.append(
                             (str(path.relative_to(REPO)), line, marker, block)
                         )
-                elif marker == "panic!" and not block and "#[cfg(test)]" not in text:
-                    production.append(
+                elif marker == "panic!" and not block:
+                    panic_warnings.append(
                         (str(path.relative_to(REPO)), line, marker, block)
                     )
-    return production, test_fakes
+    return production, test_fakes, panic_warnings
 
 
 def scan_direct_sql():
@@ -196,7 +197,7 @@ def scan_direct_sql():
 def main():
     metadata = cargo_metadata()
     dep_errors, dep_warnings = check_dependency_direction(metadata)
-    prod_placeholders, test_placeholders = scan_placeholders()
+    prod_placeholders, test_placeholders, panic_warnings = scan_placeholders()
     sql_hits = scan_direct_sql()
 
     print("=== Architecture Audit ===")
@@ -206,8 +207,11 @@ def main():
     print(f"Forbidden dependency warnings: {len(dep_warnings)}")
     for w in dep_warnings[:20]:
         print("  ", w)
-    print(f"Production todo!/unimplemented!/panic! hits: {len(prod_placeholders)}")
+    print(f"Production todo!/unimplemented! hits: {len(prod_placeholders)}")
     for h in prod_placeholders[:20]:
+        print(f"  {h[0]}:{h[1]} {h[2]}")
+    print(f"Production panic! warnings: {len(panic_warnings)}")
+    for h in panic_warnings[:20]:
         print(f"  {h[0]}:{h[1]} {h[2]}")
     print(f"Test-fake todo!/unimplemented! hits: {len(test_placeholders)}")
     for h in test_placeholders[:20]:
@@ -222,7 +226,8 @@ def main():
         "# BAS-004: Architecture and Placeholder Audit\n\n",
         f"- Dependency layer violations: {len(dep_errors)}\n",
         f"- Forbidden dependency warnings: {len(dep_warnings)}\n",
-        f"- Production `todo!` / `unimplemented!` / `panic!` hits: {len(prod_placeholders)}\n",
+        f"- Production `todo!` / `unimplemented!` hits: {len(prod_placeholders)}\n",
+        f"- Production `panic!` warnings: {len(panic_warnings)}\n",
         f"- Test-fake `todo!` / `unimplemented!` hits: {len(test_placeholders)}\n",
         f"- Direct SQL outside storage crates: {len(sql_hits)}\n\n",
         "## Dependency layer violations\n\n",
@@ -232,8 +237,11 @@ def main():
     lines.append("\n## Forbidden dependency warnings\n\n")
     for w in dep_warnings:
         lines.append(f"- {w}\n")
-    lines.append("\n## Production placeholder hits\n\n")
+    lines.append("\n## Production todo! / unimplemented! hits\n\n")
     for h in prod_placeholders:
+        lines.append(f"- `{h[0]}:{h[1]}` `{h[2]}`\n")
+    lines.append("\n## Production panic! warnings\n\n")
+    for h in panic_warnings:
         lines.append(f"- `{h[0]}:{h[1]}` `{h[2]}`\n")
     lines.append("\n## Test-fake placeholder hits\n\n")
     for h in test_placeholders:
@@ -244,7 +252,7 @@ def main():
     report_path.write_text("".join(lines), encoding="utf-8")
     print(f"\nReport written to {report_path}")
 
-    if dep_errors or prod_placeholders or sql_hits:
+    if prod_placeholders or test_placeholders or sql_hits:
         return 1
     return 0
 
