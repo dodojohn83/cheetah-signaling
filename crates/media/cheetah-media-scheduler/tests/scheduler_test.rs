@@ -87,6 +87,7 @@ fn default_node() -> MediaNode {
         instance_epoch: 1,
         zone: "zone-a".to_string(),
         region: "region-1".to_string(),
+        network_zones: vec!["zone-a".to_string()],
         labels: Default::default(),
         control_endpoint: "http://127.0.0.1:9000".to_string(),
         media_addresses: vec!["127.0.0.1:9001".to_string()],
@@ -98,6 +99,8 @@ fn default_node() -> MediaNode {
                 "talk".to_string(),
             ],
             constraints: Default::default(),
+            version: 1,
+            runtime_state: "active".to_string(),
         }],
         capacity: MediaNodeCapacity {
             max_sessions: 4,

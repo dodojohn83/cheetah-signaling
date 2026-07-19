@@ -103,6 +103,8 @@ impl Config {
             protocol: "gb28181".to_string(),
             operations: self.operations(),
             constraints: Default::default(),
+            version: 1,
+            runtime_state: "active".to_string(),
         }
     }
 
@@ -111,6 +113,9 @@ impl Config {
             max_sessions: self.max_sessions,
             max_bandwidth_mbps: self.max_bandwidth_mbps,
             max_cpu_percent: self.max_cpu_percent,
+            available_sessions: self.max_sessions,
+            available_bandwidth_mbps: self.max_bandwidth_mbps,
+            available_cpu_percent: self.max_cpu_percent,
         }
     }
 
@@ -145,19 +150,23 @@ struct State {
 impl State {
     fn new(config: Config) -> Self {
         let events = broadcast::channel(1024).0;
-        let capability = Some(config.capability());
+        let capabilities = vec![config.capability()];
         let capacity = Some(config.capacity());
         let rng = StdRng::seed_from_u64(config.seed);
         let node_info = media::MediaNodeInfo {
             node_id: config.node_id.clone(),
             listen_addr: config.bind.to_string(),
-            capability,
+            capabilities,
             region: config.region.clone(),
             owner_epoch: 0,
             last_heartbeat_at: now_timestamp(),
             status: media::MediaNodeStatus::Active as i32,
             capacity,
             instance_id: uuid::Uuid::now_v7().to_string(),
+            zone: config.region.clone(),
+            network_zones: vec![],
+            load: 0,
+            session_count: 0,
         };
         Self {
             config,
@@ -510,8 +519,10 @@ impl MediaClusterRegistry for State {
         let mut node_info = self.node_info.lock().await;
         node_info.node_id = registration.node_id.clone();
         node_info.listen_addr = registration.listen_addr.clone();
-        node_info.capability = registration.capability;
+        node_info.capabilities = registration.capabilities;
         node_info.region = registration.region.clone();
+        node_info.zone = registration.zone;
+        node_info.network_zones = registration.network_zones;
         node_info.capacity = registration.capacity;
         node_info.last_heartbeat_at = now_timestamp();
         if !registration.instance_id.is_empty() {
