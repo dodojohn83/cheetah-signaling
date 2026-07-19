@@ -485,7 +485,7 @@ mod tests {
     #[async_trait::async_trait]
     impl NodeRepository for FakeNodeRepository {
         async fn register(&mut self, _node: ClusterNode) -> Result<(), StorageError> {
-            unimplemented!("not used in tests")
+            Err(StorageError::internal("test fake: not implemented"))
         }
 
         async fn heartbeat(
@@ -496,7 +496,7 @@ mod tests {
             _updated_at: UtcTimestamp,
             _load: NodeLoad,
         ) -> Result<Option<ClusterNode>, StorageError> {
-            unimplemented!("not used in tests")
+            Err(StorageError::internal("test fake: not implemented"))
         }
 
         async fn get(&self, node_id: NodeId) -> Result<Option<ClusterNode>, StorageError> {
@@ -523,7 +523,7 @@ mod tests {
             _instance_id: NodeInstanceId,
             _updated_at: UtcTimestamp,
         ) -> Result<bool, StorageError> {
-            unimplemented!("not used in tests")
+            Err(StorageError::internal("test fake: not implemented"))
         }
     }
 
@@ -625,7 +625,7 @@ mod tests {
             _node_id: NodeId,
             _lease_until: UtcTimestamp,
         ) -> Result<Option<OwnerInfo>, StorageError> {
-            unimplemented!("not used in tests")
+            Err(StorageError::internal("test fake: not implemented"))
         }
 
         async fn release(
@@ -635,7 +635,7 @@ mod tests {
             _node_id: NodeId,
             _epoch: OwnerEpoch,
         ) -> Result<(), StorageError> {
-            unimplemented!("not used in tests")
+            Err(StorageError::internal("test fake: not implemented"))
         }
 
         async fn list_by_node(
