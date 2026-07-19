@@ -553,6 +553,7 @@ dependencies = [
  "cheetah-config",
  "cheetah-signal-types",
  "clap",
+ "http",
  "reqwest",
  "serde_json",
  "tokio",

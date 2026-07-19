@@ -193,30 +193,63 @@ async fn admin_post_url(
     handle_response(response).await
 }
 
+fn format_response_output(status: reqwest::StatusCode, body: &str) -> Result<String, String> {
+    if !status.is_success() {
+        Err(serde_json::json!({"status": status.as_u16(), "body": body}).to_string())
+    } else if body.trim().is_empty() {
+        Ok("{}".to_string())
+    } else {
+        Ok(body.to_string())
+    }
+}
+
+fn response_error(json: String) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    #[cfg(not(test))]
+    {
+        eprintln!("{json}");
+        std::process::exit(1);
+    }
+    #[cfg(test)]
+    Err(json.into())
+}
+
 async fn handle_response(
     response: reqwest::Response,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let status = response.status();
-    let body = response.text().await.unwrap_or_default();
+    let bytes = match response.bytes().await {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            return response_error(
+                serde_json::json!({"status": status.as_u16(), "body": format!("failed to read response body: {err}")})
+                    .to_string(),
+            );
+        }
+    };
+    // The administrative HTTP API returns JSON, which is required to be UTF-8,
+    // so a non-UTF-8 body is treated as an error rather than lossily printed.
+    let body = match String::from_utf8(bytes.to_vec()) {
+        Ok(body) => body,
+        Err(err) => {
+            return response_error(
+                serde_json::json!({"status": status.as_u16(), "body": format!("response body is not valid UTF-8: {err}")})
+                    .to_string(),
+            );
+        }
+    };
 
-    if !status.is_success() {
-        eprintln!(
-            "{}",
-            serde_json::json!({"status": status.as_u16(), "body": body})
-        );
-        std::process::exit(1);
+    match format_response_output(status, &body) {
+        Ok(output) => {
+            println!("{output}");
+            Ok(())
+        }
+        Err(json) => response_error(json),
     }
-
-    if body.trim().is_empty() {
-        println!("{{}}");
-    } else {
-        println!("{body}");
-    }
-    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     #[test]
@@ -303,5 +336,50 @@ mod tests {
         expected.insert("x-tenant-id", HeaderValue::from_static("tenant-42"));
         assert_eq!(headers, expected);
         Ok(())
+    }
+
+    #[test]
+    fn format_response_output_returns_body_on_success() {
+        assert_eq!(
+            format_response_output(reqwest::StatusCode::OK, "hello").unwrap(),
+            "hello"
+        );
+    }
+
+    #[test]
+    fn format_response_output_returns_empty_json_object_for_empty_success_body() {
+        assert_eq!(
+            format_response_output(reqwest::StatusCode::OK, "  ").unwrap(),
+            "{}"
+        );
+    }
+
+    #[test]
+    fn format_response_output_returns_json_for_error_status() {
+        let err =
+            format_response_output(reqwest::StatusCode::INTERNAL_SERVER_ERROR, "boom").unwrap_err();
+        let parsed: serde_json::Value = serde_json::from_str(&err).unwrap();
+        assert_eq!(parsed["status"], 500);
+        assert_eq!(parsed["body"], "boom");
+    }
+
+    #[tokio::test]
+    async fn handle_response_rejects_invalid_utf8_body() {
+        let http_response = http::Response::builder()
+            .status(200)
+            .body(vec![0xff])
+            .unwrap();
+        let response = reqwest::Response::from(http_response);
+        assert!(handle_response(response).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn handle_response_returns_ok_for_valid_success_body() {
+        let http_response = http::Response::builder()
+            .status(200)
+            .body("{\"ok\": true}")
+            .unwrap();
+        let response = reqwest::Response::from(http_response);
+        assert!(handle_response(response).await.is_ok());
     }
 }
