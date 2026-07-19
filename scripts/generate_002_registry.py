@@ -108,7 +108,9 @@ def build_registry():
 
 def write_outputs(registry):
     OUT_JSON.parent.mkdir(parents=True, exist_ok=True)
-    OUT_JSON.write_text(json.dumps(registry, indent=2, ensure_ascii=False))
+    OUT_JSON.write_text(
+        json.dumps(registry, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
 
     lines = ["# 002 Checkbox Registry (AUD-001)\n\n"]
     lines.append("Stable references for every checkbox in `dev-docs/002_vibe_coding_plan`.\n\n")
