@@ -61,7 +61,7 @@ def main():
     skipped = []
     for name, cmd in GATE_COMMANDS:
         if name in ("registry", "architecture", "storage"):
-            script = Path(cmd[1])
+            script = REPO / cmd[1]
             if not script.exists():
                 skipped.append(name)
                 print(f"[{name}] skipped: {script} not present in this branch", flush=True)

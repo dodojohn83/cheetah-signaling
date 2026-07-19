@@ -1,17 +1,17 @@
 # AUD-002: Phase 00 Baseline Re-verification
 
-- Date: 2026-07-19T13:34:18.743833+00:00
+- Date: 2026-07-19T13:38:12.312289+00:00
 - Host: devin-box (Linux-5.15.200-x86_64-with-glibc2.35, x86_64, 2 CPUs)
 
 ## Commands run
 
 | Check | Command | Exit | Elapsed |
 |-------|---------|------|----------|
-| fmt | `cargo fmt --all -- --check` | PASS (0) | 0.60s |
-| clippy | `cargo clippy --workspace --all-targets -- -D warnings` | PASS (0) | 7.49s |
-| nextest | `cargo nextest run --workspace` | PASS (0) | 42.70s |
+| fmt | `cargo fmt --all -- --check` | PASS (0) | 0.54s |
+| clippy | `cargo clippy --workspace --all-targets -- -D warnings` | PASS (0) | 17.96s |
+| nextest | `cargo nextest run --workspace` | PASS (0) | 45.17s |
 | buf_format | `buf format --diff --exit-code` | PASS (0) | 0.03s |
-| buf_lint | `buf lint` | PASS (0) | 0.49s |
+| buf_lint | `buf lint` | PASS (0) | 0.46s |
 | deny | `cargo deny check` | PASS (0) | 0.75s |
 
 ## Skipped checks
