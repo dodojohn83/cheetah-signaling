@@ -14,8 +14,8 @@ use cheetah_signal_contracts::cheetah::media::v1::{
 use cheetah_signal_types::MediaNodeInstanceEpoch;
 use cheetah_signal_types::Page;
 use cheetah_signal_types::{
-    ChannelId, Clock, CorrelationId, DeviceId, MediaBindingId, MediaSessionId, MessageId, NodeId,
-    PageRequest, TenantId, UtcTimestamp,
+    ChannelId, Clock, DeviceId, MediaBindingId, MediaSessionId, MessageId, NodeId, PageRequest,
+    TenantId, UtcTimestamp,
 };
 use prost_types::Timestamp;
 use std::str::FromStr;
@@ -159,7 +159,7 @@ impl MediaPort for SchedulerMediaPort {
         let context = MediaMutationContext {
             tenant_id: command.tenant_id.to_string(),
             request_id: command.request_id.clone(),
-            correlation_id: CorrelationId::generate().to_string(),
+            correlation_id: command.request_id.clone(),
             message_id: MessageId::generate().to_string(),
             idempotency_key: command.idempotency_key.clone(),
             deadline,
@@ -171,7 +171,7 @@ impl MediaPort for SchedulerMediaPort {
             operation_step_id: command.payload.kind().to_string(),
             media_session_id: Some(command.media_session_id.to_string()),
             media_binding_id: Some(command.media_binding_id.to_string()),
-            contract_version: command.contract_version as u64,
+            contract_version: contract_version as u64,
             traceparent: None,
             tracestate: None,
         };
