@@ -319,10 +319,11 @@ pub fn parse_get_presets_response(
                         }
                         presets.push(preset);
                     }
-                } else if name == "Name" && parent.as_deref() == Some("Preset") {
-                    if let Some(ref mut preset) = current {
-                        preset.name = text.trim().to_string();
-                    }
+                } else if name == "Name"
+                    && parent.as_deref() == Some("Preset")
+                    && let Some(ref mut preset) = current
+                {
+                    preset.name = text.trim().to_string();
                 }
                 ctx.pop();
             }

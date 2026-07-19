@@ -232,35 +232,32 @@ pub fn parse_pull_messages_response(
                         messages.push(msg);
                     }
                     in_notification = false;
-                } else if in_notification {
-                    if let Some(ref mut msg) = current {
-                        match name.as_str() {
-                            "Topic" => msg.topic = text.trim().to_string(),
-                            "UtcTime" | "UtcTimeAttr" => {
-                                msg.utc_time = Some(text.trim().to_string());
-                            }
-                            "PropertyOperation" => {
-                                msg.property_operation = Some(text.trim().to_string());
-                            }
-                            "Source" | "Key" | "Data"
-                                if parent.as_deref() == Some("Message")
-                                    || parent.as_deref() == Some("tt:Message") =>
-                            {
-                                // Keep a short raw marker rather than unbounded XML.
-                                let snippet = text.trim();
-                                if !snippet.is_empty() {
-                                    let existing =
-                                        msg.extension_xml.get_or_insert_with(String::new);
-                                    if existing.len() < 512 {
-                                        if !existing.is_empty() {
-                                            existing.push(';');
-                                        }
-                                        existing.push_str(&snippet[..snippet.len().min(128)]);
+                } else if in_notification && let Some(ref mut msg) = current {
+                    match name.as_str() {
+                        "Topic" => msg.topic = text.trim().to_string(),
+                        "UtcTime" | "UtcTimeAttr" => {
+                            msg.utc_time = Some(text.trim().to_string());
+                        }
+                        "PropertyOperation" => {
+                            msg.property_operation = Some(text.trim().to_string());
+                        }
+                        "Source" | "Key" | "Data"
+                            if parent.as_deref() == Some("Message")
+                                || parent.as_deref() == Some("tt:Message") =>
+                        {
+                            // Keep a short raw marker rather than unbounded XML.
+                            let snippet = text.trim();
+                            if !snippet.is_empty() {
+                                let existing = msg.extension_xml.get_or_insert_with(String::new);
+                                if existing.len() < 512 {
+                                    if !existing.is_empty() {
+                                        existing.push(';');
                                     }
+                                    existing.push_str(&snippet[..snippet.len().min(128)]);
                                 }
                             }
-                            _ => {}
                         }
+                        _ => {}
                     }
                 }
                 ctx.pop();
@@ -281,9 +278,7 @@ pub fn parse_pull_messages_response(
 /// Maps a known ONVIF topic to a stable northbound event type, or vendor fallback.
 pub fn normalize_topic(topic: &str) -> String {
     let lower = topic.to_ascii_lowercase();
-    if lower.contains("motion") {
-        "device.motion_detected".into()
-    } else if lower.contains("cellmotion") {
+    if lower.contains("motion") || lower.contains("cellmotion") {
         "device.motion_detected".into()
     } else if lower.contains("digitalinput") || lower.contains("tns1:device/trigger/digitalinput") {
         "device.digital_input".into()
