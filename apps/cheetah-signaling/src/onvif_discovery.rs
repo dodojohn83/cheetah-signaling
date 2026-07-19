@@ -73,13 +73,6 @@ pub fn spawn(
                 break;
             }
 
-            if !single_sweep {
-                tokio::select! {
-                    _ = cancel.cancelled() => break,
-                    _ = tokio::time::sleep(interval) => {}
-                }
-            }
-
             run_discovery_sweep(
                 state.clone(),
                 node_id,
@@ -93,6 +86,11 @@ pub fn spawn(
 
             if single_sweep {
                 break;
+            }
+
+            tokio::select! {
+                _ = cancel.cancelled() => break,
+                _ = tokio::time::sleep(interval) => {}
             }
         }
 
