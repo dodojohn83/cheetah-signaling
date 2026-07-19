@@ -60,7 +60,9 @@ pub fn build_device_status_notify(
     encode_xml(&root, true)
 }
 
-fn extract_device_status(root: &XmlElement) -> Result<DeviceStatusResponse, AccessError> {
+pub(crate) fn extract_device_status(
+    root: &XmlElement,
+) -> Result<DeviceStatusResponse, AccessError> {
     let cmd_type = root
         .child_text("CmdType")
         .ok_or_else(|| AccessError::InvalidXml("missing CmdType".to_string()))?;

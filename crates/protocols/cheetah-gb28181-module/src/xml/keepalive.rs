@@ -67,7 +67,9 @@ pub fn parse_keepalive_response(body: &[u8]) -> Result<KeepaliveResponse, Access
     extract_keepalive_response(&root)
 }
 
-fn extract_keepalive_response(root: &XmlElement) -> Result<KeepaliveResponse, AccessError> {
+pub(crate) fn extract_keepalive_response(
+    root: &XmlElement,
+) -> Result<KeepaliveResponse, AccessError> {
     if root.name != "Response" {
         return Err(AccessError::InvalidXml(format!(
             "expected Response root, got {}",
@@ -89,7 +91,7 @@ fn extract_keepalive_response(root: &XmlElement) -> Result<KeepaliveResponse, Ac
     })
 }
 
-fn extract_keepalive(root: &XmlElement) -> Result<KeepaliveInfo, AccessError> {
+pub(crate) fn extract_keepalive(root: &XmlElement) -> Result<KeepaliveInfo, AccessError> {
     let cmd_type = root
         .child_text("CmdType")
         .ok_or_else(|| AccessError::InvalidXml("missing CmdType".to_string()))?;

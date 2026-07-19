@@ -78,7 +78,7 @@ pub fn parse_catalog(body: &[u8]) -> Result<CatalogResponse, AccessError> {
     extract_catalog(&root)
 }
 
-fn extract_catalog(root: &XmlElement) -> Result<CatalogResponse, AccessError> {
+pub(crate) fn extract_catalog(root: &XmlElement) -> Result<CatalogResponse, AccessError> {
     let cmd_type = root
         .child_text("CmdType")
         .ok_or_else(|| AccessError::InvalidXml("missing CmdType".to_string()))?;
@@ -90,30 +90,36 @@ fn extract_catalog(root: &XmlElement) -> Result<CatalogResponse, AccessError> {
         .child("DeviceList")
         .ok_or_else(|| AccessError::InvalidXml("missing DeviceList".to_string()))?;
 
-    let num_attr = device_list
-        .attributes
-        .get("Num")
-        .ok_or_else(|| AccessError::InvalidXml("missing DeviceList Num".to_string()))?;
-    let num = parse_u32(num_attr)?;
     let sum_num = parse_u32(&root.require_child_text("SumNum")?)?;
+
+    let items: Vec<CatalogItem> = device_list
+        .children
+        .iter()
+        .filter(|c| c.name == "Item")
+        .filter_map(parse_item)
+        .collect();
+
+    // Trust the number of well-formed items we actually parsed. A missing or
+    // malformed `Num` attribute is ignored so a single bad item cannot force
+    // the whole fragment to be rejected.
+    let num = items.len() as u32;
 
     Ok(CatalogResponse {
         sn: root.require_child_text("SN")?,
         device_id: root.require_child_text("DeviceID")?,
         sum_num,
         num,
-        items: device_list
-            .children
-            .iter()
-            .filter(|c| c.name == "Item")
-            .map(parse_item)
-            .collect::<Result<Vec<_>, _>>()?,
+        items,
     })
 }
 
-fn parse_item(item: &XmlElement) -> Result<CatalogItem, AccessError> {
-    Ok(CatalogItem {
-        device_id: item.require_child_text("DeviceID")?,
+fn parse_item(item: &XmlElement) -> Option<CatalogItem> {
+    let device_id = item.child_text("DeviceID")?;
+    if device_id.is_empty() {
+        return None;
+    }
+    Some(CatalogItem {
+        device_id,
         name: item.child_text("Name"),
         manufacturer: item.child_text("Manufacturer"),
         model: item.child_text("Model"),

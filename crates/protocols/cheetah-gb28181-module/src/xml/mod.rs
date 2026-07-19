@@ -36,6 +36,15 @@ pub use reader::parse_xml;
 pub use record_info::{RecordInfoResponse, RecordItem, parse_record_info};
 pub use writer::encode_xml;
 
+pub(crate) use alarm::extract_alarm;
+pub(crate) use catalog::extract_catalog;
+pub(crate) use device_control::extract_device_control_response;
+pub(crate) use device_info::extract_device_info;
+pub(crate) use device_status::extract_device_status;
+pub(crate) use keepalive::extract_keepalive;
+pub(crate) use mobile_position::extract_mobile_position;
+pub(crate) use record_info::extract_record_info;
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -227,7 +236,7 @@ mod tests {
     }
 
     #[test]
-    fn catalog_rejects_invalid_num_attribute() {
+    fn catalog_ignores_invalid_num_attribute_and_counts_items() {
         let body = br#"<?xml version="1.0"?>
 <Response>
     <CmdType>Catalog</CmdType>
@@ -240,7 +249,9 @@ mod tests {
         </Item>
     </DeviceList>
 </Response>"#;
-        assert!(parse_catalog(body).is_err());
+        let parsed = parse_catalog(body).unwrap();
+        assert_eq!(parsed.num, 1);
+        assert_eq!(parsed.items.len(), 1);
     }
 
     #[test]
@@ -257,7 +268,7 @@ mod tests {
     }
 
     #[test]
-    fn record_info_rejects_invalid_num_attribute() {
+    fn record_info_ignores_invalid_num_attribute_and_counts_items() {
         let body = br#"<?xml version="1.0"?>
 <Response>
     <CmdType>RecordInfo</CmdType>
@@ -271,7 +282,9 @@ mod tests {
         </Item>
     </RecordList>
 </Response>"#;
-        assert!(parse_record_info(body).is_err());
+        let parsed = parse_record_info(body).unwrap();
+        assert_eq!(parsed.num, 1);
+        assert_eq!(parsed.items.len(), 1);
     }
 
     #[test]

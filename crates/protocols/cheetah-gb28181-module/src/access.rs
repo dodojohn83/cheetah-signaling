@@ -7,8 +7,9 @@ use crate::ports::CredentialProvider;
 use crate::registration::RegistrationTable;
 use crate::types::DeviceId;
 use crate::xml::{
-    XmlLimits, parse_alarm, parse_catalog, parse_device_control_response, parse_device_info,
-    parse_device_status, parse_keepalive, parse_mobile_position, parse_record_info, parse_xml,
+    XmlLimits, extract_alarm, extract_catalog, extract_device_control_response,
+    extract_device_info, extract_device_status, extract_keepalive, extract_mobile_position,
+    extract_record_info, parse_xml,
 };
 use cheetah_gb28181_core::{
     DigestChallenge, DigestContext, DigestQop, DigestReplayCache, DigestResponse, HeaderName,
@@ -299,172 +300,168 @@ impl<P: CredentialProvider> Gb28181Access<P> {
             .ok_or(AccessError::InvalidDeviceId)?;
         let from_device_id = device_from_address(from).ok_or(AccessError::InvalidDeviceId)?;
 
-        let root = parse_xml(body, &XmlLimits::default())?;
-        let cmd_type = root
-            .child_text("CmdType")
-            .ok_or_else(|| AccessError::InvalidXml("missing CmdType".to_string()))?;
-        let xml_device_id = root.child_text("DeviceID").unwrap_or_default();
+        // Reject business messages from unregistered devices before doing any
+        // expensive XML parsing.
+        if !self.registrations.is_registered(&from_device_id) {
+            return Err(AccessError::NotRegistered);
+        }
 
+        let root = parse_xml(body, &XmlLimits::default())?;
+        let xml_device_id = root.child_text("DeviceID").unwrap_or_default();
         if from_device_id.as_ref() != xml_device_id {
             return Err(AccessError::InvalidDeviceId);
         }
-        let device_id = DeviceId::new(&xml_device_id).ok_or(AccessError::InvalidDeviceId)?;
 
-        let Some(was_offline) = self.registrations.touch(&device_id, source, now) else {
-            // Business messages from a device that is not currently registered
-            // must not bypass the registration policy.
-            return Err(AccessError::NotRegistered);
-        };
-
-        // Parse the command body before finalizing outputs. This lets us keep the
-        // device-online presence event even when the payload is malformed, because
-        // a registered device that reaches us is alive even if its message body
-        // fails validation.
-        let command_event = match cmd_type.as_str() {
-            "Keepalive" => {
-                let keepalive = parse_keepalive(body)?;
-                Ok(Gb28181Event::Keepalive {
-                    domain_id: self.config.domain_id().clone(),
-                    device_id: device_id.clone(),
-                    source,
-                    status: keepalive.status,
-                })
-            }
-            "Catalog" => {
-                let catalog = parse_catalog(body)?;
-                Ok(Gb28181Event::CatalogReceived {
-                    domain_id: self.config.domain_id().clone(),
-                    device_id: device_id.clone(),
-                    source,
-                    sn: catalog.sn,
-                    sum_num: catalog.sum_num,
-                    num: catalog.num,
-                    items: catalog.items,
-                })
-            }
-            "DeviceInfo" => {
-                let info = parse_device_info(body)?;
-                Ok(Gb28181Event::DeviceInfoReceived {
-                    domain_id: self.config.domain_id().clone(),
-                    device_id: device_id.clone(),
-                    source,
-                    sn: info.sn,
-                    result: info.result,
-                    manufacturer: info.manufacturer,
-                    model: info.model,
-                    firmware: info.firmware,
-                })
-            }
-            "DeviceStatus" => {
-                let status = parse_device_status(body)?;
-                Ok(Gb28181Event::DeviceStatusReceived {
-                    domain_id: self.config.domain_id().clone(),
-                    device_id: device_id.clone(),
-                    source,
-                    sn: status.sn,
-                    result: status.result,
-                    online: status.online,
-                    status: status.status,
-                    reason: status.reason,
-                    invalid_equip: status.invalid_equip,
-                })
-            }
-            "Alarm" => {
-                let alarm = parse_alarm(body)?;
-                Ok(Gb28181Event::AlarmReceived {
-                    domain_id: self.config.domain_id().clone(),
-                    device_id: device_id.clone(),
-                    source,
-                    sn: alarm.sn,
-                    priority: alarm.priority,
-                    method: alarm.method,
-                    alarm_type: alarm.alarm_type,
-                    time: alarm.time,
-                    info: alarm.info,
-                })
-            }
-            "MobilePosition" => {
-                let pos = parse_mobile_position(body)?;
-                Ok(Gb28181Event::MobilePositionReceived {
-                    domain_id: self.config.domain_id().clone(),
-                    device_id: device_id.clone(),
-                    source,
-                    sn: pos.sn,
-                    time: pos.time,
-                    longitude: pos.longitude,
-                    latitude: pos.latitude,
-                    speed: pos.speed,
-                    direction: pos.direction,
-                    altitude: pos.altitude,
-                })
-            }
-            "RecordInfo" => {
-                let info = parse_record_info(body)?;
-                Ok(Gb28181Event::RecordInfoReceived {
-                    domain_id: self.config.domain_id().clone(),
-                    device_id: device_id.clone(),
-                    source,
-                    sn: info.sn,
-                    name: info.name,
-                    sum_num: info.sum_num,
-                    num: info.num,
-                    items: info.items,
-                })
-            }
-            "DeviceControl" => {
-                let resp = parse_device_control_response(body)?;
-                Ok(Gb28181Event::DeviceControlResponseReceived {
-                    domain_id: self.config.domain_id().clone(),
-                    device_id: device_id.clone(),
-                    source,
-                    sn: resp.sn,
-                    result: resp.result,
-                })
-            }
-            other => Err(AccessError::UnsupportedCmdType(other.to_string())),
-        };
-
-        match command_event {
-            Ok(event) => {
-                let mut outputs = Vec::with_capacity(3);
-                if was_offline {
-                    outputs.push(AccessOutput::EmitEvent(
-                        Gb28181Event::DevicePresenceChanged {
-                            domain_id: self.config.domain_id().clone(),
-                            device_id: device_id.clone(),
-                            source,
-                            presence: DevicePresence::Online,
-                        },
-                    ));
+        // Extract the command event. Any malformed payload or unsupported
+        // command type results in a 400 response so the device can correct or
+        // retry, but we do not refresh registration liveness until we have a
+        // valid command. This prevents a malformed keepalive from committing an
+        // online presence transition.
+        let command_event: Result<Gb28181Event, AccessError> = (|| {
+            let cmd_type = root
+                .child_text("CmdType")
+                .ok_or_else(|| AccessError::InvalidXml("missing CmdType".to_string()))?;
+            Ok(match cmd_type.as_str() {
+                "Keepalive" => {
+                    let keepalive = extract_keepalive(&root)?;
+                    Gb28181Event::Keepalive {
+                        domain_id: self.config.domain_id().clone(),
+                        device_id: from_device_id.clone(),
+                        source,
+                        status: keepalive.status,
+                    }
                 }
-                outputs.push(AccessOutput::EmitEvent(event));
-                outputs.push(AccessOutput::SendResponse(build_message_response(
-                    &message,
-                    self.next_tag(),
-                )));
-                Ok(outputs)
-            }
+                "Catalog" => {
+                    let catalog = extract_catalog(&root)?;
+                    Gb28181Event::CatalogReceived {
+                        domain_id: self.config.domain_id().clone(),
+                        device_id: from_device_id.clone(),
+                        source,
+                        sn: catalog.sn,
+                        sum_num: catalog.sum_num,
+                        num: catalog.num,
+                        items: catalog.items,
+                    }
+                }
+                "DeviceInfo" => {
+                    let info = extract_device_info(&root)?;
+                    Gb28181Event::DeviceInfoReceived {
+                        domain_id: self.config.domain_id().clone(),
+                        device_id: from_device_id.clone(),
+                        source,
+                        sn: info.sn,
+                        result: info.result,
+                        manufacturer: info.manufacturer,
+                        model: info.model,
+                        firmware: info.firmware,
+                    }
+                }
+                "DeviceStatus" => {
+                    let status = extract_device_status(&root)?;
+                    Gb28181Event::DeviceStatusReceived {
+                        domain_id: self.config.domain_id().clone(),
+                        device_id: from_device_id.clone(),
+                        source,
+                        sn: status.sn,
+                        result: status.result,
+                        online: status.online,
+                        status: status.status,
+                        reason: status.reason,
+                        invalid_equip: status.invalid_equip,
+                    }
+                }
+                "Alarm" => {
+                    let alarm = extract_alarm(&root)?;
+                    Gb28181Event::AlarmReceived {
+                        domain_id: self.config.domain_id().clone(),
+                        device_id: from_device_id.clone(),
+                        source,
+                        sn: alarm.sn,
+                        priority: alarm.priority,
+                        method: alarm.method,
+                        alarm_type: alarm.alarm_type,
+                        time: alarm.time,
+                        info: alarm.info,
+                    }
+                }
+                "MobilePosition" => {
+                    let pos = extract_mobile_position(&root)?;
+                    Gb28181Event::MobilePositionReceived {
+                        domain_id: self.config.domain_id().clone(),
+                        device_id: from_device_id.clone(),
+                        source,
+                        sn: pos.sn,
+                        time: pos.time,
+                        longitude: pos.longitude,
+                        latitude: pos.latitude,
+                        speed: pos.speed,
+                        direction: pos.direction,
+                        altitude: pos.altitude,
+                    }
+                }
+                "RecordInfo" => {
+                    let info = extract_record_info(&root)?;
+                    Gb28181Event::RecordInfoReceived {
+                        domain_id: self.config.domain_id().clone(),
+                        device_id: from_device_id.clone(),
+                        source,
+                        sn: info.sn,
+                        name: info.name,
+                        sum_num: info.sum_num,
+                        num: info.num,
+                        items: info.items,
+                    }
+                }
+                "DeviceControl" => {
+                    let resp = extract_device_control_response(&root)?;
+                    Gb28181Event::DeviceControlResponseReceived {
+                        domain_id: self.config.domain_id().clone(),
+                        device_id: from_device_id.clone(),
+                        source,
+                        sn: resp.sn,
+                        result: resp.result,
+                    }
+                }
+                other => return Err(AccessError::UnsupportedCmdType(other.to_string())),
+            })
+        })();
+
+        let event = match command_event {
+            Ok(event) => event,
             Err(_) => {
-                let mut outputs = Vec::with_capacity(2);
-                if was_offline {
-                    outputs.push(AccessOutput::EmitEvent(
-                        Gb28181Event::DevicePresenceChanged {
-                            domain_id: self.config.domain_id().clone(),
-                            device_id: device_id.clone(),
-                            source,
-                            presence: DevicePresence::Online,
-                        },
-                    ));
-                }
-                outputs.push(AccessOutput::SendResponse(build_error_response(
+                return Ok(vec![AccessOutput::SendResponse(build_error_response(
                     &message,
                     400,
                     "Bad Request",
                     self.next_tag(),
-                )));
-                Ok(outputs)
+                ))]);
             }
+        };
+
+        // Only refresh liveness and emit an online transition once the command
+        // payload has been validated.
+        let was_offline = self
+            .registrations
+            .touch(&from_device_id, source, now)
+            .unwrap_or(false);
+
+        let mut outputs = Vec::with_capacity(3);
+        if was_offline {
+            outputs.push(AccessOutput::EmitEvent(
+                Gb28181Event::DevicePresenceChanged {
+                    domain_id: self.config.domain_id().clone(),
+                    device_id: from_device_id.clone(),
+                    source,
+                    presence: DevicePresence::Online,
+                },
+            ));
         }
+        outputs.push(AccessOutput::EmitEvent(event));
+        outputs.push(AccessOutput::SendResponse(build_message_response(
+            &message,
+            self.next_tag(),
+        )));
+        Ok(outputs)
     }
 
     /// Advances the registration timer wheel and returns any resulting events.

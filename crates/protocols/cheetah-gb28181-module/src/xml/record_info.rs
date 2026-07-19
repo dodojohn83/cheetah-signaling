@@ -51,7 +51,7 @@ pub fn parse_record_info(body: &[u8]) -> Result<RecordInfoResponse, AccessError>
     extract_record_info(&root)
 }
 
-fn extract_record_info(root: &XmlElement) -> Result<RecordInfoResponse, AccessError> {
+pub(crate) fn extract_record_info(root: &XmlElement) -> Result<RecordInfoResponse, AccessError> {
     let cmd_type = root
         .child_text("CmdType")
         .ok_or_else(|| AccessError::InvalidXml("missing CmdType".to_string()))?;
@@ -63,12 +63,18 @@ fn extract_record_info(root: &XmlElement) -> Result<RecordInfoResponse, AccessEr
         .child("RecordList")
         .ok_or_else(|| AccessError::InvalidXml("missing RecordList".to_string()))?;
 
-    let num_attr = record_list
-        .attributes
-        .get("Num")
-        .ok_or_else(|| AccessError::InvalidXml("missing RecordList Num".to_string()))?;
-    let num = parse_u32(num_attr)?;
     let sum_num = parse_u32(&root.require_child_text("SumNum")?)?;
+
+    let items: Vec<RecordItem> = record_list
+        .children
+        .iter()
+        .filter(|c| c.name == "Item")
+        .filter_map(parse_item)
+        .collect();
+
+    // Ignore a missing or malformed `Num` attribute and use the number of
+    // well-formed items actually parsed.
+    let num = items.len() as u32;
 
     Ok(RecordInfoResponse {
         sn: root.require_child_text("SN")?,
@@ -76,18 +82,17 @@ fn extract_record_info(root: &XmlElement) -> Result<RecordInfoResponse, AccessEr
         name: root.child_text("Name"),
         sum_num,
         num,
-        items: record_list
-            .children
-            .iter()
-            .filter(|c| c.name == "Item")
-            .map(parse_item)
-            .collect::<Result<Vec<_>, _>>()?,
+        items,
     })
 }
 
-fn parse_item(item: &XmlElement) -> Result<RecordItem, AccessError> {
-    Ok(RecordItem {
-        device_id: item.require_child_text("DeviceID")?,
+fn parse_item(item: &XmlElement) -> Option<RecordItem> {
+    let device_id = item.child_text("DeviceID")?;
+    if device_id.is_empty() {
+        return None;
+    }
+    Some(RecordItem {
+        device_id,
         name: item.child_text("Name"),
         file_path: item.child_text("FilePath"),
         start_time: item.child_text("StartTime"),

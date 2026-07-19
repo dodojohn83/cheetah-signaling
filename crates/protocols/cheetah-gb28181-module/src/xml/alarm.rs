@@ -74,7 +74,7 @@ pub fn build_alarm_notify(
     encode_xml(&root, true)
 }
 
-fn extract_alarm(root: &XmlElement) -> Result<AlarmInfo, AccessError> {
+pub(crate) fn extract_alarm(root: &XmlElement) -> Result<AlarmInfo, AccessError> {
     let cmd_type = root
         .child_text("CmdType")
         .ok_or_else(|| AccessError::InvalidXml("missing CmdType".to_string()))?;

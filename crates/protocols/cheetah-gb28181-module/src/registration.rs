@@ -83,6 +83,11 @@ impl RegistrationTable {
         Some(was_offline)
     }
 
+    /// Returns whether the device currently has an active registration.
+    pub fn is_registered(&self, device_id: &DeviceId) -> bool {
+        self.table.contains_key(device_id)
+    }
+
     /// Removes a registration and returns it, if present.
     pub fn remove(&mut self, device_id: &DeviceId) -> Option<Registration> {
         self.table.remove(device_id)

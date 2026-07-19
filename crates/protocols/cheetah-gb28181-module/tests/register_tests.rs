@@ -543,6 +543,68 @@ fn keepalive_after_offline_restores_online() {
 }
 
 #[test]
+fn malformed_keepalive_from_offline_returns_400_and_does_not_commit_online() {
+    let (mut access, now) = make_registered_access();
+    let heartbeat_timeout = 90;
+
+    let _offline_outputs = access.tick(now + heartbeat_timeout + 1);
+
+    // Keepalive is missing the required <Status> element.
+    let malformed_body = br#"<?xml version="1.0"?>
+<Notify>
+    <CmdType>Keepalive</CmdType>
+    <SN>2</SN>
+    <DeviceID>34020000001320000001</DeviceID>
+</Notify>"#;
+    let request = make_message_request(malformed_body);
+    let outputs = access
+        .process(AccessInput {
+            source: "192.168.1.100:5060".parse().unwrap(),
+            now: now + heartbeat_timeout + 2,
+            message: request,
+        })
+        .unwrap();
+
+    let response = find_response(&outputs);
+    let SipMessage::Response { line, .. } = response else {
+        panic!("expected response");
+    };
+    assert_eq!(line.code, 400);
+
+    for event in find_events(&outputs) {
+        assert!(!matches!(
+            event,
+            Gb28181Event::DevicePresenceChanged {
+                presence: DevicePresence::Online,
+                ..
+            }
+        ));
+    }
+
+    // The next valid keepalive should still emit the online transition.
+    let request = make_message_request(&keepalive_body());
+    let outputs = access
+        .process(AccessInput {
+            source: "192.168.1.100:5060".parse().unwrap(),
+            now: now + heartbeat_timeout + 3,
+            message: request,
+        })
+        .unwrap();
+
+    let mut online_seen = false;
+    for event in find_events(&outputs) {
+        if let Gb28181Event::DevicePresenceChanged {
+            presence: DevicePresence::Online,
+            ..
+        } = event
+        {
+            online_seen = true;
+        }
+    }
+    assert!(online_seen);
+}
+
+#[test]
 fn registration_expiry_removes_registration() {
     let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec())
         .unwrap()

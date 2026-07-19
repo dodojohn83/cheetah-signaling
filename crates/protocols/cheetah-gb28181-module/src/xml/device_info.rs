@@ -34,7 +34,7 @@ pub fn parse_device_info(body: &[u8]) -> Result<DeviceInfoResponse, AccessError>
     extract_device_info(&root)
 }
 
-fn extract_device_info(root: &XmlElement) -> Result<DeviceInfoResponse, AccessError> {
+pub(crate) fn extract_device_info(root: &XmlElement) -> Result<DeviceInfoResponse, AccessError> {
     let cmd_type = root
         .child_text("CmdType")
         .ok_or_else(|| AccessError::InvalidXml("missing CmdType".to_string()))?;
