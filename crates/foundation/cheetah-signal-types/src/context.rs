@@ -183,6 +183,41 @@ impl MediaMutationContext {
             )
             .with_field_violation("tenant_id", "must not be nil"));
         }
+        if self.request_id.is_empty() {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                "request_id is required",
+            )
+            .with_field_violation("request_id", "must be non-empty"));
+        }
+        if self.correlation_id.as_uuid().is_nil() {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                "correlation_id is required",
+            )
+            .with_field_violation("correlation_id", "must not be nil"));
+        }
+        if self.message_id.as_uuid().is_nil() {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                "message_id is required",
+            )
+            .with_field_violation("message_id", "must not be nil"));
+        }
+        if self.operation_id.as_uuid().is_nil() {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                "operation_id is required",
+            )
+            .with_field_violation("operation_id", "must not be nil"));
+        }
+        if self.operation_step_id.is_empty() {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                "operation_step_id is required",
+            )
+            .with_field_violation("operation_step_id", "must be non-empty"));
+        }
         if self.idempotency_key.is_empty() {
             return Err(SignalError::new(
                 SignalErrorKind::InvalidArgument,
@@ -356,6 +391,61 @@ mod tests {
         let clock = FakeClock::new();
         let mut ctx = valid_context(&clock);
         ctx.source_signaling_node_id = NodeId::from_uuid(uuid::Uuid::nil());
+        let Err(err) = ctx.validate(clock.now_wall()) else {
+            panic!("expected validation to fail");
+        };
+        assert_eq!(err.kind(), SignalErrorKind::InvalidArgument);
+    }
+
+    #[test]
+    fn empty_request_id_fails() {
+        let clock = FakeClock::new();
+        let mut ctx = valid_context(&clock);
+        ctx.request_id.clear();
+        let Err(err) = ctx.validate(clock.now_wall()) else {
+            panic!("expected validation to fail");
+        };
+        assert_eq!(err.kind(), SignalErrorKind::InvalidArgument);
+    }
+
+    #[test]
+    fn nil_correlation_id_fails() {
+        let clock = FakeClock::new();
+        let mut ctx = valid_context(&clock);
+        ctx.correlation_id = CorrelationId::from_uuid(uuid::Uuid::nil());
+        let Err(err) = ctx.validate(clock.now_wall()) else {
+            panic!("expected validation to fail");
+        };
+        assert_eq!(err.kind(), SignalErrorKind::InvalidArgument);
+    }
+
+    #[test]
+    fn nil_message_id_fails() {
+        let clock = FakeClock::new();
+        let mut ctx = valid_context(&clock);
+        ctx.message_id = MessageId::from_uuid(uuid::Uuid::nil());
+        let Err(err) = ctx.validate(clock.now_wall()) else {
+            panic!("expected validation to fail");
+        };
+        assert_eq!(err.kind(), SignalErrorKind::InvalidArgument);
+    }
+
+    #[test]
+    fn nil_operation_id_fails() {
+        let clock = FakeClock::new();
+        let mut ctx = valid_context(&clock);
+        ctx.operation_id = OperationId::from_uuid(uuid::Uuid::nil());
+        let Err(err) = ctx.validate(clock.now_wall()) else {
+            panic!("expected validation to fail");
+        };
+        assert_eq!(err.kind(), SignalErrorKind::InvalidArgument);
+    }
+
+    #[test]
+    fn empty_operation_step_id_fails() {
+        let clock = FakeClock::new();
+        let mut ctx = valid_context(&clock);
+        ctx.operation_step_id.clear();
         let Err(err) = ctx.validate(clock.now_wall()) else {
             panic!("expected validation to fail");
         };
