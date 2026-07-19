@@ -128,8 +128,30 @@ impl<P: CredentialProvider> Gb28181Access<P> {
         };
 
         let device_id = device_id_from_request(line, headers)?;
-        let (contact_uri, contact_expires) = parse_contact_header(headers)?;
-        let expires_header = parse_expires_header(headers)?;
+        let (contact_uri, contact_expires) = match parse_contact_header(headers) {
+            Ok(v) => v,
+            Err(AccessError::InvalidContact | AccessError::InvalidExpires) => {
+                return Ok(vec![AccessOutput::SendResponse(build_error_response(
+                    &message,
+                    400,
+                    "Bad Request",
+                    self.next_tag(),
+                ))]);
+            }
+            Err(e) => return Err(e),
+        };
+        let expires_header = match parse_expires_header(headers) {
+            Ok(v) => v,
+            Err(AccessError::InvalidExpires) => {
+                return Ok(vec![AccessOutput::SendResponse(build_error_response(
+                    &message,
+                    400,
+                    "Bad Request",
+                    self.next_tag(),
+                ))]);
+            }
+            Err(e) => return Err(e),
+        };
         let expires = resolve_expires(contact_expires, expires_header, &self.config);
 
         let user_agent = headers
@@ -590,6 +612,22 @@ fn build_challenge_response(
     headers.append(HeaderName::ContentLength, HeaderValue::new("0"));
     SipMessage::Response {
         line: StatusLine::new(401, "Unauthorized"),
+        headers,
+        body: Vec::new(),
+    }
+}
+
+fn build_error_response(request: &SipMessage, code: u16, reason: &str, tag: String) -> SipMessage {
+    let mut headers = copy_common_headers(request);
+    if let Some(to) = request.headers().get(&HeaderName::To) {
+        headers.append(
+            HeaderName::To,
+            HeaderValue::new(add_or_replace_tag(to.as_str(), &tag)),
+        );
+    }
+    headers.append(HeaderName::ContentLength, HeaderValue::new("0"));
+    SipMessage::Response {
+        line: StatusLine::new(code, reason),
         headers,
         body: Vec::new(),
     }

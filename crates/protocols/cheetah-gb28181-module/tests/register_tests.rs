@@ -7,7 +7,7 @@ use cheetah_gb28181_core::{
     SipUri,
 };
 use cheetah_gb28181_module::{
-    AccessError, AccessInput, AccessOutput, AuthPolicy, DeviceId, DevicePresence, Gb28181Access,
+    AccessInput, AccessOutput, AuthPolicy, DeviceId, DevicePresence, Gb28181Access,
     Gb28181DomainConfig, Gb28181Event,
 };
 use secrecy::SecretString;
@@ -1002,12 +1002,18 @@ fn register_rejects_malformed_expires_header() {
     request
         .headers_mut()
         .append(HeaderName::Expires, HeaderValue::new("not-a-number"));
-    let result = access.process(AccessInput {
-        source: "192.168.1.100:5060".parse().unwrap(),
-        now: 1000,
-        message: request,
-    });
-    assert!(matches!(result, Err(AccessError::InvalidExpires)));
+    let outputs = access
+        .process(AccessInput {
+            source: "192.168.1.100:5060".parse().unwrap(),
+            now: 1000,
+            message: request,
+        })
+        .unwrap();
+    assert_eq!(outputs.len(), 1);
+    assert!(matches!(
+        &outputs[0],
+        AccessOutput::SendResponse(SipMessage::Response { line, .. }) if line.code == 400
+    ));
 }
 
 #[test]
@@ -1044,10 +1050,16 @@ fn register_rejects_malformed_contact_expires_param() {
         headers: new_headers,
         body,
     };
-    let result = access.process(AccessInput {
-        source: "192.168.1.100:5060".parse().unwrap(),
-        now: 1000,
-        message: request,
-    });
-    assert!(matches!(result, Err(AccessError::InvalidExpires)));
+    let outputs = access
+        .process(AccessInput {
+            source: "192.168.1.100:5060".parse().unwrap(),
+            now: 1000,
+            message: request,
+        })
+        .unwrap();
+    assert_eq!(outputs.len(), 1);
+    assert!(matches!(
+        &outputs[0],
+        AccessOutput::SendResponse(SipMessage::Response { line, .. }) if line.code == 400
+    ));
 }
