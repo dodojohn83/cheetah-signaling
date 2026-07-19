@@ -300,6 +300,18 @@ fn event_source(event: &Gb28181Event) -> Option<&std::net::SocketAddr> {
     }
 }
 
+/// Creates a stable key for a catalog fragment from the sorted set of channel
+/// external ids it contains. Retransmissions of the same fragment will share
+/// the same key and therefore contribute their declared `Num` only once.
+fn fragment_key(batch: &HashMap<String, GbCatalogItem>) -> String {
+    if batch.is_empty() {
+        return "empty".to_string();
+    }
+    let mut ids: Vec<_> = batch.keys().map(String::as_str).collect();
+    ids.sort();
+    ids.join(",")
+}
+
 const CATALOG_FRAGMENT_TTL: Duration = Duration::from_secs(60);
 const CATALOG_CLEANUP_INTERVAL: Duration = Duration::from_secs(30);
 
@@ -308,9 +320,15 @@ const CATALOG_CLEANUP_INTERVAL: Duration = Duration::from_secs(30);
 /// Devices may split a catalog response across multiple SIP MESSAGE bodies.
 /// Fragments are keyed by (tenant, device, sequence number) and merged into a
 /// single `replace_channel_catalog` call once `sum_num` distinct channel ids
-/// have been seen. Items are de-duplicated by their channel `device_id` so
-/// retransmitted or overlapping fragments cannot prematurely complete the
-/// assembly. Partial transfers expire after `CATALOG_FRAGMENT_TTL` and are
+/// have been seen. Items are de-duplicated by their channel `device_id`.
+///
+/// To avoid stalling when a camera drops malformed items, completion also falls
+/// back to the sum of declared `Num` values for each *unique* fragment content
+/// (retransmissions are ignored). If the unique fragment count equals `sum_num`
+/// but fewer distinct channels were collected, the partial catalog is emitted as
+/// a best-effort replacement and a warning is logged. Overlapping fragments that
+/// would push the unique declared count above `sum_num` are not used to trigger
+/// completion. Partial transfers expire after `CATALOG_FRAGMENT_TTL` and are
 /// evicted by the background worker cleanup tick.
 struct CatalogBuffer {
     entries: HashMap<CatalogKey, PartialCatalog>,
@@ -330,29 +348,54 @@ struct PartialCatalog {
     items: HashMap<String, GbCatalogItem>,
     /// Declared total number of items across all fragments (`SumNum`).
     expected: u32,
-    /// Sum of declared `Num` counts received for this catalog. Completion is
-    /// triggered when this reaches `expected`, even if some malformed items
-    /// were dropped, so that a camera's channel list is not stalled by bad
-    /// entries.
-    received_num: u32,
+    /// Declared `Num` values keyed by a digest of the fragment's channel ids.
+    ///
+    /// Retransmissions of the same fragment share the same key and do not
+    /// contribute multiple times. For each unique fragment the largest `Num`
+    /// value observed is kept.
+    fragments: HashMap<String, u32>,
     last_seen: Instant,
 }
 
 impl PartialCatalog {
+    /// Sum of declared `Num` values for unique fragments received so far.
+    fn received_num(&self) -> u32 {
+        self.fragments.values().copied().sum()
+    }
+
     fn is_complete(&self) -> bool {
-        if self.received_num >= self.expected || self.items.len() >= self.expected as usize {
-            if self.items.len() < self.expected as usize {
+        let distinct = self.items.len();
+        if distinct >= self.expected as usize {
+            if distinct > self.expected as usize {
                 warn!(
                     expected = self.expected,
-                    received_num = self.received_num,
-                    distinct = self.items.len(),
-                    "gb28181 catalog completed with fewer distinct channels than declared; some items may have been malformed"
+                    distinct, "gb28181 catalog has more distinct channels than declared"
                 );
             }
-            true
-        } else {
-            false
+            return true;
         }
+
+        let received = self.received_num();
+        if received == self.expected {
+            warn!(
+                expected = self.expected,
+                distinct,
+                received,
+                "gb28181 catalog unique fragment count reached sum_num with fewer distinct channels; some items may have been malformed or dropped"
+            );
+            return true;
+        }
+
+        if received > self.expected {
+            warn!(
+                expected = self.expected,
+                distinct,
+                received,
+                "gb28181 catalog fragments overlap or repeat declared counts; waiting for distinct channel ids"
+            );
+        }
+
+        false
     }
 }
 
@@ -428,7 +471,11 @@ impl CatalogBuffer {
                 self.entries.remove(&key);
                 return None;
             }
-            partial.received_num = partial.received_num.saturating_add(num);
+            partial
+                .fragments
+                .entry(fragment_key(&batch))
+                .and_modify(|v| *v = num.max(*v))
+                .or_insert(num);
             partial.items.extend(batch);
             partial.last_seen = Instant::now();
             if partial.is_complete() {
@@ -451,10 +498,14 @@ impl CatalogBuffer {
             return None;
         }
 
+        let mut fragments = HashMap::new();
+        if num > 0 || !batch.is_empty() {
+            fragments.insert(fragment_key(&batch), num);
+        }
         let partial = PartialCatalog {
             items: batch,
             expected,
-            received_num: num,
+            fragments,
             last_seen: Instant::now(),
         };
         if partial.is_complete() {
