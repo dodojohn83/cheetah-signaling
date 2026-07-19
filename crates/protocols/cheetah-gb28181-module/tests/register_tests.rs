@@ -1410,3 +1410,65 @@ fn unsupported_message_cmd_type_returns_400() {
     };
     assert_eq!(line.code, 400);
 }
+
+#[test]
+fn malformed_message_does_not_commit_online_presence_transition() {
+    let (mut access, now) = make_registered_access();
+    let heartbeat_timeout = 90;
+
+    // Trigger offline state.
+    let _offline_outputs = access.tick(now + heartbeat_timeout + 1);
+
+    // A malformed keepalive (mismatched DeviceID) returns 400 but must not
+    // mark the device online, otherwise the next valid keepalive would not
+    // emit a presence transition event.
+    let bad_body = br#"<?xml version="1.0"?>
+<Notify>
+    <CmdType>Keepalive</CmdType>
+    <SN>1</SN>
+    <DeviceID>34020000001320000002</DeviceID>
+    <Status>OK</Status>
+</Notify>"#;
+    let bad_request = make_message_request(bad_body);
+    let outputs = access
+        .process(AccessInput {
+            source: "192.168.1.100:5060".parse().unwrap(),
+            now: now + heartbeat_timeout + 2,
+            message: bad_request,
+        })
+        .unwrap();
+    assert_eq!(outputs.len(), 1);
+    let response = find_response(&outputs);
+    let SipMessage::Response { line, .. } = response else {
+        panic!("expected response");
+    };
+    assert_eq!(line.code, 400);
+
+    // The next valid keepalive must still report the online transition.
+    let valid_request = make_message_request(&keepalive_body());
+    let outputs = access
+        .process(AccessInput {
+            source: "192.168.1.100:5060".parse().unwrap(),
+            now: now + heartbeat_timeout + 3,
+            message: valid_request,
+        })
+        .unwrap();
+
+    let mut online_seen = false;
+    let mut keepalive_seen = false;
+    for event in find_events(&outputs) {
+        match event {
+            Gb28181Event::DevicePresenceChanged {
+                presence: DevicePresence::Online,
+                ..
+            } => online_seen = true,
+            Gb28181Event::Keepalive { .. } => keepalive_seen = true,
+            _ => {}
+        }
+    }
+    assert!(
+        online_seen,
+        "online transition should be emitted after malformed keepalive"
+    );
+    assert!(keepalive_seen);
+}

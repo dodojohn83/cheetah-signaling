@@ -342,6 +342,116 @@ impl<P: CredentialProvider> Gb28181Access<P> {
         }
         let device_id = DeviceId::new(&xml_device_id).ok_or(AccessError::InvalidDeviceId)?;
 
+        let domain_id = self.config.domain_id().clone();
+
+        // Parse the command payload before touching the registration table.
+        // A malformed or unknown command must not commit an online presence
+        // transition whose event would then be discarded when we return a 400
+        // response.
+        let event = match cmd_type.as_str() {
+            "Keepalive" => {
+                let keepalive = parse_keepalive(body)?;
+                Gb28181Event::Keepalive {
+                    domain_id: domain_id.clone(),
+                    device_id: device_id.clone(),
+                    source,
+                    status: keepalive.status,
+                }
+            }
+            "Catalog" => {
+                let catalog = parse_catalog(body)?;
+                Gb28181Event::CatalogReceived {
+                    domain_id: domain_id.clone(),
+                    device_id: device_id.clone(),
+                    source,
+                    sn: catalog.sn,
+                    sum_num: catalog.sum_num,
+                    num: catalog.num,
+                    items: catalog.items,
+                }
+            }
+            "DeviceInfo" => {
+                let info = parse_device_info(body)?;
+                Gb28181Event::DeviceInfoReceived {
+                    domain_id: domain_id.clone(),
+                    device_id: device_id.clone(),
+                    source,
+                    sn: info.sn,
+                    result: info.result,
+                    manufacturer: info.manufacturer,
+                    model: info.model,
+                    firmware: info.firmware,
+                }
+            }
+            "DeviceStatus" => {
+                let status = parse_device_status(body)?;
+                Gb28181Event::DeviceStatusReceived {
+                    domain_id: domain_id.clone(),
+                    device_id: device_id.clone(),
+                    source,
+                    sn: status.sn,
+                    result: status.result,
+                    online: status.online,
+                    status: status.status,
+                    reason: status.reason,
+                    invalid_equip: status.invalid_equip,
+                }
+            }
+            "Alarm" => {
+                let alarm = parse_alarm(body)?;
+                Gb28181Event::AlarmReceived {
+                    domain_id: domain_id.clone(),
+                    device_id: device_id.clone(),
+                    source,
+                    sn: alarm.sn,
+                    priority: alarm.priority,
+                    method: alarm.method,
+                    alarm_type: alarm.alarm_type,
+                    time: alarm.time,
+                    info: alarm.info,
+                }
+            }
+            "MobilePosition" => {
+                let pos = parse_mobile_position(body)?;
+                Gb28181Event::MobilePositionReceived {
+                    domain_id: domain_id.clone(),
+                    device_id: device_id.clone(),
+                    source,
+                    sn: pos.sn,
+                    time: pos.time,
+                    longitude: pos.longitude,
+                    latitude: pos.latitude,
+                    speed: pos.speed,
+                    direction: pos.direction,
+                    altitude: pos.altitude,
+                }
+            }
+            "RecordInfo" => {
+                let info = parse_record_info(body)?;
+                Gb28181Event::RecordInfoReceived {
+                    domain_id: domain_id.clone(),
+                    device_id: device_id.clone(),
+                    source,
+                    sn: info.sn,
+                    name: info.name,
+                    sum_num: info.sum_num,
+                    num: info.num,
+                    items: info.items,
+                }
+            }
+            "DeviceControl" => {
+                let resp = parse_device_control_response(body)?;
+                Gb28181Event::DeviceControlResponseReceived {
+                    domain_id: domain_id.clone(),
+                    device_id: device_id.clone(),
+                    source,
+                    sn: resp.sn,
+                    result: resp.result,
+                }
+            }
+            other => return Err(AccessError::UnsupportedCmdType(other.to_string())),
+        };
+
         let Some(was_offline) = self.registrations.touch(&device_id, source, now) else {
             // Business messages from a device that is not currently registered
             // must not bypass the registration policy.
@@ -352,7 +462,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
         if was_offline {
             outputs.push(AccessOutput::EmitEvent(
                 Gb28181Event::DevicePresenceChanged {
-                    domain_id: self.config.domain_id().clone(),
+                    domain_id,
                     device_id: device_id.clone(),
                     source,
                     presence: DevicePresence::Online,
@@ -360,116 +470,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
             ));
         }
 
-        match cmd_type.as_str() {
-            "Keepalive" => {
-                let keepalive = parse_keepalive(body)?;
-                outputs.push(AccessOutput::EmitEvent(Gb28181Event::Keepalive {
-                    domain_id: self.config.domain_id().clone(),
-                    device_id,
-                    source,
-                    status: keepalive.status,
-                }));
-            }
-            "Catalog" => {
-                let catalog = parse_catalog(body)?;
-                outputs.push(AccessOutput::EmitEvent(Gb28181Event::CatalogReceived {
-                    domain_id: self.config.domain_id().clone(),
-                    device_id,
-                    source,
-                    sn: catalog.sn,
-                    sum_num: catalog.sum_num,
-                    num: catalog.num,
-                    items: catalog.items,
-                }));
-            }
-            "DeviceInfo" => {
-                let info = parse_device_info(body)?;
-                outputs.push(AccessOutput::EmitEvent(Gb28181Event::DeviceInfoReceived {
-                    domain_id: self.config.domain_id().clone(),
-                    device_id,
-                    source,
-                    sn: info.sn,
-                    result: info.result,
-                    manufacturer: info.manufacturer,
-                    model: info.model,
-                    firmware: info.firmware,
-                }));
-            }
-            "DeviceStatus" => {
-                let status = parse_device_status(body)?;
-                outputs.push(AccessOutput::EmitEvent(
-                    Gb28181Event::DeviceStatusReceived {
-                        domain_id: self.config.domain_id().clone(),
-                        device_id,
-                        source,
-                        sn: status.sn,
-                        result: status.result,
-                        online: status.online,
-                        status: status.status,
-                        reason: status.reason,
-                        invalid_equip: status.invalid_equip,
-                    },
-                ));
-            }
-            "Alarm" => {
-                let alarm = parse_alarm(body)?;
-                outputs.push(AccessOutput::EmitEvent(Gb28181Event::AlarmReceived {
-                    domain_id: self.config.domain_id().clone(),
-                    device_id,
-                    source,
-                    sn: alarm.sn,
-                    priority: alarm.priority,
-                    method: alarm.method,
-                    alarm_type: alarm.alarm_type,
-                    time: alarm.time,
-                    info: alarm.info,
-                }));
-            }
-            "MobilePosition" => {
-                let pos = parse_mobile_position(body)?;
-                outputs.push(AccessOutput::EmitEvent(
-                    Gb28181Event::MobilePositionReceived {
-                        domain_id: self.config.domain_id().clone(),
-                        device_id,
-                        source,
-                        sn: pos.sn,
-                        time: pos.time,
-                        longitude: pos.longitude,
-                        latitude: pos.latitude,
-                        speed: pos.speed,
-                        direction: pos.direction,
-                        altitude: pos.altitude,
-                    },
-                ));
-            }
-            "RecordInfo" => {
-                let info = parse_record_info(body)?;
-                outputs.push(AccessOutput::EmitEvent(Gb28181Event::RecordInfoReceived {
-                    domain_id: self.config.domain_id().clone(),
-                    device_id,
-                    source,
-                    sn: info.sn,
-                    name: info.name,
-                    sum_num: info.sum_num,
-                    num: info.num,
-                    items: info.items,
-                }));
-            }
-            "DeviceControl" => {
-                let resp = parse_device_control_response(body)?;
-                outputs.push(AccessOutput::EmitEvent(
-                    Gb28181Event::DeviceControlResponseReceived {
-                        domain_id: self.config.domain_id().clone(),
-                        device_id,
-                        source,
-                        sn: resp.sn,
-                        result: resp.result,
-                    },
-                ));
-            }
-            other => return Err(AccessError::UnsupportedCmdType(other.to_string())),
-        }
-
+        outputs.push(AccessOutput::EmitEvent(event));
         outputs.push(AccessOutput::SendResponse(build_message_response(
             message,
             self.next_tag(),
