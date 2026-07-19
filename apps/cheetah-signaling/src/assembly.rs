@@ -5,6 +5,7 @@
 
 use crate::gb_event_sink;
 use crate::onvif_discovery;
+use ::time::{OffsetDateTime, UtcOffset};
 use cheetah_cluster_ownership::lease::CachingDeviceOwnerResolver;
 use cheetah_domain::ports::{DeviceOwnerResolver, MediaPort};
 use cheetah_domain::{DomainEvent, EventPublisher};
@@ -17,8 +18,8 @@ use cheetah_gb28181_module::types::DeviceId as GbDeviceId;
 use cheetah_http_api::state::{ApiConfig, ApiServer, ApiState};
 use cheetah_media_client::{MediaClientConfig, MediaControlClient};
 use cheetah_media_scheduler::{
-    InMemoryMediaNodeRegistry, LeastLoadedScheduler, MediaRegistryConfig, SchedulerConfig,
-    SchedulerMediaPort,
+    InMemoryMediaNodeRegistry, LeastLoadedScheduler, MediaClusterRegistryService,
+    MediaRegistryConfig, PeerIdentity, SchedulerConfig, SchedulerMediaPort,
 };
 use cheetah_message_api::RawEventBus;
 use cheetah_message_api::publisher::publish_domain_event;
@@ -29,6 +30,7 @@ use cheetah_plugin_host::PluginHost;
 use cheetah_plugin_sdk::{PluginManifest, ProtocolDriverFactory};
 use cheetah_secret::{CompositeSecretStore, EnvSecretStore, FileSecretStore};
 use cheetah_signal_application::OutboxRelay;
+use cheetah_signal_contracts::cheetah::common::v1::media_cluster_registry_server::MediaClusterRegistryServer;
 use cheetah_signal_types::config::{MessagingBackend, SignalConfig, StorageBackend};
 use cheetah_signal_types::{
     ChannelId, Clock, DeviceId, DurationMs, Event, IdGenerator, MediaBindingId, MediaSessionId,
@@ -36,17 +38,42 @@ use cheetah_signal_types::{
 };
 use cheetah_storage_api::Storage;
 use cheetah_storage_sqlite::SqliteStorage;
+use futures::future::select_all;
 use secrecy::{ExposeSecret, SecretSlice, SecretString};
 use semver::Version;
-use std::net::SocketAddr;
+use std::collections::HashMap;
+use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
-use time::{OffsetDateTime, UtcOffset};
 use tokio::task::JoinHandle;
+use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
+use tonic::service::InterceptorLayer;
+use tonic::transport::{Certificate, Identity, Server, ServerTlsConfig, server::TcpIncoming};
 use tracing::{info, warn};
 use uuid::Uuid;
+use x509_parser::prelude::{FromDer, X509Certificate};
+
+/// Health status of a single runtime component.
+#[derive(Clone, Debug)]
+#[allow(dead_code)]
+pub enum ComponentStatus {
+    /// Component is running.
+    Running,
+    /// Component stopped cleanly.
+    Stopped,
+    /// Component stopped with an error.
+    Failed(String),
+}
+
+/// Aggregated health of all supervised runtime components.
+#[derive(Clone, Debug, Default)]
+pub struct RuntimeHealth {
+    /// Component name to last observed status.
+    pub components: HashMap<String, ComponentStatus>,
+}
 
 /// Running signaling process handles.
 pub struct SignalingRuntime {
@@ -58,21 +85,76 @@ pub struct SignalingRuntime {
     pub http_addr: SocketAddr,
     /// Optional bound GB28181 SIP address.
     pub gb28181_addr: Option<SocketAddr>,
+    /// Bound internal gRPC address.
+    pub grpc_addr: SocketAddr,
     /// Plugin host with built-in factories and validated external manifests.
     #[allow(dead_code)]
     pub plugin_host: PluginHost,
+    /// Readiness flag: true only after all startup stages have completed.
+    pub ready: Arc<AtomicBool>,
+    /// Observed health of supervised background components.
+    pub health: Arc<Mutex<RuntimeHealth>>,
     /// Background worker handles (outbox, protocol drivers).
     workers: Vec<JoinHandle<()>>,
 }
 
 impl SignalingRuntime {
-    /// Stops background workers and the HTTP server.
-    pub fn shutdown(self) {
+    /// Gracefully shuts down the runtime.
+    ///
+    /// 1. Marks readiness false.
+    /// 2. Cancels all worker cancellation tokens.
+    /// 3. Waits for workers to finish within `worker_timeout`.
+    /// 4. Aborts any remaining workers and stops the HTTP server.
+    pub async fn shutdown(self, worker_timeout: Duration) -> RuntimeHealth {
+        self.ready.store(false, Ordering::SeqCst);
         self.cancel.cancel();
-        for handle in self.workers {
-            handle.abort();
+
+        let mut health = self
+            .health
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        let mut remaining: Vec<(usize, JoinHandle<()>)> =
+            self.workers.into_iter().enumerate().collect();
+        let deadline = tokio::time::Instant::now() + worker_timeout;
+
+        while !remaining.is_empty() {
+            let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if left.is_zero() {
+                break;
+            }
+
+            let handles: Vec<&mut JoinHandle<()>> = remaining.iter_mut().map(|(_, h)| h).collect();
+            let (result, idx, _) = match timeout(left, select_all(handles)).await {
+                Ok(r) => r,
+                Err(_) => break,
+            };
+
+            let (original_idx, handle) = remaining.remove(idx);
+            drop(handle);
+            let name = format!("worker-{original_idx}");
+            match result {
+                Ok(()) => {
+                    health.components.insert(name, ComponentStatus::Stopped);
+                }
+                Err(e) => {
+                    let msg = format!("{e}");
+                    warn!(component = %name, error = %msg, "worker exited with error");
+                    health.components.insert(name, ComponentStatus::Failed(msg));
+                }
+            }
         }
+
+        for (i, handle) in remaining {
+            handle.abort();
+            health.components.insert(
+                format!("worker-{i}"),
+                ComponentStatus::Failed("shutdown deadline exceeded; worker aborted".to_string()),
+            );
+        }
+
         self.http.shutdown();
+        health
     }
 }
 
@@ -412,9 +494,10 @@ pub async fn start(
     };
     let publisher: Arc<dyn EventPublisher> = Arc::new(EventBusPublisher::new(bus.clone()));
 
-    let media_registry = Arc::new(InMemoryMediaNodeRegistry::new(
-        MediaRegistryConfig::default(),
-    ));
+    let media_registry: Arc<dyn cheetah_media_scheduler::MediaNodeRegistry> = Arc::new(
+        InMemoryMediaNodeRegistry::new(MediaRegistryConfig::default()),
+    );
+    let media_registry_for_grpc = Arc::clone(&media_registry);
     let media_scheduler: Arc<dyn cheetah_media_scheduler::MediaScheduler> = Arc::new(
         LeastLoadedScheduler::new(media_registry, SchedulerConfig::default()),
     );
@@ -453,8 +536,8 @@ pub async fn start(
     let mut state = ApiState::new(
         api_config,
         storage.clone(),
-        clock,
-        id_generator,
+        clock.clone(),
+        id_generator.clone(),
         bus.clone(),
         owner_resolver,
         media_port,
@@ -564,16 +647,73 @@ pub async fn start(
         warn!("onvif.enabled is false; discovery worker not started");
     }
 
+    // Internal gRPC server for media node lifecycle (MediaClusterRegistry).
+    // Binds the port eagerly so startup fails fast; TLS/mTLS is configured
+    // when the corresponding secret references are provided. The router and its
+    // TLS config are built synchronously so any misconfiguration fails startup
+    // before readiness is advertised.
+    let grpc_ip = config
+        .grpc
+        .listen_addr
+        .parse::<IpAddr>()
+        .map_err(|e| format!("grpc.listen_addr is not a valid IP address: {e}"))?;
+    let grpc_addr = SocketAddr::new(grpc_ip, config.grpc.port);
+    let (grpc_identity, grpc_client_ca, grpc_require_mtls) =
+        configure_grpc_tls(&*secret_store, &config.grpc)?;
+    let mut media_registry_config = MediaRegistryConfig::production();
+    media_registry_config.require_mtls = grpc_require_mtls;
+    let grpc_service = MediaClusterRegistryService::new(
+        media_registry_for_grpc,
+        clock.clone(),
+        id_generator.clone(),
+        media_registry_config,
+    );
+    let tcp_incoming = TcpIncoming::bind(grpc_addr)
+        .map_err(|e| format!("failed to bind internal gRPC listener: {e}"))?;
+    let grpc_addr = tcp_incoming
+        .local_addr()
+        .map_err(|e| format!("failed to get gRPC local address: {e}"))?;
+
+    let mut server = Server::builder();
+    if let Some(identity) = grpc_identity {
+        let mut tls = ServerTlsConfig::new().identity(identity);
+        if let Some(client_ca) = grpc_client_ca {
+            tls = tls.client_ca_root(client_ca).client_auth_optional(false);
+        }
+        server = server
+            .tls_config(tls)
+            .map_err(|e| format!("failed to configure gRPC TLS: {e}"))?;
+    }
+    let grpc_router = server
+        .layer(InterceptorLayer::new(mtls_identity_interceptor))
+        .add_service(MediaClusterRegistryServer::new(grpc_service));
+    let grpc_server = grpc_router
+        .serve_with_incoming_shutdown(tcp_incoming, cancel.child_token().cancelled_owned());
+    workers.push(tokio::spawn(async move {
+        if let Err(e) = grpc_server.await {
+            warn!(error = %e, "internal gRPC server stopped with error");
+        }
+    }));
+    info!(%grpc_addr, "internal gRPC listening");
+
     let http = ApiServer::start(state).await?;
     let http_addr = http.local_addr;
     info!(%http_addr, "HTTP API listening");
+
+    let ready = Arc::new(AtomicBool::new(false));
+    let health = Arc::new(Mutex::new(RuntimeHealth::default()));
+    ready.store(true, Ordering::SeqCst);
+    info!("cheetah-signaling ready");
 
     Ok(SignalingRuntime {
         cancel,
         http,
         http_addr,
         gb28181_addr,
+        grpc_addr,
         plugin_host,
+        ready,
+        health,
         workers,
     })
 }
@@ -660,4 +800,71 @@ async fn validate_external_plugins(
     }
 
     Ok(())
+}
+
+/// Builds TLS identity and optional client CA from secret references.
+///
+/// Returns `(server_identity, client_ca, require_mtls)`. `require_mtls` is only
+/// true when a client CA is configured, which forces the registry to require a
+/// peer certificate identity matching the claimed node id.
+fn configure_grpc_tls(
+    secret_store: &dyn SecretStore,
+    grpc: &cheetah_signal_types::config::GrpcConfig,
+) -> Result<(Option<Identity>, Option<Certificate>, bool), String> {
+    let Some(cert_ref) = grpc.tls_cert_ref.as_ref() else {
+        if grpc.mtls_client_ca_ref.is_some() {
+            return Err("grpc.mtls_client_ca_ref requires grpc.tls_cert_ref".to_string());
+        }
+        return Ok((None, None, false));
+    };
+    let Some(key_ref) = grpc.tls_key_ref.as_ref() else {
+        return Err("grpc.tls_key_ref is required when grpc.tls_cert_ref is set".to_string());
+    };
+    let cert_pem = secret_store
+        .get(cert_ref)
+        .map_err(|e| format!("failed to load grpc.tls_cert_ref: {e}"))?
+        .expose_secret()
+        .to_string();
+    let key_pem = secret_store
+        .get(key_ref)
+        .map_err(|e| format!("failed to load grpc.tls_key_ref: {e}"))?
+        .expose_secret()
+        .to_string();
+    let identity = Identity::from_pem(cert_pem, key_pem);
+
+    let mut client_ca: Option<Certificate> = None;
+    if let Some(ca_ref) = grpc.mtls_client_ca_ref.as_ref() {
+        let ca_pem = secret_store
+            .get(ca_ref)
+            .map_err(|e| format!("failed to load grpc.mtls_client_ca_ref: {e}"))?
+            .expose_secret()
+            .to_string();
+        client_ca = Some(Certificate::from_pem(ca_pem));
+    }
+
+    Ok((Some(identity), client_ca, grpc.mtls_client_ca_ref.is_some()))
+}
+
+/// gRPC interceptor that extracts the mTLS peer common name and inserts it as a
+/// [`PeerIdentity`] request extension so the registry can match the caller to a
+/// media node id.
+#[allow(clippy::unnecessary_wraps)]
+fn mtls_identity_interceptor(
+    mut req: tonic::Request<()>,
+) -> Result<tonic::Request<()>, tonic::Status> {
+    if let Some(tls_info) = req
+        .extensions()
+        .get::<tonic::transport::server::TlsConnectInfo<tonic::transport::server::TcpConnectInfo>>()
+        && let Some(certs) = tls_info.peer_certs()
+        && let Some(cert) = certs.first()
+        && let Ok((_, x509)) = X509Certificate::from_der(cert.as_ref())
+        && let Some(cn) = x509
+            .subject()
+            .iter_common_name()
+            .next()
+            .and_then(|attr| attr.as_str().ok())
+    {
+        req.extensions_mut().insert(PeerIdentity(cn.to_string()));
+    }
+    Ok(req)
 }

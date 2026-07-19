@@ -51,6 +51,7 @@ port = 50051
 # Optional mTLS secret references. Required for cluster deployments.
 # tls_cert_ref = "certs/grpc.crt"
 # tls_key_ref = "certs/grpc.key"
+# mtls_client_ca_ref = "certs/grpc-client-ca.crt"
 
 [storage]
 # Backend: "sqlite" or "postgres". Default: "sqlite".
