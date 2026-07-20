@@ -7,8 +7,8 @@ use axum::{
     http::request::Parts,
 };
 use cheetah_signal_types::{
-    CorrelationId, Deadline, DurationMs, MessageId, PageRequest, RequestContext, TenantId,
-    validate_traceparent, validate_tracestate,
+    CorrelationId, Deadline, DurationMs, MessageId, PageRequest, RequestContext, SignalError,
+    SignalErrorKind, TenantId, validate_traceparent, validate_tracestate,
 };
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -245,14 +245,52 @@ impl FromRequestParts<Arc<ApiState>> for IdempotencyKey {
         parts: &mut Parts,
         _state: &Arc<ApiState>,
     ) -> Result<Self, Self::Rejection> {
-        let key = parts
-            .headers
-            .get("idempotency-key")
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string());
-        match key {
-            Some(k) if !k.is_empty() => Ok(Self(k)),
-            _ => Ok(Self(uuid::Uuid::now_v7().to_string())),
+        let key = idempotency_key_from_header(parts.headers.get("idempotency-key"))?;
+        Ok(Self(key))
+    }
+}
+
+fn idempotency_key_from_header(
+    value: Option<&axum::http::HeaderValue>,
+) -> Result<String, HttpError> {
+    match value {
+        Some(v) => {
+            let key = v.to_str().map_err(|_| {
+                HttpError::Signal(SignalError::new(
+                    SignalErrorKind::InvalidArgument,
+                    "Idempotency-Key header is not valid UTF-8",
+                ))
+            })?;
+            if key.is_empty() {
+                Ok(uuid::Uuid::now_v7().to_string())
+            } else {
+                Ok(key.to_string())
+            }
         }
+        None => Ok(uuid::Uuid::now_v7().to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+
+    #[test]
+    fn idempotency_key_from_header_rejects_non_utf8() {
+        let value = axum::http::HeaderValue::from_bytes(&[0xff]).unwrap();
+        assert!(idempotency_key_from_header(Some(&value)).is_err());
+    }
+
+    #[test]
+    fn idempotency_key_from_header_uses_valid_value() {
+        let value = axum::http::HeaderValue::from_static("my-key");
+        assert_eq!(idempotency_key_from_header(Some(&value)).unwrap(), "my-key");
+    }
+
+    #[test]
+    fn idempotency_key_from_header_generates_uuid_when_missing() {
+        let key = idempotency_key_from_header(None).unwrap();
+        assert!(!key.is_empty());
     }
 }
