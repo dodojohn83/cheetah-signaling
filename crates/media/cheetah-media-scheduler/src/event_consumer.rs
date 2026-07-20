@@ -462,11 +462,41 @@ impl MediaEventConsumer {
                 Ok(())
             }
             Err(e) => {
+                // Discard any partial outbox/state writes from the failed handler.
+                // The processed-message failure marker and cursor are recorded in
+                // a fresh unit of work so the domain transaction stays atomic.
+                uow.rollback()
+                    .await
+                    .map_err(|e| SchedulerError::Backend(format!("{e}")))?;
+                drop(uow);
+
                 let payload = serde_json::to_string(&serde_json::json!({
                     "sequence": sequence,
                     "error": e.to_string(),
                 }))
                 .map_err(|e| SchedulerError::Backend(format!("{e}")))?;
+
+                let mut uow = self
+                    .storage
+                    .begin()
+                    .await
+                    .map_err(|e| SchedulerError::Backend(format!("{e}")))?;
+
+                let record = ProcessedMessageRecord {
+                    tenant_id,
+                    message_id,
+                    idempotency_key: Some(event_id.clone()),
+                    status: ProcessedMessageStatus::Pending,
+                    result_payload: None,
+                    processed_at: self.clock.now_wall(),
+                    expires_at: self
+                        .clock
+                        .now_wall()
+                        .checked_add(DurationMs::from_millis(self.config.record_ttl_ms as i64)),
+                };
+                uow.processed_message_repository()
+                    .get_or_insert(record)
+                    .await?;
                 uow.processed_message_repository()
                     .complete(
                         tenant_id,
