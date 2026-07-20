@@ -280,9 +280,13 @@ fn idempotency_key_from_header(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
     use super::*;
+    use crate::AuthContext;
+    use axum::http::Request;
+    use cheetah_signal_types::{Principal, PrincipalKind};
+    use std::str::FromStr;
 
     #[test]
     fn idempotency_key_from_header_rejects_non_utf8() {
@@ -301,16 +305,6 @@ mod tests {
         let key = idempotency_key_from_header(None).unwrap();
         assert!(!key.is_empty());
     }
-}
-
-#[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
-mod tests {
-    use super::*;
-    use crate::AuthContext;
-    use axum::http::Request;
-    use cheetah_signal_types::{Principal, PrincipalKind};
-    use std::str::FromStr;
 
     fn auth_with_tenant(tenant_id: Option<TenantId>) -> AuthContext {
         AuthContext {
