@@ -20,7 +20,7 @@ use cheetah_signal_types::{
     RequestContext, TenantId,
 };
 use cheetah_storage_api::Storage;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -90,7 +90,6 @@ impl CursorState {
 
 #[derive(Clone, Debug)]
 struct Subscription {
-    node: MediaNode,
     token: CancellationToken,
     generation: u64,
 }
@@ -201,8 +200,7 @@ impl MediaEventConsumer {
             }
 
             let nodes = self.node_registry.list_active(self.clock.as_ref()).await;
-            let active: BTreeMap<NodeId, MediaNode> =
-                nodes.into_iter().map(|n| (n.node_id, n)).collect();
+            let active: BTreeSet<NodeId> = nodes.into_iter().map(|n| n.node_id).collect();
             Arc::clone(&self)
                 .reconcile_subscriptions(active, &cancel)
                 .await?;
@@ -212,23 +210,22 @@ impl MediaEventConsumer {
 
     async fn reconcile_subscriptions(
         self: Arc<Self>,
-        active: BTreeMap<NodeId, MediaNode>,
+        active: BTreeSet<NodeId>,
         cancel: &CancellationToken,
     ) -> Result<(), SchedulerError> {
         let current = self.subscriptions.snapshot();
         let mut to_stop: Vec<NodeId> = Vec::new();
-        let mut to_start: Vec<MediaNode> = Vec::new();
+        let mut to_start: Vec<NodeId> = Vec::new();
 
-        for (id, sub) in &current {
-            match active.get(id) {
-                Some(node) if node_eq(node, &sub.node) => {}
-                _ => to_stop.push(*id),
+        for id in current.keys() {
+            if !active.contains(id) {
+                to_stop.push(*id);
             }
         }
 
-        for (id, node) in active {
-            if !current.get(&id).is_some_and(|s| node_eq(&node, &s.node)) {
-                to_start.push(node);
+        for id in active {
+            if !current.contains_key(&id) {
+                to_start.push(id);
             }
         }
 
@@ -236,7 +233,7 @@ impl MediaEventConsumer {
             self.subscriptions.cancel(id);
         }
 
-        for node in to_start {
+        for node_id in to_start {
             let permit = self.permits.clone().acquire_owned().await.map_err(|_| {
                 SchedulerError::Backend("subscription semaphore closed".to_string())
             })?;
@@ -244,13 +241,11 @@ impl MediaEventConsumer {
             let generation = self.subscriptions.next_generation();
             let token = cancel.child_token();
             let self_clone = Arc::clone(&self);
-            let node_for_task = node.clone();
             let task_token = token.clone();
 
             self.subscriptions.insert(
-                node.node_id,
+                node_id,
                 Subscription {
-                    node: node.clone(),
                     token: token.clone(),
                     generation,
                 },
@@ -259,14 +254,14 @@ impl MediaEventConsumer {
             tokio::spawn(async move {
                 let _permit = permit;
                 if let Err(e) = self_clone
-                    .subscribe_node(node_for_task, task_token, generation)
+                    .subscribe_node(node_id, task_token, generation)
                     .await
                 {
-                    tracing::warn!(node_id = %node.node_id, "media event subscription ended: {e}");
+                    tracing::warn!(%node_id, "media event subscription ended: {e}");
                 }
                 self_clone
                     .subscriptions
-                    .remove_if_generation(node.node_id, generation);
+                    .remove_if_generation(node_id, generation);
             });
         }
 
@@ -275,16 +270,16 @@ impl MediaEventConsumer {
 
     async fn subscribe_node(
         &self,
-        node: MediaNode,
+        node_id: NodeId,
         cancel: CancellationToken,
         generation: u64,
     ) -> Result<(), SchedulerError> {
         loop {
             tokio::select! {
                 _ = cancel.cancelled() => return Ok(()),
-                result = self.consume_node(&node, cancel.child_token(), generation) => {
+                result = self.consume_node(node_id, cancel.child_token(), generation) => {
                     if let Err(e) = result {
-                        tracing::warn!(node_id = %node.node_id, "media event stream error: {e}");
+                        tracing::warn!(%node_id, "media event stream error: {e}");
                     }
                 }
             }
@@ -298,14 +293,18 @@ impl MediaEventConsumer {
 
     async fn consume_node(
         &self,
-        node: &MediaNode,
+        node_id: NodeId,
         cancel: CancellationToken,
         _generation: u64,
     ) -> Result<(), SchedulerError> {
-        self.load_cursor(node).await?;
+        let Some(node) = self.node_registry.get(node_id, self.clock.as_ref()).await else {
+            return Err(SchedulerError::NodeNotFound(node_id.to_string()));
+        };
+
+        self.load_cursor(&node).await?;
 
         let cursor = self.cursors.last_sequence(node.node_id).to_string();
-        let request = build_subscribe_request(node, &cursor, &self.config, self.source_node_id);
+        let request = build_subscribe_request(&node, &cursor, &self.config, self.source_node_id);
         let endpoint = &node.control_endpoint;
 
         let mut stream = self
@@ -320,7 +319,7 @@ impl MediaEventConsumer {
                 msg = stream.message() => match msg {
                     Ok(None) => return Ok(()),
                     Ok(Some(event)) => {
-                        if let Err(e) = self.process_event(event, node).await {
+                        if let Err(e) = self.process_event(event, &node).await {
                             tracing::warn!(node_id = %node.node_id, "failed to process media event: {e}");
                         }
                     }
@@ -541,12 +540,6 @@ impl MediaEventConsumer {
             source_ip: None,
         }
     }
-}
-
-fn node_eq(left: &MediaNode, right: &MediaNode) -> bool {
-    left.node_id == right.node_id
-        && left.instance_epoch == right.instance_epoch
-        && left.control_endpoint == right.control_endpoint
 }
 
 fn build_subscribe_request(
