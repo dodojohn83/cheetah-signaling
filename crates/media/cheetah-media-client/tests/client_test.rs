@@ -48,6 +48,7 @@ fn request() -> MediaControlRequest {
         operation_id: OperationId::from_str("55555555-5555-5555-5555-555555555555").unwrap(),
         owner_epoch: OwnerEpoch(1),
         source_node_id: NodeId::from_str("66666666-6666-6666-6666-666666666666").unwrap(),
+        media_node_id: NodeId::from_str("22222222-2222-2222-2222-222222222222").unwrap(),
         target_media_node_instance_epoch: MediaNodeInstanceEpoch(7),
         deadline: None,
         idempotency_key: "idem-1".to_string(),
