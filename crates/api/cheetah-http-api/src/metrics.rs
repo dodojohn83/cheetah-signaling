@@ -2,6 +2,7 @@
 
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use cheetah_signal_types::MetricsExporter;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -102,7 +103,10 @@ impl RequestMetrics {
 }
 
 /// Returns a Prometheus-compatible metrics response.
-pub fn metrics_response(metrics: Arc<RequestMetrics>) -> Response {
+pub fn metrics_response(
+    metrics: Arc<RequestMetrics>,
+    media_metrics: Option<Arc<dyn MetricsExporter>>,
+) -> Response {
     let requests_total = metrics.requests_total.load(Ordering::Relaxed);
     let responses_failed = metrics.responses_failed.load(Ordering::Relaxed);
     let responses_2xx = metrics.responses_2xx.load(Ordering::Relaxed);
@@ -150,6 +154,10 @@ pub fn metrics_response(metrics: Arc<RequestMetrics>) -> Response {
         "cheetah_http_response_duration_seconds_sum {sum_seconds}\n\
          cheetah_http_response_duration_seconds_count {observation_count}\n"
     ));
+
+    if let Some(mm) = media_metrics {
+        body.push_str(&mm.prometheus_text());
+    }
 
     ([("content-type", "text/plain; version=0.0.4")], body).into_response()
 }

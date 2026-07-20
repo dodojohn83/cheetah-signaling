@@ -1,13 +1,15 @@
 //! Domain and application ports.
 
+use std::sync::Arc;
+
 use crate::{
     Channel, Command, CommandPayload, Device, DomainError, DomainEvent, MediaBinding, MediaSession,
     Operation, WebhookConfig, WebhookDelivery,
 };
 use cheetah_signal_types::{
     ChannelId, Deadline, DeliveryId, DeviceId, Event, EventId, MediaBindingId,
-    MediaNodeInstanceEpoch, MediaSessionId, MessageId, NodeId, OperationId, OwnerEpoch, Page,
-    PageRequest, ProtocolIdentity, Revision, TenantId, UtcTimestamp, WebhookId,
+    MediaNodeInstanceEpoch, MediaSessionId, MessageId, MetricsExporter, NodeId, OperationId,
+    OwnerEpoch, Page, PageRequest, ProtocolIdentity, Revision, TenantId, UtcTimestamp, WebhookId,
 };
 
 pub use cheetah_signal_types::{Clock, IdGenerator};
@@ -389,6 +391,31 @@ pub trait MediaPort: Send + Sync {
         page: PageRequest,
         clock: &dyn Clock,
     ) -> Result<Page<crate::MediaNodeSessionRef>>;
+
+    /// Returns optional Prometheus-formatted media metrics for observability.
+    fn metrics(&self) -> Option<Arc<dyn MetricsExporter>> {
+        None
+    }
+
+    /// Records a reconciliation pass result for metrics.
+    fn record_reconcile(
+        &self,
+        _nodes_scanned: u64,
+        _sessions_repaired: u64,
+        _sessions_failed: u64,
+        _orphans_cleaned: u64,
+    ) {
+    }
+
+    /// Marks the given media node as draining.
+    async fn drain_node(
+        &self,
+        _tenant_id: TenantId,
+        _node_id: NodeId,
+        _clock: &dyn Clock,
+    ) -> Result<()> {
+        Ok(())
+    }
 }
 
 /// Status of an idempotent inbox record.

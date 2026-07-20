@@ -1,6 +1,7 @@
 //! Domain `MediaPort` implementation backed by the media scheduler.
 
 use crate::mapper::{map_command_to_media_command, map_proto_session_ref};
+use crate::metrics::MediaMetrics;
 use crate::scheduler::MediaScheduler;
 use cheetah_domain::{
     DomainError, MediaNodeCommand, MediaNodeCommandResult, MediaNodeSessionRef, MediaPort,
@@ -12,10 +13,11 @@ use cheetah_media_client::{
 use cheetah_signal_contracts::cheetah::media::v1::MediaMutationContext;
 use cheetah_signal_types::Page;
 use cheetah_signal_types::{
-    ChannelId, Clock, DeviceId, MediaBindingId, MediaSessionId, MessageId, NodeId, PageRequest,
-    TenantId, UtcTimestamp,
+    ChannelId, Clock, DeviceId, MediaBindingId, MediaSessionId, MessageId, MetricsExporter, NodeId,
+    PageRequest, TenantId, UtcTimestamp,
 };
 use std::sync::Arc;
+use std::time::Instant;
 
 use crate::error::SchedulerError;
 
@@ -25,12 +27,21 @@ use crate::error::SchedulerError;
 pub struct SchedulerMediaPort {
     scheduler: Arc<dyn MediaScheduler>,
     client: MediaControlClient,
+    metrics: Arc<MediaMetrics>,
 }
 
 impl SchedulerMediaPort {
     /// Creates a new scheduler-backed media port.
-    pub fn new(scheduler: Arc<dyn MediaScheduler>, client: MediaControlClient) -> Self {
-        Self { scheduler, client }
+    pub fn new(
+        scheduler: Arc<dyn MediaScheduler>,
+        client: MediaControlClient,
+        metrics: Arc<MediaMetrics>,
+    ) -> Self {
+        Self {
+            scheduler,
+            client,
+            metrics,
+        }
     }
 }
 
@@ -59,6 +70,7 @@ impl MediaPort for SchedulerMediaPort {
             media_binding_id,
             requirements,
             clock,
+            &self.metrics,
         )
         .await
     }
@@ -82,6 +94,7 @@ impl MediaPort for SchedulerMediaPort {
             media_binding_id,
             requirements,
             clock,
+            &self.metrics,
         )
         .await
     }
@@ -102,6 +115,7 @@ impl MediaPort for SchedulerMediaPort {
             media_binding_id,
             requirements,
             clock,
+            &self.metrics,
         )
         .await
     }
@@ -203,11 +217,19 @@ impl MediaPort for SchedulerMediaPort {
             command: proto_command,
         };
 
-        let response = self
-            .client
-            .execute(&endpoint, request)
-            .await
-            .map_err(map_client_error)?;
+        let start = Instant::now();
+        let response = self.client.execute(&endpoint, request).await;
+        let duration = start.elapsed();
+        let response = match response {
+            Ok(r) => {
+                self.metrics.record_rpc(duration, false);
+                r
+            }
+            Err(e) => {
+                self.metrics.record_rpc(duration, true);
+                return Err(map_client_error(e));
+            }
+        };
 
         let result = response
             .result
@@ -245,7 +267,9 @@ impl MediaPort for SchedulerMediaPort {
         _tenant_id: TenantId,
         clock: &dyn Clock,
     ) -> Result<Vec<cheetah_domain::MediaNode>, DomainError> {
-        Ok(self.scheduler.list_nodes(clock).await)
+        let nodes = self.scheduler.list_nodes(clock).await;
+        self.metrics.record_node_snapshot(&nodes, clock);
+        Ok(nodes)
     }
 
     async fn list_sessions(
@@ -270,11 +294,19 @@ impl MediaPort for SchedulerMediaPort {
             page_token: page.cursor,
         };
 
-        let response = self
-            .client
-            .list_sessions(&endpoint, request)
-            .await
-            .map_err(map_client_error)?;
+        let start = Instant::now();
+        let response = self.client.list_sessions(&endpoint, request).await;
+        let duration = start.elapsed();
+        let response = match response {
+            Ok(r) => {
+                self.metrics.record_rpc(duration, false);
+                r
+            }
+            Err(e) => {
+                self.metrics.record_rpc(duration, true);
+                return Err(map_client_error(e));
+            }
+        };
 
         let mut items = Vec::with_capacity(response.sessions.len());
         for proto in response.sessions {
@@ -302,6 +334,38 @@ impl MediaPort for SchedulerMediaPort {
             total: None,
         })
     }
+
+    fn metrics(&self) -> Option<Arc<dyn MetricsExporter>> {
+        Some(self.metrics.clone())
+    }
+
+    fn record_reconcile(
+        &self,
+        nodes_scanned: u64,
+        sessions_repaired: u64,
+        sessions_failed: u64,
+        orphans_cleaned: u64,
+    ) {
+        self.metrics.record_reconcile(
+            nodes_scanned,
+            sessions_repaired,
+            sessions_failed,
+            orphans_cleaned,
+        );
+    }
+
+    async fn drain_node(
+        &self,
+        tenant_id: TenantId,
+        node_id: NodeId,
+        clock: &dyn Clock,
+    ) -> Result<(), DomainError> {
+        self.scheduler
+            .drain(node_id, tenant_id, clock)
+            .await
+            .map_err(map_scheduler_error)?;
+        Ok(())
+    }
 }
 
 async fn reserve(
@@ -310,6 +374,7 @@ async fn reserve(
     binding_id: MediaBindingId,
     requirements: &MediaRequirements,
     clock: &dyn Clock,
+    metrics: &MediaMetrics,
 ) -> Result<MediaReservation, DomainError> {
     let mut excluded = Vec::new();
     let max_attempts = scheduler.config().max_reserve_attempts.max(1);
@@ -322,8 +387,11 @@ async fn reserve(
                 if matches!(e, crate::error::SchedulerError::NoNode(_))
                     && requirements.operation == "talk"
                 {
+                    metrics.record_reservation(false, Some("unsupported_talk"));
                     DomainError::not_supported("talk not supported by any media node")
                 } else {
+                    let reason = schedule_error_reason(&e);
+                    metrics.record_reservation(false, Some(reason));
                     map_scheduler_error(e)
                 }
             })?;
@@ -335,6 +403,7 @@ async fn reserve(
             .await
         {
             Ok(_) => {
+                metrics.record_reservation(true, None);
                 return Ok(MediaReservation {
                     media_node_id: node_id,
                     media_node_instance_epoch: instance_epoch,
@@ -345,10 +414,15 @@ async fn reserve(
                 excluded.push(node_id);
                 continue;
             }
-            Err(e) => return Err(map_scheduler_error(e)),
+            Err(e) => {
+                let reason = scheduler_reserve_error_reason(&e);
+                metrics.record_reservation(false, Some(reason));
+                return Err(map_scheduler_error(e));
+            }
         }
     }
 
+    metrics.record_reservation(false, Some("no_capacity"));
     Err(DomainError::unavailable(
         "no media node had capacity after retries",
     ))
@@ -396,5 +470,30 @@ fn map_client_error(e: MediaClientError) -> DomainError {
         | MediaClientError::CircuitOpen(_)
         | MediaClientError::PoolExhausted(_)
         | MediaClientError::TlsConfig(_) => DomainError::unavailable(e.to_string()),
+    }
+}
+
+fn schedule_error_reason(e: &crate::error::SchedulerError) -> &'static str {
+    match e {
+        crate::error::SchedulerError::NoNode(_) => "no_node",
+        crate::error::SchedulerError::Backend(_) | crate::error::SchedulerError::EventStream(_) => {
+            "internal"
+        }
+        _ => "internal",
+    }
+}
+
+fn scheduler_reserve_error_reason(e: &crate::error::SchedulerError) -> &'static str {
+    match e {
+        crate::error::SchedulerError::CapacityExhausted(_) => "capacity_exhausted",
+        crate::error::SchedulerError::NodeNotFound(_)
+        | crate::error::SchedulerError::ReservationNotFound { .. } => "not_found",
+        crate::error::SchedulerError::InvalidArgument(_)
+        | crate::error::SchedulerError::IdentityMismatch { .. } => "invalid_argument",
+        crate::error::SchedulerError::Domain(_) => "domain",
+        crate::error::SchedulerError::Backend(_) | crate::error::SchedulerError::EventStream(_) => {
+            "internal"
+        }
+        _ => "internal",
     }
 }

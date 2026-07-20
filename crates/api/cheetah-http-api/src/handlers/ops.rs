@@ -189,15 +189,48 @@ pub async fn outbox_replay(
     ))
 }
 
-/// Triggers background reconciliation.
+/// Triggers a tenant reconciliation pass and returns its report.
 pub async fn reconcile(
-    State(_state): State<Arc<ApiState>>,
-    ctx: AuthContext,
-) -> Result<StatusCode, HttpError> {
+    State(state): State<Arc<ApiState>>,
+    ctx: ApiRequestContext,
+) -> Result<
+    (
+        StatusCode,
+        Json<cheetah_signal_application::dto::ReconciliationReport>,
+    ),
+    HttpError,
+> {
     ctx.require_scope("system_admin")?;
-    Err(HttpError::NotImplemented(
-        "reconciliation trigger is not yet wired to background reconcilers".to_string(),
-    ))
+
+    let mut uow = state.storage.begin().await.map_err(HttpError::from)?;
+    let report = state
+        .media_service
+        .reconcile(&ctx.0, &mut *uow)
+        .await
+        .map_err(HttpError::from)?;
+
+    state.audit.record(cheetah_signal_types::AuditEvent {
+        timestamp: state.clock.now_wall(),
+        action: "media.reconcile".to_string(),
+        actor: ctx.0.principal.id.clone(),
+        tenant_id: Some(ctx.0.tenant_id),
+        target_type: "tenant".to_string(),
+        target_id: Some(ctx.0.tenant_id.to_string()),
+        outcome: cheetah_signal_types::AuditOutcome::Success,
+        request_id: ctx.0.message_id.to_string(),
+        correlation_id: Some(ctx.0.correlation_id.to_string()),
+        source_ip: None,
+        node_id: state.config.node_id,
+        details: Some(format!(
+            "scanned={} repaired={} failed={} orphans={}",
+            report.nodes_scanned,
+            report.missing_released + report.migrations_succeeded,
+            report.missing_failed + report.migrations_failed,
+            report.orphans_detected
+        )),
+    });
+
+    Ok((StatusCode::OK, Json(report)))
 }
 
 fn migration_status_string(status: &cheetah_storage_api::MigrationStatus) -> String {

@@ -238,7 +238,6 @@ impl MediaService {
                             ))
                             .await?;
                     }
-                    uow.commit().await?;
                     Ok(())
                 }
                 .await;
@@ -307,7 +306,6 @@ impl MediaService {
                         op_event,
                     ))
                     .await?;
-                uow.commit().await?;
 
                 if let Err(e) = self
                     .media_port

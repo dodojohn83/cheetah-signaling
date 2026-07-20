@@ -40,6 +40,29 @@ impl MediaService {
         }
     }
 
+    /// Lists media nodes reachable through the configured media port.
+    pub async fn list_media_nodes(
+        &self,
+        context: &RequestContext,
+    ) -> crate::Result<Vec<cheetah_domain::MediaNode>> {
+        self.media_port
+            .list_nodes(context.tenant_id, self.clock.as_ref())
+            .await
+            .map_err(crate::SignalError::from)
+    }
+
+    /// Marks the given media node as draining.
+    pub async fn drain_media_node(
+        &self,
+        context: &RequestContext,
+        node_id: NodeId,
+    ) -> crate::Result<()> {
+        self.media_port
+            .drain_node(context.tenant_id, node_id, self.clock.as_ref())
+            .await
+            .map_err(crate::SignalError::from)
+    }
+
     /// Stops a live media session.
     pub async fn stop_live(
         &self,

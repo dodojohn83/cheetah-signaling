@@ -123,6 +123,14 @@ pub fn build_router(state: ApiState) -> Router {
         )
         .route("/api/v1/nodes", get(nodes::list_nodes))
         .route("/api/v1/media-nodes", get(nodes::list_media_nodes))
+        .route(
+            "/api/v1/admin/media-nodes/{node_id}/drain",
+            post(nodes::drain_media_node),
+        )
+        .route(
+            "/api/v1/admin/media-nodes/{node_id}/force-cleanup",
+            post(nodes::force_cleanup_media_node),
+        )
         .route("/api/v1/events/stream", get(events::event_stream))
         .route("/api/v1/webhooks", get(webhooks::list_webhooks))
         .route("/api/v1/webhooks", post(webhooks::create_webhook))

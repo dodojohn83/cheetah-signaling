@@ -55,6 +55,14 @@ pub trait MediaScheduler: Send + Sync {
 
     /// Lists all media nodes known to the scheduler.
     async fn list_nodes(&self, clock: &dyn Clock) -> Vec<MediaNode>;
+
+    /// Marks the given node as draining and returns its updated state.
+    async fn drain(
+        &self,
+        node_id: NodeId,
+        tenant_id: TenantId,
+        clock: &dyn Clock,
+    ) -> Result<MediaNode, SchedulerError>;
 }
 
 /// Least-loaded scheduler with stable scoring and per-session affinity.
@@ -251,6 +259,15 @@ impl MediaScheduler for LeastLoadedScheduler {
 
     async fn list_nodes(&self, clock: &dyn Clock) -> Vec<MediaNode> {
         self.registry.list_active(clock).await
+    }
+
+    async fn drain(
+        &self,
+        node_id: NodeId,
+        _tenant_id: TenantId,
+        clock: &dyn Clock,
+    ) -> Result<MediaNode, SchedulerError> {
+        self.registry.drain(node_id, true, clock).await
     }
 }
 

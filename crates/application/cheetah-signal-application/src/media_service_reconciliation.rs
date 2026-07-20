@@ -11,6 +11,87 @@ use cheetah_signal_types::{MediaBindingId, MediaSessionId, NodeId, PageRequest, 
 use std::collections::{BTreeMap, BTreeSet};
 
 impl MediaService {
+    /// Forces cleanup of all active sessions on the given media node by marking
+    /// their bindings as failed and releasing scheduler reservations.
+    pub async fn force_cleanup_node(
+        &self,
+        context: &RequestContext,
+        uow: &mut dyn UnitOfWork,
+        node_id: NodeId,
+    ) -> crate::Result<u64> {
+        let tenant_id = context.tenant_id;
+        let mut cleaned: u64 = 0;
+        let mut cursor: Option<String> = None;
+
+        loop {
+            let request = match cursor {
+                None => PageRequest::new(1000)?,
+                Some(c) => PageRequest::new(1000)?.with_cursor(c),
+            };
+            let page = self
+                .media_port
+                .list_sessions(tenant_id, node_id, request, self.clock.as_ref())
+                .await?;
+
+            for r in page.items {
+                let Some(mut session) = uow
+                    .media_session_repository()
+                    .get(tenant_id, r.media_session_id)
+                    .await?
+                else {
+                    continue;
+                };
+                let Some(mut binding) = uow
+                    .media_binding_repository()
+                    .get_by_media_session(tenant_id, r.media_session_id)
+                    .await?
+                else {
+                    continue;
+                };
+
+                if binding.is_terminal() {
+                    continue;
+                }
+                if binding.media_node_id() != node_id
+                    || binding.media_node_instance_epoch() != r.media_node_instance_epoch
+                {
+                    continue;
+                }
+
+                self.fail_session(
+                    context,
+                    uow,
+                    &mut session,
+                    &mut binding,
+                    "forced_cleanup",
+                    "admin forced cleanup",
+                )
+                .await?;
+                if let Err(e) = self
+                    .media_port
+                    .release(tenant_id, binding.media_binding_id(), self.clock.as_ref())
+                    .await
+                {
+                    tracing::warn!(
+                        tenant_id = %tenant_id,
+                        binding_id = %binding.media_binding_id(),
+                        "failed to release scheduler reservation during forced cleanup: {e}"
+                    );
+                }
+                cleaned += 1;
+            }
+
+            match page.next_cursor {
+                None => break,
+                Some(c) => cursor = Some(c),
+            }
+        }
+
+        uow.commit().await?;
+        self.media_port.record_reconcile(1, 0, 0, cleaned);
+        Ok(cleaned)
+    }
+
     /// Reconciles local media session and binding state with the sessions
     /// currently reported by each media node.
     pub async fn reconcile(
@@ -197,6 +278,19 @@ impl MediaService {
             }
         }
 
+        uow.commit().await?;
+
+        self.media_port.record_reconcile(
+            report.nodes_scanned,
+            report
+                .missing_released
+                .saturating_add(report.migrations_succeeded),
+            report
+                .missing_failed
+                .saturating_add(report.migrations_failed),
+            report.orphans_detected,
+        );
+
         Ok(report)
     }
 
@@ -224,7 +318,6 @@ impl MediaService {
             uow.media_binding_repository().save(binding).await?;
         }
 
-        uow.commit().await?;
         Ok(())
     }
 
@@ -249,7 +342,6 @@ impl MediaService {
             uow.media_binding_repository().save(binding).await?;
         }
 
-        uow.commit().await?;
         Ok(())
     }
 
@@ -417,7 +509,6 @@ impl MediaService {
         session: &mut MediaSession,
         binding: &mut MediaBinding,
     ) -> crate::Result<()> {
-        let mut mutated = false;
         match session.state() {
             MediaSessionState::Requested => {
                 let ev = session.allocating(self.clock.as_ref())?;
@@ -429,7 +520,6 @@ impl MediaService {
                 let ev = session.active(self.clock.as_ref())?;
                 append_session_event(self, context, uow, session, ev).await?;
                 uow.media_session_repository().save(session).await?;
-                mutated = true;
             }
             MediaSessionState::Allocating => {
                 let ev = session.inviting(self.clock.as_ref())?;
@@ -438,13 +528,11 @@ impl MediaService {
                 let ev = session.active(self.clock.as_ref())?;
                 append_session_event(self, context, uow, session, ev).await?;
                 uow.media_session_repository().save(session).await?;
-                mutated = true;
             }
             MediaSessionState::Inviting => {
                 let ev = session.active(self.clock.as_ref())?;
                 append_session_event(self, context, uow, session, ev).await?;
                 uow.media_session_repository().save(session).await?;
-                mutated = true;
             }
             MediaSessionState::Active => {}
             _ => {
@@ -460,12 +548,8 @@ impl MediaService {
             let ev = binding.activate(self.clock.as_ref())?;
             append_binding_event(self, context, uow, binding, ev).await?;
             uow.media_binding_repository().save(binding).await?;
-            mutated = true;
         }
 
-        if mutated {
-            uow.commit().await?;
-        }
         Ok(())
     }
 }
