@@ -7,9 +7,9 @@
 use crate::dto::MediaSessionDto;
 use crate::media_service::*;
 use cheetah_domain::{
-    CommandPayload, DomainError, MediaBinding, MediaBindingError, MediaBindingState,
-    MediaNodeCommandResult, MediaPurpose, MediaReservation, MediaSession, MediaSessionError,
-    MediaSessionState, Operation, OperationResult, UnitOfWork,
+    CommandPayload, DomainError, MediaBinding, MediaBindingError, MediaNodeCommandResult,
+    MediaPurpose, MediaReservation, MediaSession, MediaSessionError, Operation, OperationResult,
+    UnitOfWork,
 };
 use cheetah_signal_types::{
     ChannelId, Deadline, DeviceId, DurationMs, MediaBindingId, RequestContext,
@@ -189,7 +189,6 @@ impl MediaService {
             }
         };
 
-        // Reload after execute_media_command committed.
         let mut operation = uow
             .operation_repository()
             .get(tenant_id, operation_id)
@@ -203,58 +202,59 @@ impl MediaService {
 
         match result {
             MediaNodeCommandResult::Completed | MediaNodeCommandResult::Accepted => {
-                if session.state() != MediaSessionState::Active {
-                    let ev = session
-                        .active(self.clock.as_ref())
-                        .map_err(crate::SignalError::from)?;
-                    uow.media_session_repository().save(session).await?;
-                    uow.outbox()
-                        .append(wrap_event(
-                            self.id_generator.as_ref(),
-                            self.clock.as_ref(),
-                            context,
-                            tenant_id,
-                            media_session_resource_ref(tenant_id, media_session_id),
-                            session.revision().0,
-                            ev,
-                        ))
+                // Drive the session/binding to Active the same way the regular
+                // reconcile loop does, then complete the operation. Any error
+                // after this point must release the new scheduler reservation
+                // because the binding has already been committed.
+                let post_result: crate::Result<()> = async {
+                    self.converge_active(context, uow, session, &mut new_binding)
                         .await?;
+
+                    let mut operation = uow
+                        .operation_repository()
+                        .get(tenant_id, operation_id)
+                        .await?
+                        .ok_or_else(|| {
+                            crate::SignalError::from(DomainError::not_found(
+                                "operation",
+                                operation_id.to_string(),
+                            ))
+                        })?;
+
+                    if operation.status() == cheetah_domain::OperationStatus::Running {
+                        let op_event = operation
+                            .complete(OperationResult::success(), self.clock.as_ref())
+                            .map_err(crate::SignalError::from)?;
+                        uow.operation_repository().save(&operation).await?;
+                        uow.outbox()
+                            .append(wrap_event(
+                                self.id_generator.as_ref(),
+                                self.clock.as_ref(),
+                                context,
+                                tenant_id,
+                                operation_resource_ref(tenant_id, operation_id),
+                                operation.revision().0,
+                                op_event,
+                            ))
+                            .await?;
+                    }
+                    uow.commit().await?;
+                    Ok(())
                 }
-                if new_binding.state() == MediaBindingState::Reserved {
-                    let ev = new_binding
-                        .activate(self.clock.as_ref())
-                        .map_err(crate::SignalError::from)?;
-                    uow.media_binding_repository().save(&new_binding).await?;
-                    uow.outbox()
-                        .append(wrap_event(
-                            self.id_generator.as_ref(),
-                            self.clock.as_ref(),
-                            context,
-                            tenant_id,
-                            media_binding_resource_ref(tenant_id, media_binding_id),
-                            new_binding.revision().0,
-                            ev,
-                        ))
-                        .await?;
+                .await;
+
+                if let Err(e) = post_result {
+                    if let Err(e2) = self
+                        .media_port
+                        .release(tenant_id, media_binding_id, self.clock.as_ref())
+                        .await
+                    {
+                        tracing::warn!(
+                            "failed to release media binding after reconnect post-execute error: {e2}"
+                        );
+                    }
+                    return Err(e);
                 }
-                if operation.status() == cheetah_domain::OperationStatus::Running {
-                    let op_event = operation
-                        .complete(OperationResult::success(), self.clock.as_ref())
-                        .map_err(crate::SignalError::from)?;
-                    uow.operation_repository().save(&operation).await?;
-                    uow.outbox()
-                        .append(wrap_event(
-                            self.id_generator.as_ref(),
-                            self.clock.as_ref(),
-                            context,
-                            tenant_id,
-                            operation_resource_ref(tenant_id, operation_id),
-                            operation.revision().0,
-                            op_event,
-                        ))
-                        .await?;
-                }
-                uow.commit().await?;
             }
             MediaNodeCommandResult::Failed { code, message } => {
                 let ev = new_binding

@@ -410,7 +410,7 @@ impl MediaService {
         Ok(())
     }
 
-    async fn converge_active(
+    pub(crate) async fn converge_active(
         &self,
         context: &RequestContext,
         uow: &mut dyn UnitOfWork,
