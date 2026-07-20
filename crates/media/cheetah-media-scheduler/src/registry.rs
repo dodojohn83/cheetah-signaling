@@ -4,14 +4,15 @@ use crate::config::MediaRegistryConfig;
 use crate::error::SchedulerError;
 use crate::model::{MediaNode, MediaNodeHealth, NodeStatus};
 use cheetah_signal_types::{Clock, MediaBindingId, NodeId, TenantId, UtcTimestamp};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::sync::RwLock;
 
 #[derive(Debug)]
 pub(crate) struct NodeEntry {
     pub(crate) node: MediaNode,
     pub(crate) reported_session_count: u64,
-    pub(crate) reserved: BTreeSet<(TenantId, MediaBindingId)>,
+    /// Active reservations keyed by tenant and binding, with expiry time.
+    pub(crate) reserved: BTreeMap<(TenantId, MediaBindingId), UtcTimestamp>,
     pub(crate) instance_id: String,
 }
 
@@ -147,7 +148,7 @@ impl MediaNodeRegistry for InMemoryMediaNodeRegistry {
                 NodeEntry {
                     node: updated,
                     reported_session_count: 0,
-                    reserved: BTreeSet::new(),
+                    reserved: BTreeMap::new(),
                     instance_id,
                 }
             }
@@ -163,7 +164,7 @@ impl MediaNodeRegistry for InMemoryMediaNodeRegistry {
                 instance_id,
                 node: updated,
                 reported_session_count: 0,
-                reserved: BTreeSet::new(),
+                reserved: BTreeMap::new(),
             }
         };
         let view = to_media_node(&entry, now, &self.config);
@@ -287,14 +288,20 @@ impl MediaNodeRegistry for InMemoryMediaNodeRegistry {
         let entry = nodes
             .get_mut(&node_id)
             .ok_or_else(|| SchedulerError::NodeNotFound(node_id.to_string()))?;
-        let total = entry
-            .reported_session_count
-            .saturating_add(entry.reserved.len() as u64);
+        let now = clock.now_wall();
+        let ttl = i64::try_from(self.config.reservation_ttl_ms).unwrap_or(i64::MAX);
+        let deadline = now
+            .checked_add(cheetah_signal_types::DurationMs::from_millis(ttl))
+            .ok_or_else(|| {
+                SchedulerError::InvalidArgument("reservation deadline overflow".to_string())
+            })?;
+        entry.reserved.retain(|_, d| *d > now);
+        let active = entry.reserved.len() as u64;
+        let total = entry.reported_session_count.saturating_add(active);
         if total >= entry.node.capacity.max_sessions.max(1) {
             return Err(SchedulerError::CapacityExhausted(node_id.to_string()));
         }
-        entry.reserved.insert((tenant_id, binding_id));
-        let now = clock.now_wall();
+        entry.reserved.insert((tenant_id, binding_id), deadline);
         Ok(to_media_node(entry, now, &self.config))
     }
 
@@ -312,8 +319,9 @@ impl MediaNodeRegistry for InMemoryMediaNodeRegistry {
         let entry = nodes
             .get_mut(&node_id)
             .ok_or_else(|| SchedulerError::NodeNotFound(node_id.to_string()))?;
-        entry.reserved.remove(&(tenant_id, binding_id));
         let now = clock.now_wall();
+        entry.reserved.remove(&(tenant_id, binding_id));
+        entry.reserved.retain(|_, d| *d > now);
         Ok(to_media_node(entry, now, &self.config))
     }
 }
@@ -323,9 +331,12 @@ pub(crate) fn to_media_node(
     now: UtcTimestamp,
     config: &MediaRegistryConfig,
 ) -> MediaNode {
-    let total_sessions = entry
-        .reported_session_count
-        .saturating_add(entry.reserved.len() as u64);
+    let active_reserved = entry
+        .reserved
+        .values()
+        .filter(|deadline| **deadline > now)
+        .count() as u64;
+    let total_sessions = entry.reported_session_count.saturating_add(active_reserved);
     let mut node = entry.node.clone();
     node.session_count = total_sessions;
     node.recalc_health();

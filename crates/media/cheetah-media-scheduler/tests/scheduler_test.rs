@@ -129,6 +129,7 @@ fn requirements(operation: &str, session: Option<MediaSessionId>) -> MediaRequir
         codecs: vec![],
         session_type: operation.to_string(),
         zone: None,
+        network_zone: None,
         tenant_constraints: Default::default(),
         required_constraints: Default::default(),
         media_session_id: session.map(|s| s.to_string()),

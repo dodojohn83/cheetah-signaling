@@ -307,6 +307,7 @@ pub(crate) fn build_media_requirements(
         encapsulation: None,
         codecs,
         zone: None,
+        network_zone: None,
         tenant_constraints: std::collections::BTreeMap::new(),
         required_constraints: extra_constraints,
         media_session_id: Some(media_session_id.to_string()),

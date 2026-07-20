@@ -101,6 +101,8 @@ pub struct MediaRequirements {
     pub session_type: String,
     /// Preferred availability zone.
     pub zone: Option<String>,
+    /// Required network zone the node must be reachable through.
+    pub network_zone: Option<String>,
     /// Tenant-level constraints that the node must satisfy.
     pub tenant_constraints: std::collections::BTreeMap<String, String>,
     /// Additional capability constraints required by the request.
