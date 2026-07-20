@@ -161,8 +161,9 @@ impl IdGenerator for UuidIdGenerator {
 ///
 /// The configured `device_password_ref` template may contain the `{device_id}`
 /// placeholder, which is replaced with the GB28181 device identifier before the
-/// secret store is queried. Missing optional secrets return `None` so the domain
-/// can fall back to challenge-based authentication when enabled.
+/// secret store is queried. Missing optional secrets return `Ok(None)` so the
+/// domain can fall back to challenge-based authentication when enabled; backend
+/// failures are returned as `Err(CredentialError::Backend(...))`.
 #[derive(Clone)]
 struct SecretStoreCredentialProvider {
     store: Arc<dyn SecretStore>,

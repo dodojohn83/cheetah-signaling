@@ -17,6 +17,7 @@ use cheetah_gb28181_core::{
 use secrecy::ExposeSecret;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
+use tracing::warn;
 
 mod parse;
 mod response;
@@ -186,7 +187,11 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                 };
                 let password = match self.credential_provider.password_for(&device_id) {
                     Ok(Some(p)) => p,
-                    Ok(None) | Err(_) => {
+                    Ok(None) => {
+                        return self.authentication_failure_response(&message, now, false);
+                    }
+                    Err(e) => {
+                        warn!(device_id = %device_id, error = %e, "credential provider backend error during REGISTER");
                         return self.authentication_failure_response(&message, now, false);
                     }
                 };
@@ -233,7 +238,8 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                         // No password configured; fall through to unauthenticated
                         // acceptance in ChallengeOptional mode.
                     }
-                    Err(_) => {
+                    Err(e) => {
+                        warn!(device_id = %device_id, error = %e, "credential provider backend error during REGISTER");
                         return self.authentication_failure_response(&message, now, false);
                     }
                 }
