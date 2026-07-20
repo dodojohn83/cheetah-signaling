@@ -659,6 +659,10 @@ pub struct ReconciliationReport {
     pub missing_released: u64,
     /// Number of active sessions missing on the media node that were marked failed.
     pub missing_failed: u64,
+    /// Number of active sessions migrated to a new media node.
+    pub migrations_succeeded: u64,
+    /// Number of migration attempts that failed.
+    pub migrations_failed: u64,
     /// Number of orphan sessions detected but not yet cleaned.
     pub orphans_detected: u64,
 }
