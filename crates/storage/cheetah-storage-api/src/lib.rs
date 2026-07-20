@@ -21,6 +21,7 @@ pub use phase_migration::{
     VersionedMigration,
 };
 pub use repository::{
-    NodeRepository, OperationStep, OperationStepRepository, OwnedDevice, OwnerRepository,
+    MediaNodeRepository, NodeRepository, OperationStep, OperationStepRepository, OwnedDevice,
+    OwnerRepository,
 };
 pub use storage::Storage;

@@ -13,6 +13,7 @@ pub mod error;
 pub mod event;
 pub mod media_binding;
 pub mod media_callback;
+pub mod media_node;
 pub mod media_session;
 pub mod node;
 pub mod operation;
@@ -33,6 +34,7 @@ pub use error::DomainError;
 pub use event::DomainEvent;
 pub use media_binding::{MediaBinding, MediaBindingError, MediaBindingState};
 pub use media_callback::{MediaNodeCallback, MediaNodeCallbackKind, MediaNodeSessionRef};
+pub use media_node::{MediaCapability, MediaNode, MediaNodeCapacity, MediaNodeHealth, NodeStatus};
 pub use media_session::{
     MediaPurpose, MediaSession, MediaSessionDesiredState, MediaSessionError, MediaSessionState,
 };

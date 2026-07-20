@@ -4,6 +4,7 @@
 
 mod error;
 mod list;
+mod media_node;
 mod migration;
 mod node;
 mod operation_step;
@@ -13,6 +14,7 @@ mod storage;
 mod unit_of_work;
 mod webhook;
 
+pub use media_node::SqliteMediaNodeRepository;
 pub use migration::SqliteMigration;
 pub use node::SqliteNodeRepository;
 pub use operation_step::SqliteOperationStepRepository;

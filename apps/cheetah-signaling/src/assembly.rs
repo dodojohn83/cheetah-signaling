@@ -18,8 +18,8 @@ use cheetah_gb28181_module::types::DeviceId as GbDeviceId;
 use cheetah_http_api::state::{ApiConfig, ApiServer, ApiState};
 use cheetah_media_client::{MediaClientConfig, MediaControlClient};
 use cheetah_media_scheduler::{
-    InMemoryMediaNodeRegistry, LeastLoadedScheduler, MediaClusterRegistryService,
-    MediaRegistryConfig, PeerIdentity, SchedulerConfig, SchedulerMediaPort,
+    LeastLoadedScheduler, MediaClusterRegistryService, MediaRegistryConfig, PeerIdentity,
+    PersistentMediaNodeRegistry, SchedulerConfig, SchedulerMediaPort,
 };
 use cheetah_message_api::RawEventBus;
 use cheetah_message_api::publisher::publish_domain_event;
@@ -504,9 +504,16 @@ pub async fn start(
     };
     let publisher: Arc<dyn EventPublisher> = Arc::new(EventBusPublisher::new(bus.clone()));
 
-    let media_registry: Arc<dyn cheetah_media_scheduler::MediaNodeRegistry> = Arc::new(
-        InMemoryMediaNodeRegistry::new(MediaRegistryConfig::default()),
-    );
+    let mut media_registry_config = MediaRegistryConfig::production();
+    let media_repo = storage.media_node_repository();
+    let persistent_registry =
+        PersistentMediaNodeRegistry::new(media_registry_config.clone(), media_repo);
+    persistent_registry
+        .load(clock.as_ref())
+        .await
+        .map_err(|e| format!("failed to load media node registry: {e}"))?;
+    let media_registry: Arc<dyn cheetah_media_scheduler::MediaNodeRegistry> =
+        Arc::new(persistent_registry);
     let media_registry_for_grpc = Arc::clone(&media_registry);
     let media_scheduler: Arc<dyn cheetah_media_scheduler::MediaScheduler> = Arc::new(
         LeastLoadedScheduler::new(media_registry, SchedulerConfig::default()),
@@ -670,7 +677,6 @@ pub async fn start(
     let grpc_addr = SocketAddr::new(grpc_ip, config.grpc.port);
     let (grpc_identity, grpc_client_ca, grpc_require_mtls) =
         configure_grpc_tls(&*secret_store, &config.grpc)?;
-    let mut media_registry_config = MediaRegistryConfig::production();
     media_registry_config.require_mtls = grpc_require_mtls;
     let grpc_service = MediaClusterRegistryService::new(
         media_registry_for_grpc,

@@ -1,7 +1,7 @@
 //! Extension repository ports that do not belong to the domain UnitOfWork.
 
 use crate::StorageError;
-use cheetah_domain::{ClusterNode, NodeLoad, OwnerInfo};
+use cheetah_domain::{ClusterNode, MediaNode, NodeLoad, OwnerInfo};
 use cheetah_signal_types::{
     DeviceId, NodeId, NodeInstanceId, OperationId, Page, PageRequest, TenantId, UtcTimestamp,
 };
@@ -174,4 +174,54 @@ pub trait NodeRepository: Send + Sync {
         instance_id: NodeInstanceId,
         updated_at: UtcTimestamp,
     ) -> Result<bool, StorageError>;
+}
+
+/// Repository for media node registrations and leases.
+#[async_trait::async_trait]
+pub trait MediaNodeRepository: Send + Sync {
+    /// Registers or re-registers a media node, returning the persisted view
+    /// with updated revision.
+    async fn register(&mut self, node: MediaNode) -> Result<MediaNode, StorageError>;
+
+    /// Extends the lease and updates load/session count for `node_id`, but only
+    /// if `instance_id` matches. Returns the updated node, or `None` if the
+    /// node is unknown or has been fenced by another instance.
+    async fn heartbeat(
+        &mut self,
+        node_id: NodeId,
+        instance_id: String,
+        lease_until: UtcTimestamp,
+        updated_at: UtcTimestamp,
+        load: u64,
+        session_count: u64,
+    ) -> Result<Option<MediaNode>, StorageError>;
+
+    /// Returns the registered media node, if any.
+    async fn get(&self, node_id: NodeId) -> Result<Option<MediaNode>, StorageError>;
+
+    /// Lists media nodes whose lease is still valid at `now`, paginated by cursor.
+    async fn list_alive(
+        &self,
+        now: UtcTimestamp,
+        page: PageRequest,
+    ) -> Result<Page<MediaNode>, StorageError>;
+
+    /// Marks the node as draining or active if `instance_id` matches.
+    /// Returns the updated node, or `None` if the node is unknown or fenced.
+    async fn set_draining(
+        &mut self,
+        node_id: NodeId,
+        instance_id: String,
+        draining: bool,
+        updated_at: UtcTimestamp,
+    ) -> Result<Option<MediaNode>, StorageError>;
+
+    /// Marks the node as `Left` if `instance_id` matches, retaining it for a
+    /// protection window. Returns the updated node, or `None` if fenced.
+    async fn deregister(
+        &mut self,
+        node_id: NodeId,
+        instance_id: String,
+        updated_at: UtcTimestamp,
+    ) -> Result<Option<MediaNode>, StorageError>;
 }

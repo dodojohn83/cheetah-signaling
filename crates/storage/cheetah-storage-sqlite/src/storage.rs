@@ -1,6 +1,7 @@
 //! SQLite storage implementation.
 
 use crate::error::sqlx_to_storage;
+use crate::media_node::SqliteMediaNodeRepository;
 use crate::migration::SqliteMigration;
 use crate::node::SqliteNodeRepository;
 use crate::operation_step::SqliteOperationStepRepository;
@@ -9,8 +10,8 @@ use crate::unit_of_work::SqliteUnitOfWork;
 use cheetah_domain::Clock;
 use cheetah_domain::ports::DeviceOwnerResolver;
 use cheetah_storage_api::{
-    Migration as MigrationTrait, NodeRepository, OperationStepRepository, OwnerRepository, Storage,
-    StorageError,
+    MediaNodeRepository, Migration as MigrationTrait, NodeRepository, OperationStepRepository,
+    OwnerRepository, Storage, StorageError,
 };
 use sqlx::SqlitePool;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
@@ -108,6 +109,13 @@ impl Storage for SqliteStorage {
 
     fn node_repository(&self) -> Box<dyn NodeRepository> {
         Box::new(SqliteNodeRepository::new(
+            self.read_pool.clone(),
+            self.write_pool.clone(),
+        ))
+    }
+
+    fn media_node_repository(&self) -> Box<dyn MediaNodeRepository> {
+        Box::new(SqliteMediaNodeRepository::new(
             self.read_pool.clone(),
             self.write_pool.clone(),
         ))
