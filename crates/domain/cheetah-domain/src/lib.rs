@@ -43,6 +43,9 @@ pub use media_session::{
     MediaPurpose, MediaSession, MediaSessionDesiredState, MediaSessionError, MediaSessionState,
 };
 pub use node::{ClusterNode, NodeCapacity, NodeLoad};
-pub use operation::{Operation, OperationError, OperationResult, OperationStatus};
+pub use operation::{
+    DispatchAttempt, DispatchAttemptStatus, Operation, OperationError, OperationResult,
+    OperationStatus, OperationStep, OperationStepStatus,
+};
 pub use ports::*;
 pub use webhook::{DeliveryStatus, WebhookConfig, WebhookDelivery, sign_webhook_payload};

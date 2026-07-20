@@ -51,6 +51,10 @@ pub struct Command {
     command_id: MessageId,
     message_id: MessageId,
     operation_id: OperationId,
+    /// Optional saga step identifier, used to correlate dispatches with
+    /// `OperationStep` records.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    step_id: Option<MessageId>,
     tenant_id: TenantId,
     device_id: DeviceId,
     target: ResourceRef,
@@ -71,6 +75,7 @@ impl Command {
     pub(crate) fn new(
         id_generator: &dyn IdGenerator,
         operation_id: OperationId,
+        step_id: Option<MessageId>,
         tenant_id: TenantId,
         device_id: DeviceId,
         idempotency_scope: IdempotencyScope,
@@ -88,6 +93,7 @@ impl Command {
             command_id: id_generator.generate_message_id(),
             message_id: id_generator.generate_message_id(),
             operation_id,
+            step_id,
             tenant_id,
             device_id,
             idempotency_key: idempotency_scope.idempotency_key.clone(),
@@ -117,6 +123,11 @@ impl Command {
     /// Returns the owning operation id.
     pub fn operation_id(&self) -> OperationId {
         self.operation_id
+    }
+
+    /// Returns the saga step id, if the command belongs to a specific step.
+    pub fn step_id(&self) -> Option<MessageId> {
+        self.step_id
     }
 
     /// Returns the tenant id.

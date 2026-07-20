@@ -2,7 +2,8 @@
 
 use crate::dto::OperationDto;
 use cheetah_domain::{
-    CommandBus, DeviceOwnerResolver, DomainError, DomainEvent, OperationResult, UnitOfWork,
+    CommandBus, DeviceOwnerResolver, DispatchAttempt, DomainError, DomainEvent, OperationResult,
+    UnitOfWork,
 };
 use cheetah_signal_types::{
     Clock, Event, IdGenerator, OperationId, RequestContext, ResourceId, ResourceKind, ResourceRef,
@@ -75,6 +76,21 @@ impl CommandDispatcher {
         uow.outbox().append(event).await?;
         uow.commit().await?;
 
+        let step_id = operation
+            .command()
+            .step_id()
+            .unwrap_or_else(|| operation.command().command_id());
+        let attempt_id = self.id_generator.generate_message_id();
+        let attempt = DispatchAttempt::new(attempt_id);
+        operation
+            .record_dispatch_attempt(step_id, attempt, self.clock.as_ref())
+            .map_err(crate::SignalError::from)?;
+        self.save_operation(uow, &operation).await?;
+        operation
+            .mark_dispatch_attempt_sent(step_id, attempt_id, self.clock.as_ref())
+            .map_err(crate::SignalError::from)?;
+        self.save_operation(uow, &operation).await?;
+
         // Resolve owner and dispatch outside the unit of work transaction.
         match self
             .owner_resolver
@@ -82,19 +98,45 @@ impl CommandDispatcher {
             .await
         {
             Ok(Some(owner)) if owner.owner_epoch == operation.expected_owner_epoch() => {
-                if let Err(e) = self.command_bus.send(operation.command()).await {
-                    self.complete_operation(
-                        context,
-                        uow,
-                        tenant_id,
-                        &mut operation,
-                        "COMMAND_BUS",
-                        e.to_string(),
-                    )
-                    .await?;
+                match self.command_bus.send(operation.command()).await {
+                    Ok(()) => {
+                        operation
+                            .mark_dispatch_attempt_acked(step_id, attempt_id, self.clock.as_ref())
+                            .map_err(crate::SignalError::from)?;
+                        self.save_operation(uow, &operation).await?;
+                    }
+                    Err(e) => {
+                        operation
+                            .mark_dispatch_attempt_nacked(
+                                step_id,
+                                attempt_id,
+                                cheetah_domain::OperationError::new("COMMAND_BUS", e.to_string()),
+                                self.clock.as_ref(),
+                            )
+                            .map_err(crate::SignalError::from)?;
+                        self.save_operation(uow, &operation).await?;
+                        self.complete_operation(
+                            context,
+                            uow,
+                            tenant_id,
+                            &mut operation,
+                            "COMMAND_BUS",
+                            e.to_string(),
+                        )
+                        .await?;
+                    }
                 }
             }
             Ok(Some(_)) => {
+                operation
+                    .mark_dispatch_attempt_nacked(
+                        step_id,
+                        attempt_id,
+                        cheetah_domain::OperationError::new("STALE_OWNER", "stale owner epoch"),
+                        self.clock.as_ref(),
+                    )
+                    .map_err(crate::SignalError::from)?;
+                self.save_operation(uow, &operation).await?;
                 self.complete_operation(
                     context,
                     uow,
@@ -106,6 +148,15 @@ impl CommandDispatcher {
                 .await?;
             }
             Ok(None) => {
+                operation
+                    .mark_dispatch_attempt_nacked(
+                        step_id,
+                        attempt_id,
+                        cheetah_domain::OperationError::new("NO_OWNER", "no owner resolved"),
+                        self.clock.as_ref(),
+                    )
+                    .map_err(crate::SignalError::from)?;
+                self.save_operation(uow, &operation).await?;
                 self.complete_operation(
                     context,
                     uow,
@@ -117,6 +168,15 @@ impl CommandDispatcher {
                 .await?;
             }
             Err(e) => {
+                operation
+                    .mark_dispatch_attempt_nacked(
+                        step_id,
+                        attempt_id,
+                        cheetah_domain::OperationError::new("RESOLVE_ERROR", e.to_string()),
+                        self.clock.as_ref(),
+                    )
+                    .map_err(crate::SignalError::from)?;
+                self.save_operation(uow, &operation).await?;
                 self.complete_operation(
                     context,
                     uow,
@@ -130,6 +190,16 @@ impl CommandDispatcher {
         }
 
         Ok(OperationDto::from(&operation))
+    }
+
+    async fn save_operation(
+        &self,
+        uow: &mut dyn UnitOfWork,
+        operation: &cheetah_domain::Operation,
+    ) -> crate::Result<()> {
+        uow.operation_repository().save(operation).await?;
+        uow.commit().await?;
+        Ok(())
     }
 
     async fn complete_operation(
