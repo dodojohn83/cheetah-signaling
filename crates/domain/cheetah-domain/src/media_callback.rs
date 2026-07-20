@@ -19,14 +19,17 @@ pub struct MediaNodeCallback {
     /// Operation that triggered the callback. Optional because older media nodes
     /// may emit events without an operation_id.
     pub operation_id: Option<OperationId>,
-    /// Owner epoch of the device/session.
-    pub owner_epoch: OwnerEpoch,
+    /// Owner epoch of the device/session. Optional because older media nodes
+    /// may emit events without an owner_epoch.
+    pub owner_epoch: Option<OwnerEpoch>,
     /// Message / request identifier of the original command.
     pub message_id: String,
-    /// Revision of the binding at the time the command was issued.
-    pub binding_revision: Revision,
-    /// Revision of the session at the time the command was issued.
-    pub session_revision: Revision,
+    /// Revision of the binding at the time the command was issued. Optional
+    /// because older media nodes may emit events without revision fields.
+    pub binding_revision: Option<Revision>,
+    /// Revision of the session at the time the command was issued. Optional
+    /// because older media nodes may emit events without revision fields.
+    pub session_revision: Option<Revision>,
     /// Kind of callback event.
     pub kind: MediaNodeCallbackKind,
 }

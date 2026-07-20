@@ -11,7 +11,8 @@ use crate::error::SchedulerError;
 use crate::mapper::map_media_event_to_callback;
 use crate::registry::MediaNodeRegistry;
 use cheetah_domain::{
-    MediaEventHandler, MediaNode, ProcessedMessageRecord, ProcessedMessageStatus, UnitOfWork,
+    DomainError, MediaEventHandler, MediaNode, MediaNodeCallback, ProcessedMessageRecord,
+    ProcessedMessageStatus, UnitOfWork,
 };
 use cheetah_media_client::MediaControlClient;
 use cheetah_signal_contracts::cheetah::media::v1::{MediaEvent, SubscribeRequest};
@@ -271,7 +272,8 @@ impl MediaEventConsumer {
             self.subscriptions.cancel(id);
         }
 
-        for node_id in to_start {
+        let nodes_to_start = to_start.len();
+        for (index, node_id) in to_start.into_iter().enumerate() {
             if cancel.is_cancelled() {
                 return Ok(());
             }
@@ -280,6 +282,11 @@ impl MediaEventConsumer {
                 Err(tokio::sync::TryAcquireError::NoPermits) => {
                     // No subscription slot is free right now; the main loop will retry
                     // on the next poll as other nodes stop or get cancelled.
+                    let remaining = nodes_to_start.saturating_sub(index + 1);
+                    tracing::warn!(
+                        "media event consumer has reached max_concurrent_subscriptions; deferring subscription for remaining {} node(s)",
+                        remaining
+                    );
                     break;
                 }
                 Err(tokio::sync::TryAcquireError::Closed) => {
@@ -502,6 +509,34 @@ impl MediaEventConsumer {
             return Ok(());
         }
 
+        // Pre-validate ownership before delegating to the event handler. This
+        // ensures a misbehaving media node cannot drive state transitions for
+        // tenants or bindings it does not own.
+        if let Err(e) = self
+            .validate_callback(&mut *uow, tenant_id, &callback, node)
+            .await
+        {
+            let payload = serde_json::to_string(&serde_json::json!({
+                "sequence": sequence,
+                "error": e.to_string(),
+            }))
+            .map_err(|e| SchedulerError::Backend(format!("{e}")))?;
+            uow.processed_message_repository()
+                .complete(
+                    tenant_id,
+                    message_id,
+                    ProcessedMessageStatus::Failed,
+                    Some(payload),
+                    self.clock.now_wall(),
+                )
+                .await?;
+            self.update_cursor(&mut *uow, node, sequence).await?;
+            uow.commit().await?;
+            self.detect_sequence_gap(node, tenant_id, sequence).await;
+            self.cursors.update_sequence(node.node_id, sequence);
+            return Ok(());
+        }
+
         let context = self.build_request_context(tenant_id, &event);
         let result = self
             .event_handler
@@ -584,6 +619,52 @@ impl MediaEventConsumer {
         }
     }
 
+    /// Verifies that the callback references a binding and session that really
+    /// belong to the connected node instance and the claimed tenant. This is a
+    /// consumer-side guard so that a compromised media node cannot drive state
+    /// transitions for arbitrary tenants before the event handler is invoked.
+    async fn validate_callback(
+        &self,
+        uow: &mut dyn UnitOfWork,
+        tenant_id: TenantId,
+        callback: &MediaNodeCallback,
+        node: &MediaNode,
+    ) -> Result<(), DomainError> {
+        if callback.media_node_id != node.node_id {
+            return Err(DomainError::invalid_argument("media node id mismatch"));
+        }
+        if callback.media_node_instance_epoch.0 != node.instance_epoch {
+            return Err(DomainError::invalid_argument(
+                "media node instance epoch mismatch",
+            ));
+        }
+
+        let binding = uow
+            .media_binding_repository()
+            .get(tenant_id, callback.media_binding_id)
+            .await?
+            .ok_or_else(|| {
+                DomainError::not_found("media binding", callback.media_binding_id.to_string())
+            })?;
+        if binding.media_node_id() != callback.media_node_id {
+            return Err(DomainError::invalid_argument("media binding node mismatch"));
+        }
+        if binding.media_node_instance_epoch() != callback.media_node_instance_epoch {
+            return Err(DomainError::invalid_argument(
+                "media binding instance epoch mismatch",
+            ));
+        }
+
+        uow.media_session_repository()
+            .get(tenant_id, callback.media_session_id)
+            .await?
+            .ok_or_else(|| {
+                DomainError::not_found("media session", callback.media_session_id.to_string())
+            })?;
+
+        Ok(())
+    }
+
     async fn detect_sequence_gap(&self, node: &MediaNode, tenant_id: TenantId, sequence: u64) {
         let last = self.cursors.last_sequence(node.node_id);
         if last != 0 && sequence > last.saturating_add(1) {
@@ -601,6 +682,22 @@ impl MediaEventConsumer {
     ) -> Result<(), SchedulerError> {
         let tenant_id = TenantId::default();
         let message_id = message_id_for_node(node.node_id);
+
+        // Avoid regressing the persisted cursor if an older/duplicate event is
+        // re-delivered out of order.
+        if let Some(record) = uow
+            .processed_message_repository()
+            .find(tenant_id, message_id)
+            .await?
+            && let Some(existing) = record
+                .result_payload
+                .as_deref()
+                .and_then(parse_cursor_payload)
+            && sequence <= existing
+        {
+            return Ok(());
+        }
+
         let now = self.clock.now_wall();
         let record = ProcessedMessageRecord {
             tenant_id,

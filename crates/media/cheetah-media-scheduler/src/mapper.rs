@@ -124,16 +124,32 @@ pub fn map_media_event_to_callback(
 
     let kind = map_event_payload(event)?;
 
+    let owner_epoch = if event.owner_epoch == 0 {
+        None
+    } else {
+        Some(OwnerEpoch(event.owner_epoch))
+    };
+    let binding_revision = if event.binding_revision == 0 {
+        None
+    } else {
+        Some(Revision(event.binding_revision))
+    };
+    let session_revision = if event.session_revision == 0 {
+        None
+    } else {
+        Some(Revision(event.session_revision))
+    };
+
     let callback = MediaNodeCallback {
         media_node_id,
         media_node_instance_epoch: MediaNodeInstanceEpoch(event.media_node_instance_epoch),
         media_session_id,
         media_binding_id,
         operation_id,
-        owner_epoch: OwnerEpoch(event.owner_epoch),
+        owner_epoch,
         message_id: event.event_id.clone(),
-        binding_revision: Revision(event.binding_revision),
-        session_revision: Revision(event.session_revision),
+        binding_revision,
+        session_revision,
         kind,
     };
 
