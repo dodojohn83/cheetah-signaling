@@ -8,7 +8,10 @@ use cheetah_signal_contracts::cheetah::common::v1::{
     ResourceRef, Uuid, media_control_client::MediaControlClient as TonicMediaControlClient,
     media_query_client::MediaQueryClient as TonicMediaQueryClient,
 };
-use cheetah_signal_contracts::cheetah::media::v1::MediaCommand;
+use cheetah_signal_contracts::cheetah::media::v1::{
+    MediaCommand, MediaEvent, SubscribeRequest,
+    media_event_stream_service_client::MediaEventStreamServiceClient,
+};
 use cheetah_signal_types::{
     MediaBindingId, MediaNodeInstanceEpoch, MediaSessionId, NodeId, OperationId, OwnerEpoch,
     SecretStore, TenantId, UtcTimestamp, is_internal_ip,
@@ -569,6 +572,21 @@ impl MediaControlClient {
         })?
         .map_err(|_| MediaClientError::Grpc(Status::internal("semaphore closed")))?;
         Ok(permit)
+    }
+
+    /// Subscribes to a media node's event stream.
+    pub async fn subscribe(
+        &self,
+        endpoint: &str,
+        request: SubscribeRequest,
+    ) -> Result<tonic::codec::Streaming<MediaEvent>, MediaClientError> {
+        let channel = self.connect(endpoint).await?;
+        let mut client = MediaEventStreamServiceClient::new(channel);
+        let response = client
+            .subscribe(request)
+            .await
+            .map_err(MediaClientError::Grpc)?;
+        Ok(response.into_inner())
     }
 }
 

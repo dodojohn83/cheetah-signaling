@@ -352,6 +352,10 @@ async fn reserve(
 
 fn map_scheduler_error(e: crate::error::SchedulerError) -> DomainError {
     match e {
+        crate::error::SchedulerError::Domain(err) => err,
+        crate::error::SchedulerError::EventStream(_) | crate::error::SchedulerError::Backend(_) => {
+            DomainError::unavailable(e.to_string())
+        }
         crate::error::SchedulerError::NoNode(_)
         | crate::error::SchedulerError::CapacityExhausted(_) => {
             DomainError::unavailable(e.to_string())
@@ -364,7 +368,6 @@ fn map_scheduler_error(e: crate::error::SchedulerError) -> DomainError {
         | crate::error::SchedulerError::IdentityMismatch { .. } => {
             DomainError::invalid_argument(e.to_string())
         }
-        crate::error::SchedulerError::Backend(_) => DomainError::unavailable(e.to_string()),
     }
 }
 

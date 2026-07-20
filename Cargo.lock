@@ -744,8 +744,10 @@ dependencies = [
  "thiserror",
  "time",
  "tokio",
+ "tokio-util",
  "tonic",
  "tracing",
+ "uuid",
 ]
 
 [[package]]

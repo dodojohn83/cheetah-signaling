@@ -503,6 +503,8 @@ message MediaEventFilter {
 // - Slow consumers may be disconnected or downgraded according to policy.
 // - Reconnects and cancellations are explicit: closing the stream cancels
 //   delivery for that subscriber.
+// - An empty tenant_id filter is interpreted as "all tenants"; the server must
+//   support this when the subscriber is authorized for cross-tenant observation.
 message SubscribeRequest {
   // Tenant and request context; tenant_id is the required filter.
   MediaMutationContext context = 1;

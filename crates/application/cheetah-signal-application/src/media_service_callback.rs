@@ -11,45 +11,55 @@ use cheetah_signal_types::RequestContext;
 impl MediaService {
     /// Handles an asynchronous event from a media node, validating fencing
     /// fields before updating the binding, session and operation.
+    ///
+    /// This helper commits `uow`; callers that need cursor/inbox atomicity should
+    /// use [`MediaService::apply_media_event`] and commit themselves.
     pub async fn handle_media_event(
         &self,
         context: &RequestContext,
         uow: &mut dyn UnitOfWork,
         callback: MediaNodeCallback,
     ) -> crate::Result<MediaSessionDto> {
+        let dto = self.apply_media_event(context, uow, callback).await?;
+        uow.commit().await?;
+        Ok(dto)
+    }
+
+    /// Applies an asynchronous event from a media node without committing `uow`.
+    ///
+    /// The caller is responsible for de-duplication, cursor persistence and
+    /// transaction commit. Errors are returned as [`DomainError`] so the
+    /// scheduler's event consumer can decide whether to retry.
+    pub(crate) async fn apply_media_event(
+        &self,
+        context: &RequestContext,
+        uow: &mut dyn UnitOfWork,
+        callback: MediaNodeCallback,
+    ) -> Result<MediaSessionDto, DomainError> {
         let mut binding = uow
             .media_binding_repository()
             .get(context.tenant_id, callback.media_binding_id)
             .await?
             .ok_or_else(|| {
-                crate::SignalError::from(DomainError::not_found(
-                    "media binding",
-                    callback.media_binding_id.to_string(),
-                ))
+                DomainError::not_found("media binding", callback.media_binding_id.to_string())
             })?;
 
         if binding.media_node_id() != callback.media_node_id {
-            return Err(crate::SignalError::from(DomainError::invalid_argument(
-                "media node id mismatch",
-            )));
+            return Err(DomainError::invalid_argument("media node id mismatch"));
         }
         if binding.media_node_instance_epoch() != callback.media_node_instance_epoch {
-            return Err(crate::SignalError::from(DomainError::invalid_argument(
+            return Err(DomainError::invalid_argument(
                 "media node instance epoch mismatch",
-            )));
+            ));
         }
         if binding.owner_epoch() != callback.owner_epoch {
-            return Err(crate::SignalError::from(DomainError::invalid_argument(
-                "owner epoch mismatch",
-            )));
+            return Err(DomainError::invalid_argument("owner epoch mismatch"));
         }
         if binding.revision().0 != callback.binding_revision.0 {
-            return Err(crate::SignalError::from(
-                DomainError::ConcurrentModification {
-                    expected: callback.binding_revision.0,
-                    found: binding.revision().0,
-                },
-            ));
+            return Err(DomainError::ConcurrentModification {
+                expected: callback.binding_revision.0,
+                found: binding.revision().0,
+            });
         }
 
         let mut session = uow
@@ -57,19 +67,14 @@ impl MediaService {
             .get(context.tenant_id, callback.media_session_id)
             .await?
             .ok_or_else(|| {
-                crate::SignalError::from(DomainError::not_found(
-                    "media session",
-                    callback.media_session_id.to_string(),
-                ))
+                DomainError::not_found("media session", callback.media_session_id.to_string())
             })?;
 
         if session.revision().0 != callback.session_revision.0 {
-            return Err(crate::SignalError::from(
-                DomainError::ConcurrentModification {
-                    expected: callback.session_revision.0,
-                    found: session.revision().0,
-                },
-            ));
+            return Err(DomainError::ConcurrentModification {
+                expected: callback.session_revision.0,
+                found: session.revision().0,
+            });
         }
 
         let mut operation = uow
@@ -77,10 +82,7 @@ impl MediaService {
             .get(context.tenant_id, callback.operation_id)
             .await?
             .ok_or_else(|| {
-                crate::SignalError::from(DomainError::not_found(
-                    "operation",
-                    callback.operation_id.to_string(),
-                ))
+                DomainError::not_found("operation", callback.operation_id.to_string())
             })?;
 
         // Ignore late callbacks for operations that are already terminal.
@@ -140,9 +142,21 @@ impl MediaService {
         if operation.status() != operation_status_before {
             uow.operation_repository().save(&operation).await?;
         }
-        uow.commit().await?;
 
         Ok(MediaSessionDto::from(&session))
+    }
+}
+
+#[async_trait::async_trait]
+impl cheetah_domain::MediaEventHandler for MediaService {
+    async fn handle_media_event(
+        &self,
+        context: &RequestContext,
+        uow: &mut dyn UnitOfWork,
+        callback: MediaNodeCallback,
+    ) -> Result<(), DomainError> {
+        let _ = self.apply_media_event(context, uow, callback).await?;
+        Ok(())
     }
 }
 
@@ -154,7 +168,7 @@ async fn apply_started(
     session: &mut cheetah_domain::MediaSession,
     binding: &mut cheetah_domain::MediaBinding,
     operation: &mut cheetah_domain::Operation,
-) -> crate::Result<()> {
+) -> Result<(), DomainError> {
     if session.state() == MediaSessionState::Inviting {
         let ev = session.active(service.clock.as_ref())?;
         append_session_event(service, context, uow, session, ev).await?;
@@ -179,7 +193,7 @@ async fn apply_stopped(
     binding: &mut cheetah_domain::MediaBinding,
     operation: &mut cheetah_domain::Operation,
     reason: &str,
-) -> crate::Result<()> {
+) -> Result<(), DomainError> {
     if session.state() == MediaSessionState::Active {
         let ev = session.stopping(service.clock.as_ref())?;
         append_session_event(service, context, uow, session, ev).await?;
@@ -220,7 +234,7 @@ async fn apply_failed(
     operation: &mut cheetah_domain::Operation,
     code: &str,
     message: &str,
-) -> crate::Result<()> {
+) -> Result<(), DomainError> {
     if !session.is_terminal() {
         let ev = session.failed(
             MediaSessionError::new(code, message),
@@ -251,7 +265,7 @@ async fn append_session_event(
     uow: &mut dyn UnitOfWork,
     session: &cheetah_domain::MediaSession,
     payload: cheetah_domain::DomainEvent,
-) -> crate::Result<()> {
+) -> Result<(), DomainError> {
     uow.outbox()
         .append(wrap_event(
             service.id_generator.as_ref(),
@@ -263,7 +277,6 @@ async fn append_session_event(
             payload,
         ))
         .await
-        .map_err(crate::SignalError::from)
 }
 
 async fn append_binding_event(
@@ -272,7 +285,7 @@ async fn append_binding_event(
     uow: &mut dyn UnitOfWork,
     binding: &cheetah_domain::MediaBinding,
     payload: cheetah_domain::DomainEvent,
-) -> crate::Result<()> {
+) -> Result<(), DomainError> {
     uow.outbox()
         .append(wrap_event(
             service.id_generator.as_ref(),
@@ -284,7 +297,6 @@ async fn append_binding_event(
             payload,
         ))
         .await
-        .map_err(crate::SignalError::from)
 }
 
 async fn append_operation_event(
@@ -293,7 +305,7 @@ async fn append_operation_event(
     uow: &mut dyn UnitOfWork,
     operation: &cheetah_domain::Operation,
     payload: cheetah_domain::DomainEvent,
-) -> crate::Result<()> {
+) -> Result<(), DomainError> {
     uow.outbox()
         .append(wrap_event(
             service.id_generator.as_ref(),
@@ -305,5 +317,4 @@ async fn append_operation_event(
             payload,
         ))
         .await
-        .map_err(crate::SignalError::from)
 }
