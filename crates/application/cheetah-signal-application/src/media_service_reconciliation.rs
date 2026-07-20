@@ -67,6 +67,9 @@ impl MediaService {
                     "admin forced cleanup",
                 )
                 .await?;
+                // Commit the failed binding/session before the scheduler RPC so the
+                // SQLite write lock is not held across the network call.
+                uow.commit().await?;
                 if let Err(e) = self
                     .media_port
                     .release(tenant_id, binding.media_binding_id(), self.clock.as_ref())
@@ -88,7 +91,7 @@ impl MediaService {
         }
 
         uow.commit().await?;
-        self.media_port.record_reconcile(1, 0, 0, cleaned);
+        self.media_port.record_forced_cleanup(cleaned);
         Ok(cleaned)
     }
 
@@ -148,6 +151,9 @@ impl MediaService {
             reservations_to_release.push(binding.media_binding_id());
             report.missing_released += 1;
         }
+        // Persist terminal bindings/sessions before querying media nodes so the
+        // SQLite write lock is not held across network RPCs.
+        uow.commit().await?;
 
         let nodes = self
             .media_port
@@ -245,6 +251,8 @@ impl MediaService {
                     );
                 }
             }
+            // Persist per-node state before the next media-node query.
+            uow.commit().await?;
         }
 
         // Any sessions still in active_by_node are bound to media nodes that are
@@ -263,6 +271,8 @@ impl MediaService {
                 .await?;
             }
         }
+        // Persist migrations/failures before releasing scheduler reservations.
+        uow.commit().await?;
 
         for binding_id in reservations_to_release {
             if let Err(e) = self
@@ -437,6 +447,7 @@ impl MediaService {
                 if !session.is_terminal() {
                     self.fail_session(context, uow, session, binding, code, message)
                         .await?;
+                    uow.commit().await?;
                 }
                 if let Err(e2) = self
                     .media_port
@@ -459,6 +470,8 @@ impl MediaService {
         let ev = session.bump_generation(self.clock.as_ref())?;
         append_session_event(self, context, uow, session, ev).await?;
         uow.media_session_repository().save(session).await?;
+        // Persist the bumped generation before issuing media-node RPCs.
+        uow.commit().await?;
 
         let command_result = self
             .dispatch_reconnect_command(
@@ -472,6 +485,8 @@ impl MediaService {
                 &reservation,
             )
             .await;
+        // Persist any post-command state before the scheduler release RPC.
+        uow.commit().await?;
 
         if let Err(e) = self
             .media_port

@@ -14,11 +14,16 @@ use time::OffsetDateTime;
 pub(crate) struct SqliteUnitOfWork {
     pool: SqlitePool,
     tx: Option<Transaction<'static, sqlx::Sqlite>>,
+    rolled_back: bool,
 }
 
 impl SqliteUnitOfWork {
     pub(crate) fn new(pool: SqlitePool, tx: Transaction<'static, sqlx::Sqlite>) -> Self {
-        Self { pool, tx: Some(tx) }
+        Self {
+            pool,
+            tx: Some(tx),
+            rolled_back: false,
+        }
     }
 
     /// Returns the current transaction, lazily beginning a new one if the
@@ -184,18 +189,25 @@ impl UnitOfWork for SqliteUnitOfWork {
     }
 
     async fn commit(&mut self) -> cheetah_domain::Result<()> {
-        let tx = self
-            .tx
-            .take()
-            .ok_or_else(|| DomainError::internal("unit of work already consumed"))?;
-        tx.commit().await.map_err(sqlx_to_domain)
+        if self.rolled_back {
+            return Err(DomainError::internal(
+                "cannot commit a unit of work that was rolled back",
+            ));
+        }
+        if let Some(tx) = self.tx.take() {
+            tx.commit().await.map_err(sqlx_to_domain)?;
+        }
+        Ok(())
     }
 
     async fn rollback(&mut self) -> cheetah_domain::Result<()> {
-        let tx = self
-            .tx
-            .take()
-            .ok_or_else(|| DomainError::internal("unit of work already consumed"))?;
-        tx.rollback().await.map_err(sqlx_to_domain)
+        if self.rolled_back {
+            return Err(DomainError::internal("unit of work already rolled back"));
+        }
+        if let Some(tx) = self.tx.take() {
+            tx.rollback().await.map_err(sqlx_to_domain)?;
+        }
+        self.rolled_back = true;
+        Ok(())
     }
 }

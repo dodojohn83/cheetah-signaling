@@ -243,6 +243,11 @@ impl MediaService {
                 .await;
 
                 if let Err(e) = post_result {
+                    if let Err(commit_err) = uow.commit().await {
+                        tracing::warn!(
+                            "failed to commit post-reconnect state before release: {commit_err}"
+                        );
+                    }
                     if let Err(e2) = self
                         .media_port
                         .release(tenant_id, media_binding_id, self.clock.as_ref())
@@ -254,6 +259,7 @@ impl MediaService {
                     }
                     return Err(e);
                 }
+                uow.commit().await?;
             }
             MediaNodeCommandResult::Failed { code, message } => {
                 let ev = new_binding
@@ -306,6 +312,9 @@ impl MediaService {
                         op_event,
                     ))
                     .await?;
+
+                // Persist the failed terminal state before the scheduler release RPC.
+                uow.commit().await?;
 
                 if let Err(e) = self
                     .media_port
