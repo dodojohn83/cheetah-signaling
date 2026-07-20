@@ -168,7 +168,7 @@ async fn sqlite_state_independence_for_operation_session_and_binding() {
         media_node_instance_epoch,
         media_session_id: session.media_session_id,
         media_binding_id: binding_id,
-        operation_id: start_operation_id,
+        operation_id: Some(start_operation_id),
         owner_epoch: OwnerEpoch::default(),
         message_id: "msg-started".to_string(),
         binding_revision: binding.revision(),

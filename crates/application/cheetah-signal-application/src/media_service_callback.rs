@@ -77,22 +77,27 @@ impl MediaService {
             });
         }
 
-        let mut operation = uow
-            .operation_repository()
-            .get(context.tenant_id, callback.operation_id)
-            .await?
-            .ok_or_else(|| {
-                DomainError::not_found("operation", callback.operation_id.to_string())
-            })?;
+        let mut operation: Option<cheetah_domain::Operation> = if let Some(operation_id) =
+            callback.operation_id
+        {
+            Some(
+                uow.operation_repository()
+                    .get(context.tenant_id, operation_id)
+                    .await?
+                    .ok_or_else(|| DomainError::not_found("operation", operation_id.to_string()))?,
+            )
+        } else {
+            None
+        };
 
         // Ignore late callbacks for operations that are already terminal.
-        if operation.is_terminal() {
+        if operation.as_ref().is_some_and(|o| o.is_terminal()) {
             return Ok(MediaSessionDto::from(&session));
         }
 
         let session_state_before = session.state();
         let binding_state_before = binding.state();
-        let operation_status_before = operation.status();
+        let operation_status_before = operation.as_ref().map(|o| o.status());
 
         match callback.kind {
             MediaNodeCallbackKind::Started => {
@@ -139,8 +144,11 @@ impl MediaService {
         if binding.state() != binding_state_before {
             uow.media_binding_repository().save(&binding).await?;
         }
-        if operation.status() != operation_status_before {
-            uow.operation_repository().save(&operation).await?;
+        if let Some(operation) = operation.as_ref() {
+            let before = operation_status_before.unwrap_or(operation.status());
+            if operation.status() != before {
+                uow.operation_repository().save(operation).await?;
+            }
         }
 
         Ok(MediaSessionDto::from(&session))
@@ -167,7 +175,7 @@ async fn apply_started(
     uow: &mut dyn UnitOfWork,
     session: &mut cheetah_domain::MediaSession,
     binding: &mut cheetah_domain::MediaBinding,
-    operation: &mut cheetah_domain::Operation,
+    operation: &mut Option<cheetah_domain::Operation>,
 ) -> Result<(), DomainError> {
     if session.state() == MediaSessionState::Inviting {
         let ev = session.active(service.clock.as_ref())?;
@@ -177,7 +185,7 @@ async fn apply_started(
         let ev = binding.activate(service.clock.as_ref())?;
         append_binding_event(service, context, uow, binding, ev).await?;
     }
-    if !operation.is_terminal() {
+    if let Some(operation) = operation.as_mut().filter(|o| !o.is_terminal()) {
         let ev = operation.complete(OperationResult::success(), service.clock.as_ref())?;
         append_operation_event(service, context, uow, operation, ev).await?;
     }
@@ -191,7 +199,7 @@ async fn apply_stopped(
     uow: &mut dyn UnitOfWork,
     session: &mut cheetah_domain::MediaSession,
     binding: &mut cheetah_domain::MediaBinding,
-    operation: &mut cheetah_domain::Operation,
+    operation: &mut Option<cheetah_domain::Operation>,
     reason: &str,
 ) -> Result<(), DomainError> {
     if session.state() == MediaSessionState::Active {
@@ -212,7 +220,7 @@ async fn apply_stopped(
         append_binding_event(service, context, uow, binding, ev).await?;
     }
 
-    if !operation.is_terminal() {
+    if let Some(operation) = operation.as_mut().filter(|o| !o.is_terminal()) {
         let result = if reason.is_empty() {
             OperationResult::success()
         } else {
@@ -231,7 +239,7 @@ async fn apply_failed(
     uow: &mut dyn UnitOfWork,
     session: &mut cheetah_domain::MediaSession,
     binding: &mut cheetah_domain::MediaBinding,
-    operation: &mut cheetah_domain::Operation,
+    operation: &mut Option<cheetah_domain::Operation>,
     code: &str,
     message: &str,
 ) -> Result<(), DomainError> {
@@ -249,7 +257,7 @@ async fn apply_failed(
         )?;
         append_binding_event(service, context, uow, binding, ev).await?;
     }
-    if !operation.is_terminal() {
+    if let Some(operation) = operation.as_mut().filter(|o| !o.is_terminal()) {
         let ev = operation.complete(
             OperationResult::failure(code, message),
             service.clock.as_ref(),

@@ -234,9 +234,12 @@ impl MediaEventConsumer {
         }
 
         for node_id in to_start {
-            let permit = self.permits.clone().acquire_owned().await.map_err(|_| {
-                SchedulerError::Backend("subscription semaphore closed".to_string())
-            })?;
+            let permit = tokio::select! {
+                _ = cancel.cancelled() => return Ok(()),
+                p = self.permits.clone().acquire_owned() => p.map_err(|_| {
+                    SchedulerError::Backend("subscription semaphore closed".to_string())
+                })?,
+            };
 
             let generation = self.subscriptions.next_generation();
             let token = cancel.child_token();
@@ -303,8 +306,14 @@ impl MediaEventConsumer {
 
         self.load_cursor(&node).await?;
 
-        let cursor = self.cursors.last_sequence(node.node_id).to_string();
-        let request = build_subscribe_request(&node, &cursor, &self.config, self.source_node_id);
+        let last = self.cursors.last_sequence(node.node_id);
+        let cursor_string = last.to_string();
+        let cursor = if last == 0 {
+            ""
+        } else {
+            cursor_string.as_str()
+        };
+        let request = build_subscribe_request(&node, cursor, &self.config, self.source_node_id);
         let endpoint = &node.control_endpoint;
 
         let mut stream = self
@@ -358,6 +367,10 @@ impl MediaEventConsumer {
     ) -> Result<(), SchedulerError> {
         let event_id = event.event_id.clone();
         let sequence = event.sequence;
+        let gap_tenant: TenantId = event
+            .tenant_id
+            .parse::<TenantId>()
+            .unwrap_or(TenantId::default());
 
         let (tenant_id, callback) = match map_media_event_to_callback(&event) {
             Ok(v) => v,
@@ -367,6 +380,7 @@ impl MediaEventConsumer {
                     sequence,
                     "media event mapping failed; treating as diagnostic: {e}"
                 );
+                self.detect_sequence_gap(node, gap_tenant, sequence).await;
                 self.cursors.update_sequence(node.node_id, sequence);
                 return Ok(());
             }
@@ -381,6 +395,7 @@ impl MediaEventConsumer {
                 node_id = %node.node_id,
                 "media event from old node instance; treating as diagnostic"
             );
+            self.detect_sequence_gap(node, tenant_id, sequence).await;
             self.cursors.update_sequence(node.node_id, sequence);
             return Ok(());
         }
@@ -426,7 +441,11 @@ impl MediaEventConsumer {
 
         match result {
             Ok(()) => {
-                let payload = format!("{{\"sequence\":{sequence},\"status\":\"completed\"}}");
+                let payload = serde_json::to_string(&serde_json::json!({
+                    "sequence": sequence,
+                    "status": "completed",
+                }))
+                .map_err(|e| SchedulerError::Backend(format!("{e}")))?;
                 uow.processed_message_repository()
                     .complete(
                         tenant_id,
@@ -443,7 +462,11 @@ impl MediaEventConsumer {
                 Ok(())
             }
             Err(e) => {
-                let payload = format!("{{\"sequence\":{sequence},\"error\":\"{e}\"}}");
+                let payload = serde_json::to_string(&serde_json::json!({
+                    "sequence": sequence,
+                    "error": e.to_string(),
+                }))
+                .map_err(|e| SchedulerError::Backend(format!("{e}")))?;
                 uow.processed_message_repository()
                     .complete(
                         tenant_id,
@@ -494,7 +517,8 @@ impl MediaEventConsumer {
             .get_or_insert(record)
             .await?;
 
-        let payload = format!("{{\"sequence\":{sequence}}}");
+        let payload = serde_json::to_string(&serde_json::json!({ "sequence": sequence }))
+            .map_err(|e| SchedulerError::Backend(format!("{e}")))?;
         uow.processed_message_repository()
             .complete(
                 tenant_id,

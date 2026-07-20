@@ -375,7 +375,7 @@ async fn media_service_callback_transitions_to_active() {
         media_node_instance_epoch: binding.media_node_instance_epoch(),
         media_session_id: session.media_session_id,
         media_binding_id: binding.media_binding_id(),
-        operation_id: session.operation_id,
+        operation_id: Some(session.operation_id),
         owner_epoch: binding.owner_epoch(),
         message_id: context.message_id.to_string(),
         binding_revision: binding.revision(),

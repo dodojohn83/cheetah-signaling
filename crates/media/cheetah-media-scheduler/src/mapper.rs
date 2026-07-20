@@ -7,7 +7,7 @@ use cheetah_signal_contracts::cheetah::media::v1::{
     MediaCommand, MediaControlPayload, MediaError, MediaEvent, MediaSessionRef, media_command,
     media_event,
 };
-use cheetah_signal_types::{MediaNodeInstanceEpoch, OwnerEpoch, Revision, TenantId};
+use cheetah_signal_types::{MediaNodeInstanceEpoch, OperationId, OwnerEpoch, Revision, TenantId};
 use std::str::FromStr;
 
 /// Maps a typed domain media command to a typed proto `MediaCommand`.
@@ -113,11 +113,14 @@ fn parse_required_id<T: FromStr<Err = cheetah_signal_types::SignalError>>(
 pub fn map_media_event_to_callback(
     event: &MediaEvent,
 ) -> Result<(TenantId, MediaNodeCallback), DomainError> {
+    if event.event_id.is_empty() {
+        return Err(DomainError::invalid_argument("event_id is required"));
+    }
     let tenant_id = parse_required_id(&event.tenant_id, "tenant_id")?;
     let media_node_id = parse_required_id(&event.media_node_id, "media_node_id")?;
     let media_session_id = parse_required_id(&event.media_session_id, "media_session_id")?;
     let media_binding_id = parse_required_id(&event.media_binding_id, "media_binding_id")?;
-    let operation_id = parse_required_id(&event.operation_id, "operation_id")?;
+    let operation_id = parse_optional_id::<OperationId>(&event.operation_id, "operation_id")?;
 
     let kind = map_event_payload(event)?;
 

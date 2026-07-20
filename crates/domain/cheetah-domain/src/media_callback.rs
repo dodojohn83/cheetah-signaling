@@ -16,8 +16,9 @@ pub struct MediaNodeCallback {
     pub media_session_id: MediaSessionId,
     /// Media binding identifier.
     pub media_binding_id: MediaBindingId,
-    /// Operation that triggered the callback.
-    pub operation_id: OperationId,
+    /// Operation that triggered the callback. Optional because older media nodes
+    /// may emit events without an operation_id.
+    pub operation_id: Option<OperationId>,
     /// Owner epoch of the device/session.
     pub owner_epoch: OwnerEpoch,
     /// Message / request identifier of the original command.
