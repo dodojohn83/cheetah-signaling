@@ -678,7 +678,6 @@ fn deregister_with_missing_credentials_disconnects_without_unauthenticated_reque
     )));
 }
 
-||||||| parent of 9016e06 (fix(review): propagate catalog auth internal errors instead of swallowing with .ok())
 #[test]
 fn catalog_authorization_propagates_internal_response_build_errors() {
     use crate::cascade::request_handler::check_catalog_authorization;
