@@ -5,6 +5,25 @@ use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+/// Extracts the protocol or resource family from an HTTP path.
+///
+/// For `/api/v1/<resource>/...` the resource segment is used so that
+/// rate limits are scoped per API family instead of all falling under the
+/// literal `api` segment. Non-API paths fall back to the first non-empty
+/// segment.
+pub(crate) fn request_protocol(path: &str) -> String {
+    let mut parts = path.split('/').filter(|s| !s.is_empty());
+    match parts.next() {
+        Some("api") => match parts.next() {
+            Some("v1") => parts.next().unwrap_or("api").to_string(),
+            Some(second) => second.to_string(),
+            None => "api".to_string(),
+        },
+        Some(first) => first.to_string(),
+        None => String::new(),
+    }
+}
+
 /// Composite key for the token bucket.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct RateKey {
@@ -138,7 +157,7 @@ pub async fn rate_limit_middleware(
         .copied()
         .map(|c| c.0.ip())
         .unwrap_or_else(|| [0, 0, 0, 0].into());
-    let protocol = req.uri().path().split('/').nth(1).unwrap_or("").to_string();
+    let protocol = request_protocol(req.uri().path());
     let node = state.config.node_id.to_string();
     let key = RateKey {
         source: ip,
