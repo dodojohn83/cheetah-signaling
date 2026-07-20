@@ -5,6 +5,7 @@
 pub mod config;
 pub mod error;
 pub mod event_consumer;
+pub(crate) mod event_consumer_support;
 pub mod grpc;
 pub mod mapper;
 pub mod model;
