@@ -95,3 +95,6 @@ pub mod cheetah {
         }
     }
 }
+
+/// Contract versioning and compatibility constants.
+pub mod version;
