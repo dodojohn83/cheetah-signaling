@@ -9,7 +9,8 @@ use crate::cascade::{
 };
 use crate::types::DomainId;
 use cheetah_gb28181_core::{
-    DigestContext, HeaderName, HeaderValue, Method, SipHeaders, SipMessage, SipUri, StatusLine,
+    DigestContext, HeaderName, HeaderValue, Method, RequestLine, SipHeaders, SipMessage, SipUri,
+    StatusLine,
 };
 use secrecy::SecretString;
 use std::sync::{
@@ -675,6 +676,51 @@ fn deregister_with_missing_credentials_disconnects_without_unauthenticated_reque
         o,
         CascadeOutput::EmitEvent(crate::events::Gb28181Event::CascadePlatformDisconnected { .. })
     )));
+}
+
+||||||| parent of 9016e06 (fix(review): propagate catalog auth internal errors instead of swallowing with .ok())
+#[test]
+fn catalog_authorization_propagates_internal_response_build_errors() {
+    use crate::cascade::request_handler::check_catalog_authorization;
+
+    let cfg = config()
+        .with_catalog_inbound_digest(
+            "inbound",
+            b"this-secret-is-much-longer-than-32-bytes-for-inbound-digest-tests",
+        )
+        .unwrap();
+    let mut cascade = Gb28181Cascade::new(cfg, password_provider()).unwrap();
+
+    let line = RequestLine::new(Method::Message, local_uri());
+    let mut headers = SipHeaders::new();
+    headers.append(
+        HeaderName::Via,
+        HeaderValue::via("UDP", "upstream.example.com", 5060, "z9hG4bK-abc").unwrap(),
+    );
+    headers.append(
+        HeaderName::From,
+        HeaderValue::new(format!("<{}>", upstream_uri().encode())),
+    );
+    headers.append(HeaderName::To, HeaderValue::to_uri(&local_uri()));
+    headers.append(HeaderName::CallId, HeaderValue::new("call-1"));
+    headers.append(HeaderName::CSeq, HeaderValue::new("1 MESSAGE"));
+    headers.append(HeaderName::ContentLength, HeaderValue::new("0"));
+
+    // A SipMessage::Response as `msg` forces `build_unauthorized_response` to
+    // fail because it can only copy headers from a request. The old `.ok()`
+    // swallow would turn that failure into `None`, making the catalog look
+    // authenticated.
+    let response = SipMessage::Response {
+        line: StatusLine::new(200, "OK"),
+        headers: SipHeaders::new(),
+        body: Vec::new(),
+    };
+
+    let result = check_catalog_authorization(&mut cascade, &response, &line, &headers, 0, "tag-1");
+    assert!(
+        result.is_err(),
+        "internal catalog auth error must be propagated, not swallowed; got {result:?}"
+    );
 }
 
 mod bridge;

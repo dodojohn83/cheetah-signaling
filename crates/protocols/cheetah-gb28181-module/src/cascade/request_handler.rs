@@ -4,6 +4,7 @@ use cheetah_gb28181_core::{
     DigestError, DigestResponse, HeaderName, HeaderValue, Method, RequestLine, SipHeaders,
     SipMessage, StatusLine,
 };
+use tracing::warn;
 
 use super::catalog::{
     CatalogQuery, build_bad_request_response, build_catalog_pages, build_ok_response,
@@ -68,10 +69,21 @@ pub(super) fn handle_request<P: CascadeCredentialProvider>(
         ))];
     }
 
-    if let Some(response) =
-        check_catalog_authorization(cascade, &msg, line, headers, now, &response_tag)
-    {
-        return vec![CascadeOutput::SendResponse(response)];
+    match check_catalog_authorization(cascade, &msg, line, headers, now, &response_tag) {
+        Ok(Some(response)) => {
+            return vec![CascadeOutput::SendResponse(response)];
+        }
+        Err(e) => {
+            warn!(error = %e, "catalog authorization internal error");
+            return vec![CascadeOutput::SendResponse(build_response(
+                &msg,
+                500,
+                "Server Internal Error",
+                &response_tag,
+                Vec::new(),
+            ))];
+        }
+        Ok(None) => {}
     }
 
     let Some(content_type) = headers.get(&HeaderName::ContentType) else {
@@ -149,15 +161,17 @@ pub(super) fn handle_request<P: CascadeCredentialProvider>(
 /// challenged or rejected based on SIP Digest authentication. Returns `None` when
 /// authentication is disabled or the request carries a valid `Authorization`
 /// header.
-fn check_catalog_authorization<P: CascadeCredentialProvider>(
+pub(super) fn check_catalog_authorization<P: CascadeCredentialProvider>(
     cascade: &mut Gb28181Cascade<P>,
     msg: &SipMessage,
     line: &RequestLine,
     headers: &SipHeaders,
     now: u64,
     response_tag: &str,
-) -> Option<SipMessage> {
-    let auth = cascade.inbound_auth.as_ref()?;
+) -> Result<Option<SipMessage>, crate::cascade::CascadeError> {
+    let Some(auth) = cascade.inbound_auth.as_ref() else {
+        return Ok(None);
+    };
 
     let credential_ref = cascade
         .config
@@ -165,13 +179,13 @@ fn check_catalog_authorization<P: CascadeCredentialProvider>(
         .as_deref()
         .unwrap_or(&cascade.config.credential_ref);
     let Some(password) = cascade.provider.password_for(credential_ref) else {
-        return Some(build_response(
+        return Ok(Some(build_response(
             msg,
             403,
             "Forbidden",
             response_tag,
             Vec::new(),
-        ));
+        )));
     };
 
     let mut replay = auth.replay.lock().unwrap_or_else(|e| e.into_inner());
@@ -185,7 +199,7 @@ fn check_catalog_authorization<P: CascadeCredentialProvider>(
                     .validate(&response, &line.method, &uri, &password, &mut replay, now)
                     .is_ok()
                 {
-                    return None;
+                    return Ok(None);
                 }
             }
             Err(DigestError::Malformed(_)) | Err(DigestError::InvalidQop) => {
@@ -197,8 +211,9 @@ fn check_catalog_authorization<P: CascadeCredentialProvider>(
         }
     }
 
-    let challenge = auth.digest.generate_challenge(now).ok()?;
-    build_unauthorized_response(msg, response_tag, &challenge).ok()
+    let challenge = auth.digest.generate_challenge(now)?;
+    let response = build_unauthorized_response(msg, response_tag, &challenge)?;
+    Ok(Some(response))
 }
 
 fn build_unauthorized_response(
