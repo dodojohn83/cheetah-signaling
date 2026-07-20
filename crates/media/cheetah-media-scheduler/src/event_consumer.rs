@@ -20,7 +20,8 @@ use cheetah_signal_types::{
     RequestContext, TenantId,
 };
 use cheetah_storage_api::Storage;
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::time::sleep;
@@ -66,8 +67,7 @@ impl ReconciliationHandler for NoopReconciliationHandler {
 /// Tracks the last processed sequence for each media node.
 #[derive(Clone, Debug, Default)]
 struct CursorState {
-    sequences: Arc<Mutex<std::collections::BTreeMap<NodeId, u64>>>,
-    running: Arc<Mutex<BTreeSet<NodeId>>>,
+    sequences: Arc<Mutex<BTreeMap<NodeId, u64>>>,
 }
 
 impl CursorState {
@@ -86,19 +86,52 @@ impl CursorState {
             map.insert(node_id, sequence);
         }
     }
+}
 
-    fn mark_running(&self, node_id: NodeId) -> bool {
-        self.running
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .insert(node_id)
+#[derive(Clone, Debug)]
+struct Subscription {
+    node: MediaNode,
+    token: CancellationToken,
+    generation: u64,
+}
+
+#[derive(Clone, Debug, Default)]
+struct SubscriptionState {
+    inner: Arc<Mutex<BTreeMap<NodeId, Subscription>>>,
+    next_generation: Arc<AtomicU64>,
+}
+
+impl SubscriptionState {
+    fn next_generation(&self) -> u64 {
+        self.next_generation.fetch_add(1, Ordering::SeqCst)
     }
 
-    fn remove_running(&self, node_id: NodeId) {
-        self.running
+    fn insert(&self, node_id: NodeId, subscription: Subscription) {
+        self.inner
             .lock()
             .unwrap_or_else(|p| p.into_inner())
-            .remove(&node_id);
+            .insert(node_id, subscription);
+    }
+
+    fn remove_if_generation(&self, node_id: NodeId, generation: u64) {
+        let mut subs = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        if subs
+            .get(&node_id)
+            .is_some_and(|s| s.generation == generation)
+        {
+            subs.remove(&node_id);
+        }
+    }
+
+    fn snapshot(&self) -> BTreeMap<NodeId, Subscription> {
+        self.inner.lock().unwrap_or_else(|p| p.into_inner()).clone()
+    }
+
+    fn cancel(&self, node_id: NodeId) {
+        let mut subs = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(sub) = subs.remove(&node_id) {
+            sub.token.cancel();
+        }
     }
 }
 
@@ -115,6 +148,7 @@ pub struct MediaEventConsumer {
     reconciler: Arc<dyn ReconciliationHandler>,
     cursors: CursorState,
     permits: Arc<tokio::sync::Semaphore>,
+    subscriptions: SubscriptionState,
 }
 
 impl std::fmt::Debug for MediaEventConsumer {
@@ -153,6 +187,7 @@ impl MediaEventConsumer {
             reconciler,
             cursors: CursorState::default(),
             permits,
+            subscriptions: SubscriptionState::default(),
         }
     }
 
@@ -166,28 +201,75 @@ impl MediaEventConsumer {
             }
 
             let nodes = self.node_registry.list_active(self.clock.as_ref()).await;
+            let active: BTreeMap<NodeId, MediaNode> =
+                nodes.into_iter().map(|n| (n.node_id, n)).collect();
+            Arc::clone(&self)
+                .reconcile_subscriptions(active, &cancel)
+                .await?;
+        }
+        Ok(())
+    }
 
-            for node in nodes {
-                if !self.cursors.mark_running(node.node_id) {
-                    continue;
-                }
+    async fn reconcile_subscriptions(
+        self: Arc<Self>,
+        active: BTreeMap<NodeId, MediaNode>,
+        cancel: &CancellationToken,
+    ) -> Result<(), SchedulerError> {
+        let current = self.subscriptions.snapshot();
+        let mut to_stop: Vec<NodeId> = Vec::new();
+        let mut to_start: Vec<MediaNode> = Vec::new();
 
-                let permit = self.permits.clone().acquire_owned().await.map_err(|_| {
-                    SchedulerError::Backend("subscription semaphore closed".to_string())
-                })?;
-
-                let self_clone = Arc::clone(&self);
-                let child = cancel.child_token();
-                tokio::spawn(async move {
-                    let _permit = permit;
-                    let node_id = node.node_id;
-                    if let Err(e) = self_clone.subscribe_node(node, child).await {
-                        tracing::warn!(%node_id, "media event subscription ended: {e}");
-                    }
-                    self_clone.cursors.remove_running(node_id);
-                });
+        for (id, sub) in &current {
+            match active.get(id) {
+                Some(node) if node_eq(node, &sub.node) => {}
+                _ => to_stop.push(*id),
             }
         }
+
+        for (id, node) in active {
+            if !current.get(&id).is_some_and(|s| node_eq(&node, &s.node)) {
+                to_start.push(node);
+            }
+        }
+
+        for id in to_stop {
+            self.subscriptions.cancel(id);
+        }
+
+        for node in to_start {
+            let permit = self.permits.clone().acquire_owned().await.map_err(|_| {
+                SchedulerError::Backend("subscription semaphore closed".to_string())
+            })?;
+
+            let generation = self.subscriptions.next_generation();
+            let token = cancel.child_token();
+            let self_clone = Arc::clone(&self);
+            let node_for_task = node.clone();
+            let task_token = token.clone();
+
+            self.subscriptions.insert(
+                node.node_id,
+                Subscription {
+                    node: node.clone(),
+                    token: token.clone(),
+                    generation,
+                },
+            );
+
+            tokio::spawn(async move {
+                let _permit = permit;
+                if let Err(e) = self_clone
+                    .subscribe_node(node_for_task, task_token, generation)
+                    .await
+                {
+                    tracing::warn!(node_id = %node.node_id, "media event subscription ended: {e}");
+                }
+                self_clone
+                    .subscriptions
+                    .remove_if_generation(node.node_id, generation);
+            });
+        }
+
         Ok(())
     }
 
@@ -195,11 +277,12 @@ impl MediaEventConsumer {
         &self,
         node: MediaNode,
         cancel: CancellationToken,
+        generation: u64,
     ) -> Result<(), SchedulerError> {
         loop {
             tokio::select! {
                 _ = cancel.cancelled() => return Ok(()),
-                result = self.consume_node(&node, cancel.child_token()) => {
+                result = self.consume_node(&node, cancel.child_token(), generation) => {
                     if let Err(e) = result {
                         tracing::warn!(node_id = %node.node_id, "media event stream error: {e}");
                     }
@@ -217,7 +300,10 @@ impl MediaEventConsumer {
         &self,
         node: &MediaNode,
         cancel: CancellationToken,
+        _generation: u64,
     ) -> Result<(), SchedulerError> {
+        self.load_cursor(node).await?;
+
         let cursor = self.cursors.last_sequence(node.node_id).to_string();
         let request = build_subscribe_request(node, &cursor, &self.config, self.source_node_id);
         let endpoint = &node.control_endpoint;
@@ -242,6 +328,28 @@ impl MediaEventConsumer {
                 },
             }
         }
+    }
+
+    async fn load_cursor(&self, node: &MediaNode) -> Result<(), SchedulerError> {
+        let mut uow = self
+            .storage
+            .begin()
+            .await
+            .map_err(|e| SchedulerError::Backend(format!("{e}")))?;
+        let record = uow
+            .processed_message_repository()
+            .find(TenantId::default(), message_id_for_node(node.node_id))
+            .await?;
+        uow.commit().await?;
+
+        if let Some(sequence) = record
+            .and_then(|r| r.result_payload)
+            .and_then(|p| parse_cursor_payload(&p))
+        {
+            self.cursors.update_sequence(node.node_id, sequence);
+        }
+
+        Ok(())
     }
 
     async fn process_event(
@@ -278,8 +386,6 @@ impl MediaEventConsumer {
             return Ok(());
         }
 
-        self.check_sequence_gap(node, tenant_id, sequence).await;
-
         let message_id = message_id_for_event(tenant_id, &event_id);
         let mut uow = self
             .storage
@@ -308,15 +414,18 @@ impl MediaEventConsumer {
         if existing.is_some() {
             self.update_cursor(&mut *uow, node, sequence).await?;
             uow.commit().await?;
+            self.detect_sequence_gap(node, tenant_id, sequence).await;
+            self.cursors.update_sequence(node.node_id, sequence);
             return Ok(());
         }
 
         let context = self.build_request_context(tenant_id, &event);
-        match self
+        let result = self
             .event_handler
             .handle_media_event(&context, &mut *uow, callback)
-            .await
-        {
+            .await;
+
+        match result {
             Ok(()) => {
                 let payload = format!("{{\"sequence\":{sequence},\"status\":\"completed\"}}");
                 uow.processed_message_repository()
@@ -330,6 +439,9 @@ impl MediaEventConsumer {
                     .await?;
                 self.update_cursor(&mut *uow, node, sequence).await?;
                 uow.commit().await?;
+                self.detect_sequence_gap(node, tenant_id, sequence).await;
+                self.cursors.update_sequence(node.node_id, sequence);
+                Ok(())
             }
             Err(e) => {
                 let payload = format!("{{\"sequence\":{sequence},\"error\":\"{e}\"}}");
@@ -344,21 +456,20 @@ impl MediaEventConsumer {
                     .await?;
                 self.update_cursor(&mut *uow, node, sequence).await?;
                 uow.commit().await?;
-                return Err(SchedulerError::Domain(e));
+                self.detect_sequence_gap(node, tenant_id, sequence).await;
+                self.cursors.update_sequence(node.node_id, sequence);
+                Err(SchedulerError::Domain(e))
             }
         }
-
-        Ok(())
     }
 
-    async fn check_sequence_gap(&self, node: &MediaNode, tenant_id: TenantId, sequence: u64) {
+    async fn detect_sequence_gap(&self, node: &MediaNode, tenant_id: TenantId, sequence: u64) {
         let last = self.cursors.last_sequence(node.node_id);
-        if last != 0 && sequence != last.saturating_add(1) {
+        if last != 0 && sequence > last.saturating_add(1) {
             self.reconciler
                 .reconcile(node.node_id, tenant_id, last.saturating_add(1), sequence)
                 .await;
         }
-        self.cursors.update_sequence(node.node_id, sequence);
     }
 
     async fn update_cursor(
@@ -432,6 +543,12 @@ impl MediaEventConsumer {
     }
 }
 
+fn node_eq(left: &MediaNode, right: &MediaNode) -> bool {
+    left.node_id == right.node_id
+        && left.instance_epoch == right.instance_epoch
+        && left.control_endpoint == right.control_endpoint
+}
+
 fn build_subscribe_request(
     node: &MediaNode,
     cursor: &str,
@@ -480,6 +597,17 @@ fn message_id_for_node(node_id: NodeId) -> MessageId {
     MessageId::from_uuid(Uuid::new_v5(&Uuid::NAMESPACE_OID, name.as_bytes()))
 }
 
+fn parse_cursor_payload(payload: &str) -> Option<u64> {
+    #[derive(serde::Deserialize)]
+    struct CursorPayload {
+        sequence: u64,
+    }
+
+    serde_json::from_str::<CursorPayload>(payload)
+        .ok()
+        .map(|cursor| cursor.sequence)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -516,5 +644,11 @@ mod tests {
         assert_eq!(ctx.target_media_node_instance_epoch, 5);
         assert_eq!(ctx.contract_version, 2);
         assert_eq!(request.resume_cursor, "cursor-1");
+    }
+
+    #[test]
+    fn parse_cursor_payload_extracts_sequence() {
+        assert_eq!(parse_cursor_payload("{\"sequence\":42}"), Some(42));
+        assert_eq!(parse_cursor_payload("not-json"), None);
     }
 }
