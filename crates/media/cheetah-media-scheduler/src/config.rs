@@ -28,6 +28,8 @@ pub struct MediaRegistryConfig {
     pub max_reported_load_percent: u64,
     /// Maximum session count a heartbeat may report.
     pub max_reported_session_count: u64,
+    /// Duration a reservation remains valid without being activated.
+    pub reservation_ttl_ms: u64,
 }
 
 impl Default for MediaRegistryConfig {
@@ -52,6 +54,7 @@ impl MediaRegistryConfig {
             endpoint_dns_lookup_timeout_ms: 1_000,
             max_reported_load_percent: 100,
             max_reported_session_count: 100_000,
+            reservation_ttl_ms: 10_000,
         }
     }
 

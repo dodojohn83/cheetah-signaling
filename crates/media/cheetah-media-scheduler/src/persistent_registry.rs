@@ -6,7 +6,7 @@ use crate::model::{MediaNode, NodeStatus};
 use crate::registry::{MediaNodeRegistry, NodeEntry, is_active, lease_until, to_media_node};
 use cheetah_signal_types::{Clock, MAX_PAGE_SIZE, MediaBindingId, NodeId, PageRequest, TenantId};
 use cheetah_storage_api::MediaNodeRepository;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 
@@ -58,7 +58,7 @@ impl PersistentMediaNodeRegistry {
                 let entry = NodeEntry {
                     node: node.clone(),
                     reported_session_count: node.session_count,
-                    reserved: BTreeSet::new(),
+                    reserved: BTreeMap::new(),
                     instance_id: node.instance_id.clone(),
                 };
                 nodes.insert(node.node_id, entry);
@@ -109,7 +109,7 @@ impl MediaNodeRegistry for PersistentMediaNodeRegistry {
                 updated.last_heartbeat_at = Some(now);
                 updated.lease_until = lease;
                 updated.revision = existing.node.revision;
-                (updated, 0, BTreeSet::new())
+                (updated, 0, BTreeMap::new())
             }
         } else {
             let mut updated = node;
@@ -120,7 +120,7 @@ impl MediaNodeRegistry for PersistentMediaNodeRegistry {
             updated.last_heartbeat_at = Some(now);
             updated.lease_until = lease;
             updated.revision = 0;
-            (updated, 0, BTreeSet::new())
+            (updated, 0, BTreeMap::new())
         };
 
         updated.recalc_health();
@@ -272,7 +272,7 @@ impl MediaNodeRegistry for PersistentMediaNodeRegistry {
                 let entry = NodeEntry {
                     node: node.clone(),
                     reported_session_count: node.session_count,
-                    reserved: BTreeSet::new(),
+                    reserved: BTreeMap::new(),
                     instance_id: node.instance_id.clone(),
                 };
                 Some(to_media_node(&entry, now, &self.config))
@@ -298,7 +298,7 @@ impl MediaNodeRegistry for PersistentMediaNodeRegistry {
                             let entry = NodeEntry {
                                 node: node.clone(),
                                 reported_session_count: node.session_count,
-                                reserved: BTreeSet::new(),
+                                reserved: BTreeMap::new(),
                                 instance_id: node.instance_id.clone(),
                             };
                             nodes.insert(node.node_id, entry);
@@ -333,14 +333,19 @@ impl MediaNodeRegistry for PersistentMediaNodeRegistry {
         let entry = nodes
             .get_mut(&node_id)
             .ok_or_else(|| SchedulerError::NodeNotFound(node_id.to_string()))?;
-        let total = entry
-            .reported_session_count
-            .saturating_add(entry.reserved.len() as u64);
+        let now = clock.now_wall();
+        let ttl = i64::try_from(self.config.reservation_ttl_ms).unwrap_or(i64::MAX);
+        let deadline = now
+            .checked_add(cheetah_signal_types::DurationMs::from_millis(ttl))
+            .ok_or_else(|| {
+                SchedulerError::InvalidArgument("reservation deadline overflow".to_string())
+            })?;
+        let active = entry.reserved.values().filter(|d| **d > now).count() as u64;
+        let total = entry.reported_session_count.saturating_add(active);
         if total >= entry.node.capacity.max_sessions.max(1) {
             return Err(SchedulerError::CapacityExhausted(node_id.to_string()));
         }
-        entry.reserved.insert((tenant_id, binding_id));
-        let now = clock.now_wall();
+        entry.reserved.insert((tenant_id, binding_id), deadline);
         Ok(to_media_node(entry, now, &self.config))
     }
 
