@@ -367,6 +367,7 @@ impl MediaControlClient {
                 MediaClientError::Grpc(Status::internal("connection pool lock poisoned"))
             })?;
             if let Some(entry) = pool.get(key) {
+                entry.touch();
                 return Ok(Arc::clone(entry));
             }
         }
