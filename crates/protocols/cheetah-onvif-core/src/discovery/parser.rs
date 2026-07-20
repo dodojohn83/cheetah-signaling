@@ -83,15 +83,24 @@ pub fn parse_probe_matches(
                 } else if name == WSA_ENDPOINT_REFERENCE {
                     if let Some(ref mut b) = current {
                         let epr = epr_text.take().unwrap_or_else(|| text.trim().to_string());
-                        b.set_endpoint_reference(&epr)?;
+                        b.set_endpoint_reference(&epr);
                     }
                     in_epr = false;
                 } else if name == WSD_PROBE_MATCH {
                     if let Some(builder) = current.take() {
-                        if matches.len() >= limits.max_matches {
-                            return Err(OnvifError::LimitExceeded("max probe matches".to_string()));
+                        match builder.build(discovered_at) {
+                            Ok(m) => {
+                                if matches.len() >= limits.max_matches {
+                                    return Err(OnvifError::LimitExceeded(
+                                        "max probe matches".to_string(),
+                                    ));
+                                }
+                                matches.push(m);
+                            }
+                            Err(e) => {
+                                tracing::warn!("skipping malformed ProbeMatch: {e}");
+                            }
                         }
-                        matches.push(builder.build(discovered_at)?);
                     }
                     in_epr = false;
                     epr_text = None;
@@ -173,7 +182,7 @@ pub fn parse_hello_bye(
                     epr_text = Some(text.trim().to_string());
                 } else if name == WSA_ENDPOINT_REFERENCE {
                     let epr = epr_text.take().unwrap_or_else(|| text.trim().to_string());
-                    builder.set_endpoint_reference(&epr)?;
+                    builder.set_endpoint_reference(&epr);
                     in_epr = false;
                 } else {
                     builder.apply(&name, &text);
@@ -259,17 +268,24 @@ pub fn parse_resolve_matches(
                 } else if name == WSA_ENDPOINT_REFERENCE {
                     if let Some(ref mut b) = current {
                         let epr = epr_text.take().unwrap_or_else(|| text.trim().to_string());
-                        b.set_endpoint_reference(&epr)?;
+                        b.set_endpoint_reference(&epr);
                     }
                     in_epr = false;
                 } else if name == WSD_RESOLVE_MATCH {
                     if let Some(builder) = current.take() {
-                        if matches.len() >= limits.max_matches {
-                            return Err(OnvifError::LimitExceeded(
-                                "max resolve matches".to_string(),
-                            ));
+                        match builder.build(discovered_at) {
+                            Ok(m) => {
+                                if matches.len() >= limits.max_matches {
+                                    return Err(OnvifError::LimitExceeded(
+                                        "max resolve matches".to_string(),
+                                    ));
+                                }
+                                matches.push(m);
+                            }
+                            Err(e) => {
+                                tracing::warn!("skipping malformed ResolveMatch: {e}");
+                            }
                         }
-                        matches.push(builder.build(discovered_at)?);
                     }
                     in_epr = false;
                     epr_text = None;
@@ -304,27 +320,40 @@ struct ProbeMatchBuilder {
     scopes: Option<String>,
     x_addrs: Option<String>,
     metadata_version: Option<MetadataVersion>,
+    error: Option<OnvifError>,
 }
 
 impl ProbeMatchBuilder {
-    fn set_endpoint_reference(&mut self, epr: &str) -> OnvifResult<()> {
-        self.endpoint_reference = Some(validate_epr(epr)?);
-        Ok(())
+    fn set_endpoint_reference(&mut self, epr: &str) {
+        if self.error.is_some() {
+            return;
+        }
+        match validate_epr(epr) {
+            Ok(clean) => self.endpoint_reference = Some(clean),
+            Err(e) => self.error = Some(e),
+        }
     }
 
     fn apply(&mut self, name: &str, text: &str) {
+        if self.error.is_some() {
+            return;
+        }
         match name {
             WSD_TYPES => self.types = text.split_whitespace().map(|s| s.to_string()).collect(),
             WSD_SCOPES => self.scopes = Some(text.to_string()),
             WSD_X_ADDRS => self.x_addrs = Some(text.to_string()),
-            WSD_METADATA_VERSION => {
-                self.metadata_version = text.trim().parse().ok();
-            }
+            WSD_METADATA_VERSION => match parse_optional_metadata_version(text) {
+                Ok(v) => self.metadata_version = v,
+                Err(e) => self.error = Some(e),
+            },
             _ => {}
         }
     }
 
     fn build(self, discovered_at: u64) -> OnvifResult<ProbeMatch> {
+        if let Some(e) = self.error {
+            return Err(e);
+        }
         let epr = validate_epr(&self.endpoint_reference.unwrap_or_default())?;
         Ok(ProbeMatch {
             endpoint_reference: super::types::EndpointReference(epr),
@@ -347,27 +376,40 @@ struct HelloByeBuilder {
     scopes: Option<String>,
     x_addrs: Option<String>,
     metadata_version: Option<MetadataVersion>,
+    error: Option<OnvifError>,
 }
 
 impl HelloByeBuilder {
-    fn set_endpoint_reference(&mut self, epr: &str) -> OnvifResult<()> {
-        self.endpoint_reference = Some(validate_epr(epr)?);
-        Ok(())
+    fn set_endpoint_reference(&mut self, epr: &str) {
+        if self.error.is_some() {
+            return;
+        }
+        match validate_epr(epr) {
+            Ok(clean) => self.endpoint_reference = Some(clean),
+            Err(e) => self.error = Some(e),
+        }
     }
 
     fn apply(&mut self, name: &str, text: &str) {
+        if self.error.is_some() {
+            return;
+        }
         match name {
             WSD_TYPES => self.types = text.split_whitespace().map(|s| s.to_string()).collect(),
             WSD_SCOPES => self.scopes = Some(text.to_string()),
             WSD_X_ADDRS => self.x_addrs = Some(text.to_string()),
-            WSD_METADATA_VERSION => {
-                self.metadata_version = text.trim().parse().ok();
-            }
+            WSD_METADATA_VERSION => match parse_optional_metadata_version(text) {
+                Ok(v) => self.metadata_version = v,
+                Err(e) => self.error = Some(e),
+            },
             _ => {}
         }
     }
 
     fn build_hello(self, discovered_at: u64) -> OnvifResult<Hello> {
+        if let Some(e) = self.error {
+            return Err(e);
+        }
         let epr = validate_epr(&self.endpoint_reference.unwrap_or_default())?;
         Ok(Hello {
             endpoint_reference: super::types::EndpointReference(epr),
@@ -383,6 +425,9 @@ impl HelloByeBuilder {
     }
 
     fn build_bye(self, discovered_at: u64) -> OnvifResult<Bye> {
+        if let Some(e) = self.error {
+            return Err(e);
+        }
         let epr = validate_epr(&self.endpoint_reference.unwrap_or_default())?;
         Ok(Bye {
             endpoint_reference: super::types::EndpointReference(epr),
@@ -396,25 +441,38 @@ struct ResolveMatchBuilder {
     endpoint_reference: Option<String>,
     x_addrs: Option<String>,
     metadata_version: Option<MetadataVersion>,
+    error: Option<OnvifError>,
 }
 
 impl ResolveMatchBuilder {
-    fn set_endpoint_reference(&mut self, epr: &str) -> OnvifResult<()> {
-        self.endpoint_reference = Some(validate_epr(epr)?);
-        Ok(())
+    fn set_endpoint_reference(&mut self, epr: &str) {
+        if self.error.is_some() {
+            return;
+        }
+        match validate_epr(epr) {
+            Ok(clean) => self.endpoint_reference = Some(clean),
+            Err(e) => self.error = Some(e),
+        }
     }
 
     fn apply(&mut self, name: &str, text: &str) {
+        if self.error.is_some() {
+            return;
+        }
         match name {
             WSD_X_ADDRS => self.x_addrs = Some(text.to_string()),
-            WSD_METADATA_VERSION => {
-                self.metadata_version = text.trim().parse().ok();
-            }
+            WSD_METADATA_VERSION => match parse_optional_metadata_version(text) {
+                Ok(v) => self.metadata_version = v,
+                Err(e) => self.error = Some(e),
+            },
             _ => {}
         }
     }
 
     fn build(self, discovered_at: u64) -> OnvifResult<ResolveMatch> {
+        if let Some(e) = self.error {
+            return Err(e);
+        }
         let epr = validate_epr(&self.endpoint_reference.unwrap_or_default())?;
         Ok(ResolveMatch {
             endpoint_reference: super::types::EndpointReference(epr),
@@ -423,4 +481,14 @@ impl ResolveMatchBuilder {
             discovered_at,
         })
     }
+}
+
+fn parse_optional_metadata_version(text: &str) -> OnvifResult<Option<MetadataVersion>> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Ok(None);
+    }
+    text.parse::<MetadataVersion>().map(Some).map_err(|_| {
+        OnvifError::InvalidField(format!("MetadataVersion is not a valid integer: {text}"))
+    })
 }
