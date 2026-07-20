@@ -11,7 +11,7 @@ use cheetah_signal_contracts::cheetah::common::v1::{
     RegisterMediaNodeRequest, RegisterMediaNodeResponse,
 };
 use cheetah_signal_contracts::cheetah::media::v1 as media_proto;
-use cheetah_signal_types::{Clock, IdGenerator, NodeId, is_internal_ip};
+use cheetah_signal_types::{Clock, IdGenerator, NodeId, UtcTimestamp, is_internal_ip};
 use std::str::FromStr;
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
@@ -126,8 +126,14 @@ impl MediaClusterRegistry for MediaClusterRegistryService {
             .await
             .map_err(map_scheduler_error)?;
 
+        let now = self.clock.now_wall();
         Ok(Response::new(RegisterMediaNodeResponse {
-            node: Some(to_media_node_info(node)),
+            node: Some(to_media_node_info(node.clone())),
+            instance_id: node.instance_id,
+            lease_ttl_ms: self.config.default_lease_ttl_ms,
+            heartbeat_interval_ms: self.config.heartbeat_interval_ms,
+            cluster_time: Some(now.to_prost_timestamp()),
+            accepted_contract_version: u64::from(node.contract_version),
         }))
     }
 
@@ -143,6 +149,7 @@ impl MediaClusterRegistry for MediaClusterRegistryService {
         check_identity(&identity, &self.config, &heartbeat.node_id)?;
 
         let node_id = parse_node_id(&heartbeat.node_id)?;
+        let now = self.clock.now_wall();
         let node = self
             .registry
             .heartbeat(
@@ -155,7 +162,13 @@ impl MediaClusterRegistry for MediaClusterRegistryService {
             .map_err(map_scheduler_error)?;
 
         Ok(Response::new(HeartbeatMediaNodeResponse {
-            node: Some(to_media_node_info(node)),
+            node: Some(to_media_node_info(node.clone())),
+            lease_ttl_ms: node
+                .lease_until
+                .map_or(0, |until| remaining_millis(until, now)),
+            heartbeat_interval_ms: self.config.heartbeat_interval_ms,
+            cluster_time: Some(now.to_prost_timestamp()),
+            accepted_contract_version: u64::from(node.contract_version),
         }))
     }
 
@@ -204,6 +217,13 @@ impl MediaClusterRegistry for MediaClusterRegistryService {
             node: Some(to_media_node_info(node)),
         }))
     }
+}
+
+/// Returns the remaining milliseconds between `until` and `now`, saturating at zero.
+fn remaining_millis(until: UtcTimestamp, now: UtcTimestamp) -> u64 {
+    let duration = until.as_offset() - now.as_offset();
+    let millis = duration.whole_milliseconds();
+    if millis <= 0 { 0 } else { millis as u64 }
 }
 
 fn parse_node_id(s: &str) -> Result<NodeId, Status> {
@@ -645,8 +665,8 @@ mod tests {
         });
 
         let response = service.register_media_node(request).await?;
-        let info = response
-            .into_inner()
+        let inner = response.into_inner();
+        let info = inner
             .node
             .ok_or_else(|| tonic::Status::internal("missing node"))?;
 
@@ -655,6 +675,14 @@ mod tests {
             info.instance_id, "existing-instance",
             "empty instance_id must not inherit a stale instance_id from a previous registration"
         );
+        assert_eq!(inner.lease_ttl_ms, test_config().default_lease_ttl_ms);
+        assert_eq!(
+            inner.heartbeat_interval_ms,
+            test_config().heartbeat_interval_ms
+        );
+        assert!(!inner.instance_id.is_empty());
+        assert!(inner.cluster_time.is_some());
+        assert_eq!(inner.accepted_contract_version, 1);
 
         let registered = registry
             .lock_node()
