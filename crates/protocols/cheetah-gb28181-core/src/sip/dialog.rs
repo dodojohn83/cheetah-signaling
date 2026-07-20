@@ -103,7 +103,7 @@ impl Dialog {
 
         // UAC route set: Record-Route values from the response, reversed so that
         // the first hop for future requests is at the front of the vector.
-        let route_set = extract_route_set(final_response, true);
+        let route_set = extract_route_set(final_response, true)?;
 
         Ok(Self {
             id: DialogId {
@@ -145,7 +145,7 @@ impl Dialog {
             })?;
 
         // UAS route set: Record-Route values from the request in received order.
-        let route_set = extract_route_set(invite, false);
+        let route_set = extract_route_set(invite, false)?;
 
         Ok(Self {
             id: DialogId {
@@ -343,19 +343,57 @@ fn extract_tag(value: &str) -> Option<&str> {
     Some(tag.trim_matches('"'))
 }
 
-fn extract_route_set(msg: &SipMessage, reverse: bool) -> Vec<SipUri> {
+fn extract_route_set(msg: &SipMessage, reverse: bool) -> Result<Vec<SipUri>, SipError> {
     let mut uris = Vec::new();
     for value in msg.headers().get_all(&HeaderName::RecordRoute) {
-        for token in value.as_str().split(',') {
-            if let Some(uri) = extract_first_uri(token.trim()) {
-                uris.push(uri);
+        for token in split_route_entries(value.as_str()) {
+            let token = token.trim();
+            if token.is_empty() {
+                continue;
             }
+            let Some(uri) = extract_first_uri(token) else {
+                return Err(SipError::new(
+                    SipErrorKind::InvalidHeader,
+                    None,
+                    "malformed Record-Route URI",
+                ));
+            };
+            uris.push(uri);
         }
     }
     if reverse {
         uris.reverse();
     }
-    uris
+    Ok(uris)
+}
+
+/// Splits a comma-separated `Record-Route` header value without breaking on
+/// commas that appear inside quoted display names or angle-bracketed URIs.
+fn split_route_entries(value: &str) -> Vec<&str> {
+    let mut entries = Vec::new();
+    let mut start = 0;
+    let mut in_quotes = false;
+    let mut in_angle = false;
+    let mut chars = value.char_indices();
+    while let Some((i, c)) = chars.next() {
+        match c {
+            // Inside a quoted string, treat backslash as an escape for the
+            // next character so escaped quotes do not toggle quote state.
+            '\\' if in_quotes => {
+                chars.next();
+            }
+            '"' if !in_angle => in_quotes = !in_quotes,
+            '<' if !in_quotes => in_angle = true,
+            '>' if !in_quotes && in_angle => in_angle = false,
+            ',' if !in_quotes && !in_angle => {
+                entries.push(&value[start..i]);
+                start = i + c.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    entries.push(&value[start..]);
+    entries
 }
 
 fn extract_first_uri(value: &str) -> Option<SipUri> {
@@ -369,11 +407,12 @@ fn extract_first_uri(value: &str) -> Option<SipUri> {
         return SipUri::parse(inner).ok();
     }
 
-    // Tokenize by commas and use the first URI-like token.
-    for token in value.split(',') {
+    // Bare addr-spec (possibly in a comma-separated list): split on commas
+    // that are not inside quoted display names or angle brackets, then parse
+    // the first URI-like token, stopping at the first unquoted ';'.
+    for token in split_route_entries(value) {
         let token = token.trim();
         if token.starts_with("sip:") || token.starts_with("sips:") {
-            // Stop at the first header parameter (after an unquoted ';').
             let mut depth = 0_i32;
             let mut end = token.len();
             for (i, c) in token.char_indices() {
@@ -389,5 +428,6 @@ fn extract_first_uri(value: &str) -> Option<SipUri> {
             return SipUri::parse(&token[..end]).ok();
         }
     }
+
     None
 }
