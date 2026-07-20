@@ -300,6 +300,9 @@ impl MediaService {
                 }
                 MediaPurpose::Playback => {
                     let now = self.clock.now_wall();
+                    let start_time = session.playback_start_time().unwrap_or(now);
+                    let end_time = session.playback_end_time().unwrap_or(now);
+                    let scale = session.playback_scale().unwrap_or(1.0);
                     self.media_port
                         .reserve_playback(
                             tenant_id,
@@ -307,9 +310,9 @@ impl MediaService {
                             session.channel_id(),
                             session.media_session_id(),
                             media_binding_id,
-                            now,
-                            now,
-                            1.0,
+                            start_time,
+                            end_time,
+                            scale,
                             &requirements,
                             self.clock.as_ref(),
                         )

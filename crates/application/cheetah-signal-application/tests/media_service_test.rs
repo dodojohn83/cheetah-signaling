@@ -423,6 +423,15 @@ async fn media_service_reconcile_releases_stopped_binding() {
         .await
         .unwrap();
 
+    let binding_id = ctx
+        .uow
+        .media_binding_repository()
+        .get_by_media_session(ctx.tenant_id, session.media_session_id)
+        .await
+        .unwrap()
+        .unwrap()
+        .media_binding_id();
+
     let mut media_session = ctx
         .uow
         .media_session_repository()
@@ -455,7 +464,7 @@ async fn media_service_reconcile_releases_stopped_binding() {
     let binding = ctx
         .uow
         .media_binding_repository()
-        .get_by_media_session(ctx.tenant_id, session.media_session_id)
+        .get(ctx.tenant_id, binding_id)
         .await
         .unwrap()
         .unwrap();
@@ -589,6 +598,7 @@ async fn media_service_reconcile_handles_mid_release_binding() {
         .await
         .unwrap()
         .unwrap();
+    let binding_id = binding.media_binding_id();
 
     let clock = ctx.clock.as_ref();
     media_session.active(clock).unwrap();
@@ -631,7 +641,7 @@ async fn media_service_reconcile_handles_mid_release_binding() {
     let binding_after = ctx
         .uow
         .media_binding_repository()
-        .get_by_media_session(ctx.tenant_id, session.media_session_id)
+        .get(ctx.tenant_id, binding_id)
         .await
         .unwrap()
         .unwrap();

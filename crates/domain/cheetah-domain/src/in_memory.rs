@@ -765,16 +765,10 @@ impl MediaBindingRepository for InMemoryUnitOfWork {
             .values()
             .filter(|b| b.tenant_id() == tenant_id && b.media_session_id() == media_session_id)
             .collect();
-        // Prefer the most recent non-terminal binding. This allows a migration
-        // to leave the old terminal binding in the store while returning the
-        // newly active binding for subsequent commands and reconciliation.
+        // Prefer the most recent non-terminal binding, matching the SQL
+        // repository contract that returns `None` when all bindings are terminal.
         candidates.sort_by_key(|b| b.created_at());
-        let active = candidates
-            .iter()
-            .rev()
-            .find(|b| !b.is_terminal())
-            .copied()
-            .or_else(|| candidates.last().copied());
+        let active = candidates.iter().rev().find(|b| !b.is_terminal()).copied();
         Ok(active.cloned())
     }
 

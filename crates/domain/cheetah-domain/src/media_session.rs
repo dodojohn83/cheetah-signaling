@@ -204,6 +204,11 @@ pub struct MediaSession {
     /// Generation of the session; incremented when a new binding must be created
     /// during migration or retry. 同一 generation 最多一个有效 MediaBinding。
     generation: u64,
+    /// Playback time window persisted so a migration can rebuild the same range.
+    /// Only meaningful when `purpose` is `Playback`.
+    playback_start_time: Option<UtcTimestamp>,
+    playback_end_time: Option<UtcTimestamp>,
+    playback_scale: Option<f64>,
     created_at: UtcTimestamp,
     updated_at: UtcTimestamp,
     revision: Revision,
@@ -259,6 +264,9 @@ impl MediaSession {
             deadline,
             error: None,
             generation: 0,
+            playback_start_time: None,
+            playback_end_time: None,
+            playback_scale: None,
             created_at: now,
             updated_at: now,
             revision: Revision::default(),
@@ -535,6 +543,33 @@ impl MediaSession {
             generation: self.generation,
             updated_at: self.updated_at,
         })
+    }
+
+    /// Playback start time, meaningful only for playback sessions.
+    pub fn playback_start_time(&self) -> Option<UtcTimestamp> {
+        self.playback_start_time
+    }
+
+    /// Playback end time, meaningful only for playback sessions.
+    pub fn playback_end_time(&self) -> Option<UtcTimestamp> {
+        self.playback_end_time
+    }
+
+    /// Playback scale, meaningful only for playback sessions.
+    pub fn playback_scale(&self) -> Option<f64> {
+        self.playback_scale
+    }
+
+    /// Sets the playback window on a non-terminal session.
+    pub fn set_playback_window(
+        &mut self,
+        start_time: UtcTimestamp,
+        end_time: UtcTimestamp,
+        scale: f64,
+    ) {
+        self.playback_start_time = Some(start_time);
+        self.playback_end_time = Some(end_time);
+        self.playback_scale = Some(scale);
     }
 
     /// Whether the session is terminal.

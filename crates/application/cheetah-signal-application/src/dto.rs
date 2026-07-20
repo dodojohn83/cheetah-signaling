@@ -287,6 +287,12 @@ pub struct MediaSessionDto {
     pub updated_at: UtcTimestamp,
     /// Session generation for binding fencing.
     pub generation: u64,
+    /// Playback window start, if a playback session.
+    pub playback_start_time: Option<UtcTimestamp>,
+    /// Playback window end, if a playback session.
+    pub playback_end_time: Option<UtcTimestamp>,
+    /// Playback scale, if a playback session.
+    pub playback_scale: Option<f64>,
     /// Revision.
     pub revision: Revision,
 }
@@ -526,6 +532,9 @@ impl From<&MediaSession> for MediaSessionDto {
             created_at: session.created_at(),
             updated_at: session.updated_at(),
             generation: session.generation(),
+            playback_start_time: session.playback_start_time(),
+            playback_end_time: session.playback_end_time(),
+            playback_scale: session.playback_scale(),
             revision: session.revision(),
         }
     }

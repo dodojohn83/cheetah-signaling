@@ -332,6 +332,7 @@ impl MediaService {
                 deadline,
             )
             .map_err(crate::SignalError::from)?;
+            session.set_playback_window(start_time, end_time, request.scale);
 
             let (binding, binding_event) = MediaBinding::new(
                 self.clock.as_ref(),

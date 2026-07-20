@@ -780,14 +780,21 @@ impl MediaService {
                 media_node_id: reservation.media_node_id,
                 purpose: MediaPurpose::Live,
             },
-            MediaPurpose::Playback => CommandPayload::StartPlayback {
-                media_session_id,
-                channel_id,
-                media_node_id: reservation.media_node_id,
-                start_time: self.clock.now_wall(),
-                end_time: self.clock.now_wall(),
-                scale: 1.0,
-            },
+            MediaPurpose::Playback => {
+                let start_time = session
+                    .playback_start_time()
+                    .unwrap_or_else(|| self.clock.now_wall());
+                let end_time = session.playback_end_time().unwrap_or(start_time);
+                let scale = session.playback_scale().unwrap_or(1.0);
+                CommandPayload::StartPlayback {
+                    media_session_id,
+                    channel_id,
+                    media_node_id: reservation.media_node_id,
+                    start_time,
+                    end_time,
+                    scale,
+                }
+            }
             MediaPurpose::Talk => CommandPayload::StartTalk {
                 media_session_id,
                 channel_id,
