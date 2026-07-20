@@ -278,12 +278,16 @@ impl MediaPort for SchedulerMediaPort {
 
         let mut items = Vec::with_capacity(response.sessions.len());
         for proto in response.sessions {
-            let session = map_proto_session_ref(tenant_id, media_node_id, &proto).map_err(|e| {
-                DomainError::invalid_argument(format!(
-                    "media node {media_node_id} returned malformed session ref: {e}"
-                ))
-            })?;
-            items.push(session);
+            match map_proto_session_ref(tenant_id, media_node_id, &proto) {
+                Ok(session) => items.push(session),
+                Err(e) => {
+                    tracing::warn!(
+                        %tenant_id,
+                        %media_node_id,
+                        "media node returned malformed session ref; skipping: {e}"
+                    );
+                }
+            }
         }
 
         let next_cursor = if response.next_page_token.is_empty() {
