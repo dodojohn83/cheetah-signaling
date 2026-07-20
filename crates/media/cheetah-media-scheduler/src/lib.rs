@@ -5,6 +5,7 @@
 pub mod config;
 pub mod error;
 pub mod grpc;
+pub mod mapper;
 pub mod model;
 pub mod persistent_registry;
 pub mod port;
