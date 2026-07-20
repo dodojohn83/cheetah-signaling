@@ -247,7 +247,11 @@ fn from_media_capacity(cap: media_proto::MediaNodeCapacity) -> MediaNodeCapacity
 
 #[allow(deprecated)]
 fn to_media_node_info(node: MediaNode) -> media_proto::MediaNodeInfo {
-    let capabilities: Vec<_> = node.capabilities.into_iter().map(to_media_capability).collect();
+    let capabilities: Vec<_> = node
+        .capabilities
+        .into_iter()
+        .map(to_media_capability)
+        .collect();
     media_proto::MediaNodeInfo {
         node_id: node.node_id.to_string(),
         listen_addr: node.control_endpoint,
@@ -261,7 +265,10 @@ fn to_media_node_info(node: MediaNode) -> media_proto::MediaNodeInfo {
             max_sessions: node.capacity.max_sessions,
             max_bandwidth_mbps: node.capacity.max_bandwidth_mbps,
             max_cpu_percent: node.capacity.max_cpu_percent,
-            available_sessions: node.capacity.max_sessions.saturating_sub(node.session_count),
+            available_sessions: node
+                .capacity
+                .max_sessions
+                .saturating_sub(node.session_count),
             available_bandwidth_mbps: node.capacity.max_bandwidth_mbps,
             available_cpu_percent: node.capacity.max_cpu_percent.saturating_sub(node.load),
         }),

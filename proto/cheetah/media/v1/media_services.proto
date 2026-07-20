@@ -74,11 +74,64 @@ message ListSessionsResponse {
   PageInfo page = 2;
 }
 
+// Filter for media search queries.
+message MediaSearchFilter {
+  // Media session identifier to search for.
+  string media_session_id = 1;
+  // Media binding identifier to search for.
+  string media_binding_id = 2;
+  // Media handle assigned by a media node.
+  string media_handle = 3;
+  // Stable media stream key.
+  MediaKey media_key = 4;
+  // Idempotency key used for a mutating request.
+  string idempotency_key = 5;
+}
+
+message SearchMediaRequest {
+  // Tenant and request context; the tenant filter is required.
+  MediaMutationContext context = 1;
+  // Optional filters; at least one should be set by callers.
+  MediaSearchFilter filter = 2;
+  // Pagination parameters.
+  Pagination pagination = 3;
+}
+
+message SearchMediaResponse {
+  // Matching media sessions.
+  repeated MediaSessionRef sessions = 1;
+  // Pagination metadata.
+  PageInfo page = 2;
+}
+
+// Request to enumerate non-terminal resources for reconciliation.
+message ReconcileMediaRequest {
+  // Tenant and request context.
+  MediaMutationContext context = 1;
+  // Pagination parameters.
+  Pagination pagination = 2;
+  // Whether to include resources that have already reached a terminal state.
+  bool include_terminal = 3;
+}
+
+message ReconcileMediaResponse {
+  // Resources visible to the reconciler.
+  repeated MediaSessionRef sessions = 1;
+  // Pagination metadata.
+  PageInfo page = 2;
+}
+
 // Media session query service.
 service MediaQueryService {
   rpc GetMedia(GetMediaRequest) returns (GetMediaResponse);
   rpc IsMediaOnline(IsMediaOnlineRequest) returns (IsMediaOnlineResponse);
   rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse);
+  rpc SearchMedia(SearchMediaRequest) returns (SearchMediaResponse);
+}
+
+// Media reconciliation service for background workers.
+service MediaReconciliationService {
+  rpc ReconcileMedia(ReconcileMediaRequest) returns (ReconcileMediaResponse);
 }
 
 // RTP receiver parameters.
