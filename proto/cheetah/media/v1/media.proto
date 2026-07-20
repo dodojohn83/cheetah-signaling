@@ -167,6 +167,22 @@ message MediaCommand {
 
 // An event emitted by media processing.
 message MediaEvent {
+  // Event header.
+  string event_id = 8;
+  string tenant_id = 9;
+  string media_node_id = 10;
+  uint64 media_node_instance_epoch = 11;
+  uint64 sequence = 12;
+  google.protobuf.Timestamp occurred_at = 13;
+  string media_session_id = 14;
+  string media_binding_id = 15;
+  string media_handle = 16;
+  MediaKey media_key = 17;
+  string correlation_id = 18;
+  string traceparent = 19;
+  string tracestate = 20;
+
+  // Typed event payload.
   oneof event {
     RtpSession rtp_negotiated = 1;
     RtpSession stream_started = 2;
@@ -175,7 +191,58 @@ message MediaEvent {
     RecordSession record_stopped = 5;
     Snapshot snapshot_taken = 6;
     MediaError error = 7;
+    ResourceStateChangedEvent resource_state_changed = 21;
+    StreamOnlineEvent stream_online = 22;
+    StreamOfflineEvent stream_offline = 23;
+    RtpTimeoutEvent rtp_timeout = 24;
+    ProxyStateChangedEvent proxy_state_changed = 25;
+    PlaybackCompleteEvent playback_complete = 26;
+    NodeLifecycleEvent node_lifecycle = 27;
   }
+}
+
+// Resource state transition.
+message ResourceStateChangedEvent {
+  MediaResourceState new_state = 1;
+  MediaResourceState old_state = 2;
+}
+
+// Media stream became online.
+message StreamOnlineEvent {
+  string media_session_id = 1;
+  string media_handle = 2;
+}
+
+// Media stream became offline.
+message StreamOfflineEvent {
+  string media_session_id = 1;
+  string media_handle = 2;
+  string reason = 3;
+}
+
+// RTP session timed out.
+message RtpTimeoutEvent {
+  string media_session_id = 1;
+  string media_handle = 2;
+}
+
+// Proxy state transition.
+message ProxyStateChangedEvent {
+  string state = 1;
+}
+
+// Playback finished.
+message PlaybackCompleteEvent {
+  string media_session_id = 1;
+  string media_handle = 2;
+  string reason = 3;
+}
+
+// Media node lifecycle state transition.
+message NodeLifecycleEvent {
+  string node_id = 1;
+  uint64 instance_epoch = 2;
+  string state = 3;
 }
 
 message MediaSessionRefStopped {

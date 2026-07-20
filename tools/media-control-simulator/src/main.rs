@@ -230,12 +230,15 @@ fn injected_error() -> ErrorStatus {
     }
 }
 
-fn make_event(media_event: media::MediaEvent) -> EventEnvelope {
+fn make_event(event: media::media_event::Event) -> EventEnvelope {
     EventEnvelope {
         meta: None,
         aggregate: None,
         aggregate_sequence: 0,
-        event: Some(EnvelopeEvent::MediaEvent(media_event)),
+        event: Some(EnvelopeEvent::MediaEvent(media::MediaEvent {
+            event: Some(event),
+            ..Default::default()
+        })),
     }
 }
 
@@ -307,9 +310,9 @@ async fn handle_media_command(
                 .lock()
                 .await
                 .insert(req.media_session_id.clone(), sim);
-            state.emit_event(make_event(media::MediaEvent {
-                event: Some(media::media_event::Event::RtpNegotiated(session.clone())),
-            }));
+            state.emit_event(make_event(media::media_event::Event::RtpNegotiated(
+                session.clone(),
+            )));
             State::make_result(CommandStatus::Completed, operation_id.to_string(), None)
         }
         Command::StartRtp(req) => {
@@ -335,9 +338,7 @@ async fn handle_media_command(
                 status: "active".to_string(),
                 ..Default::default()
             };
-            state.emit_event(make_event(media::MediaEvent {
-                event: Some(media::media_event::Event::StreamStarted(rtp)),
-            }));
+            state.emit_event(make_event(media::media_event::Event::StreamStarted(rtp)));
             State::make_result(CommandStatus::Completed, operation_id.to_string(), None)
         }
         Command::StopRtp(req) => {
@@ -346,9 +347,9 @@ async fn handle_media_command(
                 session: Some(req.clone()),
                 reason: "injected stop".to_string(),
             };
-            state.emit_event(make_event(media::MediaEvent {
-                event: Some(media::media_event::Event::StreamStopped(stopped)),
-            }));
+            state.emit_event(make_event(media::media_event::Event::StreamStopped(
+                stopped,
+            )));
             State::make_result(CommandStatus::Completed, operation_id.to_string(), None)
         }
         Command::StartProxy(req) => {
@@ -379,9 +380,9 @@ async fn handle_media_command(
                 status: "recording".to_string(),
                 ..Default::default()
             };
-            state.emit_event(make_event(media::MediaEvent {
-                event: Some(media::media_event::Event::RecordStarted(session)),
-            }));
+            state.emit_event(make_event(media::media_event::Event::RecordStarted(
+                session,
+            )));
             State::make_result(CommandStatus::Completed, operation_id.to_string(), None)
         }
         Command::StopRecord(req) => {
@@ -393,9 +394,9 @@ async fn handle_media_command(
                 status: "stopped".to_string(),
                 ..Default::default()
             };
-            state.emit_event(make_event(media::MediaEvent {
-                event: Some(media::media_event::Event::RecordStopped(session)),
-            }));
+            state.emit_event(make_event(media::media_event::Event::RecordStopped(
+                session,
+            )));
             State::make_result(CommandStatus::Completed, operation_id.to_string(), None)
         }
         Command::TakeSnapshot(req) => {
@@ -406,9 +407,9 @@ async fn handle_media_command(
                 created_at: now_timestamp(),
                 ..Default::default()
             };
-            state.emit_event(make_event(media::MediaEvent {
-                event: Some(media::media_event::Event::SnapshotTaken(snapshot)),
-            }));
+            state.emit_event(make_event(media::media_event::Event::SnapshotTaken(
+                snapshot,
+            )));
             State::make_result(CommandStatus::Completed, operation_id.to_string(), None)
         }
         Command::Query(_) => {

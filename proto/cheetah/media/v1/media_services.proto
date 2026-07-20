@@ -477,15 +477,51 @@ service MediaControlService {
   rpc CloseSession(CloseSessionRequest) returns (MediaSessionRefStopped);
 }
 
+// Filter applied to a media event subscription.
+message MediaEventFilter {
+  // Optional media session identifier.
+  string media_session_id = 1;
+  // Optional media binding identifier.
+  string media_binding_id = 2;
+  // Optional media handle.
+  string media_handle = 3;
+  // Optional stable media key.
+  MediaKey media_key = 4;
+  // Optional set of event payload type names (e.g. "stream_online").
+  repeated string event_types = 5;
+}
+
 // Subscription request for media events.
+//
+// Server semantics:
+// - Delivery is at-least-once within the subscription cursor window.
+// - Duplicate event_id values are silently ignored by the client contract.
+// - sequence is scoped to (tenant_id, media_node_id).
+// - resume_cursor must be durable for at least the configured retention period.
+// - The server does not hide missing sequence numbers; gap detection is signaled
+//   out-of-band when ordering can no longer be guaranteed.
+// - Slow consumers may be disconnected or downgraded according to policy.
+// - Reconnects and cancellations are explicit: closing the stream cancels
+//   delivery for that subscriber.
 message SubscribeRequest {
+  // Tenant and request context; tenant_id is the required filter.
   MediaMutationContext context = 1;
+
+  // Optional list of media session identifiers to narrow the subscription.
   repeated string media_session_ids = 2;
+
+  // Cursor to resume from a previous subscription. Empty starts from the tail.
   string resume_cursor = 3;
+
+  // Maximum number of events to return in one streamed response message.
   uint64 max_batch_size = 4;
+
+  // Optional structured filter beyond the tenant and session list.
+  MediaEventFilter filter = 5;
 }
 
 // Media event streaming service.
 service MediaEventStreamService {
+  // Subscribe to a stream of media events.
   rpc Subscribe(SubscribeRequest) returns (stream MediaEvent);
 }
