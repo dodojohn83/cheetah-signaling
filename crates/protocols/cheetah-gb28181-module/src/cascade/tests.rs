@@ -12,6 +12,10 @@ use cheetah_gb28181_core::{
     DigestContext, HeaderName, HeaderValue, Method, SipHeaders, SipMessage, SipUri, StatusLine,
 };
 use secrecy::SecretString;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
 pub(crate) fn domain_id() -> DomainId {
     DomainId::new("3402000000").unwrap()
@@ -103,7 +107,7 @@ pub(crate) fn build_200(expires: u32, call_id: &str, cseq: &str) -> SipMessage {
     }
 }
 
-fn challenge_ctx() -> DigestContext {
+pub(crate) fn challenge_ctx() -> DigestContext {
     DigestContext::new(
         "example.com",
         b"this-is-a-very-long-secret-used-for-testing-only",
@@ -553,6 +557,123 @@ fn redirect_response_is_treated_as_failure() {
     assert!(!outputs.iter().any(|o| matches!(
         o,
         CascadeOutput::EmitEvent(crate::events::Gb28181Event::CascadePlatformConnected { .. })
+    )));
+}
+
+pub(crate) fn toggling_provider(
+    enabled: Arc<AtomicBool>,
+) -> impl Fn(&str) -> Option<SecretString> + Send + Sync {
+    move |_: &str| {
+        if enabled.load(Ordering::SeqCst) {
+            Some(SecretString::new("secret".into()))
+        } else {
+            None
+        }
+    }
+}
+
+#[test]
+fn refresh_with_missing_credentials_does_not_send_unauthenticated_request() {
+    let enabled = Arc::new(AtomicBool::new(true));
+    let mut cascade = Gb28181Cascade::new(config(), toggling_provider(enabled.clone())).unwrap();
+
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 1000,
+            event: CascadeEvent::Register,
+        })
+        .unwrap();
+    let (call_id, cseq) = request_call_id_cseq(&outputs);
+
+    let challenge = challenge_ctx().generate_challenge(1000).unwrap();
+    let response_401 = build_401(&challenge.to_header_value(), &call_id, &cseq);
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 1001,
+            event: CascadeEvent::Response(Box::new(response_401)),
+        })
+        .unwrap();
+    let (call_id, cseq) = request_call_id_cseq(&outputs);
+
+    cascade
+        .process(CascadeInput {
+            now: 1002,
+            event: CascadeEvent::Response(Box::new(build_200(60, &call_id, &cseq))),
+        })
+        .unwrap();
+
+    // Credentials are removed before the scheduled refresh.
+    enabled.store(false, Ordering::SeqCst);
+
+    let result = cascade.process(CascadeInput {
+        now: 1032,
+        event: CascadeEvent::Tick,
+    });
+    assert!(
+        result.is_ok(),
+        "refresh must not return an error when credentials disappear: {:?}",
+        result
+    );
+    // No unauthenticated REGISTER should be emitted.
+    let outputs = result.unwrap();
+    assert!(
+        outputs
+            .iter()
+            .all(|o| !matches!(o, CascadeOutput::SendRequest(_)))
+    );
+}
+
+#[test]
+fn deregister_with_missing_credentials_disconnects_without_unauthenticated_request() {
+    let enabled = Arc::new(AtomicBool::new(true));
+    let mut cascade = Gb28181Cascade::new(config(), toggling_provider(enabled.clone())).unwrap();
+
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 1000,
+            event: CascadeEvent::Register,
+        })
+        .unwrap();
+    let (call_id, cseq) = request_call_id_cseq(&outputs);
+
+    let challenge = challenge_ctx().generate_challenge(1000).unwrap();
+    let response_401 = build_401(&challenge.to_header_value(), &call_id, &cseq);
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 1001,
+            event: CascadeEvent::Response(Box::new(response_401)),
+        })
+        .unwrap();
+    let (call_id, cseq) = request_call_id_cseq(&outputs);
+
+    cascade
+        .process(CascadeInput {
+            now: 1002,
+            event: CascadeEvent::Response(Box::new(build_200(60, &call_id, &cseq))),
+        })
+        .unwrap();
+
+    // Credentials are removed before deregister.
+    enabled.store(false, Ordering::SeqCst);
+
+    let result = cascade.process(CascadeInput {
+        now: 1003,
+        event: CascadeEvent::Deregister,
+    });
+    assert!(
+        result.is_ok(),
+        "deregister must not return an error when credentials disappear: {:?}",
+        result
+    );
+    let outputs = result.unwrap();
+    assert!(
+        outputs
+            .iter()
+            .all(|o| !matches!(o, CascadeOutput::SendRequest(_)))
+    );
+    assert!(outputs.iter().any(|o| matches!(
+        o,
+        CascadeOutput::EmitEvent(crate::events::Gb28181Event::CascadePlatformDisconnected { .. })
     )));
 }
 

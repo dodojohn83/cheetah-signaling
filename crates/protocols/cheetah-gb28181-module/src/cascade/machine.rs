@@ -99,10 +99,22 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
             State::Registered(prev) => {
                 let prev = prev.clone();
                 let reg = self.start_registering(now, false, Some(prev.clone()))?;
-                let auth = prev.challenge.as_ref().and_then(|challenge| {
-                    self.build_authorization(challenge, reg.cseq, reg.attempt, now)
-                        .ok()
-                });
+                let auth = match prev.challenge.as_ref() {
+                    Some(challenge) => {
+                        match self.build_authorization(challenge, reg.cseq, reg.attempt, now) {
+                            Ok(auth) => Some(auth),
+                            Err(e) => {
+                                return Ok(self.fail_or_retry(
+                                    now,
+                                    reg.attempt,
+                                    false,
+                                    format!("authorization build failed for refresh: {e}"),
+                                ));
+                            }
+                        }
+                    }
+                    None => None,
+                };
                 let msg = build_register_request(
                     &self.config,
                     &reg.call_id,
@@ -127,10 +139,22 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
             State::Registered(prev) => {
                 let prev = prev.clone();
                 let mut reg = self.start_registering(now, true, Some(prev.clone()))?;
-                let auth = prev.challenge.as_ref().and_then(|challenge| {
-                    self.build_authorization(challenge, reg.cseq, reg.attempt, now)
-                        .ok()
-                });
+                let auth = match prev.challenge.as_ref() {
+                    Some(challenge) => {
+                        match self.build_authorization(challenge, reg.cseq, reg.attempt, now) {
+                            Ok(auth) => Some(auth),
+                            Err(e) => {
+                                return Ok(self.fail_or_retry(
+                                    now,
+                                    reg.attempt,
+                                    true,
+                                    format!("authorization build failed for deregister: {e}"),
+                                ));
+                            }
+                        }
+                    }
+                    None => None,
+                };
                 reg.is_deregister = true;
                 let msg = build_register_request(
                     &self.config,

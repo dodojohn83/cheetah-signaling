@@ -1,10 +1,16 @@
 //! Tests for the upstream play bridge handling in the GB28181 cascade.
 
-use super::{config, local_uri, password_provider, register_to_connected, upstream_uri};
+use super::{
+    config, local_uri, password_provider, register_to_connected, toggling_provider, upstream_uri,
+};
 use crate::cascade::{CascadeEvent, CascadeInput, CascadeOutput, Gb28181Cascade};
 use crate::events::Gb28181Event;
 use cheetah_gb28181_core::{
     HeaderName, HeaderValue, Method, RequestLine, SipHeaders, SipMessage, SipUri,
+};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
 };
 
 fn sample_sdp() -> &'static str {
@@ -749,4 +755,107 @@ fn bridge_invite_to_wrong_host_is_ignored() {
         })
         .unwrap();
     assert!(outputs.is_empty());
+}
+
+#[test]
+fn refresh_preserves_bridge_cleanup_outputs_when_credentials_disappear() {
+    let enabled = Arc::new(AtomicBool::new(true));
+    let mut cfg = config();
+    cfg.register_interval_seconds = 10;
+    cfg.register_refresh_margin_seconds = 2;
+    cfg.media_bridge_transaction_timeout_seconds = 3;
+    let mut cascade = Gb28181Cascade::new(cfg, toggling_provider(enabled.clone())).unwrap();
+
+    // Authenticated registration with a 10s expiry.
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 0,
+            event: CascadeEvent::Register,
+        })
+        .unwrap();
+    let (call_id, cseq) = super::request_call_id_cseq(&outputs);
+
+    let challenge = super::challenge_ctx().generate_challenge(0).unwrap();
+    let response_401 = super::build_401(&challenge.to_header_value(), &call_id, &cseq);
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 1,
+            event: CascadeEvent::Response(Box::new(response_401)),
+        })
+        .unwrap();
+    let (call_id, cseq) = super::request_call_id_cseq(&outputs);
+
+    cascade
+        .process(CascadeInput {
+            now: 2,
+            event: CascadeEvent::Response(Box::new(super::build_200(10, &call_id, &cseq))),
+        })
+        .unwrap();
+
+    // Incoming upstream INVITE.
+    let body = sample_sdp().as_bytes();
+    let invite = build_invite(
+        "call-1",
+        "34020000001320000002",
+        &upstream_uri(),
+        "from-tag",
+        body,
+    );
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 4,
+            event: CascadeEvent::Request(Box::new(invite)),
+        })
+        .unwrap();
+    let CascadeOutput::EmitEvent(Gb28181Event::CascadePlayRequested { bridge_id, .. }) =
+        &outputs[1]
+    else {
+        panic!("expected CascadePlayRequested");
+    };
+    let bridge_id = bridge_id.clone();
+
+    // Answer moves the bridge into Accepted; downstream stop before the
+    // upstream ACK moves it into Closing.
+    let answer = sample_answer_sdp().to_string();
+    cascade
+        .process(CascadeInput {
+            now: 5,
+            event: CascadeEvent::BridgeMediaReady {
+                bridge_id: bridge_id.clone(),
+                answer_sdp: answer,
+            },
+        })
+        .unwrap();
+    cascade
+        .process(CascadeInput {
+            now: 6,
+            event: CascadeEvent::BridgeMediaStop { bridge_id },
+        })
+        .unwrap();
+
+    // Credentials disappear before both bridge cleanup and refresh are due.
+    enabled.store(false, Ordering::SeqCst);
+
+    // At t=10 the closing bridge has expired and the registration refresh is
+    // due.  The bridge cleanup event must be preserved even though the refresh
+    // cannot be authenticated.
+    let result = cascade.process(CascadeInput {
+        now: 10,
+        event: CascadeEvent::Tick,
+    });
+    assert!(
+        result.is_ok(),
+        "tick must not fail when refresh auth fails: {:?}",
+        result
+    );
+    let outputs = result.unwrap();
+    assert!(outputs.iter().any(|o| matches!(
+        o,
+        CascadeOutput::EmitEvent(Gb28181Event::CascadePlayStopped { .. })
+    )));
+    assert!(
+        outputs
+            .iter()
+            .all(|o| !matches!(o, CascadeOutput::SendRequest(_)))
+    );
 }
