@@ -17,7 +17,7 @@ use cheetah_media_client::MediaControlClient;
 use cheetah_signal_contracts::cheetah::media::v1::{MediaEvent, SubscribeRequest};
 use cheetah_signal_types::{
     Clock, CorrelationId, DurationMs, MessageId, NodeId, OperationId, Principal, PrincipalKind,
-    RequestContext, TenantId,
+    RequestContext, TenantId, UtcTimestamp,
 };
 use cheetah_storage_api::Storage;
 use std::collections::{BTreeMap, BTreeSet};
@@ -88,6 +88,42 @@ impl CursorState {
     }
 }
 
+/// Simple per-node token bucket for diagnostic log rate limiting.
+#[derive(Clone, Debug, Default)]
+struct DiagnosticLogLimiter {
+    buckets: Arc<Mutex<BTreeMap<NodeId, TokenBucket>>>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct TokenBucket {
+    tokens: f64,
+    last_update: UtcTimestamp,
+}
+
+impl DiagnosticLogLimiter {
+    fn check(&self, node_id: NodeId, max_per_second: u32, now: UtcTimestamp) -> bool {
+        let max = f64::from(max_per_second.max(1));
+        let mut buckets = self.buckets.lock().unwrap_or_else(|p| p.into_inner());
+        let bucket = buckets.entry(node_id).or_insert_with(|| TokenBucket {
+            tokens: max,
+            last_update: now,
+        });
+
+        let elapsed = ((now.as_offset().unix_timestamp_nanos()
+            - bucket.last_update.as_offset().unix_timestamp_nanos()) as f64)
+            / 1_000_000_000.0;
+        bucket.tokens = (bucket.tokens + elapsed.max(0.0) * max).min(max);
+        bucket.last_update = now;
+
+        if bucket.tokens >= 1.0 {
+            bucket.tokens -= 1.0;
+            true
+        } else {
+            false
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 struct Subscription {
     token: CancellationToken,
@@ -148,6 +184,7 @@ pub struct MediaEventConsumer {
     cursors: CursorState,
     permits: Arc<tokio::sync::Semaphore>,
     subscriptions: SubscriptionState,
+    diagnostic_log_limiter: DiagnosticLogLimiter,
 }
 
 impl std::fmt::Debug for MediaEventConsumer {
@@ -187,6 +224,7 @@ impl MediaEventConsumer {
             cursors: CursorState::default(),
             permits,
             subscriptions: SubscriptionState::default(),
+            diagnostic_log_limiter: DiagnosticLogLimiter::default(),
         }
     }
 
@@ -234,11 +272,21 @@ impl MediaEventConsumer {
         }
 
         for node_id in to_start {
-            let permit = tokio::select! {
-                _ = cancel.cancelled() => return Ok(()),
-                p = self.permits.clone().acquire_owned() => p.map_err(|_| {
-                    SchedulerError::Backend("subscription semaphore closed".to_string())
-                })?,
+            if cancel.is_cancelled() {
+                return Ok(());
+            }
+            let permit = match self.permits.clone().try_acquire_owned() {
+                Ok(p) => p,
+                Err(tokio::sync::TryAcquireError::NoPermits) => {
+                    // No subscription slot is free right now; the main loop will retry
+                    // on the next poll as other nodes stop or get cancelled.
+                    break;
+                }
+                Err(tokio::sync::TryAcquireError::Closed) => {
+                    return Err(SchedulerError::Backend(
+                        "subscription semaphore closed".to_string(),
+                    ));
+                }
             };
 
             let generation = self.subscriptions.next_generation();
@@ -277,19 +325,28 @@ impl MediaEventConsumer {
         cancel: CancellationToken,
         generation: u64,
     ) -> Result<(), SchedulerError> {
+        let mut delay_ms = self.config.reconnect_interval_ms;
         loop {
-            tokio::select! {
+            let result = tokio::select! {
                 _ = cancel.cancelled() => return Ok(()),
-                result = self.consume_node(node_id, cancel.child_token(), generation) => {
-                    if let Err(e) = result {
-                        tracing::warn!(%node_id, "media event stream error: {e}");
-                    }
-                }
+                r = self.consume_node(node_id, cancel.child_token(), generation) => r,
+            };
+            if let Err(e) = result {
+                tracing::warn!(%node_id, "media event stream error: {e}");
+                delay_ms = delay_ms
+                    .saturating_mul(2)
+                    .min(self.config.max_reconnect_interval_ms);
+            } else {
+                delay_ms = self.config.reconnect_interval_ms;
             }
+
+            // Add up to 25% jitter to avoid synchronized reconnect storms.
+            let jitter = delay_ms / 4;
+            let sleep_ms = delay_ms.saturating_add(fastrand::u64(0..=jitter));
 
             tokio::select! {
                 _ = cancel.cancelled() => return Ok(()),
-                _ = sleep(Duration::from_millis(self.config.reconnect_interval_ms)) => {}
+                _ = sleep(Duration::from_millis(sleep_ms)) => {}
             }
         }
     }
@@ -375,11 +432,17 @@ impl MediaEventConsumer {
         let (tenant_id, callback) = match map_media_event_to_callback(&event) {
             Ok(v) => v,
             Err(e) => {
-                tracing::info!(
-                    %event_id,
-                    sequence,
-                    "media event mapping failed; treating as diagnostic: {e}"
-                );
+                if self.diagnostic_log_limiter.check(
+                    node.node_id,
+                    self.config.max_diagnostic_logs_per_second,
+                    self.clock.now_wall(),
+                ) {
+                    tracing::info!(
+                        %event_id,
+                        sequence,
+                        "media event mapping failed; treating as diagnostic: {e}"
+                    );
+                }
                 self.detect_sequence_gap(node, gap_tenant, sequence).await;
                 self.cursors.update_sequence(node.node_id, sequence);
                 return Ok(());
@@ -389,12 +452,18 @@ impl MediaEventConsumer {
         if callback.media_node_id != node.node_id
             || callback.media_node_instance_epoch.0 != node.instance_epoch
         {
-            tracing::info!(
-                %event_id,
-                %tenant_id,
-                node_id = %node.node_id,
-                "media event from old node instance; treating as diagnostic"
-            );
+            if self.diagnostic_log_limiter.check(
+                node.node_id,
+                self.config.max_diagnostic_logs_per_second,
+                self.clock.now_wall(),
+            ) {
+                tracing::info!(
+                    %event_id,
+                    %tenant_id,
+                    node_id = %node.node_id,
+                    "media event from old node instance; treating as diagnostic"
+                );
+            }
             self.detect_sequence_gap(node, tenant_id, sequence).await;
             self.cursors.update_sequence(node.node_id, sequence);
             return Ok(());

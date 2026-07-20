@@ -111,6 +111,8 @@ pub struct MediaEventConsumerConfig {
     pub poll_interval_ms: u64,
     /// Delay in milliseconds before reconnecting after a stream error.
     pub reconnect_interval_ms: u64,
+    /// Maximum delay in milliseconds between reconnect attempts.
+    pub max_reconnect_interval_ms: u64,
     /// Maximum number of concurrent per-node subscriptions.
     pub max_concurrent_subscriptions: usize,
     /// Maximum number of events returned in one streamed response message.
@@ -132,7 +134,8 @@ impl MediaEventConsumerConfig {
     pub fn production() -> Self {
         Self {
             poll_interval_ms: 5_000,
-            reconnect_interval_ms: 5_000,
+            reconnect_interval_ms: 1_000,
+            max_reconnect_interval_ms: 60_000,
             max_concurrent_subscriptions: 64,
             max_batch_size: 100,
             record_ttl_ms: 86_400_000,
@@ -145,6 +148,7 @@ impl MediaEventConsumerConfig {
         Self {
             poll_interval_ms: 100,
             reconnect_interval_ms: 100,
+            max_reconnect_interval_ms: 1_000,
             max_concurrent_subscriptions: 4,
             max_batch_size: 10,
             record_ttl_ms: 60_000,

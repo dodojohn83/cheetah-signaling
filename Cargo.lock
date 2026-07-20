@@ -738,6 +738,7 @@ dependencies = [
  "cheetah-signal-contracts",
  "cheetah-signal-types",
  "cheetah-storage-api",
+ "fastrand",
  "prost-types",
  "serde",
  "serde_json",
