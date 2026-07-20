@@ -132,7 +132,7 @@ fn check_rate_limit(
         .copied()
         .map(|c| c.0.ip())
         .unwrap_or_else(|| [0, 0, 0, 0].into());
-    let protocol = parts.uri.path().split('/').nth(1).unwrap_or("").to_string();
+    let protocol = crate::rate_limit::request_protocol(parts.uri.path());
     let node = state.config.node_id.to_string();
     let key = RateKey {
         source: ip,
