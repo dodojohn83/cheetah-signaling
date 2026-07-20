@@ -36,7 +36,7 @@ fn main() -> io::Result<()> {
     // accept proto3 `optional` fields; 3.15+ enables them by default and rejects
     // the flag as unknown. Add the flag only for the narrow range that needs
     // it so the build works with both older and newer protoc installations.
-    if protoc_needs_optional_experimental_flag()? {
+    if protoc_needs_optional_experimental_flag() {
         builder = builder.protoc_arg("--experimental_allow_proto3_optional");
     }
 
@@ -46,13 +46,20 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 
-fn protoc_needs_optional_experimental_flag() -> io::Result<bool> {
-    let output = std::process::Command::new("protoc")
+fn protoc_needs_optional_experimental_flag() -> bool {
+    // Match `prost_build`/`tonic_prost_build` protoc resolution: the `PROTOC`
+    // environment variable takes precedence, otherwise search PATH for `protoc`.
+    // If we cannot determine the version, do not add the experimental flag and
+    // let the normal compile step report any real incompatibility.
+    let protoc = env::var("PROTOC").unwrap_or_else(|_| "protoc".to_string());
+    let output = std::process::Command::new(&protoc)
         .arg("--version")
-        .output()?;
-    if !output.status.success() {
-        return Ok(false);
-    }
+        .output();
+
+    let output = match output {
+        Ok(o) if o.status.success() => o,
+        _ => return false,
+    };
 
     let version = String::from_utf8_lossy(&output.stdout);
     let version = version.split_whitespace().next_back().unwrap_or("");
@@ -64,12 +71,12 @@ fn protoc_needs_optional_experimental_flag() -> io::Result<bool> {
         .collect();
 
     if parts.len() < 2 {
-        return Ok(false);
+        return false;
     }
 
     let major = parts[0];
     let minor = parts.get(1).copied().unwrap_or(0);
 
     // The flag was introduced in 3.12 and removed in 3.15.
-    Ok(major == 3 && (12..15).contains(&minor))
+    major == 3 && (12..15).contains(&minor)
 }
