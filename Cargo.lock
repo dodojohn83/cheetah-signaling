@@ -1161,6 +1161,7 @@ dependencies = [
  "cheetah-storage-api",
  "cheetah-storage-postgres",
  "cheetah-storage-sqlite",
+ "sqlx",
  "testcontainers-modules",
  "time",
  "tokio",

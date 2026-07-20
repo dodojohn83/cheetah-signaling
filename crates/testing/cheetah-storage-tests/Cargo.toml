@@ -19,6 +19,7 @@ cheetah-storage-sqlite = { path = "../../storage/cheetah-storage-sqlite" }
 cheetah-storage-postgres = { path = "../../storage/cheetah-storage-postgres" }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 testcontainers-modules = { version = "0.15", features = ["postgres"] }
+sqlx = { workspace = true }
 
 [lints]
 workspace = true

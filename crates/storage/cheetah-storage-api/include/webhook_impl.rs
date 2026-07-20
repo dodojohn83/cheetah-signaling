@@ -160,9 +160,13 @@ pub(crate) async fn save_webhook_config(
             .fetch_optional(&mut *conn)
             .await
             .map_err(crate::error::sqlx_to_domain)?;
-        let found = found
-            .and_then(|(r,)| u64::try_from(r).ok())
-            .unwrap_or(0);
+        let found = match found {
+            Some((r,)) => ::cheetah_storage_api::stored_revision_as_u64(r)?,
+            // Row was deleted between the upsert and the read-back; report the
+            // same zero found value used by sibling repositories for a missing
+            // target row so callers get a uniform ConcurrentModification error.
+            None => 0,
+        };
         return Err(DomainError::ConcurrentModification {
             expected: config.revision().0.saturating_sub(1),
             found,
