@@ -201,6 +201,18 @@ pub struct MediaSession {
     idempotency_scope: IdempotencyScope,
     deadline: Option<Deadline>,
     error: Option<MediaSessionError>,
+    /// Generation of the session; incremented when a new binding must be created
+    /// during migration or retry. 同一 generation 最多一个有效 MediaBinding。
+    #[serde(default)]
+    generation: u64,
+    /// Playback time window persisted so a migration can rebuild the same range.
+    /// Only meaningful when `purpose` is `Playback`.
+    #[serde(default)]
+    playback_start_time: Option<UtcTimestamp>,
+    #[serde(default)]
+    playback_end_time: Option<UtcTimestamp>,
+    #[serde(default)]
+    playback_scale: Option<f64>,
     created_at: UtcTimestamp,
     updated_at: UtcTimestamp,
     revision: Revision,
@@ -255,6 +267,10 @@ impl MediaSession {
             idempotency_scope,
             deadline,
             error: None,
+            generation: 0,
+            playback_start_time: None,
+            playback_end_time: None,
+            playback_scale: None,
             created_at: now,
             updated_at: now,
             revision: Revision::default(),
@@ -270,6 +286,7 @@ impl MediaSession {
             owner_epoch,
             operation_id,
             idempotency_scope: Box::new(session.idempotency_scope.clone()),
+            generation: session.generation,
             deadline,
             created_at: session.created_at,
         };
@@ -506,6 +523,57 @@ impl MediaSession {
     /// Revision.
     pub fn revision(&self) -> Revision {
         self.revision
+    }
+
+    /// Session generation; incremented when the session must establish a new
+    /// physical binding after migration or retry.
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// Bumps the session generation and returns a domain event.
+    pub fn bump_generation(&mut self, clock: &dyn Clock) -> crate::Result<DomainEvent> {
+        if self.state.is_terminal() {
+            return Err(DomainError::already_terminal(
+                "MediaSession",
+                format!("{:?}", self.state),
+            ));
+        }
+        self.generation += 1;
+        self.bump(clock);
+        Ok(DomainEvent::MediaSessionGenerationBumped {
+            media_session_id: self.media_session_id,
+            tenant_id: self.tenant_id,
+            generation: self.generation,
+            updated_at: self.updated_at,
+        })
+    }
+
+    /// Playback start time, meaningful only for playback sessions.
+    pub fn playback_start_time(&self) -> Option<UtcTimestamp> {
+        self.playback_start_time
+    }
+
+    /// Playback end time, meaningful only for playback sessions.
+    pub fn playback_end_time(&self) -> Option<UtcTimestamp> {
+        self.playback_end_time
+    }
+
+    /// Playback scale, meaningful only for playback sessions.
+    pub fn playback_scale(&self) -> Option<f64> {
+        self.playback_scale
+    }
+
+    /// Sets the playback window on a non-terminal session.
+    pub fn set_playback_window(
+        &mut self,
+        start_time: UtcTimestamp,
+        end_time: UtcTimestamp,
+        scale: f64,
+    ) {
+        self.playback_start_time = Some(start_time);
+        self.playback_end_time = Some(end_time);
+        self.playback_scale = Some(scale);
     }
 
     /// Whether the session is terminal.

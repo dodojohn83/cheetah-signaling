@@ -28,6 +28,8 @@ pub struct MediaRegistryConfig {
     pub max_reported_load_percent: u64,
     /// Maximum session count a heartbeat may report.
     pub max_reported_session_count: u64,
+    /// Duration a reservation remains valid without being activated.
+    pub reservation_ttl_ms: u64,
 }
 
 impl Default for MediaRegistryConfig {
@@ -52,6 +54,7 @@ impl MediaRegistryConfig {
             endpoint_dns_lookup_timeout_ms: 1_000,
             max_reported_load_percent: 100,
             max_reported_session_count: 100_000,
+            reservation_ttl_ms: 10_000,
         }
     }
 
@@ -97,6 +100,59 @@ impl Default for SchedulerConfig {
             max_reserve_attempts: 3,
             max_candidates: 256,
             max_reservations: 100_000,
+        }
+    }
+}
+
+/// Configuration for the gRPC media event consumer.
+#[derive(Clone, Debug)]
+pub struct MediaEventConsumerConfig {
+    /// Interval in milliseconds between scans of the active node registry.
+    pub poll_interval_ms: u64,
+    /// Delay in milliseconds before reconnecting after a stream error.
+    pub reconnect_interval_ms: u64,
+    /// Maximum delay in milliseconds between reconnect attempts.
+    pub max_reconnect_interval_ms: u64,
+    /// Maximum number of concurrent per-node subscriptions.
+    pub max_concurrent_subscriptions: usize,
+    /// Maximum number of events returned in one streamed response message.
+    pub max_batch_size: u64,
+    /// Time-to-live in milliseconds for processed-message inbox records.
+    pub record_ttl_ms: u64,
+    /// Upper bound on diagnostic log lines per second to avoid log flooding.
+    pub max_diagnostic_logs_per_second: u32,
+}
+
+impl Default for MediaEventConsumerConfig {
+    fn default() -> Self {
+        Self::production()
+    }
+}
+
+impl MediaEventConsumerConfig {
+    /// Returns a default production configuration.
+    pub fn production() -> Self {
+        Self {
+            poll_interval_ms: 5_000,
+            reconnect_interval_ms: 1_000,
+            max_reconnect_interval_ms: 60_000,
+            max_concurrent_subscriptions: 64,
+            max_batch_size: 100,
+            record_ttl_ms: 86_400_000,
+            max_diagnostic_logs_per_second: 10,
+        }
+    }
+
+    /// Returns a configuration suitable for tests.
+    pub fn test() -> Self {
+        Self {
+            poll_interval_ms: 100,
+            reconnect_interval_ms: 100,
+            max_reconnect_interval_ms: 1_000,
+            max_concurrent_subscriptions: 4,
+            max_batch_size: 10,
+            record_ttl_ms: 60_000,
+            max_diagnostic_logs_per_second: 100,
         }
     }
 }

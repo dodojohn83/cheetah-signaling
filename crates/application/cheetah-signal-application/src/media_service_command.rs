@@ -15,7 +15,7 @@ impl MediaService {
     /// Loads the operation, starts it, commits, then executes the media-node command.
     /// Callers are responsible for applying the result to the aggregates.
     #[allow(clippy::too_many_arguments)]
-    async fn execute_media_command(
+    pub(crate) async fn execute_media_command(
         &self,
         context: &RequestContext,
         uow: &mut dyn UnitOfWork,

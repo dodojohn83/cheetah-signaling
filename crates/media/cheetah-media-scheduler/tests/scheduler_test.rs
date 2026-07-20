@@ -129,6 +129,7 @@ fn requirements(operation: &str, session: Option<MediaSessionId>) -> MediaRequir
         codecs: vec![],
         session_type: operation.to_string(),
         zone: None,
+        network_zone: None,
         tenant_constraints: Default::default(),
         required_constraints: Default::default(),
         media_session_id: session.map(|s| s.to_string()),
@@ -452,8 +453,8 @@ async fn scale_out_avoids_draining_node_and_breaks_affinity() {
     // Node A remains listed because it is only draining (not Left or expired)
     // and the frozen clock never exceeds its 60s lease.
     let active_nodes = scheduler.list_nodes(clock.as_ref()).await;
-    assert!(active_nodes.contains(&node_a.node_id));
-    assert!(active_nodes.contains(&node_b.node_id));
+    assert!(active_nodes.iter().any(|n| n.node_id == node_a.node_id));
+    assert!(active_nodes.iter().any(|n| n.node_id == node_b.node_id));
 }
 
 #[tokio::test]

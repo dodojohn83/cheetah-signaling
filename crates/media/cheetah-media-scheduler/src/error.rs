@@ -1,5 +1,7 @@
 //! Scheduler errors.
 
+use cheetah_domain::DomainError;
+
 /// Errors returned by the media node registry and scheduler.
 #[derive(Debug, thiserror::Error)]
 pub enum SchedulerError {
@@ -34,4 +36,10 @@ pub enum SchedulerError {
     /// Storage backend failure.
     #[error("storage backend: {0}")]
     Backend(String),
+    /// An event could not be applied because of a domain validation conflict.
+    #[error("domain error: {0}")]
+    Domain(#[from] DomainError),
+    /// Media event stream client failure.
+    #[error("media event stream client: {0}")]
+    EventStream(String),
 }

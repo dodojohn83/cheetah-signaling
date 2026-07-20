@@ -224,6 +224,9 @@ pub enum DomainEvent {
         operation_id: OperationId,
         /// Idempotency scope.
         idempotency_scope: Box<IdempotencyScope>,
+        /// Session generation.
+        #[serde(default)]
+        generation: u64,
         /// Deadline.
         deadline: Option<Deadline>,
         /// Creation timestamp.
@@ -243,6 +246,17 @@ pub enum DomainEvent {
         desired_state: MediaSessionDesiredState,
         /// Error, if any.
         error: Option<crate::MediaSessionError>,
+    },
+    /// A media session generation was bumped for migration/retry.
+    MediaSessionGenerationBumped {
+        /// Media session identifier.
+        media_session_id: MediaSessionId,
+        /// Tenant of the media session.
+        tenant_id: TenantId,
+        /// New generation.
+        generation: u64,
+        /// Update timestamp.
+        updated_at: UtcTimestamp,
     },
     /// A media binding was created.
     MediaBindingCreated {

@@ -4,7 +4,8 @@ use crate::dto::ReconciliationReport;
 use crate::media_service::*;
 use cheetah_domain::{
     DomainError, MediaBinding, MediaBindingError, MediaBindingState, MediaNodeSessionRef,
-    MediaSession, MediaSessionDesiredState, MediaSessionError, MediaSessionState, UnitOfWork,
+    MediaPurpose, MediaReservation, MediaSession, MediaSessionDesiredState, MediaSessionError,
+    MediaSessionState, UnitOfWork,
 };
 use cheetah_signal_types::{MediaBindingId, MediaSessionId, NodeId, PageRequest, RequestContext};
 use std::collections::{BTreeMap, BTreeSet};
@@ -73,7 +74,8 @@ impl MediaService {
             .await?;
         report.nodes_scanned = nodes.len() as u64;
 
-        for node_id in nodes {
+        for node in nodes {
+            let node_id = node.node_id;
             let local_list = active_by_node.remove(&node_id).unwrap_or_default();
             let local_ids: BTreeSet<MediaSessionId> = local_list
                 .iter()
@@ -102,6 +104,19 @@ impl MediaService {
             report.sessions_found += reported.len() as u64;
 
             for (mut session, mut binding) in local_list {
+                if node.draining {
+                    self.migrate_or_fail(
+                        context,
+                        uow,
+                        &mut session,
+                        &mut binding,
+                        "node_draining",
+                        "media node is draining",
+                        &mut report,
+                    )
+                    .await?;
+                    continue;
+                }
                 match reported.get(&session.media_session_id()) {
                     Some(report_ref) => {
                         if report_ref.media_node_instance_epoch
@@ -124,17 +139,16 @@ impl MediaService {
                         }
                     }
                     None => {
-                        self.fail_session(
+                        self.migrate_or_fail(
                             context,
                             uow,
                             &mut session,
                             &mut binding,
                             "reconciliation_missing",
                             "active media session missing on media node",
+                            &mut report,
                         )
                         .await?;
-                        reservations_to_release.push(binding.media_binding_id());
-                        report.missing_failed += 1;
                     }
                 }
             }
@@ -156,21 +170,18 @@ impl MediaService {
         // no longer active in the cluster (crashed, deregistered, or expired).
         for (_node_id, sessions) in active_by_node {
             for (mut session, mut binding) in sessions {
-                self.fail_session(
+                self.migrate_or_fail(
                     context,
                     uow,
                     &mut session,
                     &mut binding,
                     "node_unavailable",
                     "media node no longer active",
+                    &mut report,
                 )
                 .await?;
-                reservations_to_release.push(binding.media_binding_id());
-                report.missing_failed += 1;
             }
         }
-
-        uow.commit().await?;
 
         for binding_id in reservations_to_release {
             if let Err(e) = self
@@ -213,6 +224,7 @@ impl MediaService {
             uow.media_binding_repository().save(binding).await?;
         }
 
+        uow.commit().await?;
         Ok(())
     }
 
@@ -237,16 +249,175 @@ impl MediaService {
             uow.media_binding_repository().save(binding).await?;
         }
 
+        uow.commit().await?;
         Ok(())
     }
 
-    async fn converge_active(
+    #[allow(clippy::too_many_arguments)]
+    async fn migrate_or_fail(
+        &self,
+        context: &RequestContext,
+        uow: &mut dyn UnitOfWork,
+        session: &mut MediaSession,
+        binding: &mut MediaBinding,
+        code: &str,
+        message: &str,
+        report: &mut ReconciliationReport,
+    ) -> crate::Result<()> {
+        let tenant_id = context.tenant_id;
+
+        let reservation: crate::Result<(MediaReservation, MediaBindingId)> = async {
+            let (device, channel) = self
+                .ensure_device_and_channel_ready(
+                    uow,
+                    tenant_id,
+                    session.device_id(),
+                    session.channel_id(),
+                )
+                .await?;
+            let requirements = build_media_requirements(
+                &device,
+                &channel,
+                session.purpose(),
+                session.media_session_id(),
+                std::collections::BTreeMap::new(),
+            );
+            let media_binding_id = self.id_generator.generate_media_binding_id();
+            let reservation = match session.purpose() {
+                MediaPurpose::Live => {
+                    self.media_port
+                        .reserve_live(
+                            tenant_id,
+                            session.device_id(),
+                            session.channel_id(),
+                            session.media_session_id(),
+                            media_binding_id,
+                            MediaPurpose::Live,
+                            &requirements,
+                            self.clock.as_ref(),
+                        )
+                        .await
+                }
+                MediaPurpose::Playback => {
+                    let now = self.clock.now_wall();
+                    let start_time = session.playback_start_time().unwrap_or(now);
+                    let end_time = session.playback_end_time().unwrap_or(now);
+                    let scale = session.playback_scale().unwrap_or(1.0);
+                    self.media_port
+                        .reserve_playback(
+                            tenant_id,
+                            session.device_id(),
+                            session.channel_id(),
+                            session.media_session_id(),
+                            media_binding_id,
+                            start_time,
+                            end_time,
+                            scale,
+                            &requirements,
+                            self.clock.as_ref(),
+                        )
+                        .await
+                }
+                MediaPurpose::Talk => {
+                    self.media_port
+                        .reserve_talk(
+                            tenant_id,
+                            session.device_id(),
+                            session.channel_id(),
+                            session.media_session_id(),
+                            media_binding_id,
+                            &requirements,
+                            self.clock.as_ref(),
+                        )
+                        .await
+                }
+                _ => Err(DomainError::invalid_argument(
+                    "unknown media purpose for migration",
+                )),
+            }?;
+            Ok((reservation, media_binding_id))
+        }
+        .await;
+
+        let (reservation, media_binding_id) = match reservation {
+            Ok(tuple) => tuple,
+            Err(_) => {
+                if !session.is_terminal() {
+                    self.fail_session(context, uow, session, binding, code, message)
+                        .await?;
+                }
+                if let Err(e2) = self
+                    .media_port
+                    .release(tenant_id, binding.media_binding_id(), self.clock.as_ref())
+                    .await
+                {
+                    tracing::warn!(
+                        tenant_id = %tenant_id,
+                        binding_id = %binding.media_binding_id(),
+                        "failed to release scheduler reservation after migration failure: {e2}"
+                    );
+                }
+                report.migrations_failed += 1;
+                return Ok(());
+            }
+        };
+
+        // Only bump generation after a successful reservation so the new
+        // binding is in a fresh generation and old callbacks cannot advance it.
+        let ev = session.bump_generation(self.clock.as_ref())?;
+        append_session_event(self, context, uow, session, ev).await?;
+        uow.media_session_repository().save(session).await?;
+
+        let command_result = self
+            .dispatch_reconnect_command(
+                context,
+                uow,
+                session,
+                binding,
+                session.device_id(),
+                session.channel_id(),
+                media_binding_id,
+                &reservation,
+            )
+            .await;
+
+        if let Err(e) = self
+            .media_port
+            .release(tenant_id, binding.media_binding_id(), self.clock.as_ref())
+            .await
+        {
+            tracing::warn!(
+                tenant_id = %tenant_id,
+                binding_id = %binding.media_binding_id(),
+                "failed to release scheduler reservation after migration attempt: {e}"
+            );
+        }
+
+        match command_result {
+            Ok(_) => {
+                report.migrations_succeeded += 1;
+            }
+            Err(e) => {
+                tracing::warn!(
+                    tenant_id = %tenant_id,
+                    media_session_id = %session.media_session_id(),
+                    "migration failed: {e}"
+                );
+                report.migrations_failed += 1;
+            }
+        }
+
+        Ok(())
+    }
+
+    pub(crate) async fn converge_active(
         &self,
         context: &RequestContext,
         uow: &mut dyn UnitOfWork,
         session: &mut MediaSession,
         binding: &mut MediaBinding,
     ) -> crate::Result<()> {
+        let mut mutated = false;
         match session.state() {
             MediaSessionState::Requested => {
                 let ev = session.allocating(self.clock.as_ref())?;
@@ -258,6 +429,7 @@ impl MediaService {
                 let ev = session.active(self.clock.as_ref())?;
                 append_session_event(self, context, uow, session, ev).await?;
                 uow.media_session_repository().save(session).await?;
+                mutated = true;
             }
             MediaSessionState::Allocating => {
                 let ev = session.inviting(self.clock.as_ref())?;
@@ -266,11 +438,13 @@ impl MediaService {
                 let ev = session.active(self.clock.as_ref())?;
                 append_session_event(self, context, uow, session, ev).await?;
                 uow.media_session_repository().save(session).await?;
+                mutated = true;
             }
             MediaSessionState::Inviting => {
                 let ev = session.active(self.clock.as_ref())?;
                 append_session_event(self, context, uow, session, ev).await?;
                 uow.media_session_repository().save(session).await?;
+                mutated = true;
             }
             MediaSessionState::Active => {}
             _ => {
@@ -286,8 +460,12 @@ impl MediaService {
             let ev = binding.activate(self.clock.as_ref())?;
             append_binding_event(self, context, uow, binding, ev).await?;
             uow.media_binding_repository().save(binding).await?;
+            mutated = true;
         }
 
+        if mutated {
+            uow.commit().await?;
+        }
         Ok(())
     }
 }

@@ -54,7 +54,7 @@ pub trait MediaScheduler: Send + Sync {
     async fn get_node(&self, node_id: NodeId, clock: &dyn Clock) -> Option<MediaNode>;
 
     /// Lists all media nodes known to the scheduler.
-    async fn list_nodes(&self, clock: &dyn Clock) -> Vec<NodeId>;
+    async fn list_nodes(&self, clock: &dyn Clock) -> Vec<MediaNode>;
 }
 
 /// Least-loaded scheduler with stable scoring and per-session affinity.
@@ -127,28 +127,51 @@ impl MediaScheduler for LeastLoadedScheduler {
             }
         }
 
-        let mut scored: Vec<(MediaNode, f64)> = candidates
-            .into_iter()
-            .filter(|n| !excluded.contains(&n.node_id))
-            .filter(|n| n.status == NodeStatus::Active && !n.draining)
-            .filter(|n| n.health != MediaNodeHealth::Unhealthy)
-            .filter(|n| matches_capability(n, requirements))
-            .filter(has_capacity)
-            .map(|n| {
-                let score = score_node(&n, requirements, &self.config);
-                (n, score)
-            })
-            .filter(|(_, score)| score.is_finite())
-            .collect();
+        let mut counts = CandidateFilterCounts::default();
+        let mut scored: Vec<(MediaNode, f64)> = Vec::new();
+        for node in candidates.into_iter() {
+            if excluded.contains(&node.node_id) {
+                counts.excluded += 1;
+                continue;
+            }
+            if node.status != NodeStatus::Active || node.draining {
+                counts.wrong_status += 1;
+                continue;
+            }
+            if node.health == MediaNodeHealth::Unhealthy {
+                counts.unhealthy += 1;
+                continue;
+            }
+            if !matches_capability(&node, requirements) {
+                counts.no_capability += 1;
+                continue;
+            }
+            if !zone_matches(&node, requirements) {
+                counts.no_zone += 1;
+                continue;
+            }
+            if !network_zone_matches(&node, requirements) {
+                counts.no_network_zone += 1;
+                continue;
+            }
+            if !has_capacity(&node) {
+                counts.no_capacity += 1;
+                continue;
+            }
+            let score = score_node(&node, requirements, &self.config);
+            if score.is_finite() {
+                scored.push((node, score));
+            } else {
+                counts.bad_score += 1;
+            }
+        }
 
         scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         scored.truncate(self.config.max_candidates);
 
-        scored
-            .into_iter()
-            .next()
-            .map(|(n, _)| n)
-            .ok_or_else(|| SchedulerError::NoNode(format_no_candidate_reason(requirements)))
+        scored.into_iter().next().map(|(n, _)| n).ok_or_else(|| {
+            SchedulerError::NoNode(format_no_candidate_reason(requirements, &counts))
+        })
     }
 
     async fn reserve(
@@ -226,13 +249,8 @@ impl MediaScheduler for LeastLoadedScheduler {
         self.registry.get(node_id, clock).await
     }
 
-    async fn list_nodes(&self, clock: &dyn Clock) -> Vec<NodeId> {
-        self.registry
-            .list_active(clock)
-            .await
-            .into_iter()
-            .map(|n| n.node_id)
-            .collect()
+    async fn list_nodes(&self, clock: &dyn Clock) -> Vec<MediaNode> {
+        self.registry.list_active(clock).await
     }
 }
 
@@ -261,20 +279,32 @@ impl LeastLoadedScheduler {
 }
 
 fn is_eligible_for_affinity(node: &MediaNode, requirements: &MediaRequirements) -> bool {
-    matches_capability(node, requirements)
-        && zone_matches(node, requirements)
-        && node.health != MediaNodeHealth::Unhealthy
-        && node.status == NodeStatus::Active
+    is_node_eligible(node, requirements)
+}
+
+fn is_node_eligible(node: &MediaNode, requirements: &MediaRequirements) -> bool {
+    node.status == NodeStatus::Active
         && !node.draining
-        && node.has_capacity()
+        && node.health != MediaNodeHealth::Unhealthy
+        && matches_capability(node, requirements)
+        && zone_matches(node, requirements)
+        && network_zone_matches(node, requirements)
+        && has_capacity(node)
 }
 
 fn matches_capability(node: &MediaNode, requirements: &MediaRequirements) -> bool {
+    let mut required = requirements.required_constraints.clone();
+    if let Some(transport) = requirements.transport.as_ref() {
+        required.insert("transport".to_string(), transport.clone());
+    }
+    if let Some(encapsulation) = requirements.encapsulation.as_ref() {
+        required.insert("encapsulation".to_string(), encapsulation.clone());
+    }
     node.capabilities.iter().any(|cap| {
         cap.protocol == requirements.protocol
             && (requirements.operation.is_empty()
                 || cap.operations.contains(&requirements.operation))
-            && constraints_satisfy(&cap.constraints, &requirements.required_constraints)
+            && constraints_satisfy(&cap.constraints, &required)
             && constraints_satisfy(&cap.constraints, &requirements.tenant_constraints)
             && codec_compatible(cap, requirements)
     })
@@ -308,6 +338,14 @@ fn codec_compatible(
 fn zone_matches(node: &MediaNode, requirements: &MediaRequirements) -> bool {
     if let Some(zone) = requirements.zone.as_ref() {
         node.zone == *zone || node.region == *zone
+    } else {
+        true
+    }
+}
+
+fn network_zone_matches(node: &MediaNode, requirements: &MediaRequirements) -> bool {
+    if let Some(network_zone) = requirements.network_zone.as_ref() {
+        node.network_zones.iter().any(|z| z == network_zone)
     } else {
         true
     }
@@ -358,12 +396,40 @@ fn stable_random(media_session_id: Option<&str>, node_id: &str) -> f64 {
     (value as f64) / (u64::MAX as f64)
 }
 
-fn format_no_candidate_reason(requirements: &MediaRequirements) -> String {
+#[derive(Default, Debug)]
+struct CandidateFilterCounts {
+    excluded: usize,
+    wrong_status: usize,
+    unhealthy: usize,
+    no_capability: usize,
+    no_zone: usize,
+    no_network_zone: usize,
+    no_capacity: usize,
+    bad_score: usize,
+}
+
+fn format_no_candidate_reason(
+    requirements: &MediaRequirements,
+    counts: &CandidateFilterCounts,
+) -> String {
     format!(
-        "no node satisfies protocol={} operation={} zone={:?} constraints={:?}",
+        "no node satisfies protocol={} operation={} zone={:?} network_zone={:?} transport={:?} encapsulation={:?} codecs={:?} required_constraints={:?} tenant_constraints={:?}; excluded={:?}, wrong_status={:?}, unhealthy={:?}, no_capability={:?}, no_zone={:?}, no_network_zone={:?}, no_capacity={:?}, bad_score={:?}",
         requirements.protocol,
         requirements.operation,
         requirements.zone,
-        requirements.required_constraints
+        requirements.network_zone,
+        requirements.transport,
+        requirements.encapsulation,
+        requirements.codecs,
+        requirements.required_constraints,
+        requirements.tenant_constraints,
+        counts.excluded,
+        counts.wrong_status,
+        counts.unhealthy,
+        counts.no_capability,
+        counts.no_zone,
+        counts.no_network_zone,
+        counts.no_capacity,
+        counts.bad_score,
     )
 }

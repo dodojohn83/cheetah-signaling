@@ -375,7 +375,7 @@ async fn media_service_callback_transitions_to_active() {
         media_node_instance_epoch: binding.media_node_instance_epoch(),
         media_session_id: session.media_session_id,
         media_binding_id: binding.media_binding_id(),
-        operation_id: session.operation_id,
+        operation_id: Some(session.operation_id),
         owner_epoch: binding.owner_epoch(),
         message_id: context.message_id.to_string(),
         binding_revision: binding.revision(),
@@ -423,6 +423,15 @@ async fn media_service_reconcile_releases_stopped_binding() {
         .await
         .unwrap();
 
+    let binding_id = ctx
+        .uow
+        .media_binding_repository()
+        .get_by_media_session(ctx.tenant_id, session.media_session_id)
+        .await
+        .unwrap()
+        .unwrap()
+        .media_binding_id();
+
     let mut media_session = ctx
         .uow
         .media_session_repository()
@@ -455,7 +464,7 @@ async fn media_service_reconcile_releases_stopped_binding() {
     let binding = ctx
         .uow
         .media_binding_repository()
-        .get_by_media_session(ctx.tenant_id, session.media_session_id)
+        .get(ctx.tenant_id, binding_id)
         .await
         .unwrap()
         .unwrap();
@@ -467,7 +476,7 @@ async fn media_service_reconcile_releases_stopped_binding() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn media_service_reconcile_fails_missing_active_session() {
+async fn media_service_reconcile_migrates_missing_active_session() {
     let mut ctx = setup();
     let context = request_context(&ctx);
     let device = register_device_and_channel(&mut ctx).await;
@@ -515,8 +524,9 @@ async fn media_service_reconcile_fails_missing_active_session() {
         .await
         .unwrap();
 
-    assert_eq!(report.nodes_scanned, 1);
-    assert_eq!(report.missing_failed, 1);
+    assert_eq!(report.nodes_scanned, 0);
+    assert_eq!(report.missing_failed, 0);
+    assert_eq!(report.migrations_succeeded, 1);
 
     let media_session = ctx
         .uow
@@ -534,9 +544,9 @@ async fn media_service_reconcile_fails_missing_active_session() {
         .unwrap();
     assert_eq!(
         media_session.state(),
-        cheetah_domain::MediaSessionState::Failed
+        cheetah_domain::MediaSessionState::Active
     );
-    assert_eq!(binding.state(), cheetah_domain::MediaBindingState::Failed);
+    assert_eq!(binding.state(), cheetah_domain::MediaBindingState::Active);
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -588,6 +598,7 @@ async fn media_service_reconcile_handles_mid_release_binding() {
         .await
         .unwrap()
         .unwrap();
+    let binding_id = binding.media_binding_id();
 
     let clock = ctx.clock.as_ref();
     media_session.active(clock).unwrap();
@@ -630,7 +641,7 @@ async fn media_service_reconcile_handles_mid_release_binding() {
     let binding_after = ctx
         .uow
         .media_binding_repository()
-        .get_by_media_session(ctx.tenant_id, session.media_session_id)
+        .get(ctx.tenant_id, binding_id)
         .await
         .unwrap()
         .unwrap();
@@ -639,7 +650,7 @@ async fn media_service_reconcile_handles_mid_release_binding() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn media_service_reconcile_fails_sessions_on_deregistered_node() {
+async fn media_service_reconcile_migrates_sessions_on_deregistered_node() {
     let mut ctx = setup();
     let context = request_context(&ctx);
     let device = register_device_and_channel(&mut ctx).await;
@@ -670,6 +681,18 @@ async fn media_service_reconcile_fails_sessions_on_deregistered_node() {
         .await
         .unwrap();
 
+    // Simulate a deregistered node: remove all reported sessions so the node
+    // no longer appears in `list_nodes`.
+    let binding = ctx
+        .uow
+        .media_binding_repository()
+        .get_by_media_session(ctx.tenant_id, session.media_session_id)
+        .await
+        .unwrap()
+        .unwrap();
+    ctx.media_port
+        .set_node_sessions(ctx.tenant_id, binding.media_node_id(), Vec::new());
+
     let report = ctx
         .media_service
         .reconcile(&context, &mut ctx.uow)
@@ -677,7 +700,8 @@ async fn media_service_reconcile_fails_sessions_on_deregistered_node() {
         .unwrap();
 
     assert_eq!(report.nodes_scanned, 0);
-    assert_eq!(report.missing_failed, 1);
+    assert_eq!(report.missing_failed, 0);
+    assert_eq!(report.migrations_succeeded, 1);
 
     let media_session = ctx
         .uow
@@ -695,9 +719,9 @@ async fn media_service_reconcile_fails_sessions_on_deregistered_node() {
         .unwrap();
     assert_eq!(
         media_session.state(),
-        cheetah_domain::MediaSessionState::Failed
+        cheetah_domain::MediaSessionState::Active
     );
-    assert_eq!(binding.state(), cheetah_domain::MediaBindingState::Failed);
+    assert_eq!(binding.state(), cheetah_domain::MediaBindingState::Active);
 }
 
 #[tokio::test(flavor = "current_thread")]

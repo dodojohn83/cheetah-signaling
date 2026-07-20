@@ -137,6 +137,7 @@ async fn sqlite_media_reconcile_active_missing_and_orphan_sessions() {
         .unwrap();
     assert_eq!(session.state, MediaSessionState::Inviting);
 
+    uow = storage.begin().await.unwrap();
     let binding = uow
         .media_binding_repository()
         .get_by_media_session(tenant, session.media_session_id)
@@ -160,6 +161,7 @@ async fn sqlite_media_reconcile_active_missing_and_orphan_sessions() {
     );
 
     let report = media_service.reconcile(&ctx, &mut *uow).await.unwrap();
+    uow = storage.begin().await.unwrap();
     assert_eq!(report.nodes_scanned, 1);
     assert_eq!(report.sessions_found, 1);
     assert_eq!(report.missing_failed, 0);
@@ -193,6 +195,7 @@ async fn sqlite_media_reconcile_active_missing_and_orphan_sessions() {
     );
 
     let report = media_service.reconcile(&ctx, &mut *uow).await.unwrap();
+    uow = storage.begin().await.unwrap();
     assert_eq!(report.missing_failed, 1);
 
     let failed_session = uow
@@ -228,6 +231,8 @@ async fn sqlite_media_reconcile_active_missing_and_orphan_sessions() {
         .await
         .unwrap();
 
+    uow = storage.begin().await.unwrap();
+
     let binding2 = uow
         .media_binding_repository()
         .get_by_media_session(tenant, session2.media_session_id)
@@ -258,6 +263,7 @@ async fn sqlite_media_reconcile_active_missing_and_orphan_sessions() {
     );
 
     let report = media_service.reconcile(&ctx, &mut *uow).await.unwrap();
+    uow = storage.begin().await.unwrap();
     assert_eq!(report.orphans_detected, 1);
     assert_eq!(report.sessions_found, 2);
 
@@ -269,25 +275,35 @@ async fn sqlite_media_reconcile_active_missing_and_orphan_sessions() {
         .expect("session2 exists");
     assert_eq!(session2_active.state(), MediaSessionState::Active);
 
-    // 4. Clear the node report -> missing sessions are failed and bindings released.
+    // 4. Clear the node report -> missing active session is migrated to a new
+    // media node rather than failed; the old binding is terminated.
     media_port.set_node_sessions(tenant, node2, vec![]);
     let report = media_service.reconcile(&ctx, &mut *uow).await.unwrap();
-    assert_eq!(report.missing_failed, 1);
+    uow = storage.begin().await.unwrap();
+    assert_eq!(report.missing_failed, 0);
+    assert_eq!(report.migrations_succeeded, 1);
 
-    let missing_session = uow
+    let migrated_session = uow
         .media_session_repository()
         .get(tenant, session2.media_session_id)
         .await
         .unwrap()
         .expect("session2 still exists");
-    assert!(missing_session.is_terminal());
-    let missing_binding = uow
+    assert_eq!(migrated_session.state(), MediaSessionState::Active);
+    let migrated_binding = uow
+        .media_binding_repository()
+        .get_by_media_session(tenant, session2.media_session_id)
+        .await
+        .unwrap()
+        .expect("migrated binding exists");
+    assert_eq!(migrated_binding.state(), MediaBindingState::Active);
+    let old_binding = uow
         .media_binding_repository()
         .get(tenant, binding2_id)
         .await
         .unwrap()
         .expect("binding2 still exists");
-    assert!(missing_binding.is_terminal());
+    assert!(old_binding.is_terminal());
 
     // Clean up temporary database files.
     drop(uow);

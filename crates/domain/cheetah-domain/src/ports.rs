@@ -101,6 +101,8 @@ pub struct MediaRequirements {
     pub session_type: String,
     /// Preferred availability zone.
     pub zone: Option<String>,
+    /// Required network zone the node must be reachable through.
+    pub network_zone: Option<String>,
     /// Tenant-level constraints that the node must satisfy.
     pub tenant_constraints: std::collections::BTreeMap<String, String>,
     /// Additional capability constraints required by the request.
@@ -373,7 +375,11 @@ pub trait MediaPort: Send + Sync {
     ) -> Result<MediaNodeCommandResult>;
 
     /// Lists the media nodes that are reachable through this port.
-    async fn list_nodes(&self, tenant_id: TenantId, clock: &dyn Clock) -> Result<Vec<NodeId>>;
+    async fn list_nodes(
+        &self,
+        tenant_id: TenantId,
+        clock: &dyn Clock,
+    ) -> Result<Vec<crate::MediaNode>>;
 
     /// Lists active sessions on the given media node.
     async fn list_sessions(

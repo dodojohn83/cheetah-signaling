@@ -285,6 +285,14 @@ pub struct MediaSessionDto {
     pub created_at: UtcTimestamp,
     /// Last update timestamp.
     pub updated_at: UtcTimestamp,
+    /// Session generation for binding fencing.
+    pub generation: u64,
+    /// Playback window start, if a playback session.
+    pub playback_start_time: Option<UtcTimestamp>,
+    /// Playback window end, if a playback session.
+    pub playback_end_time: Option<UtcTimestamp>,
+    /// Playback scale, if a playback session.
+    pub playback_scale: Option<f64>,
     /// Revision.
     pub revision: Revision,
 }
@@ -523,6 +531,10 @@ impl From<&MediaSession> for MediaSessionDto {
             idempotency_key: session.idempotency_scope().idempotency_key.clone(),
             created_at: session.created_at(),
             updated_at: session.updated_at(),
+            generation: session.generation(),
+            playback_start_time: session.playback_start_time(),
+            playback_end_time: session.playback_end_time(),
+            playback_scale: session.playback_scale(),
             revision: session.revision(),
         }
     }
@@ -656,6 +668,10 @@ pub struct ReconciliationReport {
     pub missing_released: u64,
     /// Number of active sessions missing on the media node that were marked failed.
     pub missing_failed: u64,
+    /// Number of active sessions migrated to a new media node.
+    pub migrations_succeeded: u64,
+    /// Number of migration attempts that failed.
+    pub migrations_failed: u64,
     /// Number of orphan sessions detected but not yet cleaned.
     pub orphans_detected: u64,
 }

@@ -760,11 +760,16 @@ impl MediaBindingRepository for InMemoryUnitOfWork {
         media_session_id: MediaSessionId,
     ) -> crate::Result<Option<MediaBinding>> {
         let pending = lock_mutex(&self.pending);
-        Ok(pending
+        let mut candidates: Vec<&MediaBinding> = pending
             .bindings
             .values()
-            .find(|b| b.tenant_id() == tenant_id && b.media_session_id() == media_session_id)
-            .cloned())
+            .filter(|b| b.tenant_id() == tenant_id && b.media_session_id() == media_session_id)
+            .collect();
+        // Prefer the most recent non-terminal binding, matching the SQL
+        // repository contract that returns `None` when all bindings are terminal.
+        candidates.sort_by_key(|b| b.created_at());
+        let active = candidates.iter().rev().find(|b| !b.is_terminal()).copied();
+        Ok(active.cloned())
     }
 
     async fn save(&mut self, binding: &MediaBinding) -> crate::Result<()> {
@@ -1193,13 +1198,21 @@ impl InMemoryMediaPort {
     }
 
     /// Configures the sessions reported by a media node for reconciliation tests.
+    /// Passing an empty vector removes the node so it no longer appears in
+    /// `list_nodes`, which is useful for simulating a deregistered or expired
+    /// media node.
     pub fn set_node_sessions(
         &self,
         tenant_id: TenantId,
         node_id: NodeId,
         sessions: Vec<MediaNodeSessionRef>,
     ) {
-        lock_mutex(&self.node_sessions).insert((tenant_id, node_id), sessions);
+        let mut map = lock_mutex(&self.node_sessions);
+        if sessions.is_empty() {
+            map.remove(&(tenant_id, node_id));
+        } else {
+            map.insert((tenant_id, node_id), sessions);
+        }
     }
 
     fn reserve(
@@ -1282,13 +1295,49 @@ impl crate::MediaPort for InMemoryMediaPort {
         command: MediaNodeCommand,
         _clock: &dyn Clock,
     ) -> crate::Result<MediaNodeCommandResult> {
+        let tenant_id = command.tenant_id;
+        let node_id = command.media_node_id;
+        let epoch = command.media_node_instance_epoch;
         match command.payload {
-            CommandPayload::StartLive { .. }
-            | CommandPayload::StartPlayback { .. }
-            | CommandPayload::StartTalk { .. } => Ok(MediaNodeCommandResult::Accepted),
-            CommandPayload::StopMediaSession { .. } | CommandPayload::ControlPlayback { .. } => {
+            CommandPayload::StartLive {
+                media_session_id,
+                channel_id,
+                ..
+            }
+            | CommandPayload::StartPlayback {
+                media_session_id,
+                channel_id,
+                ..
+            }
+            | CommandPayload::StartTalk {
+                media_session_id,
+                channel_id,
+                ..
+            } => {
+                let mut sessions = lock_mutex(&self.node_sessions);
+                let refs = sessions.entry((tenant_id, node_id)).or_default();
+                refs.retain(|r| r.media_session_id != media_session_id);
+                refs.push(MediaNodeSessionRef {
+                    media_session_id,
+                    device_id: None,
+                    channel_id: Some(channel_id),
+                    media_node_instance_epoch: epoch,
+                });
+                Ok(MediaNodeCommandResult::Accepted)
+            }
+            CommandPayload::StopMediaSession {
+                media_session_id, ..
+            } => {
+                let mut sessions = lock_mutex(&self.node_sessions);
+                if let Some(refs) = sessions.get_mut(&(tenant_id, node_id)) {
+                    refs.retain(|r| r.media_session_id != media_session_id);
+                    if refs.is_empty() {
+                        sessions.remove(&(tenant_id, node_id));
+                    }
+                }
                 Ok(MediaNodeCommandResult::Completed)
             }
+            CommandPayload::ControlPlayback { .. } => Ok(MediaNodeCommandResult::Completed),
             CommandPayload::Ptz { .. } => Err(DomainError::invalid_argument(
                 "PTZ command not dispatched through media node port",
             )),
@@ -1299,12 +1348,15 @@ impl crate::MediaPort for InMemoryMediaPort {
         &self,
         tenant_id: TenantId,
         _clock: &dyn Clock,
-    ) -> crate::Result<Vec<NodeId>> {
+    ) -> crate::Result<Vec<crate::MediaNode>> {
         let node_sessions = lock_mutex(&self.node_sessions);
         Ok(node_sessions
             .keys()
             .filter(|(t, _)| *t == tenant_id)
-            .map(|(_, node_id)| *node_id)
+            .map(|(_, node_id)| crate::MediaNode {
+                node_id: *node_id,
+                ..crate::MediaNode::default()
+            })
             .collect())
     }
 
