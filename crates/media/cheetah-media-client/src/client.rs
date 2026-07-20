@@ -79,6 +79,7 @@ struct ChannelEntry {
     channel: Channel,
     semaphore: Arc<Semaphore>,
     circuit: Mutex<CircuitState>,
+    last_used: Mutex<Instant>,
     cooldown: Duration,
     threshold: u32,
 }
@@ -109,6 +110,16 @@ impl ChannelEntry {
                 consecutive_failures: 0,
             };
         }
+    }
+
+    fn touch(&self) {
+        if let Ok(mut t) = self.last_used.lock() {
+            *t = Instant::now();
+        }
+    }
+
+    fn last_used(&self) -> Instant {
+        *self.last_used.lock().unwrap_or_else(|p| p.into_inner())
     }
 
     fn record_failure(&self) {
@@ -367,6 +378,7 @@ impl MediaControlClient {
             circuit: Mutex::new(CircuitState::Closed {
                 consecutive_failures: 0,
             }),
+            last_used: Mutex::new(Instant::now()),
             cooldown: Duration::from_millis(self.config.circuit_breaker_cooldown_ms),
             threshold: self.config.circuit_breaker_threshold,
         });
@@ -375,10 +387,14 @@ impl MediaControlClient {
             MediaClientError::Grpc(Status::internal("connection pool lock poisoned"))
         })?;
         if let Some(existing) = pool.get(key) {
+            existing.touch();
             return Ok(Arc::clone(existing));
         }
-        if pool.len() >= self.config.max_connections {
-            pool.pop_first();
+        if pool.len() >= self.config.max_connections
+            && let Some((oldest_key, _)) = pool.iter().min_by_key(|(_, e)| e.last_used())
+        {
+            let oldest_key = oldest_key.clone();
+            pool.remove(&oldest_key);
         }
         pool.insert(key.to_string(), Arc::clone(&entry));
         Ok(entry)
