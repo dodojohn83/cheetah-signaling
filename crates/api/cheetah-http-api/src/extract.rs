@@ -7,8 +7,8 @@ use axum::{
     http::request::Parts,
 };
 use cheetah_signal_types::{
-    CorrelationId, Deadline, DurationMs, MessageId, PageRequest, RequestContext, TenantId,
-    validate_traceparent, validate_tracestate,
+    CorrelationId, Deadline, DurationMs, MessageId, PageRequest, RequestContext, SignalError,
+    SignalErrorKind, TenantId, validate_traceparent, validate_tracestate,
 };
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -150,23 +150,31 @@ fn check_rate_limit(
 }
 
 fn resolve_tenant_id(parts: &Parts, auth: &AuthContext) -> Result<TenantId, HttpError> {
-    let header_tenant = parts
-        .headers
-        .get("x-tenant-id")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.parse::<TenantId>());
+    let Some(value) = parts.headers.get("x-tenant-id") else {
+        return auth.tenant_id.ok_or_else(|| {
+            HttpError::Unauthenticated(
+                "tenant id is required via x-tenant-id header or token claim".to_string(),
+            )
+        });
+    };
 
-    match (header_tenant, auth.tenant_id) {
-        (Some(Ok(header)), Some(auth)) if header != auth => Err(HttpError::PermissionDenied(
+    let text = value.to_str().map_err(|_| {
+        HttpError::Signal(SignalError::new(
+            SignalErrorKind::InvalidArgument,
+            "x-tenant-id header is not valid UTF-8",
+        ))
+    })?;
+    let header = text.parse::<TenantId>()?;
+
+    if let Some(auth_tenant) = auth.tenant_id
+        && header != auth_tenant
+    {
+        return Err(HttpError::PermissionDenied(
             "tenant header does not match token tenant".to_string(),
-        )),
-        (Some(Ok(header)), _) => Ok(header),
-        (Some(Err(e)), _) => Err(HttpError::Signal(e)),
-        (None, Some(auth)) => Ok(auth),
-        (None, None) => Err(HttpError::Unauthenticated(
-            "tenant id is required via x-tenant-id header or token claim".to_string(),
-        )),
+        ));
     }
+
+    Ok(header)
 }
 
 fn parse_message_or_correlation_id(
@@ -254,5 +262,85 @@ impl FromRequestParts<Arc<ApiState>> for IdempotencyKey {
             Some(k) if !k.is_empty() => Ok(Self(k)),
             _ => Ok(Self(uuid::Uuid::now_v7().to_string())),
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+    use crate::AuthContext;
+    use axum::http::Request;
+    use cheetah_signal_types::{Principal, PrincipalKind};
+    use std::str::FromStr;
+
+    fn auth_with_tenant(tenant_id: Option<TenantId>) -> AuthContext {
+        AuthContext {
+            principal: Principal {
+                id: "u".to_string(),
+                kind: PrincipalKind::User,
+                scopes: vec![],
+            },
+            tenant_id,
+        }
+    }
+
+    fn parts_with_header(name: &str, value: &[u8]) -> Parts {
+        let req = Request::builder()
+            .header(name, value)
+            .body(())
+            .expect("request build");
+        let (parts, _) = req.into_parts();
+        parts
+    }
+
+    #[test]
+    fn resolve_tenant_id_uses_valid_header() {
+        let tenant = TenantId::from_str("018f3e7a-6a7d-7c9e-8b1a-2b3c4d5e6f7a").unwrap();
+        let parts = parts_with_header("x-tenant-id", tenant.to_string().as_bytes());
+        let auth = auth_with_tenant(None);
+        assert_eq!(resolve_tenant_id(&parts, &auth).unwrap(), tenant);
+    }
+
+    #[test]
+    fn resolve_tenant_id_falls_back_to_auth_claim() {
+        let tenant = TenantId::from_str("018f3e7a-6a7d-7c9e-8b1a-2b3c4d5e6f7a").unwrap();
+        let parts = Request::builder()
+            .body(())
+            .expect("request build")
+            .into_parts()
+            .0;
+        let auth = auth_with_tenant(Some(tenant));
+        assert_eq!(resolve_tenant_id(&parts, &auth).unwrap(), tenant);
+    }
+
+    #[test]
+    fn resolve_tenant_id_rejects_non_utf8_header() {
+        let parts = parts_with_header("x-tenant-id", &[0xff, 0xfe]);
+        let auth = auth_with_tenant(None);
+        let err = resolve_tenant_id(&parts, &auth).expect_err("non-utf8 header");
+        assert_eq!(err.status(), axum::http::StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn resolve_tenant_id_rejects_mismatch_with_auth_claim() {
+        let header_tenant = TenantId::from_str("018f3e7a-6a7d-7c9e-8b1a-2b3c4d5e6f7a").unwrap();
+        let auth_tenant = TenantId::from_str("028f3e7a-6a7d-7c9e-8b1a-2b3c4d5e6f7a").unwrap();
+        let parts = parts_with_header("x-tenant-id", header_tenant.to_string().as_bytes());
+        let auth = auth_with_tenant(Some(auth_tenant));
+        let err = resolve_tenant_id(&parts, &auth).expect_err("mismatched tenant");
+        assert_eq!(err.status(), axum::http::StatusCode::FORBIDDEN);
+    }
+
+    #[test]
+    fn resolve_tenant_id_rejects_missing_when_auth_has_no_tenant() {
+        let parts = Request::builder()
+            .body(())
+            .expect("request build")
+            .into_parts()
+            .0;
+        let auth = auth_with_tenant(None);
+        let err = resolve_tenant_id(&parts, &auth).expect_err("missing tenant");
+        assert_eq!(err.status(), axum::http::StatusCode::UNAUTHORIZED);
     }
 }
