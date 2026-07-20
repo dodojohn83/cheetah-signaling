@@ -41,6 +41,8 @@ pub struct MediaControlRequest {
     pub owner_epoch: OwnerEpoch,
     /// Signaling node that owns this command.
     pub source_node_id: NodeId,
+    /// Target media node identifier.
+    pub media_node_id: NodeId,
     /// Target media node instance epoch for fencing.
     pub target_media_node_instance_epoch: MediaNodeInstanceEpoch,
     /// Optional wall-clock deadline.
@@ -58,6 +60,8 @@ pub struct MediaControlRequest {
 pub struct MediaListSessionsRequest {
     /// Media node identifier.
     pub media_node_id: NodeId,
+    /// Media node instance epoch for fencing and connection keying.
+    pub media_node_instance_epoch: MediaNodeInstanceEpoch,
     /// Tenant identifier.
     pub tenant_id: TenantId,
     /// Maximum number of sessions to return.
@@ -163,7 +167,12 @@ impl MediaControlClient {
         cheetah_signal_contracts::cheetah::common::v1::MediaControlExecuteResponse,
         MediaClientError,
     > {
-        let entry = self.get_or_create_entry(endpoint).await?;
+        let key = self.pool_key(
+            endpoint,
+            request.media_node_id,
+            request.target_media_node_instance_epoch,
+        );
+        let entry = self.get_or_create_entry(&key, endpoint).await?;
 
         entry.can_attempt()?;
 
@@ -256,7 +265,12 @@ impl MediaControlClient {
         request: MediaListSessionsRequest,
     ) -> Result<cheetah_signal_contracts::cheetah::common::v1::ListSessionsResponse, MediaClientError>
     {
-        let entry = self.get_or_create_entry(endpoint).await?;
+        let key = self.pool_key(
+            endpoint,
+            request.media_node_id,
+            request.media_node_instance_epoch,
+        );
+        let entry = self.get_or_create_entry(&key, endpoint).await?;
 
         entry.can_attempt()?;
 
@@ -334,13 +348,14 @@ impl MediaControlClient {
 
     async fn get_or_create_entry(
         &self,
+        key: &str,
         endpoint: &str,
     ) -> Result<Arc<ChannelEntry>, MediaClientError> {
         {
             let pool = self.pool.lock().map_err(|_| {
                 MediaClientError::Grpc(Status::internal("connection pool lock poisoned"))
             })?;
-            if let Some(entry) = pool.get(endpoint) {
+            if let Some(entry) = pool.get(key) {
                 return Ok(Arc::clone(entry));
             }
         }
@@ -359,17 +374,40 @@ impl MediaControlClient {
         let mut pool = self.pool.lock().map_err(|_| {
             MediaClientError::Grpc(Status::internal("connection pool lock poisoned"))
         })?;
-        if let Some(existing) = pool.get(endpoint) {
+        if let Some(existing) = pool.get(key) {
             return Ok(Arc::clone(existing));
         }
         if pool.len() >= self.config.max_connections {
-            return Err(MediaClientError::PoolExhausted(format!(
-                "connection pool limit {} reached",
-                self.config.max_connections
-            )));
+            pool.pop_first();
         }
-        pool.insert(endpoint.to_string(), Arc::clone(&entry));
+        pool.insert(key.to_string(), Arc::clone(&entry));
         Ok(entry)
+    }
+
+    fn pool_key(
+        &self,
+        endpoint: &str,
+        media_node_id: NodeId,
+        media_node_instance_epoch: MediaNodeInstanceEpoch,
+    ) -> String {
+        format!(
+            "{}\0{}\0{}\0{}",
+            endpoint,
+            media_node_id,
+            media_node_instance_epoch.0,
+            self.tls_identity_digest()
+        )
+    }
+
+    fn tls_identity_digest(&self) -> String {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut hasher = DefaultHasher::new();
+        self.config.tls_ca_pem.hash(&mut hasher);
+        self.config.tls_client_cert_pem.hash(&mut hasher);
+        self.config.tls_client_key_secret_name.hash(&mut hasher);
+        self.config.allow_insecure_http.hash(&mut hasher);
+        format!("{:x}", hasher.finish())
     }
 
     async fn connect(&self, endpoint: &str) -> Result<Channel, MediaClientError> {

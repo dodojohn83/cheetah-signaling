@@ -140,7 +140,7 @@ impl MediaPort for SchedulerMediaPort {
             ));
         }
 
-        let endpoint = node.control_endpoint;
+        let endpoint = node.control_endpoint.clone();
         let contract_version = if command.contract_version > 0 {
             command.contract_version
         } else {
@@ -190,6 +190,7 @@ impl MediaPort for SchedulerMediaPort {
             operation_id: command.operation_id,
             owner_epoch: command.owner_epoch,
             source_node_id: command.source_node_id,
+            media_node_id: command.media_node_id,
             target_media_node_instance_epoch: command.media_node_instance_epoch,
             deadline: command.deadline.map(|d| d.as_timestamp()),
             idempotency_key: command.idempotency_key,
@@ -255,9 +256,10 @@ impl MediaPort for SchedulerMediaPort {
             .await
             .ok_or_else(|| DomainError::not_found("media_node", media_node_id.to_string()))?;
 
-        let endpoint = node.control_endpoint;
+        let endpoint = node.control_endpoint.clone();
         let request = MediaListSessionsRequest {
             media_node_id,
+            media_node_instance_epoch: node.instance_epoch_value(),
             tenant_id,
             page_size: page.page_size,
             page_token: page.cursor,
