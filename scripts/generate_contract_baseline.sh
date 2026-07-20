@@ -14,6 +14,6 @@ buf build "${PROTO_DIR}" --as-file-descriptor-set -o "${OUT_DIR}/descriptor.bin"
 
 # Verify the current proto does not break against the main branch baseline.
 # The baseline is the last released contract state stored in git.
-buf breaking "${PROTO_DIR}" --against ".git#branch=main"
+buf breaking "${PROTO_DIR}" --against ".git#branch=origin/main"
 
 echo "Contract baseline generated at ${OUT_DIR}/descriptor.bin"
