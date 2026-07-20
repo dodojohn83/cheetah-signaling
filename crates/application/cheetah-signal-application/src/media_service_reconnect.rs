@@ -11,7 +11,9 @@ use cheetah_domain::{
     MediaNodeCommandResult, MediaPurpose, MediaReservation, MediaSession, MediaSessionError,
     MediaSessionState, Operation, OperationResult, UnitOfWork,
 };
-use cheetah_signal_types::{ChannelId, DeviceId, MediaBindingId, RequestContext};
+use cheetah_signal_types::{
+    ChannelId, Deadline, DeviceId, DurationMs, MediaBindingId, RequestContext,
+};
 
 impl MediaService {
     /// Reconnects an existing media session to a new media node.
@@ -40,7 +42,9 @@ impl MediaService {
             session.generation(),
             self.id_generator.generate_message_id()
         );
-        let deadline = session.deadline();
+        // Use a fresh deadline for the reconnect command so that an elapsed
+        // original request deadline does not prevent migration.
+        let deadline = Deadline::from_now(self.clock.now_wall(), DurationMs::from_seconds(30));
         let owner_epoch = session.owner_epoch();
 
         // Mark the old binding as failed so it is never resurrected.
@@ -153,7 +157,7 @@ impl MediaService {
 
         uow.commit().await?;
 
-        let result = self
+        let result = match self
             .execute_media_command(
                 context,
                 uow,
@@ -168,7 +172,22 @@ impl MediaService {
                 operation.idempotency_scope().idempotency_key.clone(),
                 operation.command().payload().clone(),
             )
-            .await?;
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                if let Err(e2) = self
+                    .media_port
+                    .release(tenant_id, media_binding_id, self.clock.as_ref())
+                    .await
+                {
+                    tracing::warn!(
+                        "failed to release scheduler reservation after reconnect dispatch error: {e2}"
+                    );
+                }
+                return Err(e);
+            }
+        };
 
         // Reload after execute_media_command committed.
         let mut operation = uow
