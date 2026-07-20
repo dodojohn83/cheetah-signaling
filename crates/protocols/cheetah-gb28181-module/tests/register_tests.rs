@@ -375,6 +375,44 @@ fn challenge_optional_rejects_credential_backend_error() {
 }
 
 #[test]
+fn challenge_optional_rejects_invalid_credentials_with_401() {
+    // When a password is configured in ChallengeOptional mode and the device
+    // presents an Authorization header, the digest must validate; an invalid
+    // response must not fall through to unauthenticated acceptance.
+    let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec())
+        .unwrap()
+        .with_auth_policy(AuthPolicy::ChallengeOptional);
+    let provider = |device: &DeviceId| {
+        if device.as_ref() == DEVICE_ID {
+            Ok(Some(SecretString::from(PASSWORD)))
+        } else {
+            Ok(None)
+        }
+    };
+    let mut access = Gb28181Access::new(config, provider).unwrap();
+
+    let mut request = make_request(1, false);
+    request.headers_mut().append(
+        HeaderName::Authorization,
+        HeaderValue::new("Digest username=\"34020000001320000001\", realm=\"example.com\", nonce=\"deadbeef\", uri=\"sip:34020000001320000001@example.com\", response=\"fakemac\", algorithm=\"SHA-256\""),
+    );
+    let outputs = access
+        .process(AccessInput {
+            source: "192.168.1.100:5060".parse().unwrap(),
+            now: 1000,
+            message: request,
+        })
+        .unwrap();
+
+    assert_eq!(outputs.len(), 1);
+    let response = find_response(&outputs);
+    let SipMessage::Response { line, .. } = response else {
+        panic!("expected response");
+    };
+    assert_eq!(line.code, 401);
+}
+
+#[test]
 fn multiple_via_headers_are_copied_to_response() {
     let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec()).unwrap();
     let provider = |device: &DeviceId| {

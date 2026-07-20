@@ -170,8 +170,10 @@ impl<P: CredentialProvider> Gb28181Access<P> {
 
         // In ChallengeOptional mode we accept devices that do not present
         // credentials. If credentials are present and the device is known,
-        // validate them; otherwise fall through to unauthenticated acceptance.
-        let mut authenticated = false;
+        // validate them; invalid credentials must be rejected even in optional
+        // mode.
+        let mut auth_ok = false;
+        let mut auth_attempted = false;
         if let Some(auth_header) = headers.get(&HeaderName::Authorization) {
             if self.config.auth_policy() == AuthPolicy::Required {
                 let digest = match parse_authorization(auth_header.as_str()) {
@@ -204,7 +206,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                     &mut self.replay_cache,
                     now,
                 ) {
-                    Ok(()) => authenticated = true,
+                    Ok(()) => auth_ok = true,
                     Err(cheetah_gb28181_core::DigestError::StaleNonce) => {
                         return self.authentication_failure_response(&message, now, true);
                     }
@@ -213,30 +215,40 @@ impl<P: CredentialProvider> Gb28181Access<P> {
             } else {
                 // ChallengeOptional: missing password is acceptable, but a backend
                 // error must not be treated as "no password" and fall through to an
-                // unauthenticated acceptance.
+                // unauthenticated acceptance. When a password is configured and the
+                // device presents an Authorization header, the digest must validate.
                 match self.credential_provider.password_for(&device_id) {
                     Ok(Some(password)) => {
-                        if let Ok(digest) = parse_authorization(auth_header.as_str()) {
-                            let request_uri = line.uri.encode();
-                            if self
-                                .digest_context
-                                .validate(
-                                    &digest,
-                                    &Method::Register,
-                                    &request_uri,
-                                    &password,
-                                    &mut self.replay_cache,
-                                    now,
-                                )
-                                .is_ok()
-                            {
-                                authenticated = true;
+                        let digest = match parse_authorization(auth_header.as_str()) {
+                            Ok(d) => d,
+                            Err(
+                                cheetah_gb28181_core::DigestError::Malformed(_)
+                                | cheetah_gb28181_core::DigestError::UnknownAlgorithm
+                                | cheetah_gb28181_core::DigestError::InvalidQop,
+                            ) => return Ok(self.bad_request_response(&message)),
+                            Err(_) => {
+                                return self.authentication_failure_response(&message, now, false);
                             }
+                        };
+                        let request_uri = line.uri.encode();
+                        match self.digest_context.validate(
+                            &digest,
+                            &Method::Register,
+                            &request_uri,
+                            &password,
+                            &mut self.replay_cache,
+                            now,
+                        ) {
+                            Ok(()) => auth_ok = true,
+                            Err(cheetah_gb28181_core::DigestError::StaleNonce) => {
+                                return self.authentication_failure_response(&message, now, true);
+                            }
+                            Err(_) => auth_attempted = true,
                         }
                     }
                     Ok(None) => {
-                        // No password configured; fall through to unauthenticated
-                        // acceptance in ChallengeOptional mode.
+                        // No password configured; ignore the header and accept as
+                        // unauthenticated in ChallengeOptional mode.
                     }
                     Err(e) => {
                         warn!(device_id = %device_id, error = %e, "credential provider backend error during REGISTER");
@@ -246,7 +258,9 @@ impl<P: CredentialProvider> Gb28181Access<P> {
             }
         }
 
-        if authenticated || self.config.auth_policy() == AuthPolicy::ChallengeOptional {
+        if auth_ok
+            || (self.config.auth_policy() == AuthPolicy::ChallengeOptional && !auth_attempted)
+        {
             self.register_accepted(
                 &message,
                 &contact_uri,
