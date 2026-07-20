@@ -285,6 +285,8 @@ pub struct MediaSessionDto {
     pub created_at: UtcTimestamp,
     /// Last update timestamp.
     pub updated_at: UtcTimestamp,
+    /// Session generation for binding fencing.
+    pub generation: u64,
     /// Revision.
     pub revision: Revision,
 }
@@ -523,6 +525,7 @@ impl From<&MediaSession> for MediaSessionDto {
             idempotency_key: session.idempotency_scope().idempotency_key.clone(),
             created_at: session.created_at(),
             updated_at: session.updated_at(),
+            generation: session.generation(),
             revision: session.revision(),
         }
     }

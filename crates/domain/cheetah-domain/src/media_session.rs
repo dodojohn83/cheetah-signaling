@@ -201,6 +201,9 @@ pub struct MediaSession {
     idempotency_scope: IdempotencyScope,
     deadline: Option<Deadline>,
     error: Option<MediaSessionError>,
+    /// Generation of the session; incremented when a new binding must be created
+    /// during migration or retry. 同一 generation 最多一个有效 MediaBinding。
+    generation: u64,
     created_at: UtcTimestamp,
     updated_at: UtcTimestamp,
     revision: Revision,
@@ -255,6 +258,7 @@ impl MediaSession {
             idempotency_scope,
             deadline,
             error: None,
+            generation: 0,
             created_at: now,
             updated_at: now,
             revision: Revision::default(),
@@ -270,6 +274,7 @@ impl MediaSession {
             owner_epoch,
             operation_id,
             idempotency_scope: Box::new(session.idempotency_scope.clone()),
+            generation: session.generation,
             deadline,
             created_at: session.created_at,
         };
@@ -506,6 +511,30 @@ impl MediaSession {
     /// Revision.
     pub fn revision(&self) -> Revision {
         self.revision
+    }
+
+    /// Session generation; incremented when the session must establish a new
+    /// physical binding after migration or retry.
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// Bumps the session generation and returns a domain event.
+    pub fn bump_generation(&mut self, clock: &dyn Clock) -> crate::Result<DomainEvent> {
+        if self.state.is_terminal() {
+            return Err(DomainError::already_terminal(
+                "MediaSession",
+                format!("{:?}", self.state),
+            ));
+        }
+        self.generation += 1;
+        self.bump(clock);
+        Ok(DomainEvent::MediaSessionGenerationBumped {
+            media_session_id: self.media_session_id,
+            tenant_id: self.tenant_id,
+            generation: self.generation,
+            updated_at: self.updated_at,
+        })
     }
 
     /// Whether the session is terminal.
