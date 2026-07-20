@@ -8,7 +8,7 @@ use quick_xml::Reader;
 use quick_xml::Writer;
 use quick_xml::events::{BytesStart, Event};
 use std::io::Cursor;
-use time::{Date, Month, PrimitiveDateTime, Time};
+use time::{Date, Month, OffsetDateTime, PrimitiveDateTime, Time};
 
 const ACTION: &str = "http://www.onvif.org/ver10/device/wsdl/GetSystemDateAndTime";
 const DEVICE_NS: &str = "http://www.onvif.org/ver10/device/wsdl";
@@ -33,17 +33,29 @@ pub struct DateTime {
 impl DateTime {
     /// Constructs a `time::PrimitiveDateTime` from these components.
     ///
-    /// Returns `None` if the components are out of range.
-    pub fn to_primitive(&self) -> Option<PrimitiveDateTime> {
-        let month = Month::try_from(self.month).ok()?;
-        let date = Date::from_calendar_date(self.year, month, self.day).ok()?;
-        let time = Time::from_hms(self.hour, self.minute, self.second).ok()?;
-        Some(PrimitiveDateTime::new(date, time))
+    /// Returns an error if any component is out of range.
+    pub fn to_primitive(&self) -> OnvifResult<PrimitiveDateTime> {
+        let month = Month::try_from(self.month).map_err(|_| {
+            OnvifError::InvalidField(format!("DateTime month out of range: {}", self.month))
+        })?;
+        let date = Date::from_calendar_date(self.year, month, self.day).map_err(|_| {
+            OnvifError::InvalidField(format!(
+                "DateTime date out of range: {}-{}-{}",
+                self.year, self.month, self.day
+            ))
+        })?;
+        let time = Time::from_hms(self.hour, self.minute, self.second).map_err(|_| {
+            OnvifError::InvalidField(format!(
+                "DateTime time out of range: {}:{}:{}",
+                self.hour, self.minute, self.second
+            ))
+        })?;
+        Ok(PrimitiveDateTime::new(date, time))
     }
 
     /// Assumes UTC and returns an `OffsetDateTime`.
-    pub fn to_utc(&self) -> Option<time::OffsetDateTime> {
-        self.to_primitive().map(|p| p.assume_utc())
+    pub fn to_utc(&self) -> OnvifResult<OffsetDateTime> {
+        Ok(self.to_primitive()?.assume_utc())
     }
 }
 
@@ -149,7 +161,15 @@ pub fn parse_get_system_date_and_time_response(xml: &str) -> OnvifResult<SystemD
                     utc = Some(utc_builder.build()?);
                     utc_builder = DateTimeBuilder::default();
                 } else if name == "LocalDateTime" {
-                    local = Some(local_builder.build()?);
+                    // LocalDateTime is optional; a malformed optional block is
+                    // ignored rather than failing the whole response.
+                    match local_builder.build() {
+                        Ok(d) => local = Some(d),
+                        Err(e) => {
+                            tracing::warn!("ignoring malformed optional LocalDateTime: {e}");
+                            local = None;
+                        }
+                    }
                     local_builder = DateTimeBuilder::default();
                 }
 
@@ -188,14 +208,17 @@ struct DateTimeBuilder {
 
 impl DateTimeBuilder {
     fn build(self) -> OnvifResult<DateTime> {
-        Ok(DateTime {
+        let date_time = DateTime {
             year: self.year.ok_or_else(|| missing("year"))?,
             month: self.month.ok_or_else(|| missing("month"))?,
             day: self.day.ok_or_else(|| missing("day"))?,
             hour: self.hour.ok_or_else(|| missing("hour"))?,
             minute: self.minute.ok_or_else(|| missing("minute"))?,
             second: self.second.ok_or_else(|| missing("second"))?,
-        })
+        };
+        // Validate that the parsed components form a real calendar date/time.
+        date_time.to_primitive()?;
+        Ok(date_time)
     }
 }
 
@@ -275,5 +298,30 @@ mod tests {
 </s:Envelope>"#;
         let res = parse_get_system_date_and_time_response(xml).unwrap();
         assert_eq!(res.utc.year, 2026);
+    }
+
+    #[test]
+    fn rejects_invalid_date_time_components() {
+        let xml = r#"<?xml version="1.0"?>
+<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">
+  <s:Body>
+    <tds:GetSystemDateAndTimeResponse xmlns:tds="http://www.onvif.org/ver10/device/wsdl">
+      <tds:SystemDateAndTime>
+        <tt:DateTimeType xmlns:tt="http://www.onvif.org/ver10/schema">NTP</tt:DateTimeType>
+        <tt:DaylightSavings xmlns:tt="http://www.onvif.org/ver10/schema">false</tt:DaylightSavings>
+        <tt:UTCDateTime xmlns:tt="http://www.onvif.org/ver10/schema">
+          <tt:Time><tt:Hour>14</tt:Hour><tt:Minute>31</tt:Minute><tt:Second>0</tt:Second></tt:Time>
+          <tt:Date><tt:Year>2026</tt:Year><tt:Month>13</tt:Month><tt:Day>13</tt:Day></tt:Date>
+        </tt:UTCDateTime>
+      </tds:SystemDateAndTime>
+    </tds:GetSystemDateAndTimeResponse>
+  </s:Body>
+</s:Envelope>"#;
+        let result = parse_get_system_date_and_time_response(xml);
+        assert!(
+            result.is_err(),
+            "parser must reject out-of-range date/time components, got {:?}",
+            result
+        );
     }
 }

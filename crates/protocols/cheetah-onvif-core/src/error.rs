@@ -10,9 +10,13 @@ pub enum OnvifError {
     #[error("xml error: {0}")]
     Xml(String),
 
-    /// A required element or attribute is missing or malformed.
-    #[error("missing or malformed field: {0}")]
+    /// A required element is missing.
+    #[error("missing field: {0}")]
     MissingField(String),
+
+    /// A field is present but has an out-of-range or otherwise invalid value.
+    #[error("invalid field: {0}")]
+    InvalidField(String),
 
     /// The supplied URL failed validation.
     #[error("invalid xaddr: {0}")]
