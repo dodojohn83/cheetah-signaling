@@ -30,10 +30,46 @@ fn main() -> io::Result<()> {
         proto_dir.join("cheetah/cluster/v1/cluster.proto"),
     ];
 
-    tonic_prost_build::configure()
-        .btree_map(".")
-        .compile_protos(&proto_files, std::slice::from_ref(&proto_dir))?;
+    let mut builder = tonic_prost_build::configure().btree_map(".");
+
+    // Protoc versions between 3.12 and 3.14 require an experimental flag to
+    // accept proto3 `optional` fields; 3.15+ enables them by default and rejects
+    // the flag as unknown. Add the flag only for the narrow range that needs
+    // it so the build works with both older and newer protoc installations.
+    if protoc_needs_optional_experimental_flag()? {
+        builder = builder.protoc_arg("--experimental_allow_proto3_optional");
+    }
+
+    builder.compile_protos(&proto_files, std::slice::from_ref(&proto_dir))?;
 
     println!("cargo:rerun-if-changed={}", proto_dir.display());
     Ok(())
+}
+
+fn protoc_needs_optional_experimental_flag() -> io::Result<bool> {
+    let output = std::process::Command::new("protoc")
+        .arg("--version")
+        .output()?;
+    if !output.status.success() {
+        return Ok(false);
+    }
+
+    let version = String::from_utf8_lossy(&output.stdout);
+    let version = version.split_whitespace().next_back().unwrap_or("");
+
+    let parts: Vec<u32> = version
+        .split('.')
+        .take(3)
+        .filter_map(|s| s.parse().ok())
+        .collect();
+
+    if parts.len() < 2 {
+        return Ok(false);
+    }
+
+    let major = parts[0];
+    let minor = parts.get(1).copied().unwrap_or(0);
+
+    // The flag was introduced in 3.12 and removed in 3.15.
+    Ok(major == 3 && (12..15).contains(&minor))
 }
