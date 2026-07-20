@@ -132,29 +132,29 @@ pub fn parse_get_system_date_and_time_response(xml: &str) -> OnvifResult<SystemD
                 } else if current == Some("TZ") {
                     timezone = Some(text.trim().to_string());
                 } else if current == Some("Hour") && in_utc {
-                    utc_builder.hour = text.trim().parse().ok();
+                    utc_builder.hour = parse_component(&text, "hour")?;
                 } else if current == Some("Minute") && in_utc {
-                    utc_builder.minute = text.trim().parse().ok();
+                    utc_builder.minute = parse_component(&text, "minute")?;
                 } else if current == Some("Second") && in_utc {
-                    utc_builder.second = text.trim().parse().ok();
+                    utc_builder.second = parse_component(&text, "second")?;
                 } else if current == Some("Year") && in_utc {
-                    utc_builder.year = text.trim().parse().ok();
+                    utc_builder.year = parse_component(&text, "year")?;
                 } else if current == Some("Month") && in_utc {
-                    utc_builder.month = text.trim().parse().ok();
+                    utc_builder.month = parse_component(&text, "month")?;
                 } else if current == Some("Day") && in_utc {
-                    utc_builder.day = text.trim().parse().ok();
+                    utc_builder.day = parse_component(&text, "day")?;
                 } else if current == Some("Hour") && in_local {
-                    local_builder.hour = text.trim().parse().ok();
+                    local_builder.hour = parse_component(&text, "hour")?;
                 } else if current == Some("Minute") && in_local {
-                    local_builder.minute = text.trim().parse().ok();
+                    local_builder.minute = parse_component(&text, "minute")?;
                 } else if current == Some("Second") && in_local {
-                    local_builder.second = text.trim().parse().ok();
+                    local_builder.second = parse_component(&text, "second")?;
                 } else if current == Some("Year") && in_local {
-                    local_builder.year = text.trim().parse().ok();
+                    local_builder.year = parse_component(&text, "year")?;
                 } else if current == Some("Month") && in_local {
-                    local_builder.month = text.trim().parse().ok();
+                    local_builder.month = parse_component(&text, "month")?;
                 } else if current == Some("Day") && in_local {
-                    local_builder.day = text.trim().parse().ok();
+                    local_builder.day = parse_component(&text, "day")?;
                 }
 
                 if name == "UTCDateTime" {
@@ -224,6 +224,16 @@ impl DateTimeBuilder {
 
 fn missing(field: &str) -> OnvifError {
     OnvifError::MissingField(format!("DateTime/{field}"))
+}
+
+fn parse_component<T: std::str::FromStr>(text: &str, name: &str) -> OnvifResult<Option<T>> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Ok(None);
+    }
+    text.parse::<T>().map(Some).map_err(|_| {
+        OnvifError::InvalidField(format!("DateTime/{name} is not a valid integer: {text}"))
+    })
 }
 
 fn local_name(name: &quick_xml::name::QName<'_>) -> String {
@@ -321,6 +331,31 @@ mod tests {
         assert!(
             result.is_err(),
             "parser must reject out-of-range date/time components, got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn rejects_non_numeric_date_time_component() {
+        let xml = r#"<?xml version="1.0"?>
+<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">
+  <s:Body>
+    <tds:GetSystemDateAndTimeResponse xmlns:tds="http://www.onvif.org/ver10/device/wsdl">
+      <tds:SystemDateAndTime>
+        <tt:DateTimeType xmlns:tt="http://www.onvif.org/ver10/schema">NTP</tt:DateTimeType>
+        <tt:DaylightSavings xmlns:tt="http://www.onvif.org/ver10/schema">false</tt:DaylightSavings>
+        <tt:UTCDateTime xmlns:tt="http://www.onvif.org/ver10/schema">
+          <tt:Time><tt:Hour>not-a-number</tt:Hour><tt:Minute>31</tt:Minute><tt:Second>0</tt:Second></tt:Time>
+          <tt:Date><tt:Year>2026</tt:Year><tt:Month>7</tt:Month><tt:Day>13</tt:Day></tt:Date>
+        </tt:UTCDateTime>
+      </tds:SystemDateAndTime>
+    </tds:GetSystemDateAndTimeResponse>
+  </s:Body>
+</s:Envelope>"#;
+        let result = parse_get_system_date_and_time_response(xml);
+        assert!(
+            result.is_err(),
+            "parser must reject non-numeric date/time components, got {:?}",
             result
         );
     }
