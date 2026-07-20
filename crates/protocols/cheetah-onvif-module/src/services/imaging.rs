@@ -97,8 +97,17 @@ pub fn set_imaging_settings_action() -> &'static str {
     SET_IMAGING_SETTINGS_ACTION
 }
 
-fn parse_f64(text: &str) -> Option<f64> {
-    text.trim().parse().ok()
+fn parse_f64(text: &str, field: &str) -> Result<Option<f64>, OnvifModuleError> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Ok(None);
+    }
+    text.parse::<f64>()
+        .map(Some)
+        .map_err(|e| OnvifModuleError::InvalidValue {
+            field: field.to_string(),
+            message: format!("expected a valid floating point value: {e}"),
+        })
 }
 
 /// Parses GetImagingSettingsResponse into diagnostic fields.
@@ -122,10 +131,12 @@ pub fn parse_get_imaging_settings_response(
                 let name = local_name(&e.name());
                 let text = ctx.on_end();
                 match name.as_str() {
-                    "Brightness" => settings.brightness = parse_f64(&text),
-                    "ColorSaturation" => settings.color_saturation = parse_f64(&text),
-                    "Contrast" => settings.contrast = parse_f64(&text),
-                    "Sharpness" => settings.sharpness = parse_f64(&text),
+                    "Brightness" => settings.brightness = parse_f64(&text, "Brightness")?,
+                    "ColorSaturation" => {
+                        settings.color_saturation = parse_f64(&text, "ColorSaturation")?;
+                    }
+                    "Contrast" => settings.contrast = parse_f64(&text, "Contrast")?,
+                    "Sharpness" => settings.sharpness = parse_f64(&text, "Sharpness")?,
                     "Mode" => {
                         // Prefer the most specific parent context when present.
                         let parent = ctx.parent().map(str::to_string);
@@ -191,5 +202,40 @@ mod tests {
         let settings = parse_get_imaging_settings_response(xml, &ParserLimits::default()).unwrap();
         assert_eq!(settings.brightness, Some(50.0));
         assert_eq!(settings.contrast, Some(40.0));
+    }
+
+    #[test]
+    fn rejects_malformed_float_in_imaging_settings() {
+        let xml = r#"
+        <s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">
+          <s:Body>
+            <timg:GetImagingSettingsResponse xmlns:timg="http://www.onvif.org/ver20/imaging/wsdl">
+              <timg:ImagingSettings>
+                <tt:Brightness xmlns:tt="http://www.onvif.org/ver10/schema">not-a-number</tt:Brightness>
+              </timg:ImagingSettings>
+            </timg:GetImagingSettingsResponse>
+          </s:Body>
+        </s:Envelope>"#;
+        let result = parse_get_imaging_settings_response(xml, &ParserLimits::default());
+        assert!(
+            result.is_err(),
+            "malformed float in imaging settings must be rejected; got {result:?}"
+        );
+    }
+
+    #[test]
+    fn treats_empty_imaging_settings_fields_as_missing() {
+        let xml = r#"
+        <s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">
+          <s:Body>
+            <timg:GetImagingSettingsResponse xmlns:timg="http://www.onvif.org/ver20/imaging/wsdl">
+              <timg:ImagingSettings>
+                <tt:Brightness xmlns:tt="http://www.onvif.org/ver10/schema"></tt:Brightness>
+              </timg:ImagingSettings>
+            </timg:GetImagingSettingsResponse>
+          </s:Body>
+        </s:Envelope>"#;
+        let settings = parse_get_imaging_settings_response(xml, &ParserLimits::default()).unwrap();
+        assert_eq!(settings.brightness, None);
     }
 }
