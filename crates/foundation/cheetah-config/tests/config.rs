@@ -106,6 +106,11 @@ backend = "nats"
 
 [cluster]
 enabled = true
+
+[grpc]
+tls_cert_ref = "certs/grpc.crt"
+tls_key_ref = "certs/grpc.key"
+mtls_client_ca_ref = "certs/grpc-client-ca.crt"
 "#;
     fs::write(&path, content).map_err(|e| {
         SignalError::new(
@@ -136,6 +141,11 @@ backend = "nats"
 
 [cluster]
 enabled = true
+
+[grpc]
+tls_cert_ref = "certs/grpc.crt"
+tls_key_ref = "certs/grpc.key"
+mtls_client_ca_ref = "certs/grpc-client-ca.crt"
 "#;
     fs::write(&path, content).map_err(|e| {
         SignalError::new(

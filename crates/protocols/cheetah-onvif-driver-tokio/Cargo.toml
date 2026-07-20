@@ -10,10 +10,14 @@ repository.workspace = true
 [dependencies]
 cheetah-onvif-core = { path = "../cheetah-onvif-core" }
 cheetah-onvif-module = { path = "../cheetah-onvif-module" }
+cheetah-plugin-sdk = { path = "../../plugin/cheetah-plugin-sdk" }
 cheetah-signal-types = { path = "../../foundation/cheetah-signal-types" }
+async-trait = { workspace = true }
 rand = { workspace = true }
 reqwest = { workspace = true }
 secrecy = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["net", "time", "rt", "macros", "sync"] }
 tracing = { workspace = true }

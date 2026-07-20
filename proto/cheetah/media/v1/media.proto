@@ -2,6 +2,9 @@ syntax = "proto3";
 
 package cheetah.media.v1;
 
+import "cheetah/foundation/v1/error.proto";
+import "cheetah/media/v1/media_context.proto";
+import "cheetah/media/v1/media_resource.proto";
 import "google/protobuf/timestamp.proto";
 
 option go_package = "github.com/dodojohn83/cheetah-signaling/gen/go/cheetah/media/v1;mediav1";
@@ -19,6 +22,8 @@ message MediaCapability {
   string protocol = 1;
   repeated string operations = 2;
   map<string, string> constraints = 3;
+  uint64 version = 4;
+  string runtime_state = 5;
 }
 
 // A reference to a media session.
@@ -45,6 +50,12 @@ message RtpSession {
   string remote_sdp = 4;
   string local_sdp = 5;
   string status = 6;
+
+  // Resource reference returned by the media node.
+  MediaHandle handle = 7;
+  MediaKey media_key = 8;
+  MediaResourceState resource_state = 9;
+  NegotiationResult negotiation = 10;
 }
 
 // Proxy negotiation parameters.
@@ -62,6 +73,11 @@ message ProxySession {
   string channel_id = 3;
   string proxy_url = 4;
   string status = 5;
+
+  // Resource reference returned by the media node.
+  MediaHandle handle = 6;
+  MediaKey media_key = 7;
+  MediaResourceState resource_state = 8;
 }
 
 // Parameters to start a recording.
@@ -79,6 +95,13 @@ message RecordSession {
   string storage_path = 3;
   int64 duration_ms = 4;
   string status = 5;
+
+  // Resource reference returned by the media node.
+  MediaHandle handle = 6;
+  MediaKey media_key = 7;
+  MediaResourceState resource_state = 8;
+  google.protobuf.Timestamp started_at = 9;
+  google.protobuf.Timestamp stopped_at = 10;
 }
 
 // Parameters to take a snapshot.
@@ -93,6 +116,11 @@ message Snapshot {
   string media_session_id = 2;
   string image_url = 3;
   google.protobuf.Timestamp created_at = 4;
+
+  // Resource reference returned by the media node.
+  MediaHandle handle = 5;
+  MediaKey media_key = 6;
+  MediaResourceState resource_state = 7;
 }
 
 // A media query.
@@ -132,10 +160,29 @@ message MediaCommand {
 
   // Fencing: the media node instance epoch targeted by this command.
   uint64 target_media_node_instance_epoch = 11;
+
+  // Shared mutation context for idempotency, deadline, tenant and trace.
+  MediaMutationContext context = 12;
 }
 
 // An event emitted by media processing.
 message MediaEvent {
+  // Event header.
+  string event_id = 8;
+  string tenant_id = 9;
+  string media_node_id = 10;
+  uint64 media_node_instance_epoch = 11;
+  uint64 sequence = 12;
+  google.protobuf.Timestamp occurred_at = 13;
+  string media_session_id = 14;
+  string media_binding_id = 15;
+  string media_handle = 16;
+  MediaKey media_key = 17;
+  string correlation_id = 18;
+  string traceparent = 19;
+  string tracestate = 20;
+
+  // Typed event payload.
   oneof event {
     RtpSession rtp_negotiated = 1;
     RtpSession stream_started = 2;
@@ -144,7 +191,58 @@ message MediaEvent {
     RecordSession record_stopped = 5;
     Snapshot snapshot_taken = 6;
     MediaError error = 7;
+    ResourceStateChangedEvent resource_state_changed = 21;
+    StreamOnlineEvent stream_online = 22;
+    StreamOfflineEvent stream_offline = 23;
+    RtpTimeoutEvent rtp_timeout = 24;
+    ProxyStateChangedEvent proxy_state_changed = 25;
+    PlaybackCompleteEvent playback_complete = 26;
+    NodeLifecycleEvent node_lifecycle = 27;
   }
+}
+
+// Resource state transition.
+message ResourceStateChangedEvent {
+  MediaResourceState new_state = 1;
+  MediaResourceState old_state = 2;
+}
+
+// Media stream became online.
+message StreamOnlineEvent {
+  string media_session_id = 1;
+  string media_handle = 2;
+}
+
+// Media stream became offline.
+message StreamOfflineEvent {
+  string media_session_id = 1;
+  string media_handle = 2;
+  string reason = 3;
+}
+
+// RTP session timed out.
+message RtpTimeoutEvent {
+  string media_session_id = 1;
+  string media_handle = 2;
+}
+
+// Proxy state transition.
+message ProxyStateChangedEvent {
+  string state = 1;
+}
+
+// Playback finished.
+message PlaybackCompleteEvent {
+  string media_session_id = 1;
+  string media_handle = 2;
+  string reason = 3;
+}
+
+// Media node lifecycle state transition.
+message NodeLifecycleEvent {
+  string node_id = 1;
+  uint64 instance_epoch = 2;
+  string state = 3;
 }
 
 message MediaSessionRefStopped {
@@ -152,10 +250,28 @@ message MediaSessionRefStopped {
   string reason = 2;
 }
 
+// Stable outcome for a failed media operation.
+enum ErrorOutcome {
+  ERROR_OUTCOME_UNSPECIFIED = 0;
+  ERROR_OUTCOME_NOT_APPLIED = 1;
+  ERROR_OUTCOME_APPLIED = 2;
+  ERROR_OUTCOME_UNKNOWN = 3;
+}
+
+// Wire-safe error emitted by media processing.
 message MediaError {
-  MediaSessionRef session = 1;
-  string error_code = 2;
-  string error_message = 3;
+  // Deprecated: use resource_ref for the affected session reference.
+  MediaSessionRef session = 1 [deprecated = true];
+  // Deprecated: use status.code.
+  string error_code = 2 [deprecated = true];
+  // Deprecated: use status.message.
+  string error_message = 3 [deprecated = true];
+  // Shared safe error shape. New consumers should read status.code/message/retryable/violations.
+  cheetah.foundation.v1.ErrorStatus status = 4;
+  string request_id = 5;
+  string correlation_id = 6;
+  MediaSessionRef resource_ref = 7;
+  ErrorOutcome outcome = 8;
 }
 
 // Capacity advertised at registration.
@@ -163,24 +279,33 @@ message MediaNodeCapacity {
   uint64 max_sessions = 1;
   uint64 max_bandwidth_mbps = 2;
   uint64 max_cpu_percent = 3;
+  uint64 available_sessions = 4;
+  uint64 available_bandwidth_mbps = 5;
+  uint64 available_cpu_percent = 6;
 }
 
 // Media node registration payload.
 message MediaNodeRegistration {
   string node_id = 1;
   string listen_addr = 2;
-  MediaCapability capability = 3;
+  // Deprecated: use `capabilities` (field 9). Kept for backward-compatible readers.
+  MediaCapability capability = 3 [deprecated = true];
   string region = 4;
   MediaNodeCapacity capacity = 5;
   // Stable identifier for this running media node process. If empty the server generates one.
   string instance_id = 6;
+  // New fields are appended using fresh numbers.
+  string zone = 7;
+  repeated string network_zones = 8;
+  repeated MediaCapability capabilities = 9;
 }
 
 // Media node runtime information.
 message MediaNodeInfo {
   string node_id = 1;
   string listen_addr = 2;
-  MediaCapability capability = 3;
+  // Deprecated: use `capabilities` (field 14). Kept for backward-compatible readers.
+  MediaCapability capability = 3 [deprecated = true];
   string region = 4;
   uint64 owner_epoch = 5;
   google.protobuf.Timestamp last_heartbeat_at = 6;
@@ -188,6 +313,12 @@ message MediaNodeInfo {
   MediaNodeCapacity capacity = 8;
   // Opaque instance identifier assigned during registration.
   string instance_id = 9;
+  // New fields are appended using fresh numbers.
+  string zone = 10;
+  repeated string network_zones = 11;
+  uint64 load = 12;
+  uint64 session_count = 13;
+  repeated MediaCapability capabilities = 14;
 }
 
 // Media node heartbeat payload.

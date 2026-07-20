@@ -170,7 +170,7 @@ impl MediaControlClient {
         let permit = self.acquire_permit(&entry, endpoint).await?;
 
         let deadline = request.deadline;
-        let command_envelope = build_command_envelope(request)?;
+        let command_envelope = build_command_envelope(request);
 
         let mut last_error: Option<Status> = None;
         for attempt in 0..=self.config.max_retry_attempts {
@@ -525,9 +525,7 @@ impl std::fmt::Debug for MediaControlClient {
     }
 }
 
-fn build_command_envelope(
-    request: MediaControlRequest,
-) -> Result<CommandEnvelope, MediaClientError> {
+fn build_command_envelope(request: MediaControlRequest) -> CommandEnvelope {
     let now = UtcTimestamp::from_offset(time::OffsetDateTime::now_utc());
     let target = ResourceRef {
         tenant_id: Some(Uuid {
@@ -540,7 +538,7 @@ fn build_command_envelope(
     };
     let mut command = request.command.clone();
     command.target_media_node_instance_epoch = request.target_media_node_instance_epoch.0;
-    Ok(CommandEnvelope {
+    CommandEnvelope {
         meta: Some(EnvelopeMeta {
             message_id: Some(Uuid {
                 value: request.request_id.clone(),
@@ -554,8 +552,8 @@ fn build_command_envelope(
             causation_id: Some(Uuid {
                 value: request.operation_id.to_string(),
             }),
-            occurred_at: Some(to_timestamp(now)?),
-            deadline: request.deadline.map(to_timestamp).transpose()?,
+            occurred_at: Some(now.to_prost_timestamp()),
+            deadline: request.deadline.map(|ts| ts.to_prost_timestamp()),
             source_node_id: Some(Uuid {
                 value: request.source_node_id.to_string(),
             }),
@@ -569,16 +567,7 @@ fn build_command_envelope(
         operation_id: request.operation_id.to_string(),
         step_id: request.media_binding_id.to_string(),
         command: Some(Command::MediaCommand(command)),
-    })
-}
-
-fn to_timestamp(ts: UtcTimestamp) -> Result<prost_types::Timestamp, MediaClientError> {
-    let offset = ts.as_offset();
-    Ok(prost_types::Timestamp {
-        seconds: offset.unix_timestamp(),
-        nanos: i32::try_from(offset.nanosecond())
-            .map_err(|_| MediaClientError::InvalidDeadline("nanos out of range".to_string()))?,
-    })
+    }
 }
 
 fn is_retryable(code: Code) -> bool {

@@ -18,10 +18,14 @@ fn main() -> io::Result<()> {
 
     let proto_files = [
         proto_dir.join("cheetah/common/v1/common.proto"),
+        proto_dir.join("cheetah/foundation/v1/error.proto"),
         proto_dir.join("cheetah/common/v1/services.proto"),
         proto_dir.join("cheetah/device/v1/device.proto"),
         proto_dir.join("cheetah/control/v1/control.proto"),
         proto_dir.join("cheetah/media/v1/media.proto"),
+        proto_dir.join("cheetah/media/v1/media_context.proto"),
+        proto_dir.join("cheetah/media/v1/media_resource.proto"),
+        proto_dir.join("cheetah/media/v1/media_services.proto"),
         proto_dir.join("cheetah/plugin/v1/plugin.proto"),
         proto_dir.join("cheetah/cluster/v1/cluster.proto"),
     ];

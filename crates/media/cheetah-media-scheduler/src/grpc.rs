@@ -55,6 +55,7 @@ impl MediaClusterRegistryService {
 
 #[async_trait::async_trait]
 impl MediaClusterRegistry for MediaClusterRegistryService {
+    #[allow(deprecated)]
     async fn register_media_node(
         &self,
         request: Request<RegisterMediaNodeRequest>,
@@ -82,16 +83,25 @@ impl MediaClusterRegistry for MediaClusterRegistryService {
             node_id,
             instance_id,
             instance_epoch: 0,
-            zone: registration.region.clone(),
+            zone: registration.zone,
             region: registration.region,
+            network_zones: registration.network_zones,
             labels: std::collections::BTreeMap::new(),
             control_endpoint: registration.listen_addr,
             media_addresses: Vec::new(),
-            capabilities: registration
-                .capability
-                .map(from_media_capability)
-                .into_iter()
-                .collect(),
+            capabilities: if registration.capabilities.is_empty() {
+                registration
+                    .capability
+                    .into_iter()
+                    .map(from_media_capability)
+                    .collect()
+            } else {
+                registration
+                    .capabilities
+                    .into_iter()
+                    .map(from_media_capability)
+                    .collect()
+            },
             capacity: registration.capacity.map(from_media_capacity).unwrap_or(
                 crate::model::MediaNodeCapacity {
                     max_sessions: 1,
@@ -117,7 +127,7 @@ impl MediaClusterRegistry for MediaClusterRegistryService {
             .map_err(map_scheduler_error)?;
 
         Ok(Response::new(RegisterMediaNodeResponse {
-            node: Some(to_media_node_info(node)?),
+            node: Some(to_media_node_info(node)),
         }))
     }
 
@@ -145,7 +155,7 @@ impl MediaClusterRegistry for MediaClusterRegistryService {
             .map_err(map_scheduler_error)?;
 
         Ok(Response::new(HeartbeatMediaNodeResponse {
-            node: Some(to_media_node_info(node)?),
+            node: Some(to_media_node_info(node)),
         }))
     }
 
@@ -168,7 +178,7 @@ impl MediaClusterRegistry for MediaClusterRegistryService {
             .map_err(map_scheduler_error)?;
 
         Ok(Response::new(DrainMediaNodeResponse {
-            node: Some(to_media_node_info(node)?),
+            node: Some(to_media_node_info(node)),
         }))
     }
 
@@ -191,7 +201,7 @@ impl MediaClusterRegistry for MediaClusterRegistryService {
             .map_err(map_scheduler_error)?;
 
         Ok(Response::new(DeregisterMediaNodeResponse {
-            node: Some(to_media_node_info(node)?),
+            node: Some(to_media_node_info(node)),
         }))
     }
 }
@@ -222,6 +232,8 @@ fn from_media_capability(cap: media_proto::MediaCapability) -> MediaCapability {
         protocol: cap.protocol,
         operations: cap.operations,
         constraints: cap.constraints.into_iter().collect(),
+        version: cap.version,
+        runtime_state: cap.runtime_state,
     }
 }
 
@@ -233,22 +245,39 @@ fn from_media_capacity(cap: media_proto::MediaNodeCapacity) -> MediaNodeCapacity
     }
 }
 
-fn to_media_node_info(node: MediaNode) -> Result<media_proto::MediaNodeInfo, Status> {
-    Ok(media_proto::MediaNodeInfo {
+#[allow(deprecated)]
+fn to_media_node_info(node: MediaNode) -> media_proto::MediaNodeInfo {
+    let capabilities: Vec<_> = node
+        .capabilities
+        .into_iter()
+        .map(to_media_capability)
+        .collect();
+    media_proto::MediaNodeInfo {
         node_id: node.node_id.to_string(),
         listen_addr: node.control_endpoint,
-        capability: node
-            .capabilities
-            .into_iter()
-            .next()
-            .map(to_media_capability),
+        capability: capabilities.first().cloned(),
+        capabilities,
         region: node.region,
         owner_epoch: node.instance_epoch,
-        last_heartbeat_at: node.last_heartbeat_at.map(to_timestamp).transpose()?,
+        last_heartbeat_at: node.last_heartbeat_at.map(|ts| ts.to_prost_timestamp()),
         status: to_proto_status(node.status) as i32,
-        capacity: Some(to_media_capacity(node.capacity)),
+        capacity: Some(media_proto::MediaNodeCapacity {
+            max_sessions: node.capacity.max_sessions,
+            max_bandwidth_mbps: node.capacity.max_bandwidth_mbps,
+            max_cpu_percent: node.capacity.max_cpu_percent,
+            available_sessions: node
+                .capacity
+                .max_sessions
+                .saturating_sub(node.session_count),
+            available_bandwidth_mbps: node.capacity.max_bandwidth_mbps,
+            available_cpu_percent: node.capacity.max_cpu_percent.saturating_sub(node.load),
+        }),
         instance_id: node.instance_id,
-    })
+        zone: node.zone,
+        network_zones: node.network_zones,
+        load: node.load,
+        session_count: node.session_count,
+    }
 }
 
 fn to_media_capability(cap: MediaCapability) -> media_proto::MediaCapability {
@@ -256,23 +285,9 @@ fn to_media_capability(cap: MediaCapability) -> media_proto::MediaCapability {
         protocol: cap.protocol,
         operations: cap.operations,
         constraints: cap.constraints.into_iter().collect(),
+        version: cap.version,
+        runtime_state: cap.runtime_state,
     }
-}
-
-fn to_media_capacity(cap: MediaNodeCapacity) -> media_proto::MediaNodeCapacity {
-    media_proto::MediaNodeCapacity {
-        max_sessions: cap.max_sessions,
-        max_bandwidth_mbps: cap.max_bandwidth_mbps,
-        max_cpu_percent: cap.max_cpu_percent,
-    }
-}
-
-fn to_timestamp(ts: cheetah_signal_types::UtcTimestamp) -> Result<prost_types::Timestamp, Status> {
-    let offset = ts.as_offset();
-    let seconds = offset.unix_timestamp();
-    let nanos = i32::try_from(offset.nanosecond())
-        .map_err(|_| Status::internal("timestamp nanos out of range"))?;
-    Ok(prost_types::Timestamp { seconds, nanos })
 }
 
 fn to_proto_status(status: NodeStatus) -> media_proto::MediaNodeStatus {
@@ -300,35 +315,40 @@ fn validate_registration_fields(
         }
     }
 
-    if let Some(cap) = &registration.capability {
+    #[allow(deprecated)]
+    for cap in registration
+        .capabilities
+        .iter()
+        .chain(registration.capability.iter())
+    {
         if cap.protocol.len() > max {
             return Err(Status::invalid_argument(format!(
-                "field 'capability.protocol' exceeds {max} bytes"
+                "field 'capabilities[].protocol' exceeds {max} bytes"
             )));
         }
         if cap.operations.len() > config.max_capability_operations {
             return Err(Status::invalid_argument(format!(
-                "capability.operations exceeds {} entries",
+                "capabilities[].operations exceeds {} entries",
                 config.max_capability_operations
             )));
         }
         for op in &cap.operations {
             if op.len() > max {
                 return Err(Status::invalid_argument(format!(
-                    "field 'capability.operations' exceeds {max} bytes"
+                    "field 'capabilities[].operations' exceeds {max} bytes"
                 )));
             }
         }
         if cap.constraints.len() > config.max_capability_constraints {
             return Err(Status::invalid_argument(format!(
-                "capability.constraints exceeds {} entries",
+                "capabilities[].constraints exceeds {} entries",
                 config.max_capability_constraints
             )));
         }
         for (k, v) in &cap.constraints {
             if k.len() > max || v.len() > max {
                 return Err(Status::invalid_argument(format!(
-                    "field 'capability.constraints' exceeds {max} bytes"
+                    "field 'capabilities[].constraints' exceeds {max} bytes"
                 )));
             }
         }
@@ -429,6 +449,7 @@ fn map_scheduler_error(e: SchedulerError) -> Status {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use crate::model::{MediaNode, MediaNodeCapacity, MediaNodeHealth, NodeStatus};
@@ -554,6 +575,7 @@ mod tests {
             instance_epoch: 1,
             zone: "us-east".to_string(),
             region: "us-east".to_string(),
+            network_zones: vec!["us-east".to_string()],
             labels: std::collections::BTreeMap::new(),
             control_endpoint: "https://1.1.1.1:443".to_string(),
             media_addresses: Vec::new(),
@@ -599,16 +621,24 @@ mod tests {
             node: Some(media_proto::MediaNodeRegistration {
                 node_id: node_id.to_string(),
                 listen_addr: "https://1.1.1.1:443".to_string(),
-                capability: Some(media_proto::MediaCapability {
+                capability: None,
+                capabilities: vec![media_proto::MediaCapability {
                     protocol: "gb28181".to_string(),
                     operations: vec!["live".to_string()],
                     constraints: std::collections::BTreeMap::new(),
-                }),
+                    version: 1,
+                    runtime_state: "active".to_string(),
+                }],
                 region: "us-east".to_string(),
+                zone: "us-east".to_string(),
+                network_zones: vec!["us-east".to_string()],
                 capacity: Some(media_proto::MediaNodeCapacity {
                     max_sessions: 10,
                     max_bandwidth_mbps: 1000,
                     max_cpu_percent: 100,
+                    available_sessions: 10,
+                    available_bandwidth_mbps: 1000,
+                    available_cpu_percent: 100,
                 }),
                 instance_id: String::new(),
             }),
@@ -652,16 +682,24 @@ mod tests {
             node: Some(media_proto::MediaNodeRegistration {
                 node_id: node_id.to_string(),
                 listen_addr: "https://1.1.1.1:443".to_string(),
-                capability: Some(media_proto::MediaCapability {
+                capability: None,
+                capabilities: vec![media_proto::MediaCapability {
                     protocol: "gb28181".to_string(),
                     operations: vec!["live".to_string()],
                     constraints: std::collections::BTreeMap::new(),
-                }),
+                    version: 1,
+                    runtime_state: "active".to_string(),
+                }],
                 region: "us-east".to_string(),
+                zone: "us-east".to_string(),
+                network_zones: vec!["us-east".to_string()],
                 capacity: Some(media_proto::MediaNodeCapacity {
                     max_sessions: 10,
                     max_bandwidth_mbps: 1000,
                     max_cpu_percent: 100,
+                    available_sessions: 10,
+                    available_bandwidth_mbps: 1000,
+                    available_cpu_percent: 100,
                 }),
                 instance_id: "supplied-id".to_string(),
             }),

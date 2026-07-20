@@ -2,9 +2,11 @@
 
 mod assembly;
 mod gb_event_sink;
+mod onvif_discovery;
 
 use cheetah_signal_types::config::ConfigSource;
-use tracing::info;
+use std::time::Duration;
+use tracing::{info, warn};
 
 #[tokio::main]
 #[allow(clippy::print_stderr)]
@@ -33,8 +35,10 @@ async fn main() {
 
     info!(
         http = %runtime.http_addr,
+        grpc = %runtime.grpc_addr,
         gb28181 = ?runtime.gb28181_addr,
-        "cheetah-signaling ready"
+        ready = runtime.ready.load(std::sync::atomic::Ordering::SeqCst),
+        "cheetah-signaling running"
     );
 
     tokio::select! {
@@ -43,6 +47,14 @@ async fn main() {
         }
     }
 
-    runtime.shutdown();
-    info!("cheetah-signaling stopped");
+    let health = runtime.shutdown(Duration::from_secs(30)).await;
+    if health
+        .components
+        .values()
+        .any(|s| matches!(s, assembly::ComponentStatus::Failed(_)))
+    {
+        warn!(?health, "shutdown completed with worker failures");
+    } else {
+        info!(?health, "cheetah-signaling stopped");
+    }
 }

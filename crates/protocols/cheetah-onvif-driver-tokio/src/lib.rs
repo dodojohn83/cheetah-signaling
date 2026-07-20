@@ -9,12 +9,14 @@ pub mod auth;
 pub mod config;
 pub mod discovery;
 pub mod error;
+pub mod protocol_driver;
 pub mod soap_client;
 
 pub use auth::{DeviceCredentials, inject_username_token};
 pub use config::DriverConfig;
 pub use discovery::{DiscoveryResult, probe_once, validate_endpoint};
 pub use error::{DriverError, DriverResult};
+pub use protocol_driver::{OnvifTokioDriverFactory, OnvifTokioProtocolDriver};
 pub use soap_client::SoapClient;
 
 use cheetah_onvif_module::services::{
@@ -47,21 +49,20 @@ impl OnvifHttpDriver {
     }
 
     /// Fetches device information.
+    ///
+    /// When `credentials` are supplied the request is signed with a WS-Security
+    /// UsernameToken; otherwise the device is queried unauthenticated.
     pub async fn get_device_information(
         &self,
         endpoint: &str,
+        credentials: Option<&DeviceCredentials>,
         timeout: Option<Duration>,
     ) -> DriverResult<DeviceInformation> {
         let msg_id = format!("urn:uuid:{}", Uuid::now_v7());
         let req = get_device_information_request(&msg_id)?;
+        let action = "http://www.onvif.org/ver10/device/wsdl/GetDeviceInformation";
         let body = self
-            .client
-            .post(
-                endpoint,
-                "http://www.onvif.org/ver10/device/wsdl/GetDeviceInformation",
-                &req,
-                timeout,
-            )
+            .post_with_optional_auth(endpoint, action, &req, credentials, timeout)
             .await?;
         Ok(parse_get_device_information_response(&body, &self.limits)?)
     }
@@ -87,10 +88,14 @@ impl OnvifHttpDriver {
     }
 
     /// Lists media profiles, preferring Media2 then falling back to Media1.
+    ///
+    /// When `credentials` are supplied the request is signed with a WS-Security
+    /// UsernameToken; otherwise the device is queried unauthenticated.
     pub async fn get_profiles(
         &self,
         media_endpoint: &str,
         prefer: MediaDialect,
+        credentials: Option<&DeviceCredentials>,
         timeout: Option<Duration>,
     ) -> DriverResult<(MediaDialect, Vec<MediaProfile>)> {
         let order = match prefer {
@@ -100,7 +105,7 @@ impl OnvifHttpDriver {
         let mut last_err = None;
         for dialect in order {
             match self
-                .get_profiles_dialect(media_endpoint, dialect, timeout)
+                .get_profiles_dialect(media_endpoint, dialect, credentials, timeout)
                 .await
             {
                 Ok(profiles) if !profiles.is_empty() => return Ok((dialect, profiles)),
@@ -115,6 +120,7 @@ impl OnvifHttpDriver {
         &self,
         media_endpoint: &str,
         dialect: MediaDialect,
+        credentials: Option<&DeviceCredentials>,
         timeout: Option<Duration>,
     ) -> DriverResult<Vec<MediaProfile>> {
         let msg_id = format!("urn:uuid:{}", Uuid::now_v7());
@@ -124,19 +130,22 @@ impl OnvifHttpDriver {
             MediaDialect::Media2 => "http://www.onvif.org/ver20/media/wsdl/GetProfiles",
         };
         let body = self
-            .client
-            .post(media_endpoint, action, &req, timeout)
+            .post_with_optional_auth(media_endpoint, action, &req, credentials, timeout)
             .await?;
         Ok(parse_get_profiles_response(&body, &self.limits)?)
     }
 
     /// Fetches a stream URI for a profile.
+    ///
+    /// When `credentials` are supplied the request is signed with a WS-Security
+    /// UsernameToken; otherwise the device is queried unauthenticated.
     pub async fn get_stream_uri(
         &self,
         media_endpoint: &str,
         dialect: MediaDialect,
         profile_token: &str,
         protocol: &str,
+        credentials: Option<&DeviceCredentials>,
         timeout: Option<Duration>,
     ) -> DriverResult<StreamUri> {
         let msg_id = format!("urn:uuid:{}", Uuid::now_v7());
@@ -151,8 +160,7 @@ impl OnvifHttpDriver {
             ),
         };
         let body = self
-            .client
-            .post(media_endpoint, action, &req, timeout)
+            .post_with_optional_auth(media_endpoint, action, &req, credentials, timeout)
             .await?;
         Ok(parse_get_stream_uri_response(
             &body,
@@ -162,11 +170,15 @@ impl OnvifHttpDriver {
     }
 
     /// Fetches a snapshot URI for a profile.
+    ///
+    /// When `credentials` are supplied the request is signed with a WS-Security
+    /// UsernameToken; otherwise the device is queried unauthenticated.
     pub async fn get_snapshot_uri(
         &self,
         media_endpoint: &str,
         dialect: MediaDialect,
         profile_token: &str,
+        credentials: Option<&DeviceCredentials>,
         timeout: Option<Duration>,
     ) -> DriverResult<SnapshotUri> {
         let msg_id = format!("urn:uuid:{}", Uuid::now_v7());
@@ -176,13 +188,30 @@ impl OnvifHttpDriver {
             MediaDialect::Media2 => "http://www.onvif.org/ver20/media/wsdl/GetSnapshotUri",
         };
         let body = self
-            .client
-            .post(media_endpoint, action, &req, timeout)
+            .post_with_optional_auth(media_endpoint, action, &req, credentials, timeout)
             .await?;
         Ok(parse_get_snapshot_uri_response(
             &body,
             &self.limits,
             &self.policy,
         )?)
+    }
+
+    async fn post_with_optional_auth(
+        &self,
+        endpoint: &str,
+        action: &str,
+        envelope: &str,
+        credentials: Option<&DeviceCredentials>,
+        timeout: Option<Duration>,
+    ) -> DriverResult<String> {
+        match credentials {
+            Some(creds) => {
+                self.client
+                    .post_authenticated(endpoint, action, envelope, creds, timeout)
+                    .await
+            }
+            None => self.client.post(endpoint, action, envelope, timeout).await,
+        }
     }
 }

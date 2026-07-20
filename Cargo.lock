@@ -849,12 +849,16 @@ dependencies = [
 name = "cheetah-onvif-driver-tokio"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "cheetah-onvif-core",
  "cheetah-onvif-module",
+ "cheetah-plugin-sdk",
  "cheetah-signal-types",
  "rand 0.8.7",
  "reqwest",
  "secrecy",
+ "serde",
+ "serde_json",
  "thiserror",
  "tokio",
  "tracing",
@@ -1040,11 +1044,14 @@ dependencies = [
 name = "cheetah-signal-types"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "fastrand",
  "proptest",
+ "prost-types",
  "secrecy",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror",
  "time",
  "toml 0.8.23",
@@ -1068,6 +1075,10 @@ dependencies = [
  "cheetah-message-api",
  "cheetah-message-local",
  "cheetah-message-nats",
+ "cheetah-onvif-driver-tokio",
+ "cheetah-onvif-module",
+ "cheetah-plugin-host",
+ "cheetah-plugin-sdk",
  "cheetah-runtime-api",
  "cheetah-runtime-tokio",
  "cheetah-secret",
@@ -1077,13 +1088,19 @@ dependencies = [
  "cheetah-storage-api",
  "cheetah-storage-postgres",
  "cheetah-storage-sqlite",
+ "futures",
  "hex",
  "secrecy",
+ "semver",
+ "serde_json",
  "time",
  "tokio",
  "tokio-util",
+ "tonic",
  "tracing",
+ "url",
  "uuid",
+ "x509-parser",
 ]
 
 [[package]]

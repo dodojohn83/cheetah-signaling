@@ -103,6 +103,8 @@ impl Config {
             protocol: "gb28181".to_string(),
             operations: self.operations(),
             constraints: Default::default(),
+            version: 1,
+            runtime_state: "active".to_string(),
         }
     }
 
@@ -111,6 +113,9 @@ impl Config {
             max_sessions: self.max_sessions,
             max_bandwidth_mbps: self.max_bandwidth_mbps,
             max_cpu_percent: self.max_cpu_percent,
+            available_sessions: self.max_sessions,
+            available_bandwidth_mbps: self.max_bandwidth_mbps,
+            available_cpu_percent: self.max_cpu_percent,
         }
     }
 
@@ -143,21 +148,27 @@ struct State {
 }
 
 impl State {
+    #[allow(deprecated)]
     fn new(config: Config) -> Self {
         let events = broadcast::channel(1024).0;
-        let capability = Some(config.capability());
+        let capabilities = vec![config.capability()];
         let capacity = Some(config.capacity());
         let rng = StdRng::seed_from_u64(config.seed);
         let node_info = media::MediaNodeInfo {
             node_id: config.node_id.clone(),
             listen_addr: config.bind.to_string(),
-            capability,
+            capability: Some(config.capability()),
+            capabilities,
             region: config.region.clone(),
             owner_epoch: 0,
             last_heartbeat_at: now_timestamp(),
             status: media::MediaNodeStatus::Active as i32,
             capacity,
             instance_id: uuid::Uuid::now_v7().to_string(),
+            zone: config.region.clone(),
+            network_zones: vec![],
+            load: 0,
+            session_count: 0,
         };
         Self {
             config,
@@ -219,12 +230,15 @@ fn injected_error() -> ErrorStatus {
     }
 }
 
-fn make_event(media_event: media::MediaEvent) -> EventEnvelope {
+fn make_event(event: media::media_event::Event) -> EventEnvelope {
     EventEnvelope {
         meta: None,
         aggregate: None,
         aggregate_sequence: 0,
-        event: Some(EnvelopeEvent::MediaEvent(media_event)),
+        event: Some(EnvelopeEvent::MediaEvent(media::MediaEvent {
+            event: Some(event),
+            ..Default::default()
+        })),
     }
 }
 
@@ -282,6 +296,7 @@ async fn handle_media_command(
                 remote_sdp: req.remote_sdp.clone(),
                 local_sdp: local_sdp.clone(),
                 status: "negotiated".to_string(),
+                ..Default::default()
             };
             let sim = SimSession {
                 status: "negotiated".to_string(),
@@ -295,9 +310,9 @@ async fn handle_media_command(
                 .lock()
                 .await
                 .insert(req.media_session_id.clone(), sim);
-            state.emit_event(make_event(media::MediaEvent {
-                event: Some(media::media_event::Event::RtpNegotiated(session.clone())),
-            }));
+            state.emit_event(make_event(media::media_event::Event::RtpNegotiated(
+                session.clone(),
+            )));
             State::make_result(CommandStatus::Completed, operation_id.to_string(), None)
         }
         Command::StartRtp(req) => {
@@ -321,10 +336,9 @@ async fn handle_media_command(
                 remote_sdp: req.remote_sdp.clone(),
                 local_sdp: req.local_sdp.clone(),
                 status: "active".to_string(),
+                ..Default::default()
             };
-            state.emit_event(make_event(media::MediaEvent {
-                event: Some(media::media_event::Event::StreamStarted(rtp)),
-            }));
+            state.emit_event(make_event(media::media_event::Event::StreamStarted(rtp)));
             State::make_result(CommandStatus::Completed, operation_id.to_string(), None)
         }
         Command::StopRtp(req) => {
@@ -333,9 +347,9 @@ async fn handle_media_command(
                 session: Some(req.clone()),
                 reason: "injected stop".to_string(),
             };
-            state.emit_event(make_event(media::MediaEvent {
-                event: Some(media::media_event::Event::StreamStopped(stopped)),
-            }));
+            state.emit_event(make_event(media::media_event::Event::StreamStopped(
+                stopped,
+            )));
             State::make_result(CommandStatus::Completed, operation_id.to_string(), None)
         }
         Command::StartProxy(req) => {
@@ -364,10 +378,11 @@ async fn handle_media_command(
                 storage_path: req.storage_path.clone(),
                 duration_ms: 0,
                 status: "recording".to_string(),
+                ..Default::default()
             };
-            state.emit_event(make_event(media::MediaEvent {
-                event: Some(media::media_event::Event::RecordStarted(session)),
-            }));
+            state.emit_event(make_event(media::media_event::Event::RecordStarted(
+                session,
+            )));
             State::make_result(CommandStatus::Completed, operation_id.to_string(), None)
         }
         Command::StopRecord(req) => {
@@ -377,10 +392,11 @@ async fn handle_media_command(
                 storage_path: "/tmp".to_string(),
                 duration_ms: 1000,
                 status: "stopped".to_string(),
+                ..Default::default()
             };
-            state.emit_event(make_event(media::MediaEvent {
-                event: Some(media::media_event::Event::RecordStopped(session)),
-            }));
+            state.emit_event(make_event(media::media_event::Event::RecordStopped(
+                session,
+            )));
             State::make_result(CommandStatus::Completed, operation_id.to_string(), None)
         }
         Command::TakeSnapshot(req) => {
@@ -389,10 +405,11 @@ async fn handle_media_command(
                 media_session_id: req.media_session_id.clone(),
                 image_url: format!("http://127.0.0.1:8080/snapshots/{}", req.snapshot_id),
                 created_at: now_timestamp(),
+                ..Default::default()
             };
-            state.emit_event(make_event(media::MediaEvent {
-                event: Some(media::media_event::Event::SnapshotTaken(snapshot)),
-            }));
+            state.emit_event(make_event(media::media_event::Event::SnapshotTaken(
+                snapshot,
+            )));
             State::make_result(CommandStatus::Completed, operation_id.to_string(), None)
         }
         Command::Query(_) => {
@@ -436,6 +453,7 @@ impl MediaQuery for State {
                 media_session_id: result.media_session_id.clone(),
                 image_url: "http://127.0.0.1:8080/snapshots/sim-snapshot-0".to_string(),
                 created_at: now_timestamp(),
+                ..Default::default()
             });
         }
         Ok(Response::new(QueryResponse {
@@ -493,6 +511,7 @@ impl MediaEventStream for State {
 
 #[tonic::async_trait]
 impl MediaClusterRegistry for State {
+    #[allow(deprecated)]
     async fn register_media_node(
         &self,
         request: Request<RegisterMediaNodeRequest>,
@@ -504,8 +523,15 @@ impl MediaClusterRegistry for State {
         let mut node_info = self.node_info.lock().await;
         node_info.node_id = registration.node_id.clone();
         node_info.listen_addr = registration.listen_addr.clone();
-        node_info.capability = registration.capability;
+        node_info.capabilities = if registration.capabilities.is_empty() {
+            registration.capability.into_iter().collect()
+        } else {
+            registration.capabilities
+        };
+        node_info.capability = node_info.capabilities.first().cloned();
         node_info.region = registration.region.clone();
+        node_info.zone = registration.zone;
+        node_info.network_zones = registration.network_zones;
         node_info.capacity = registration.capacity;
         node_info.last_heartbeat_at = now_timestamp();
         if !registration.instance_id.is_empty() {

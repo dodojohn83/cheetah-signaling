@@ -9,13 +9,13 @@ use cheetah_media_client::{
     MediaClientError, MediaControlClient, MediaControlRequest, MediaListSessionsRequest,
 };
 use cheetah_signal_contracts::cheetah::media::v1::{
-    MediaCommand, MediaControlPayload, media_command,
+    MediaCommand, MediaControlPayload, MediaMutationContext, media_command,
 };
 use cheetah_signal_types::MediaNodeInstanceEpoch;
 use cheetah_signal_types::Page;
 use cheetah_signal_types::{
-    ChannelId, Clock, DeviceId, MediaBindingId, MediaSessionId, NodeId, PageRequest, TenantId,
-    UtcTimestamp,
+    ChannelId, Clock, DeviceId, MediaBindingId, MediaSessionId, MessageId, NodeId, PageRequest,
+    TenantId, UtcTimestamp,
 };
 use std::str::FromStr;
 use std::sync::Arc;
@@ -150,6 +150,28 @@ impl MediaPort for SchedulerMediaPort {
         let payload = serde_json::to_vec(&command.payload).map_err(|e| {
             DomainError::internal(format!("failed to serialize media command payload: {e}"))
         })?;
+        let deadline = command
+            .deadline
+            .map(|d| d.as_timestamp().to_prost_timestamp());
+        let context = MediaMutationContext {
+            tenant_id: command.tenant_id.to_string(),
+            request_id: command.request_id.clone(),
+            correlation_id: command.request_id.clone(),
+            message_id: MessageId::generate().to_string(),
+            idempotency_key: command.idempotency_key.clone(),
+            deadline,
+            source_signaling_node_id: command.source_node_id.to_string(),
+            owner_epoch: command.owner_epoch.0,
+            target_media_node_id: command.media_node_id.to_string(),
+            target_media_node_instance_epoch: command.media_node_instance_epoch.0,
+            operation_id: command.operation_id.to_string(),
+            operation_step_id: command.payload.kind().to_string(),
+            media_session_id: Some(command.media_session_id.to_string()),
+            media_binding_id: Some(command.media_binding_id.to_string()),
+            contract_version: contract_version as u64,
+            traceparent: None,
+            tracestate: None,
+        };
         let proto_command = MediaCommand {
             command: Some(media_command::Command::Control(MediaControlPayload {
                 media_session_id: command.media_session_id.to_string(),
@@ -157,6 +179,7 @@ impl MediaPort for SchedulerMediaPort {
                 payload,
             })),
             target_media_node_instance_epoch: command.media_node_instance_epoch.0,
+            context: Some(context),
         };
 
         let request = MediaControlRequest {

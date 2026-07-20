@@ -12,6 +12,10 @@ pub struct MediaCapability {
     pub operations: Vec<String>,
     /// Capability constraints, e.g. supported codecs or transports.
     pub constraints: BTreeMap<String, String>,
+    /// Capability contract version.
+    pub version: u64,
+    /// Runtime state of this capability, e.g. `healthy` or `degraded`.
+    pub runtime_state: String,
 }
 
 /// Capacity limits advertised by a media node.
@@ -60,6 +64,8 @@ pub struct MediaNode {
     pub zone: String,
     /// Region (may be a superset of the zone).
     pub region: String,
+    /// Network zones the node can reach.
+    pub network_zones: Vec<String>,
     /// Free-form node labels.
     pub labels: BTreeMap<String, String>,
     /// gRPC control endpoint address.

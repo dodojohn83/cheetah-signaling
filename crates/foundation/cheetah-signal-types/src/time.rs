@@ -58,6 +58,14 @@ impl UtcTimestamp {
             SignalError::new(SignalErrorKind::Internal, "failed to format timestamp").with_source(e)
         })
     }
+
+    /// Converts the timestamp to a `prost_types::Timestamp`.
+    pub fn to_prost_timestamp(self) -> prost_types::Timestamp {
+        prost_types::Timestamp {
+            seconds: self.0.unix_timestamp(),
+            nanos: self.0.nanosecond() as i32,
+        }
+    }
 }
 
 impl fmt::Display for UtcTimestamp {
