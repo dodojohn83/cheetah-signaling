@@ -120,8 +120,10 @@ pub fn map_media_event_to_callback(
     let media_node_id = parse_required_id(&event.media_node_id, "media_node_id")?;
     let media_session_id = parse_required_id(&event.media_session_id, "media_session_id")?;
     let media_binding_id = parse_required_id(&event.media_binding_id, "media_binding_id")?;
-    let operation_id =
-        parse_optional_id::<OperationId>(event.operation_id.as_deref().unwrap_or(""), "operation_id")?;
+    let operation_id = parse_optional_id::<OperationId>(
+        event.operation_id.as_deref().unwrap_or(""),
+        "operation_id",
+    )?;
 
     let kind = map_event_payload(event)?;
 
