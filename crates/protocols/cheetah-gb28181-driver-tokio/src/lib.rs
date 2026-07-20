@@ -12,9 +12,7 @@ pub mod error;
 pub mod sink;
 
 use cheetah_gb28181_core::{SipParser, encode_message};
-use cheetah_gb28181_module::{
-    AccessInput, AccessOutput, CredentialProvider, Gb28181Access,
-};
+use cheetah_gb28181_module::{AccessInput, AccessOutput, CredentialProvider, Gb28181Access};
 use config::DriverConfig;
 use error::DriverError;
 use sink::EventSink;
