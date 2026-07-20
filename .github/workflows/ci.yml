@@ -81,3 +81,17 @@ jobs:
           breaking: false
           push: false
           pr_comment: false
+
+  contract-baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          version: ${{ env.BUF_VERSION }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Generate descriptor and verify breaking compatibility
+        run: ./scripts/generate_contract_baseline.sh
