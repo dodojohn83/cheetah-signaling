@@ -119,10 +119,7 @@ impl PostgresMediaNodeRepository {
 #[async_trait::async_trait]
 impl MediaNodeRepository for PostgresMediaNodeRepository {
     async fn register(&mut self, node: MediaNode) -> Result<MediaNode, StorageError> {
-        let updated_at = node
-            .last_heartbeat_at
-            .map_or(0, to_millis)
-            .max(node.lease_until.map_or(0, to_millis));
+        let updated_at = node.last_heartbeat_at.map_or(0, to_millis);
 
         let mut tx = self
             .write_pool

@@ -266,18 +266,16 @@ impl MediaNodeRegistry for PersistentMediaNodeRegistry {
             }
         }
 
-        match self.repo.lock().await.get(node_id).await {
+        let fetched = self.repo.lock().await.get(node_id).await;
+        match fetched {
             Ok(Some(node)) => {
-                let mut nodes = self.nodes.write().await;
                 let entry = NodeEntry {
                     node: node.clone(),
                     reported_session_count: node.session_count,
                     reserved: BTreeSet::new(),
                     instance_id: node.instance_id.clone(),
                 };
-                let view = to_media_node(&entry, now, &self.config);
-                nodes.insert(node_id, entry);
-                Some(view)
+                Some(to_media_node(&entry, now, &self.config))
             }
             _ => None,
         }
