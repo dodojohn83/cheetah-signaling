@@ -9,7 +9,7 @@ use crate::{
     AccessInput, AccessOutput, Gb28181Access,
     config::{AuthPolicy, Gb28181DomainConfig},
     events::Gb28181Event,
-    ports::CredentialProvider,
+    ports::{CredentialError, CredentialProvider},
     types::DeviceId,
 };
 use async_trait::async_trait;
@@ -36,8 +36,8 @@ use tokio::sync::Mutex;
 struct NoopCredentialProvider;
 
 impl CredentialProvider for NoopCredentialProvider {
-    fn password_for(&self, _device_id: &DeviceId) -> Option<SecretString> {
-        None
+    fn password_for(&self, _device_id: &DeviceId) -> Result<Option<SecretString>, CredentialError> {
+        Ok(None)
     }
 }
 

@@ -38,6 +38,6 @@ pub use media::{
     Gb28181Media, MediaCommand, MediaConfig, MediaError, MediaInput, MediaOutput, MediaTransport,
     PlaybackAction,
 };
-pub use ports::CredentialProvider;
+pub use ports::{CredentialError, CredentialProvider};
 pub use types::{DeviceId, DomainId};
 pub use xml::{KeepaliveInfo, XmlElement, XmlLimits, encode_xml, parse_keepalive, parse_xml};

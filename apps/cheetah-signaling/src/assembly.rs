@@ -13,7 +13,7 @@ use cheetah_gb28181_driver_tokio::Gb28181UdpDriver;
 use cheetah_gb28181_driver_tokio::config::DriverConfig as GbDriverConfig;
 use cheetah_gb28181_module::Gb28181DriverFactory;
 use cheetah_gb28181_module::config::{AuthPolicy, Gb28181DomainConfig};
-use cheetah_gb28181_module::ports::CredentialProvider;
+use cheetah_gb28181_module::ports::{CredentialError, CredentialProvider};
 use cheetah_gb28181_module::types::DeviceId as GbDeviceId;
 use cheetah_http_api::state::{ApiConfig, ApiServer, ApiState};
 use cheetah_media_client::{MediaClientConfig, MediaControlClient};
@@ -252,8 +252,9 @@ impl IdGenerator for UuidIdGenerator {
 ///
 /// The configured `device_password_ref` template may contain the `{device_id}`
 /// placeholder, which is replaced with the GB28181 device identifier before the
-/// secret store is queried. Missing optional secrets return `None` so the domain
-/// can fall back to challenge-based authentication when enabled.
+/// secret store is queried. Missing optional secrets return `Ok(None)` so the
+/// domain can fall back to challenge-based authentication when enabled; backend
+/// failures are returned as `Err(CredentialError::Backend(...))`.
 #[derive(Clone)]
 struct SecretStoreCredentialProvider {
     store: Arc<dyn SecretStore>,
@@ -278,10 +279,19 @@ impl SecretStoreCredentialProvider {
 }
 
 impl CredentialProvider for SecretStoreCredentialProvider {
-    fn password_for(&self, device_id: &GbDeviceId) -> Option<SecretString> {
-        let template = self.ref_template.as_ref()?;
+    fn password_for(
+        &self,
+        device_id: &GbDeviceId,
+    ) -> Result<Option<SecretString>, CredentialError> {
+        let Some(template) = self.ref_template.as_ref() else {
+            return Ok(None);
+        };
         let key = template.replace("{device_id}", device_id.as_ref());
-        self.store.get(&key).ok()
+        match self.store.get(&key) {
+            Ok(secret) => Ok(Some(secret)),
+            Err(e) if e.kind() == cheetah_signal_types::SignalErrorKind::NotFound => Ok(None),
+            Err(e) => Err(CredentialError::Backend(e.to_string())),
+        }
     }
 }
 
