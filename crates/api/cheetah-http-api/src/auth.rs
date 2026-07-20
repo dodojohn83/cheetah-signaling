@@ -47,10 +47,17 @@ impl FromRequestParts<Arc<ApiState>> for AuthContext {
         parts: &mut Parts,
         state: &Arc<ApiState>,
     ) -> Result<Self, Self::Rejection> {
-        let auth_header = parts
-            .headers
-            .get("authorization")
-            .and_then(|v| v.to_str().ok());
+        let auth_header = match parts.headers.get("authorization") {
+            Some(value) => match value.to_str() {
+                Ok(text) => Some(text),
+                Err(_) => {
+                    return Err(HttpError::Unauthenticated(
+                        "authorization header is not valid UTF-8".to_string(),
+                    ));
+                }
+            },
+            None => None,
+        };
 
         let bearer_result = if let Some(header) = auth_header {
             let (scheme, token) = split_auth_header(header);
@@ -68,9 +75,12 @@ impl FromRequestParts<Arc<ApiState>> for AuthContext {
 
         let result = match bearer_result {
             Some(res) => res,
-            None => try_api_key_auth(parts, &state.config.security).unwrap_or(Err(
-                HttpError::Unauthenticated("missing Authorization or X-Api-Key header".to_string()),
-            )),
+            None => match try_api_key_auth(parts, &state.config.security) {
+                Some(res) => res,
+                None => Err(HttpError::Unauthenticated(
+                    "missing Authorization or X-Api-Key header".to_string(),
+                )),
+            },
         };
 
         record_auth_audit(parts, state, &result);
@@ -89,11 +99,15 @@ fn try_api_key_auth(
     parts: &Parts,
     security: &cheetah_signal_types::config::SecurityConfig,
 ) -> Option<Result<AuthContext, HttpError>> {
-    parts
-        .headers
-        .get("x-api-key")
-        .and_then(|v| v.to_str().ok())
-        .map(|api_key| authenticate_static_key(security, api_key))
+    match parts.headers.get("x-api-key") {
+        Some(value) => match value.to_str() {
+            Ok(api_key) => Some(authenticate_static_key(security, api_key)),
+            Err(_) => Some(Err(HttpError::Unauthenticated(
+                "x-api-key header is not valid UTF-8".to_string(),
+            ))),
+        },
+        None => None,
+    }
 }
 
 fn authenticate_static_key(

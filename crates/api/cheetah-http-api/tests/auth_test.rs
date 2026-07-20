@@ -49,3 +49,42 @@ async fn api_key_fallback_ignores_non_bearer_authorization() {
         .expect("send request");
     assert_eq!(response.status(), reqwest::StatusCode::OK);
 }
+
+#[tokio::test]
+async fn non_utf8_authorization_returns_401() {
+    let server = common::TestServer::new().await;
+    let value = reqwest::header::HeaderValue::from_bytes(&[0xff, 0xfe]).unwrap();
+    let response = server
+        .request_unauthenticated(reqwest::Method::GET, "/api/v1/devices")
+        .header("Authorization", value)
+        .send()
+        .await
+        .expect("send request");
+    assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn non_utf8_authorization_does_not_fall_back_to_api_key() {
+    let server = common::TestServer::new().await;
+    let value = reqwest::header::HeaderValue::from_bytes(&[0xff, 0xfe]).unwrap();
+    let response = server
+        .request(reqwest::Method::GET, "/metrics")
+        .header("Authorization", value)
+        .send()
+        .await
+        .expect("send request");
+    assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn non_utf8_x_api_key_returns_401() {
+    let server = common::TestServer::new().await;
+    let value = reqwest::header::HeaderValue::from_bytes(&[0xff, 0xfe]).unwrap();
+    let response = server
+        .request_unauthenticated(reqwest::Method::GET, "/api/v1/devices")
+        .header("x-api-key", value)
+        .send()
+        .await
+        .expect("send request");
+    assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
+}
