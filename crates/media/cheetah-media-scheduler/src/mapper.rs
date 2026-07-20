@@ -120,25 +120,14 @@ pub fn map_media_event_to_callback(
     let media_node_id = parse_required_id(&event.media_node_id, "media_node_id")?;
     let media_session_id = parse_required_id(&event.media_session_id, "media_session_id")?;
     let media_binding_id = parse_required_id(&event.media_binding_id, "media_binding_id")?;
-    let operation_id = parse_optional_id::<OperationId>(&event.operation_id, "operation_id")?;
+    let operation_id =
+        parse_optional_id::<OperationId>(event.operation_id.as_deref().unwrap_or(""), "operation_id")?;
 
     let kind = map_event_payload(event)?;
 
-    let owner_epoch = if event.owner_epoch == 0 {
-        None
-    } else {
-        Some(OwnerEpoch(event.owner_epoch))
-    };
-    let binding_revision = if event.binding_revision == 0 {
-        None
-    } else {
-        Some(Revision(event.binding_revision))
-    };
-    let session_revision = if event.session_revision == 0 {
-        None
-    } else {
-        Some(Revision(event.session_revision))
-    };
+    let owner_epoch = event.owner_epoch.map(OwnerEpoch);
+    let binding_revision = event.binding_revision.map(Revision);
+    let session_revision = event.session_revision.map(Revision);
 
     let callback = MediaNodeCallback {
         media_node_id,
