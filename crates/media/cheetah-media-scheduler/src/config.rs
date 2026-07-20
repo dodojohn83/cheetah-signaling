@@ -8,6 +8,8 @@ pub struct MediaRegistryConfig {
     pub require_mtls: bool,
     /// Default lease duration in milliseconds for new registrations.
     pub default_lease_ttl_ms: u64,
+    /// Heartbeat interval in milliseconds that media nodes should use.
+    pub heartbeat_interval_ms: u64,
     /// Heartbeat timeout in milliseconds after which a node is considered stale.
     pub heartbeat_timeout_ms: u64,
     /// Allowed URI schemes for a media node control endpoint.
@@ -42,6 +44,7 @@ impl MediaRegistryConfig {
         Self {
             require_mtls: true,
             default_lease_ttl_ms: 30_000,
+            heartbeat_interval_ms: 10_000,
             heartbeat_timeout_ms: 60_000,
             allowed_endpoint_schemes: vec!["http".to_string(), "https".to_string()],
             max_endpoint_uri_length: 2048,

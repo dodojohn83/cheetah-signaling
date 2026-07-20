@@ -540,6 +540,7 @@ impl MediaClusterRegistry for State {
         node_info.status = media::MediaNodeStatus::Active as i32;
         Ok(Response::new(RegisterMediaNodeResponse {
             node: Some(node_info.clone()),
+            ..Default::default()
         }))
     }
 
@@ -560,6 +561,7 @@ impl MediaClusterRegistry for State {
         }
         Ok(Response::new(HeartbeatMediaNodeResponse {
             node: Some(node_info.clone()),
+            ..Default::default()
         }))
     }
 

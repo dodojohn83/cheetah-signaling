@@ -6,6 +6,7 @@ import "cheetah/cluster/v1/cluster.proto";
 import "cheetah/common/v1/common.proto";
 import "cheetah/media/v1/media.proto";
 import "cheetah/plugin/v1/plugin.proto";
+import "google/protobuf/timestamp.proto";
 
 option go_package = "github.com/dodojohn83/cheetah-signaling/gen/go/cheetah/common/v1;commonv1";
 
@@ -109,6 +110,16 @@ message RegisterMediaNodeRequest {
 
 message RegisterMediaNodeResponse {
   cheetah.media.v1.MediaNodeInfo node = 1;
+  // Opaque instance identifier assigned by the registry, used as the lease ID.
+  string instance_id = 2;
+  // Lease TTL in milliseconds granted to this registration.
+  uint64 lease_ttl_ms = 3;
+  // Heartbeat interval in milliseconds the node should use.
+  uint64 heartbeat_interval_ms = 4;
+  // Server time at the moment the response was generated.
+  google.protobuf.Timestamp cluster_time = 5;
+  // Contract version accepted by the registry for this node.
+  uint64 accepted_contract_version = 6;
 }
 
 message HeartbeatMediaNodeRequest {
@@ -117,6 +128,14 @@ message HeartbeatMediaNodeRequest {
 
 message HeartbeatMediaNodeResponse {
   cheetah.media.v1.MediaNodeInfo node = 1;
+  // Lease TTL in milliseconds remaining after this heartbeat.
+  uint64 lease_ttl_ms = 2;
+  // Heartbeat interval in milliseconds the node should use.
+  uint64 heartbeat_interval_ms = 3;
+  // Server time at the moment the response was generated.
+  google.protobuf.Timestamp cluster_time = 4;
+  // Contract version accepted by the registry for this node.
+  uint64 accepted_contract_version = 5;
 }
 
 message DrainMediaNodeRequest {
