@@ -7,11 +7,12 @@ use cheetah_signal_types::{Clock, MediaBindingId, NodeId, TenantId, UtcTimestamp
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::RwLock;
 
-struct NodeEntry {
-    node: MediaNode,
-    reported_session_count: u64,
-    reserved: BTreeSet<(TenantId, MediaBindingId)>,
-    instance_id: String,
+#[derive(Debug)]
+pub(crate) struct NodeEntry {
+    pub(crate) node: MediaNode,
+    pub(crate) reported_session_count: u64,
+    pub(crate) reserved: BTreeSet<(TenantId, MediaBindingId)>,
+    pub(crate) instance_id: String,
 }
 
 /// Registry of media nodes used for scheduling and gRPC lifecycle.
@@ -317,53 +318,41 @@ impl MediaNodeRegistry for InMemoryMediaNodeRegistry {
     }
 }
 
-fn to_media_node(entry: &NodeEntry, now: UtcTimestamp, config: &MediaRegistryConfig) -> MediaNode {
+pub(crate) fn to_media_node(
+    entry: &NodeEntry,
+    now: UtcTimestamp,
+    config: &MediaRegistryConfig,
+) -> MediaNode {
     let total_sessions = entry
         .reported_session_count
         .saturating_add(entry.reserved.len() as u64);
     let mut node = entry.node.clone();
     node.session_count = total_sessions;
-    node.health = derive_health(total_sessions, entry.node.load, &entry.node.capacity);
+    node.recalc_health();
     if is_stale(entry, now, config) {
         node.health = MediaNodeHealth::Unhealthy;
     }
     node
 }
 
-fn derive_health(
-    session_count: u64,
-    load: u64,
-    capacity: &crate::model::MediaNodeCapacity,
-) -> MediaNodeHealth {
-    let max_cpu = if capacity.max_cpu_percent == 0 {
-        100
-    } else {
-        capacity.max_cpu_percent
-    };
-    let max_sessions = capacity.max_sessions.max(1);
-    if load >= max_cpu || session_count >= max_sessions {
-        MediaNodeHealth::Unhealthy
-    } else if load >= max_cpu * 7 / 10 || session_count >= max_sessions * 7 / 10 {
-        MediaNodeHealth::Degraded
-    } else {
-        MediaNodeHealth::Healthy
-    }
-}
-
-fn is_active(entry: &NodeEntry, now: UtcTimestamp, config: &MediaRegistryConfig) -> bool {
+pub(crate) fn is_active(
+    entry: &NodeEntry,
+    now: UtcTimestamp,
+    config: &MediaRegistryConfig,
+) -> bool {
     entry.node.status != NodeStatus::Left
         && !is_lease_expired(entry, now)
         && !is_stale(entry, now, config)
 }
 
-fn is_lease_expired(entry: &NodeEntry, now: UtcTimestamp) -> bool {
+pub(crate) fn is_lease_expired(entry: &NodeEntry, now: UtcTimestamp) -> bool {
     match entry.node.lease_until {
         None => false,
         Some(lease) => now >= lease,
     }
 }
 
-fn is_stale(entry: &NodeEntry, now: UtcTimestamp, config: &MediaRegistryConfig) -> bool {
+pub(crate) fn is_stale(entry: &NodeEntry, now: UtcTimestamp, config: &MediaRegistryConfig) -> bool {
     match entry.node.last_heartbeat_at {
         None => true,
         Some(last) => {
@@ -376,7 +365,7 @@ fn is_stale(entry: &NodeEntry, now: UtcTimestamp, config: &MediaRegistryConfig) 
     }
 }
 
-fn lease_until(clock: &dyn Clock, ttl_ms: u64) -> Option<UtcTimestamp> {
+pub(crate) fn lease_until(clock: &dyn Clock, ttl_ms: u64) -> Option<UtcTimestamp> {
     let now = clock.now_wall();
     let ttl = i64::try_from(ttl_ms).unwrap_or(i64::MAX);
     now.checked_add(cheetah_signal_types::DurationMs::from_millis(ttl))

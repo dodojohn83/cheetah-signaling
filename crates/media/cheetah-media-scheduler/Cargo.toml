@@ -12,6 +12,7 @@ description = "Media node registry, health tracking, and scheduling for Cheetah 
 cheetah-domain = { path = "../../domain/cheetah-domain" }
 cheetah-signal-types = { path = "../../foundation/cheetah-signal-types" }
 cheetah-signal-contracts = { path = "../../foundation/cheetah-signal-contracts" }
+cheetah-storage-api = { path = "../../storage/cheetah-storage-api" }
 cheetah-media-client = { path = "../cheetah-media-client" }
 
 tonic = { workspace = true }

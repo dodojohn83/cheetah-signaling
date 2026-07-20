@@ -737,6 +737,7 @@ dependencies = [
  "cheetah-media-client",
  "cheetah-signal-contracts",
  "cheetah-signal-types",
+ "cheetah-storage-api",
  "prost-types",
  "serde",
  "serde_json",

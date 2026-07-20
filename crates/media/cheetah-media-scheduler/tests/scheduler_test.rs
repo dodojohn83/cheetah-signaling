@@ -116,6 +116,7 @@ fn default_node() -> MediaNode {
         lease_until: None,
         generation: 1,
         contract_version: 1,
+        revision: 1,
     }
 }
 

@@ -118,6 +118,7 @@ impl MediaClusterRegistry for MediaClusterRegistryService {
             lease_until: None,
             generation: 0,
             contract_version: 1,
+            revision: 0,
         };
 
         let node = self
@@ -594,6 +595,7 @@ mod tests {
             lease_until: None,
             generation: 0,
             contract_version: 1,
+            revision: 0,
         }
     }
 

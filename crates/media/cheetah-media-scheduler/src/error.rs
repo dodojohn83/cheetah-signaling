@@ -31,4 +31,7 @@ pub enum SchedulerError {
         /// Found identity.
         found: Option<String>,
     },
+    /// Storage backend failure.
+    #[error("storage backend: {0}")]
+    Backend(String),
 }

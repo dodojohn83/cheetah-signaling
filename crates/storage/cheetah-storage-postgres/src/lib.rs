@@ -4,6 +4,7 @@
 
 mod error;
 mod list;
+mod media_node;
 mod migration;
 mod node;
 mod operation_step;
@@ -13,6 +14,7 @@ mod storage;
 mod unit_of_work;
 mod webhook;
 
+pub use media_node::PostgresMediaNodeRepository;
 pub use migration::PostgresMigration;
 pub use node::PostgresNodeRepository;
 pub use operation_step::PostgresOperationStepRepository;
