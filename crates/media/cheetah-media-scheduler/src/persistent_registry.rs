@@ -340,7 +340,8 @@ impl MediaNodeRegistry for PersistentMediaNodeRegistry {
             .ok_or_else(|| {
                 SchedulerError::InvalidArgument("reservation deadline overflow".to_string())
             })?;
-        let active = entry.reserved.values().filter(|d| **d > now).count() as u64;
+        entry.reserved.retain(|_, d| *d > now);
+        let active = entry.reserved.len() as u64;
         let total = entry.reported_session_count.saturating_add(active);
         if total >= entry.node.capacity.max_sessions.max(1) {
             return Err(SchedulerError::CapacityExhausted(node_id.to_string()));
@@ -360,8 +361,9 @@ impl MediaNodeRegistry for PersistentMediaNodeRegistry {
         let entry = nodes
             .get_mut(&node_id)
             .ok_or_else(|| SchedulerError::NodeNotFound(node_id.to_string()))?;
-        entry.reserved.remove(&(tenant_id, binding_id));
         let now = clock.now_wall();
+        entry.reserved.remove(&(tenant_id, binding_id));
+        entry.reserved.retain(|_, d| *d > now);
         Ok(to_media_node(entry, now, &self.config))
     }
 }
