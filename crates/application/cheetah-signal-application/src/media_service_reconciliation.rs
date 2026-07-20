@@ -417,6 +417,7 @@ impl MediaService {
         session: &mut MediaSession,
         binding: &mut MediaBinding,
     ) -> crate::Result<()> {
+        let mut mutated = false;
         match session.state() {
             MediaSessionState::Requested => {
                 let ev = session.allocating(self.clock.as_ref())?;
@@ -428,6 +429,7 @@ impl MediaService {
                 let ev = session.active(self.clock.as_ref())?;
                 append_session_event(self, context, uow, session, ev).await?;
                 uow.media_session_repository().save(session).await?;
+                mutated = true;
             }
             MediaSessionState::Allocating => {
                 let ev = session.inviting(self.clock.as_ref())?;
@@ -436,11 +438,13 @@ impl MediaService {
                 let ev = session.active(self.clock.as_ref())?;
                 append_session_event(self, context, uow, session, ev).await?;
                 uow.media_session_repository().save(session).await?;
+                mutated = true;
             }
             MediaSessionState::Inviting => {
                 let ev = session.active(self.clock.as_ref())?;
                 append_session_event(self, context, uow, session, ev).await?;
                 uow.media_session_repository().save(session).await?;
+                mutated = true;
             }
             MediaSessionState::Active => {}
             _ => {
@@ -456,9 +460,12 @@ impl MediaService {
             let ev = binding.activate(self.clock.as_ref())?;
             append_binding_event(self, context, uow, binding, ev).await?;
             uow.media_binding_repository().save(binding).await?;
+            mutated = true;
         }
 
-        uow.commit().await?;
+        if mutated {
+            uow.commit().await?;
+        }
         Ok(())
     }
 }
