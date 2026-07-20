@@ -73,7 +73,8 @@ impl MediaService {
             .await?;
         report.nodes_scanned = nodes.len() as u64;
 
-        for node_id in nodes {
+        for node in nodes {
+            let node_id = node.node_id;
             let local_list = active_by_node.remove(&node_id).unwrap_or_default();
             let local_ids: BTreeSet<MediaSessionId> = local_list
                 .iter()

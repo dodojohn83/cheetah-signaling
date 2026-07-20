@@ -1299,12 +1299,15 @@ impl crate::MediaPort for InMemoryMediaPort {
         &self,
         tenant_id: TenantId,
         _clock: &dyn Clock,
-    ) -> crate::Result<Vec<NodeId>> {
+    ) -> crate::Result<Vec<crate::MediaNode>> {
         let node_sessions = lock_mutex(&self.node_sessions);
         Ok(node_sessions
             .keys()
             .filter(|(t, _)| *t == tenant_id)
-            .map(|(_, node_id)| *node_id)
+            .map(|(_, node_id)| crate::MediaNode {
+                node_id: *node_id,
+                ..crate::MediaNode::default()
+            })
             .collect())
     }
 

@@ -375,7 +375,7 @@ pub trait MediaPort: Send + Sync {
     ) -> Result<MediaNodeCommandResult>;
 
     /// Lists the media nodes that are reachable through this port.
-    async fn list_nodes(&self, tenant_id: TenantId, clock: &dyn Clock) -> Result<Vec<NodeId>>;
+    async fn list_nodes(&self, tenant_id: TenantId, clock: &dyn Clock) -> Result<Vec<crate::MediaNode>>;
 
     /// Lists active sessions on the given media node.
     async fn list_sessions(

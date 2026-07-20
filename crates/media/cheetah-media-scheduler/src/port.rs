@@ -244,7 +244,7 @@ impl MediaPort for SchedulerMediaPort {
         &self,
         _tenant_id: TenantId,
         clock: &dyn Clock,
-    ) -> Result<Vec<NodeId>, DomainError> {
+    ) -> Result<Vec<cheetah_domain::MediaNode>, DomainError> {
         Ok(self.scheduler.list_nodes(clock).await)
     }
 
