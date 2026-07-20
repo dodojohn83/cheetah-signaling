@@ -60,8 +60,7 @@ impl SqliteMigration {
         )
         .fetch_optional(&self.pool)
         .await
-        .ok()
-        .flatten();
+        .map_err(|e| StorageError::backend(e.to_string()))?;
 
         if sqlx_exists.is_none() {
             return Ok(());
@@ -327,5 +326,22 @@ impl BackfillJobRow {
         job.finished = self.finished != 0;
         job.updated_at = rfc3339_to_system_time(&self.updated_at)?;
         Ok(job)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cheetah_storage_api::PhaseMigrationBackend;
+
+    #[tokio::test]
+    #[allow(clippy::unwrap_used)]
+    async fn init_state_tables_propagates_query_errors() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        pool.close().await;
+
+        let migrator = SqliteMigration::new(pool);
+        let result = migrator.init_state_tables().await;
+        assert!(result.is_err());
     }
 }
