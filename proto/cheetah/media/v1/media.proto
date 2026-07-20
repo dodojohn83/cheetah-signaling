@@ -182,6 +182,25 @@ message MediaEvent {
   string traceparent = 19;
   string tracestate = 20;
 
+  // Operation that produced this event. Optional because older media nodes
+  // may emit events without an operation_id.
+  optional string operation_id = 28;
+
+  // Owner epoch of the signaling node that owned the binding/session when
+  // the command was issued. Optional because older media nodes may not emit
+  // it; used to fence stale owner callbacks when present.
+  optional uint64 owner_epoch = 29;
+
+  // Revision of the MediaBinding at the time the command was processed.
+  // Optional so the consumer can distinguish a legitimate revision of 0 from
+  // an unpopulated field.
+  optional uint64 binding_revision = 30;
+
+  // Revision of the MediaSession at the time the command was processed.
+  // Optional so the consumer can distinguish a legitimate revision of 0 from
+  // an unpopulated field.
+  optional uint64 session_revision = 31;
+
   // Typed event payload.
   oneof event {
     RtpSession rtp_negotiated = 1;

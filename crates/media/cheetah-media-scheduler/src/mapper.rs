@@ -1,9 +1,13 @@
 //! Explicit domain-to-proto and proto-to-domain mapping for the media port.
 
-use cheetah_domain::{DomainError, MediaNodeCommand, MediaNodeSessionRef};
-use cheetah_signal_contracts::cheetah::media::v1::{
-    MediaCommand, MediaControlPayload, MediaSessionRef, media_command,
+use cheetah_domain::{
+    DomainError, MediaNodeCallback, MediaNodeCallbackKind, MediaNodeCommand, MediaNodeSessionRef,
 };
+use cheetah_signal_contracts::cheetah::media::v1::{
+    MediaCommand, MediaControlPayload, MediaError, MediaEvent, MediaSessionRef, media_command,
+    media_event,
+};
+use cheetah_signal_types::{MediaNodeInstanceEpoch, OperationId, OwnerEpoch, Revision, TenantId};
 use std::str::FromStr;
 
 /// Maps a typed domain media command to a typed proto `MediaCommand`.
@@ -87,6 +91,155 @@ fn parse_optional_id<T: FromStr<Err = cheetah_signal_types::SignalError>>(
     T::from_str(value)
         .map(Some)
         .map_err(|e| DomainError::invalid_argument(format!("invalid {field}: {e}")))
+}
+
+fn parse_required_id<T: FromStr<Err = cheetah_signal_types::SignalError>>(
+    value: &str,
+    field: &str,
+) -> Result<T, DomainError> {
+    if value.is_empty() {
+        return Err(DomainError::invalid_argument(format!(
+            "{field} is required"
+        )));
+    }
+    T::from_str(value).map_err(|e| DomainError::invalid_argument(format!("invalid {field}: {e}")))
+}
+
+/// Maps a proto `MediaEvent` to a domain `(tenant_id, MediaNodeCallback)` pair.
+///
+/// Unknown or non-session lifecycle events are rejected with a field-level error
+/// so the consumer can log a diagnostic and skip them without treating them as
+/// transient failures.
+pub fn map_media_event_to_callback(
+    event: &MediaEvent,
+) -> Result<(TenantId, MediaNodeCallback), DomainError> {
+    if event.event_id.is_empty() {
+        return Err(DomainError::invalid_argument("event_id is required"));
+    }
+    let tenant_id = parse_required_id(&event.tenant_id, "tenant_id")?;
+    let media_node_id = parse_required_id(&event.media_node_id, "media_node_id")?;
+    let media_session_id = parse_required_id(&event.media_session_id, "media_session_id")?;
+    let media_binding_id = parse_required_id(&event.media_binding_id, "media_binding_id")?;
+    let operation_id =
+        parse_optional_id::<OperationId>(event.operation_id.as_deref().unwrap_or(""), "operation_id")?;
+
+    let kind = map_event_payload(event)?;
+
+    // owner_epoch, binding_revision and session_revision are required for
+    // lifecycle callbacks so that stale/late events can be fenced. Older media
+    // nodes that do not populate these fields should not emit session lifecycle
+    // events; if they do, the event is rejected as a diagnostic.
+    let owner_epoch = event
+        .owner_epoch
+        .map(OwnerEpoch)
+        .ok_or_else(|| DomainError::invalid_argument("owner_epoch is required"))?;
+    let binding_revision = event
+        .binding_revision
+        .map(Revision)
+        .ok_or_else(|| DomainError::invalid_argument("binding_revision is required"))?;
+    let session_revision = event
+        .session_revision
+        .map(Revision)
+        .ok_or_else(|| DomainError::invalid_argument("session_revision is required"))?;
+
+    let callback = MediaNodeCallback {
+        media_node_id,
+        media_node_instance_epoch: MediaNodeInstanceEpoch(event.media_node_instance_epoch),
+        media_session_id,
+        media_binding_id,
+        operation_id,
+        owner_epoch,
+        message_id: event.event_id.clone(),
+        binding_revision,
+        session_revision,
+        kind,
+    };
+
+    Ok((tenant_id, callback))
+}
+
+fn map_event_payload(event: &MediaEvent) -> Result<MediaNodeCallbackKind, DomainError> {
+    match event.event.as_ref() {
+        Some(media_event::Event::StreamStarted(_))
+        | Some(media_event::Event::RecordStarted(_))
+        | Some(media_event::Event::StreamOnline(_))
+        | Some(media_event::Event::RtpNegotiated(_)) => Ok(MediaNodeCallbackKind::Started),
+        Some(media_event::Event::StreamStopped(s)) => Ok(MediaNodeCallbackKind::Stopped {
+            reason: s.reason.clone(),
+        }),
+        Some(media_event::Event::RecordStopped(_)) => Ok(MediaNodeCallbackKind::Stopped {
+            reason: "record_stopped".to_string(),
+        }),
+        Some(media_event::Event::StreamOffline(s)) => Ok(MediaNodeCallbackKind::Stopped {
+            reason: s.reason.clone(),
+        }),
+        Some(media_event::Event::PlaybackComplete(s)) => Ok(MediaNodeCallbackKind::Stopped {
+            reason: s.reason.clone(),
+        }),
+        Some(media_event::Event::RtpTimeout(_)) => Ok(MediaNodeCallbackKind::Failed {
+            code: "rtp_timeout".to_string(),
+            message: "RTP session timed out".to_string(),
+        }),
+        Some(media_event::Event::ProxyStateChanged(s)) => match s.state.as_str() {
+            "active" | "ACTIVE" => Ok(MediaNodeCallbackKind::Started),
+            "stopped" | "STOPPED" => Ok(MediaNodeCallbackKind::Stopped {
+                reason: "proxy_stopped".to_string(),
+            }),
+            _ => Ok(MediaNodeCallbackKind::Failed {
+                code: "proxy_state_error".to_string(),
+                message: s.state.clone(),
+            }),
+        },
+        Some(media_event::Event::ResourceStateChanged(s)) => {
+            let state = s
+                .new_state
+                .as_ref()
+                .map(|ns| ns.state.as_str())
+                .unwrap_or("");
+            match state {
+                "active" | "ACTIVE" => Ok(MediaNodeCallbackKind::Started),
+                "stopped" | "STOPPED" => Ok(MediaNodeCallbackKind::Stopped {
+                    reason: "resource_stopped".to_string(),
+                }),
+                "error" | "ERROR" => Ok(MediaNodeCallbackKind::Failed {
+                    code: "resource_state_error".to_string(),
+                    message: "resource entered error state".to_string(),
+                }),
+                _ => Err(DomainError::invalid_argument(format!(
+                    "unhandled resource state: {state}"
+                ))),
+            }
+        }
+        Some(media_event::Event::Error(e)) => map_media_error(e),
+        Some(media_event::Event::SnapshotTaken(_)) => Err(DomainError::invalid_argument(
+            "snapshot_taken is not a session lifecycle event",
+        )),
+        Some(media_event::Event::NodeLifecycle(_)) => Err(DomainError::invalid_argument(
+            "node_lifecycle is not a session lifecycle event",
+        )),
+        None => Err(DomainError::invalid_argument(
+            "media event payload is missing",
+        )),
+    }
+}
+
+#[allow(deprecated)]
+fn map_media_error(error: &MediaError) -> Result<MediaNodeCallbackKind, DomainError> {
+    if let Some(status) = &error.status {
+        return Ok(MediaNodeCallbackKind::Failed {
+            code: status.code.clone(),
+            message: status.message.clone(),
+        });
+    }
+    if !error.error_code.is_empty() {
+        return Ok(MediaNodeCallbackKind::Failed {
+            code: error.error_code.clone(),
+            message: error.error_message.clone(),
+        });
+    }
+    Err(DomainError::invalid_argument(
+        "error event missing status and deprecated error_code",
+    ))
 }
 
 #[cfg(test)]

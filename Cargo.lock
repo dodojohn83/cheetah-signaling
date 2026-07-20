@@ -738,14 +738,17 @@ dependencies = [
  "cheetah-signal-contracts",
  "cheetah-signal-types",
  "cheetah-storage-api",
+ "fastrand",
  "prost-types",
  "serde",
  "serde_json",
  "thiserror",
  "time",
  "tokio",
+ "tokio-util",
  "tonic",
  "tracing",
+ "uuid",
 ]
 
 [[package]]

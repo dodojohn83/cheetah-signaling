@@ -17,6 +17,7 @@ cheetah-media-client = { path = "../cheetah-media-client" }
 
 tonic = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time"] }
+tokio-util = { workspace = true }
 time = { workspace = true }
 serde_json = { workspace = true }
 prost-types = { workspace = true }
@@ -24,6 +25,8 @@ tracing = { workspace = true }
 thiserror = { workspace = true }
 async-trait = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
+uuid = { workspace = true }
+fastrand = { workspace = true }
 
 [dev-dependencies]
 cheetah-signal-types = { path = "../../foundation/cheetah-signal-types", features = ["test-support"] }

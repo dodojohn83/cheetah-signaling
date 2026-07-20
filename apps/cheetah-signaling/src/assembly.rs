@@ -8,7 +8,7 @@ use crate::onvif_discovery;
 use ::time::{OffsetDateTime, UtcOffset};
 use cheetah_cluster_ownership::lease::CachingDeviceOwnerResolver;
 use cheetah_domain::ports::{DeviceOwnerResolver, MediaPort};
-use cheetah_domain::{DomainEvent, EventPublisher};
+use cheetah_domain::{DomainEvent, EventPublisher, MediaEventHandler};
 use cheetah_gb28181_driver_tokio::Gb28181UdpDriver;
 use cheetah_gb28181_driver_tokio::config::DriverConfig as GbDriverConfig;
 use cheetah_gb28181_module::Gb28181DriverFactory;
@@ -18,7 +18,8 @@ use cheetah_gb28181_module::types::DeviceId as GbDeviceId;
 use cheetah_http_api::state::{ApiConfig, ApiServer, ApiState};
 use cheetah_media_client::{MediaClientConfig, MediaControlClient};
 use cheetah_media_scheduler::{
-    LeastLoadedScheduler, MediaClusterRegistryService, MediaRegistryConfig, PeerIdentity,
+    LeastLoadedScheduler, MediaClusterRegistryService, MediaEventConsumer,
+    MediaEventConsumerConfig, MediaRegistryConfig, NoopReconciliationHandler, PeerIdentity,
     PersistentMediaNodeRegistry, SchedulerConfig, SchedulerMediaPort,
 };
 use cheetah_message_api::RawEventBus;
@@ -515,11 +516,13 @@ pub async fn start(
     let media_registry: Arc<dyn cheetah_media_scheduler::MediaNodeRegistry> =
         Arc::new(persistent_registry);
     let media_registry_for_grpc = Arc::clone(&media_registry);
+    let media_registry_for_consumer = Arc::clone(&media_registry);
     let media_scheduler: Arc<dyn cheetah_media_scheduler::MediaScheduler> = Arc::new(
         LeastLoadedScheduler::new(media_registry, SchedulerConfig::default()),
     );
     let media_client = MediaControlClient::new(MediaClientConfig::default())
         .with_secret_store(secret_store.clone());
+    let media_client_for_consumer = media_client.clone();
     let media_port: Arc<dyn MediaPort> =
         Arc::new(SchedulerMediaPort::new(media_scheduler, media_client));
 
@@ -560,6 +563,27 @@ pub async fn start(
         media_port,
     );
     state.cancel = cancel.clone();
+
+    // Media event consumer: subscribe to active media nodes and apply
+    // session-level callbacks through the application media service.
+    let media_event_handler: Arc<dyn MediaEventHandler> = Arc::new(state.media_service.clone());
+    let media_event_consumer = Arc::new(MediaEventConsumer::new(
+        media_registry_for_consumer,
+        media_client_for_consumer,
+        media_event_handler,
+        storage.clone(),
+        clock.clone(),
+        node_id,
+        MediaEventConsumerConfig::default(),
+        Arc::new(NoopReconciliationHandler),
+    ));
+    let consumer_cancel = cancel.child_token();
+    workers.push(tokio::spawn(async move {
+        if let Err(e) = media_event_consumer.run(consumer_cancel).await {
+            warn!(error = %e, "media event consumer exited");
+        }
+    }));
+    info!("media event consumer worker started");
 
     // Plugin host: register built-in GB28181 and ONVIF factories and validate
     // any external plugin manifests before protocol workers start.
