@@ -169,10 +169,10 @@ async fn sqlite_state_independence_for_operation_session_and_binding() {
         media_session_id: session.media_session_id,
         media_binding_id: binding_id,
         operation_id: Some(start_operation_id),
-        owner_epoch: Some(OwnerEpoch::default()),
+        owner_epoch: OwnerEpoch::default(),
         message_id: "msg-started".to_string(),
-        binding_revision: Some(binding.revision()),
-        session_revision: Some(session.revision),
+        binding_revision: binding.revision(),
+        session_revision: session.revision,
         kind: MediaNodeCallbackKind::Started,
     };
     let active_session = media_service

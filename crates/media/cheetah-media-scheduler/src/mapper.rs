@@ -125,9 +125,22 @@ pub fn map_media_event_to_callback(
 
     let kind = map_event_payload(event)?;
 
-    let owner_epoch = event.owner_epoch.map(OwnerEpoch);
-    let binding_revision = event.binding_revision.map(Revision);
-    let session_revision = event.session_revision.map(Revision);
+    // owner_epoch, binding_revision and session_revision are required for
+    // lifecycle callbacks so that stale/late events can be fenced. Older media
+    // nodes that do not populate these fields should not emit session lifecycle
+    // events; if they do, the event is rejected as a diagnostic.
+    let owner_epoch = event
+        .owner_epoch
+        .map(OwnerEpoch)
+        .ok_or_else(|| DomainError::invalid_argument("owner_epoch is required"))?;
+    let binding_revision = event
+        .binding_revision
+        .map(Revision)
+        .ok_or_else(|| DomainError::invalid_argument("binding_revision is required"))?;
+    let session_revision = event
+        .session_revision
+        .map(Revision)
+        .ok_or_else(|| DomainError::invalid_argument("session_revision is required"))?;
 
     let callback = MediaNodeCallback {
         media_node_id,

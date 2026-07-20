@@ -654,13 +654,29 @@ impl MediaEventConsumer {
                 "media binding instance epoch mismatch",
             ));
         }
+        if binding.owner_epoch() != callback.owner_epoch {
+            return Err(DomainError::invalid_argument("owner epoch mismatch"));
+        }
+        if binding.revision().0 != callback.binding_revision.0 {
+            return Err(DomainError::ConcurrentModification {
+                expected: callback.binding_revision.0,
+                found: binding.revision().0,
+            });
+        }
 
-        uow.media_session_repository()
+        let session = uow
+            .media_session_repository()
             .get(tenant_id, callback.media_session_id)
             .await?
             .ok_or_else(|| {
                 DomainError::not_found("media session", callback.media_session_id.to_string())
             })?;
+        if session.revision().0 != callback.session_revision.0 {
+            return Err(DomainError::ConcurrentModification {
+                expected: callback.session_revision.0,
+                found: session.revision().0,
+            });
+        }
 
         Ok(())
     }

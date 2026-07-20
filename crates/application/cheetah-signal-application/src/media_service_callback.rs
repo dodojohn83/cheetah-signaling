@@ -52,16 +52,12 @@ impl MediaService {
                 "media node instance epoch mismatch",
             ));
         }
-        if let Some(owner_epoch) = callback.owner_epoch
-            && binding.owner_epoch() != owner_epoch
-        {
+        if binding.owner_epoch() != callback.owner_epoch {
             return Err(DomainError::invalid_argument("owner epoch mismatch"));
         }
-        if let Some(binding_revision) = callback.binding_revision
-            && binding.revision().0 != binding_revision.0
-        {
+        if binding.revision().0 != callback.binding_revision.0 {
             return Err(DomainError::ConcurrentModification {
-                expected: binding_revision.0,
+                expected: callback.binding_revision.0,
                 found: binding.revision().0,
             });
         }
@@ -74,11 +70,9 @@ impl MediaService {
                 DomainError::not_found("media session", callback.media_session_id.to_string())
             })?;
 
-        if let Some(session_revision) = callback.session_revision
-            && session.revision().0 != session_revision.0
-        {
+        if session.revision().0 != callback.session_revision.0 {
             return Err(DomainError::ConcurrentModification {
-                expected: session_revision.0,
+                expected: callback.session_revision.0,
                 found: session.revision().0,
             });
         }
