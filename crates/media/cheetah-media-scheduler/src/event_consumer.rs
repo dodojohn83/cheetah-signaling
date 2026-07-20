@@ -10,6 +10,7 @@ use crate::config::MediaEventConsumerConfig;
 use crate::error::SchedulerError;
 use crate::event_consumer_support::*;
 use crate::mapper::map_media_event_to_callback;
+use crate::metrics::MediaMetrics;
 use crate::registry::MediaNodeRegistry;
 use cheetah_domain::{
     DomainError, MediaEventHandler, MediaNode, MediaNodeCallback, ProcessedMessageRecord,
@@ -19,7 +20,7 @@ use cheetah_media_client::MediaControlClient;
 use cheetah_signal_contracts::cheetah::media::v1::MediaEvent;
 use cheetah_signal_types::{
     Clock, CorrelationId, DurationMs, MessageId, NodeId, Principal, PrincipalKind, RequestContext,
-    TenantId,
+    TenantId, UtcTimestamp,
 };
 use cheetah_storage_api::Storage;
 use std::collections::BTreeSet;
@@ -45,6 +46,7 @@ pub struct MediaEventConsumer {
     permits: Arc<tokio::sync::Semaphore>,
     subscriptions: SubscriptionState,
     diagnostic_log_limiter: DiagnosticLogLimiter,
+    metrics: Arc<MediaMetrics>,
 }
 
 impl std::fmt::Debug for MediaEventConsumer {
@@ -68,6 +70,7 @@ impl MediaEventConsumer {
         source_node_id: NodeId,
         config: MediaEventConsumerConfig,
         reconciler: Arc<dyn ReconciliationHandler>,
+        metrics: Arc<MediaMetrics>,
     ) -> Self {
         let permits = Arc::new(tokio::sync::Semaphore::new(
             config.max_concurrent_subscriptions,
@@ -85,6 +88,7 @@ impl MediaEventConsumer {
             permits,
             subscriptions: SubscriptionState::default(),
             diagnostic_log_limiter: DiagnosticLogLimiter::default(),
+            metrics,
         }
     }
 
@@ -223,6 +227,8 @@ impl MediaEventConsumer {
         cancel: CancellationToken,
         _generation: u64,
     ) -> Result<(), SchedulerError> {
+        self.metrics.record_event_reconnect();
+
         let Some(node) = self.node_registry.get(node_id, self.clock.as_ref()).await else {
             return Err(SchedulerError::NodeNotFound(node_id.to_string()));
         };
@@ -294,6 +300,16 @@ impl MediaEventConsumer {
             .tenant_id
             .parse::<TenantId>()
             .unwrap_or(TenantId::default());
+
+        if let Some(ts) = event.occurred_at.as_ref()
+            && let Some(occurred) = UtcTimestamp::from_prost_timestamp(ts)
+        {
+            let lag =
+                (self.clock.now_wall().as_offset() - occurred.as_offset()).whole_milliseconds();
+            if lag >= 0 {
+                self.metrics.record_event_lag_ms(lag as u64);
+            }
+        }
 
         let (tenant_id, callback) = match map_media_event_to_callback(&event) {
             Ok(v) => v,
@@ -543,6 +559,7 @@ impl MediaEventConsumer {
     async fn detect_sequence_gap(&self, node: &MediaNode, tenant_id: TenantId, sequence: u64) {
         let last = self.cursors.last_sequence(node.node_id);
         if last != 0 && sequence > last.saturating_add(1) {
+            self.metrics.record_event_gap();
             self.reconciler
                 .reconcile(node.node_id, tenant_id, last.saturating_add(1), sequence)
                 .await;

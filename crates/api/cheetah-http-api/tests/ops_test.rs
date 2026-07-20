@@ -135,14 +135,20 @@ async fn outbox_replay_reports_zero_when_empty() {
 }
 
 #[tokio::test]
-async fn reconcile_returns_not_implemented() {
+async fn reconcile_returns_report_for_empty_tenant() {
     let server = common::TestServer::new().await;
     let response = server
         .request(reqwest::Method::POST, "/api/v1/admin/reconcile")
         .send()
         .await
         .expect("send request");
-    assert_eq!(response.status(), reqwest::StatusCode::NOT_IMPLEMENTED);
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let body = response
+        .json::<serde_json::Value>()
+        .await
+        .expect("read body");
+    assert_eq!(body["nodes_scanned"], 0);
+    assert_eq!(body["sessions_found"], 0);
 }
 
 #[tokio::test]

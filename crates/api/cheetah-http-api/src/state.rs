@@ -11,7 +11,7 @@ use cheetah_signal_application::{
     WebhookService,
 };
 use cheetah_signal_types::config::{LogFormat, SecurityConfig};
-use cheetah_signal_types::{AuditLog, Clock, NodeId, SecretStore, SignalConfig};
+use cheetah_signal_types::{AuditLog, Clock, MetricsExporter, NodeId, SecretStore, SignalConfig};
 use cheetah_storage_api::Storage;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -93,6 +93,8 @@ pub struct ApiState {
     pub config: ApiConfig,
     /// Shared request metrics.
     pub metrics: Arc<RequestMetrics>,
+    /// Optional media scheduler metrics exporter.
+    pub media_metrics: Option<Arc<dyn MetricsExporter>>,
     /// Per-key request rate limiter.
     pub rate_limiter: RateLimiter,
     /// Audit sink for security-relevant events.
@@ -146,6 +148,7 @@ impl ApiState {
             id_generator,
             config,
             metrics: Arc::new(RequestMetrics::default()),
+            media_metrics: None,
             rate_limiter,
             audit: Arc::new(TracingAuditLog),
             cancel: CancellationToken::new(),
@@ -155,6 +158,12 @@ impl ApiState {
     /// Sets the audit sink.
     pub fn with_audit(mut self, audit: Arc<dyn AuditLog>) -> Self {
         self.audit = audit;
+        self
+    }
+
+    /// Wires media scheduler metrics into the metrics endpoint.
+    pub fn with_media_metrics(mut self, metrics: Arc<dyn MetricsExporter>) -> Self {
+        self.media_metrics = Some(metrics);
         self
     }
 
