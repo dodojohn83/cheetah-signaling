@@ -12,7 +12,9 @@ pub mod error;
 pub mod sink;
 
 use cheetah_gb28181_core::{SipParser, encode_message};
-use cheetah_gb28181_module::{AccessInput, AccessOutput, CredentialProvider, Gb28181Access};
+use cheetah_gb28181_module::{
+    AccessInput, AccessOutput, CredentialProvider, Gb28181Access,
+};
 use config::DriverConfig;
 use error::DriverError;
 use sink::EventSink;
@@ -175,7 +177,7 @@ mod tests {
     use cheetah_gb28181_core::{
         HeaderName, HeaderValue, Method, RequestLine, SipHeaders, SipMessage, SipUri,
     };
-    use cheetah_gb28181_module::{AuthPolicy, Gb28181DomainConfig};
+    use cheetah_gb28181_module::{AuthPolicy, CredentialError, Gb28181DomainConfig};
     use secrecy::SecretString;
     use sink::NoOpEventSink;
     use std::collections::HashMap;
@@ -196,7 +198,9 @@ mod tests {
     fn test_credential_provider(
         passwords: HashMap<String, SecretString>,
     ) -> impl CredentialProvider + 'static {
-        move |id: &cheetah_gb28181_module::DeviceId| passwords.get(&id.to_string()).cloned()
+        move |id: &cheetah_gb28181_module::DeviceId| -> Result<Option<SecretString>, CredentialError> {
+            Ok(passwords.get(&id.to_string()).cloned())
+        }
     }
 
     fn build_register_request(device_id: &str, port: u16) -> SipMessage {

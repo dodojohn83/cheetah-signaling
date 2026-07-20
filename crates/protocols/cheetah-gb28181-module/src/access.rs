@@ -185,8 +185,10 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                     Err(_) => return self.authentication_failure_response(&message, now, false),
                 };
                 let password = match self.credential_provider.password_for(&device_id) {
-                    Some(p) => p,
-                    None => return self.authentication_failure_response(&message, now, false),
+                    Ok(Some(p)) => p,
+                    Ok(None) | Err(_) => {
+                        return self.authentication_failure_response(&message, now, false);
+                    }
                 };
                 let request_uri = line.uri.encode();
                 match self.digest_context.validate(
@@ -203,23 +205,37 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                     }
                     Err(_) => return self.authentication_failure_response(&message, now, false),
                 }
-            } else if let Some(password) = self.credential_provider.password_for(&device_id)
-                && let Ok(digest) = parse_authorization(auth_header.as_str())
-            {
-                let request_uri = line.uri.encode();
-                if self
-                    .digest_context
-                    .validate(
-                        &digest,
-                        &Method::Register,
-                        &request_uri,
-                        &password,
-                        &mut self.replay_cache,
-                        now,
-                    )
-                    .is_ok()
-                {
-                    authenticated = true;
+            } else {
+                // ChallengeOptional: missing password is acceptable, but a backend
+                // error must not be treated as "no password" and fall through to an
+                // unauthenticated acceptance.
+                match self.credential_provider.password_for(&device_id) {
+                    Ok(Some(password)) => {
+                        if let Ok(digest) = parse_authorization(auth_header.as_str()) {
+                            let request_uri = line.uri.encode();
+                            if self
+                                .digest_context
+                                .validate(
+                                    &digest,
+                                    &Method::Register,
+                                    &request_uri,
+                                    &password,
+                                    &mut self.replay_cache,
+                                    now,
+                                )
+                                .is_ok()
+                            {
+                                authenticated = true;
+                            }
+                        }
+                    }
+                    Ok(None) => {
+                        // No password configured; fall through to unauthenticated
+                        // acceptance in ChallengeOptional mode.
+                    }
+                    Err(_) => {
+                        return self.authentication_failure_response(&message, now, false);
+                    }
                 }
             }
         }

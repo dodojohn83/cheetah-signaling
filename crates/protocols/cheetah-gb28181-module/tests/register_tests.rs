@@ -7,8 +7,8 @@ use cheetah_gb28181_core::{
     SipUri,
 };
 use cheetah_gb28181_module::{
-    AccessInput, AccessOutput, AuthPolicy, DeviceId, DevicePresence, Gb28181Access,
-    Gb28181DomainConfig, Gb28181Event,
+    AccessInput, AccessOutput, AuthPolicy, CredentialError, CredentialProvider, DeviceId,
+    DevicePresence, Gb28181Access, Gb28181DomainConfig, Gb28181Event,
 };
 use secrecy::SecretString;
 use sha2::{Digest, Sha256};
@@ -119,14 +119,12 @@ fn keepalive_body() -> Vec<u8> {
         .to_vec()
 }
 
-fn make_registered_access() -> (
-    Gb28181Access<impl Fn(&DeviceId) -> Option<SecretString>>,
-    u64,
-) {
+fn make_registered_access() -> (Gb28181Access<impl CredentialProvider>, u64) {
     let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec())
         .unwrap()
         .with_auth_policy(AuthPolicy::ChallengeOptional);
-    let provider = |_device: &DeviceId| None;
+    let provider =
+        |_device: &DeviceId| -> Result<Option<SecretString>, CredentialError> { Ok(None) };
     let mut access = Gb28181Access::new(config, provider).unwrap();
 
     let request = make_request(1, false);
@@ -198,9 +196,9 @@ fn unauthenticated_register_returns_401_challenge() {
     let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec()).unwrap();
     let provider = |device: &DeviceId| {
         if device.as_ref() == DEVICE_ID {
-            Some(SecretString::from(PASSWORD))
+            Ok(Some(SecretString::from(PASSWORD)))
         } else {
-            None
+            Ok(None)
         }
     };
     let mut access = Gb28181Access::new(config, provider).unwrap();
@@ -233,9 +231,9 @@ fn authenticated_register_returns_200_and_emits_event() {
     let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec()).unwrap();
     let provider = |device: &DeviceId| {
         if device.as_ref() == DEVICE_ID {
-            Some(SecretString::from(PASSWORD))
+            Ok(Some(SecretString::from(PASSWORD)))
         } else {
-            None
+            Ok(None)
         }
     };
     let mut access = Gb28181Access::new(config, provider).unwrap();
@@ -287,7 +285,8 @@ fn challenge_optional_register_without_auth_succeeds() {
     let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec())
         .unwrap()
         .with_auth_policy(AuthPolicy::ChallengeOptional);
-    let provider = |_device: &DeviceId| -> Option<SecretString> { None };
+    let provider =
+        |_device: &DeviceId| -> Result<Option<SecretString>, CredentialError> { Ok(None) };
     let mut access = Gb28181Access::new(config, provider).unwrap();
 
     let request = make_request(1, false);
@@ -315,7 +314,8 @@ fn challenge_optional_ignores_unknown_cached_credentials() {
     let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec())
         .unwrap()
         .with_auth_policy(AuthPolicy::ChallengeOptional);
-    let provider = |_device: &DeviceId| -> Option<SecretString> { None };
+    let provider =
+        |_device: &DeviceId| -> Result<Option<SecretString>, CredentialError> { Ok(None) };
     let mut access = Gb28181Access::new(config, provider).unwrap();
 
     let mut request = make_request(1, false);
@@ -340,13 +340,48 @@ fn challenge_optional_ignores_unknown_cached_credentials() {
 }
 
 #[test]
+fn challenge_optional_rejects_credential_backend_error() {
+    // A backend failure from the credential provider must not be treated as a
+    // missing password in ChallengeOptional mode; the request must be rejected.
+    let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec())
+        .unwrap()
+        .with_auth_policy(AuthPolicy::ChallengeOptional);
+    let provider = |_device: &DeviceId| -> Result<Option<SecretString>, CredentialError> {
+        Err(CredentialError::Backend(
+            "secret store unavailable".to_string(),
+        ))
+    };
+    let mut access = Gb28181Access::new(config, provider).unwrap();
+
+    let mut request = make_request(1, false);
+    request.headers_mut().append(
+        HeaderName::Authorization,
+        HeaderValue::new("Digest username=\"34020000001320000001\", realm=\"example.com\", nonce=\"deadbeef\", uri=\"sip:34020000001320000001@example.com\", response=\"fakemac\", algorithm=\"SHA-256\""),
+    );
+    let outputs = access
+        .process(AccessInput {
+            source: "192.168.1.100:5060".parse().unwrap(),
+            now: 1000,
+            message: request,
+        })
+        .unwrap();
+
+    assert_eq!(outputs.len(), 1);
+    let response = find_response(&outputs);
+    let SipMessage::Response { line, .. } = response else {
+        panic!("expected response");
+    };
+    assert_eq!(line.code, 401);
+}
+
+#[test]
 fn multiple_via_headers_are_copied_to_response() {
     let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec()).unwrap();
     let provider = |device: &DeviceId| {
         if device.as_ref() == DEVICE_ID {
-            Some(SecretString::from(PASSWORD))
+            Ok(Some(SecretString::from(PASSWORD)))
         } else {
-            None
+            Ok(None)
         }
     };
     let mut access = Gb28181Access::new(config, provider).unwrap();
@@ -399,9 +434,9 @@ fn challenge_optional_accepts_valid_credentials() {
         .with_auth_policy(AuthPolicy::ChallengeOptional);
     let provider = |device: &DeviceId| {
         if device.as_ref() == DEVICE_ID {
-            Some(SecretString::from(PASSWORD))
+            Ok(Some(SecretString::from(PASSWORD)))
         } else {
-            None
+            Ok(None)
         }
     };
     let mut access = Gb28181Access::new(config, provider).unwrap();
@@ -437,7 +472,8 @@ fn keepalive_before_register_returns_403() {
     let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec())
         .unwrap()
         .with_auth_policy(AuthPolicy::ChallengeOptional);
-    let provider = |_device: &DeviceId| None;
+    let provider =
+        |_device: &DeviceId| -> Result<Option<SecretString>, CredentialError> { Ok(None) };
     let mut access = Gb28181Access::new(config, provider).unwrap();
 
     let request = make_message_request(&keepalive_body());
@@ -613,7 +649,8 @@ fn registration_expiry_removes_registration() {
     let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec())
         .unwrap()
         .with_auth_policy(AuthPolicy::ChallengeOptional);
-    let provider = |_device: &DeviceId| None;
+    let provider =
+        |_device: &DeviceId| -> Result<Option<SecretString>, CredentialError> { Ok(None) };
     let mut access = Gb28181Access::new(config, provider).unwrap();
 
     let request = make_register_request(1, false, 5);
@@ -654,7 +691,8 @@ fn registration_table_respects_capacity_limit() {
         .unwrap()
         .with_auth_policy(AuthPolicy::ChallengeOptional)
         .with_max_registrations(1);
-    let provider = |_device: &DeviceId| None;
+    let provider =
+        |_device: &DeviceId| -> Result<Option<SecretString>, CredentialError> { Ok(None) };
     let mut access = Gb28181Access::new(config, provider).unwrap();
 
     let request = make_request(1, false);
@@ -831,7 +869,8 @@ fn unregistered_device_message_returns_403() {
     let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec())
         .unwrap()
         .with_auth_policy(AuthPolicy::ChallengeOptional);
-    let provider = |_device: &DeviceId| None;
+    let provider =
+        |_device: &DeviceId| -> Result<Option<SecretString>, CredentialError> { Ok(None) };
     let mut access = Gb28181Access::new(config, provider).unwrap();
 
     let body = br#"<?xml version="1.0"?>
@@ -1077,7 +1116,8 @@ fn register_rejects_malformed_expires_header() {
     let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec())
         .unwrap()
         .with_auth_policy(AuthPolicy::ChallengeOptional);
-    let provider = |_device: &DeviceId| None;
+    let provider =
+        |_device: &DeviceId| -> Result<Option<SecretString>, CredentialError> { Ok(None) };
     let mut access = Gb28181Access::new(config, provider).unwrap();
 
     let mut request = make_request(1, false);
@@ -1103,7 +1143,8 @@ fn register_rejects_malformed_contact_expires_param() {
     let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec())
         .unwrap()
         .with_auth_policy(AuthPolicy::ChallengeOptional);
-    let provider = |_device: &DeviceId| None;
+    let provider =
+        |_device: &DeviceId| -> Result<Option<SecretString>, CredentialError> { Ok(None) };
     let mut access = Gb28181Access::new(config, provider).unwrap();
 
     let base = make_request(1, false);
@@ -1151,7 +1192,8 @@ fn register_rejects_missing_device_id_with_400() {
     let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec())
         .unwrap()
         .with_auth_policy(AuthPolicy::ChallengeOptional);
-    let provider = |_device: &DeviceId| None;
+    let provider =
+        |_device: &DeviceId| -> Result<Option<SecretString>, CredentialError> { Ok(None) };
     let mut access = Gb28181Access::new(config, provider).unwrap();
 
     let request = make_register_request_without_device_id(1, 3600);
@@ -1175,9 +1217,9 @@ fn register_required_rejects_malformed_authorization_with_400() {
     let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec()).unwrap();
     let provider = |device: &DeviceId| {
         if device.as_ref() == DEVICE_ID {
-            Some(SecretString::from(PASSWORD))
+            Ok(Some(SecretString::from(PASSWORD)))
         } else {
-            None
+            Ok(None)
         }
     };
     let mut access = Gb28181Access::new(config, provider).unwrap();
@@ -1207,9 +1249,9 @@ fn register_required_rejects_invalid_credentials_with_401() {
     let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec()).unwrap();
     let provider = |device: &DeviceId| {
         if device.as_ref() == DEVICE_ID {
-            Some(SecretString::from(PASSWORD))
+            Ok(Some(SecretString::from(PASSWORD)))
         } else {
-            None
+            Ok(None)
         }
     };
     let mut access = Gb28181Access::new(config, provider).unwrap();
@@ -1243,7 +1285,8 @@ fn register_required_unknown_device_malformed_authorization_returns_400() {
     // Parsing the Authorization header must happen before the password lookup
     // so that malformed authorization is rejected with 400 even for unknown devices.
     let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec()).unwrap();
-    let provider = |_device: &DeviceId| None;
+    let provider =
+        |_device: &DeviceId| -> Result<Option<SecretString>, CredentialError> { Ok(None) };
     let mut access = Gb28181Access::new(config, provider).unwrap();
 
     let mut request = make_request(1, false);
@@ -1271,9 +1314,9 @@ fn register_required_rejects_stale_nonce_with_401_stale() {
     let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec()).unwrap();
     let provider = |device: &DeviceId| {
         if device.as_ref() == DEVICE_ID {
-            Some(SecretString::from(PASSWORD))
+            Ok(Some(SecretString::from(PASSWORD)))
         } else {
-            None
+            Ok(None)
         }
     };
     let mut access = Gb28181Access::new(config, provider).unwrap();
@@ -1315,7 +1358,8 @@ fn register_required_rejects_stale_nonce_with_401_stale() {
 #[test]
 fn register_required_rejects_unknown_algorithm_with_400() {
     let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec()).unwrap();
-    let provider = |_device: &DeviceId| None;
+    let provider =
+        |_device: &DeviceId| -> Result<Option<SecretString>, CredentialError> { Ok(None) };
     let mut access = Gb28181Access::new(config, provider).unwrap();
 
     let mut request = make_request(1, false);
@@ -1343,7 +1387,8 @@ fn register_required_rejects_unknown_algorithm_with_400() {
 #[test]
 fn register_required_rejects_invalid_qop_with_400() {
     let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec()).unwrap();
-    let provider = |_device: &DeviceId| None;
+    let provider =
+        |_device: &DeviceId| -> Result<Option<SecretString>, CredentialError> { Ok(None) };
     let mut access = Gb28181Access::new(config, provider).unwrap();
 
     let mut request = make_request(1, false);
@@ -1405,7 +1450,8 @@ fn unsupported_method_returns_501() {
     let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec())
         .unwrap()
         .with_auth_policy(AuthPolicy::ChallengeOptional);
-    let provider = |_device: &DeviceId| None;
+    let provider =
+        |_device: &DeviceId| -> Result<Option<SecretString>, CredentialError> { Ok(None) };
     let mut access = Gb28181Access::new(config, provider).unwrap();
 
     let mut headers = SipHeaders::new();

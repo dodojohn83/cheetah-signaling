@@ -10,7 +10,7 @@ use cheetah_domain::{DomainEvent, EventPublisher};
 use cheetah_gb28181_driver_tokio::Gb28181UdpDriver;
 use cheetah_gb28181_driver_tokio::config::DriverConfig as GbDriverConfig;
 use cheetah_gb28181_module::config::{AuthPolicy, Gb28181DomainConfig};
-use cheetah_gb28181_module::ports::CredentialProvider;
+use cheetah_gb28181_module::ports::{CredentialError, CredentialProvider};
 use cheetah_gb28181_module::types::DeviceId as GbDeviceId;
 use cheetah_http_api::state::{ApiConfig, ApiServer, ApiState};
 use cheetah_media_client::{MediaClientConfig, MediaControlClient};
@@ -187,10 +187,19 @@ impl SecretStoreCredentialProvider {
 }
 
 impl CredentialProvider for SecretStoreCredentialProvider {
-    fn password_for(&self, device_id: &GbDeviceId) -> Option<SecretString> {
-        let template = self.ref_template.as_ref()?;
+    fn password_for(
+        &self,
+        device_id: &GbDeviceId,
+    ) -> Result<Option<SecretString>, CredentialError> {
+        let Some(template) = self.ref_template.as_ref() else {
+            return Ok(None);
+        };
         let key = template.replace("{device_id}", device_id.as_ref());
-        self.store.get(&key).ok()
+        match self.store.get(&key) {
+            Ok(secret) => Ok(Some(secret)),
+            Err(e) if e.kind() == cheetah_signal_types::SignalErrorKind::NotFound => Ok(None),
+            Err(e) => Err(CredentialError::Backend(e.to_string())),
+        }
     }
 }
 
