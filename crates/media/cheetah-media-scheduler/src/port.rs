@@ -1,5 +1,6 @@
 //! Domain `MediaPort` implementation backed by the media scheduler.
 
+use crate::mapper::{map_command_to_media_command, map_proto_session_ref};
 use crate::scheduler::MediaScheduler;
 use cheetah_domain::{
     DomainError, MediaNodeCommand, MediaNodeCommandResult, MediaNodeSessionRef, MediaPort,
@@ -8,16 +9,12 @@ use cheetah_domain::{
 use cheetah_media_client::{
     MediaClientError, MediaControlClient, MediaControlRequest, MediaListSessionsRequest,
 };
-use cheetah_signal_contracts::cheetah::media::v1::{
-    MediaCommand, MediaControlPayload, MediaMutationContext, MediaSessionRef, media_command,
-};
-use cheetah_signal_types::MediaNodeInstanceEpoch;
+use cheetah_signal_contracts::cheetah::media::v1::MediaMutationContext;
 use cheetah_signal_types::Page;
 use cheetah_signal_types::{
     ChannelId, Clock, DeviceId, MediaBindingId, MediaSessionId, MessageId, NodeId, PageRequest,
     TenantId, UtcTimestamp,
 };
-use std::str::FromStr;
 use std::sync::Arc;
 
 use crate::error::SchedulerError;
@@ -115,10 +112,22 @@ impl MediaPort for SchedulerMediaPort {
         media_binding_id: MediaBindingId,
         clock: &dyn Clock,
     ) -> Result<(), DomainError> {
-        self.scheduler
+        match self
+            .scheduler
             .release(tenant_id, media_binding_id, clock)
             .await
-            .map_err(map_scheduler_error)
+        {
+            Ok(()) => Ok(()),
+            Err(SchedulerError::ReservationNotFound { .. }) => {
+                tracing::info!(
+                    %tenant_id,
+                    %media_binding_id,
+                    "release ignored missing reservation; treating as already released"
+                );
+                Ok(())
+            }
+            Err(e) => Err(map_scheduler_error(e)),
+        }
     }
 
     async fn execute(
@@ -140,6 +149,12 @@ impl MediaPort for SchedulerMediaPort {
             ));
         }
 
+        if let Some(deadline) = command.deadline
+            && deadline.is_elapsed(clock.now_wall())
+        {
+            return Err(DomainError::unavailable("command deadline elapsed"));
+        }
+
         let endpoint = node.control_endpoint.clone();
         let contract_version = if command.contract_version > 0 {
             command.contract_version
@@ -147,9 +162,6 @@ impl MediaPort for SchedulerMediaPort {
             node.contract_version
         };
 
-        let payload = serde_json::to_vec(&command.payload).map_err(|e| {
-            DomainError::internal(format!("failed to serialize media command payload: {e}"))
-        })?;
         let deadline = command
             .deadline
             .map(|d| d.as_timestamp().to_prost_timestamp());
@@ -172,15 +184,8 @@ impl MediaPort for SchedulerMediaPort {
             traceparent: None,
             tracestate: None,
         };
-        let proto_command = MediaCommand {
-            command: Some(media_command::Command::Control(MediaControlPayload {
-                media_session_id: command.media_session_id.to_string(),
-                command_type: command.payload.kind().to_string(),
-                payload,
-            })),
-            target_media_node_instance_epoch: command.media_node_instance_epoch.0,
-            context: Some(context),
-        };
+        let mut proto_command = map_command_to_media_command(&command)?;
+        proto_command.context = Some(context);
 
         let request = MediaControlRequest {
             request_id: command.request_id,
@@ -273,9 +278,12 @@ impl MediaPort for SchedulerMediaPort {
 
         let mut items = Vec::with_capacity(response.sessions.len());
         for proto in response.sessions {
-            if let Some(session) = map_proto_session_ref(tenant_id, media_node_id, &proto) {
-                items.push(session);
-            }
+            let session = map_proto_session_ref(tenant_id, media_node_id, &proto).map_err(|e| {
+                DomainError::invalid_argument(format!(
+                    "media node {media_node_id} returned malformed session ref: {e}"
+                ))
+            })?;
+            items.push(session);
         }
 
         let next_cursor = if response.next_page_token.is_empty() {
@@ -290,71 +298,6 @@ impl MediaPort for SchedulerMediaPort {
             total: None,
         })
     }
-}
-
-fn map_proto_session_ref(
-    tenant_id: TenantId,
-    media_node_id: NodeId,
-    proto: &MediaSessionRef,
-) -> Option<MediaNodeSessionRef> {
-    let media_session_id = match MediaSessionId::from_str(&proto.media_session_id) {
-        Ok(id) => id,
-        Err(e) => {
-            tracing::warn!(
-                %tenant_id,
-                node_id = %media_node_id,
-                media_session_id = %proto.media_session_id,
-                error = %e,
-                "media node returned invalid media_session_id; skipping session ref"
-            );
-            return None;
-        }
-    };
-
-    let device_id = if proto.device_id.is_empty() {
-        None
-    } else {
-        match DeviceId::from_str(&proto.device_id) {
-            Ok(id) => Some(id),
-            Err(e) => {
-                tracing::warn!(
-                    %tenant_id,
-                    node_id = %media_node_id,
-                    %media_session_id,
-                    device_id = %proto.device_id,
-                    error = %e,
-                    "media node returned invalid device_id; treating as absent"
-                );
-                None
-            }
-        }
-    };
-
-    let channel_id = if proto.channel_id.is_empty() {
-        None
-    } else {
-        match ChannelId::from_str(&proto.channel_id) {
-            Ok(id) => Some(id),
-            Err(e) => {
-                tracing::warn!(
-                    %tenant_id,
-                    node_id = %media_node_id,
-                    %media_session_id,
-                    channel_id = %proto.channel_id,
-                    error = %e,
-                    "media node returned invalid channel_id; treating as absent"
-                );
-                None
-            }
-        }
-    };
-
-    Some(MediaNodeSessionRef {
-        media_session_id,
-        device_id,
-        channel_id,
-        media_node_instance_epoch: MediaNodeInstanceEpoch(proto.media_node_instance_epoch),
-    })
 }
 
 async fn reserve(
@@ -446,104 +389,5 @@ fn map_client_error(e: MediaClientError) -> DomainError {
         | MediaClientError::CircuitOpen(_)
         | MediaClientError::PoolExhausted(_)
         | MediaClientError::TlsConfig(_) => DomainError::unavailable(e.to_string()),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use cheetah_signal_types::{ChannelId, DeviceId, MediaSessionId, NodeId, TenantId};
-
-    #[allow(clippy::unwrap_used)]
-    fn tenant_id() -> TenantId {
-        TenantId::from_str("00000000-0000-0000-0000-000000000000").unwrap()
-    }
-
-    #[allow(clippy::unwrap_used)]
-    fn node_id() -> NodeId {
-        NodeId::from_str("00000000-0000-0000-0000-000000000000").unwrap()
-    }
-
-    fn valid_uuid() -> String {
-        "550e8400-e29b-41d4-a716-446655440000".to_string()
-    }
-
-    fn invalid_uuid() -> String {
-        "not-a-uuid".to_string()
-    }
-
-    fn proto_ref(session: &str, device: &str, channel: &str) -> MediaSessionRef {
-        MediaSessionRef {
-            media_session_id: session.to_string(),
-            device_id: device.to_string(),
-            channel_id: channel.to_string(),
-            media_node_instance_epoch: 7,
-        }
-    }
-
-    #[test]
-    #[allow(clippy::unwrap_used)]
-    fn map_session_ref_accepts_valid_ids() {
-        let proto = proto_ref(&valid_uuid(), &valid_uuid(), &valid_uuid());
-        let result = map_proto_session_ref(tenant_id(), node_id(), &proto);
-        assert!(result.is_some());
-        let session = result.unwrap();
-        assert_eq!(
-            session.media_session_id,
-            MediaSessionId::from_str(&valid_uuid()).unwrap()
-        );
-        assert_eq!(
-            session.device_id,
-            Some(DeviceId::from_str(&valid_uuid()).unwrap())
-        );
-        assert_eq!(
-            session.channel_id,
-            Some(ChannelId::from_str(&valid_uuid()).unwrap())
-        );
-    }
-
-    #[test]
-    #[allow(clippy::unwrap_used)]
-    fn map_session_ref_treats_empty_device_and_channel_as_none() {
-        let proto = proto_ref(&valid_uuid(), "", "");
-        let result = map_proto_session_ref(tenant_id(), node_id(), &proto);
-        assert!(result.is_some());
-        let session = result.unwrap();
-        assert!(session.device_id.is_none());
-        assert!(session.channel_id.is_none());
-    }
-
-    #[test]
-    fn map_session_ref_skips_invalid_media_session_id() {
-        let proto = proto_ref(&invalid_uuid(), &valid_uuid(), &valid_uuid());
-        assert!(map_proto_session_ref(tenant_id(), node_id(), &proto).is_none());
-    }
-
-    #[test]
-    #[allow(clippy::unwrap_used)]
-    fn map_session_ref_treats_invalid_device_id_as_none() {
-        let proto = proto_ref(&valid_uuid(), &invalid_uuid(), &valid_uuid());
-        let result = map_proto_session_ref(tenant_id(), node_id(), &proto);
-        assert!(result.is_some());
-        let session = result.unwrap();
-        assert!(session.device_id.is_none());
-        assert_eq!(
-            session.channel_id,
-            Some(ChannelId::from_str(&valid_uuid()).unwrap())
-        );
-    }
-
-    #[test]
-    #[allow(clippy::unwrap_used)]
-    fn map_session_ref_treats_invalid_channel_id_as_none() {
-        let proto = proto_ref(&valid_uuid(), &valid_uuid(), &invalid_uuid());
-        let result = map_proto_session_ref(tenant_id(), node_id(), &proto);
-        assert!(result.is_some());
-        let session = result.unwrap();
-        assert_eq!(
-            session.device_id,
-            Some(DeviceId::from_str(&valid_uuid()).unwrap())
-        );
-        assert!(session.channel_id.is_none());
     }
 }
