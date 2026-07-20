@@ -15,6 +15,7 @@ use cheetah_gb28181_module::Gb28181DriverFactory;
 use cheetah_gb28181_module::config::{AuthPolicy, Gb28181DomainConfig};
 use cheetah_gb28181_module::ports::{CredentialError, CredentialProvider};
 use cheetah_gb28181_module::types::DeviceId as GbDeviceId;
+use cheetah_http_api::audit::TracingAuditLog;
 use cheetah_http_api::state::{ApiConfig, ApiServer, ApiState};
 use cheetah_media_client::{MediaClientConfig, MediaControlClient};
 use cheetah_media_scheduler::{
@@ -506,6 +507,7 @@ pub async fn start(
     let publisher: Arc<dyn EventPublisher> = Arc::new(EventBusPublisher::new(bus.clone()));
 
     let mut media_registry_config = MediaRegistryConfig::production();
+    let media_metrics = cheetah_media_scheduler::MediaMetrics::arc();
     let media_repo = storage.media_node_repository();
     let persistent_registry =
         PersistentMediaNodeRegistry::new(media_registry_config.clone(), media_repo);
@@ -523,8 +525,11 @@ pub async fn start(
     let media_client = MediaControlClient::new(MediaClientConfig::default())
         .with_secret_store(secret_store.clone());
     let media_client_for_consumer = media_client.clone();
-    let media_port: Arc<dyn MediaPort> =
-        Arc::new(SchedulerMediaPort::new(media_scheduler, media_client));
+    let media_port: Arc<dyn MediaPort> = Arc::new(SchedulerMediaPort::new(
+        media_scheduler,
+        media_client,
+        media_metrics.clone(),
+    ));
 
     // Outbox relay: publish pending domain events without holding DB transactions
     // across the message bus I/O boundary.
@@ -552,6 +557,7 @@ pub async fn start(
 
     // Shared application state is constructed before protocol adapters so that
     // inbound protocol events can be routed through application services.
+    let audit: Arc<dyn cheetah_signal_types::AuditLog> = Arc::new(TracingAuditLog);
     let api_config = ApiConfig::from(&config);
     let mut state = ApiState::new(
         api_config,
@@ -561,7 +567,9 @@ pub async fn start(
         bus.clone(),
         owner_resolver,
         media_port,
-    );
+    )
+    .with_media_metrics(media_metrics.clone())
+    .with_audit(audit.clone());
     state.cancel = cancel.clone();
 
     // Media event consumer: subscribe to active media nodes and apply
@@ -576,6 +584,7 @@ pub async fn start(
         node_id,
         MediaEventConsumerConfig::default(),
         Arc::new(NoopReconciliationHandler),
+        media_metrics.clone(),
     ));
     let consumer_cancel = cancel.child_token();
     workers.push(tokio::spawn(async move {
@@ -707,6 +716,9 @@ pub async fn start(
         clock.clone(),
         id_generator.clone(),
         media_registry_config,
+        media_metrics,
+        audit,
+        node_id,
     );
     let tcp_incoming = TcpIncoming::bind(grpc_addr)
         .map_err(|e| format!("failed to bind internal gRPC listener: {e}"))?;

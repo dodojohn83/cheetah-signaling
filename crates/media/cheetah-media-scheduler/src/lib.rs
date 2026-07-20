@@ -8,6 +8,7 @@ pub mod event_consumer;
 pub(crate) mod event_consumer_support;
 pub mod grpc;
 pub mod mapper;
+pub mod metrics;
 pub mod model;
 pub mod persistent_registry;
 pub mod port;
@@ -18,6 +19,7 @@ pub use config::{MediaEventConsumerConfig, MediaRegistryConfig, SchedulerConfig}
 pub use error::SchedulerError;
 pub use event_consumer::{MediaEventConsumer, NoopReconciliationHandler, ReconciliationHandler};
 pub use grpc::{MediaClusterRegistryService, PeerIdentity};
+pub use metrics::MediaMetrics;
 pub use model::{MediaCapability, MediaNode, MediaNodeCapacity, MediaNodeHealth, NodeStatus};
 pub use persistent_registry::PersistentMediaNodeRegistry;
 pub use port::SchedulerMediaPort;

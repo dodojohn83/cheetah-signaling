@@ -43,5 +43,8 @@ pub async fn metrics(
     auth: AuthContext,
 ) -> Result<Response, HttpError> {
     auth.require_scope("viewer")?;
-    Ok(crate::metrics::metrics_response(state.metrics.clone()))
+    Ok(crate::metrics::metrics_response(
+        state.metrics.clone(),
+        state.media_metrics.clone(),
+    ))
 }

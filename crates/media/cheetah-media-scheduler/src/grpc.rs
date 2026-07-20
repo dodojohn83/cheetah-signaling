@@ -2,6 +2,7 @@
 
 use crate::config::MediaRegistryConfig;
 use crate::error::SchedulerError;
+use crate::metrics::MediaMetrics;
 use crate::model::{MediaCapability, MediaNode, MediaNodeCapacity, MediaNodeHealth, NodeStatus};
 use crate::registry::MediaNodeRegistry;
 use cheetah_signal_contracts::cheetah::common::v1::media_cluster_registry_server::MediaClusterRegistry;
@@ -11,7 +12,9 @@ use cheetah_signal_contracts::cheetah::common::v1::{
     RegisterMediaNodeRequest, RegisterMediaNodeResponse,
 };
 use cheetah_signal_contracts::cheetah::media::v1 as media_proto;
-use cheetah_signal_types::{Clock, IdGenerator, NodeId, is_internal_ip};
+use cheetah_signal_types::{
+    AuditEvent, AuditLog, AuditOutcome, Clock, IdGenerator, NodeId, is_internal_ip,
+};
 use std::str::FromStr;
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
@@ -26,6 +29,9 @@ pub struct MediaClusterRegistryService {
     clock: Arc<dyn Clock>,
     id_generator: Arc<dyn IdGenerator>,
     config: MediaRegistryConfig,
+    metrics: Arc<MediaMetrics>,
+    audit: Arc<dyn AuditLog>,
+    node_id: NodeId,
 }
 
 impl std::fmt::Debug for MediaClusterRegistryService {
@@ -43,13 +49,43 @@ impl MediaClusterRegistryService {
         clock: Arc<dyn Clock>,
         id_generator: Arc<dyn IdGenerator>,
         config: MediaRegistryConfig,
+        metrics: Arc<MediaMetrics>,
+        audit: Arc<dyn AuditLog>,
+        node_id: NodeId,
     ) -> Self {
         Self {
             registry,
             clock,
             id_generator,
             config,
+            metrics,
+            audit,
+            node_id,
         }
+    }
+
+    fn record_audit(
+        &self,
+        action: &str,
+        actor: &str,
+        node_id: NodeId,
+        outcome: AuditOutcome,
+        details: Option<String>,
+    ) {
+        self.audit.record(AuditEvent {
+            timestamp: self.clock.now_wall(),
+            action: action.to_string(),
+            actor: actor.to_string(),
+            tenant_id: None,
+            target_type: "media_node".to_string(),
+            target_id: Some(node_id.to_string()),
+            outcome,
+            request_id: self.id_generator.generate_message_id().to_string(),
+            correlation_id: None,
+            source_ip: None,
+            node_id: self.node_id,
+            details,
+        });
     }
 }
 
@@ -87,7 +123,7 @@ impl MediaClusterRegistry for MediaClusterRegistryService {
             region: registration.region,
             network_zones: registration.network_zones,
             labels: std::collections::BTreeMap::new(),
-            control_endpoint: registration.listen_addr,
+            control_endpoint: registration.listen_addr.clone(),
             media_addresses: Vec::new(),
             capabilities: if registration.capabilities.is_empty() {
                 registration
@@ -126,6 +162,18 @@ impl MediaClusterRegistry for MediaClusterRegistryService {
             .register(node, self.config.default_lease_ttl_ms, self.clock.as_ref())
             .await
             .map_err(map_scheduler_error)?;
+
+        self.metrics.record_register();
+        self.record_audit(
+            "media_node.register",
+            &actor_from_identity(&identity),
+            node_id,
+            AuditOutcome::Success,
+            Some(format!(
+                "listen_addr={}",
+                scrub_endpoint(&registration.listen_addr)
+            )),
+        );
 
         Ok(Response::new(RegisterMediaNodeResponse {
             node: Some(to_media_node_info(node)),
@@ -178,6 +226,17 @@ impl MediaClusterRegistry for MediaClusterRegistryService {
             .await
             .map_err(map_scheduler_error)?;
 
+        if drain.drain {
+            self.metrics.record_drain();
+        }
+        self.record_audit(
+            "media_node.drain",
+            &actor_from_identity(&identity),
+            node_id,
+            AuditOutcome::Success,
+            Some(format!("drain={}", drain.drain)),
+        );
+
         Ok(Response::new(DrainMediaNodeResponse {
             node: Some(to_media_node_info(node)),
         }))
@@ -200,6 +259,19 @@ impl MediaClusterRegistry for MediaClusterRegistryService {
             .deregister(node_id, self.clock.as_ref())
             .await
             .map_err(map_scheduler_error)?;
+
+        self.metrics.record_deregister();
+        self.record_audit(
+            "media_node.deregister",
+            &actor_from_identity(&identity),
+            node_id,
+            AuditOutcome::Success,
+            if deregister.reason.is_empty() {
+                None
+            } else {
+                Some(format!("reason={}", deregister.reason))
+            },
+        );
 
         Ok(Response::new(DeregisterMediaNodeResponse {
             node: Some(to_media_node_info(node)),
@@ -449,6 +521,20 @@ fn map_scheduler_error(e: SchedulerError) -> Status {
     }
 }
 
+fn actor_from_identity(identity: &Option<PeerIdentity>) -> String {
+    identity
+        .as_ref()
+        .map(|i| i.0.clone())
+        .unwrap_or_else(|| "media-node".to_string())
+}
+
+fn scrub_endpoint(endpoint: &str) -> String {
+    endpoint
+        .rsplit_once('@')
+        .map(|(_, host)| host.to_string())
+        .unwrap_or_else(|| endpoint.to_string())
+}
+
 #[cfg(test)]
 #[allow(deprecated)]
 mod tests {
@@ -456,7 +542,7 @@ mod tests {
     use crate::model::{MediaNode, MediaNodeCapacity, MediaNodeHealth, NodeStatus};
     use crate::registry::MediaNodeRegistry;
     use cheetah_signal_types::test_support::{FakeClock, FakeIdGenerator};
-    use cheetah_signal_types::{MediaBindingId, TenantId};
+    use cheetah_signal_types::{MediaBindingId, NoOpAuditLog, TenantId};
     use std::str::FromStr;
     use std::sync::Mutex;
 
@@ -617,6 +703,9 @@ mod tests {
             Arc::new(FakeClock::new()),
             Arc::new(FakeIdGenerator::new()),
             test_config(),
+            crate::MediaMetrics::arc(),
+            Arc::new(NoOpAuditLog),
+            node_id,
         );
 
         let request = Request::new(RegisterMediaNodeRequest {
@@ -678,6 +767,9 @@ mod tests {
             Arc::new(FakeClock::new()),
             Arc::new(FakeIdGenerator::new()),
             test_config(),
+            crate::MediaMetrics::arc(),
+            Arc::new(NoOpAuditLog),
+            node_id,
         );
 
         let request = Request::new(RegisterMediaNodeRequest {

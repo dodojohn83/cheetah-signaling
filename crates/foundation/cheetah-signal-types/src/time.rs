@@ -66,6 +66,13 @@ impl UtcTimestamp {
             nanos: self.0.nanosecond() as i32,
         }
     }
+
+    /// Creates a timestamp from a `prost_types::Timestamp` if it is valid.
+    pub fn from_prost_timestamp(ts: &prost_types::Timestamp) -> Option<Self> {
+        let date = OffsetDateTime::from_unix_timestamp(ts.seconds).ok()?;
+        let date = date + time::Duration::nanoseconds(ts.nanos as i64);
+        Some(Self::from_offset(date))
+    }
 }
 
 impl fmt::Display for UtcTimestamp {
