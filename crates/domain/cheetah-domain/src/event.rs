@@ -225,6 +225,7 @@ pub enum DomainEvent {
         /// Idempotency scope.
         idempotency_scope: Box<IdempotencyScope>,
         /// Session generation.
+        #[serde(default)]
         generation: u64,
         /// Deadline.
         deadline: Option<Deadline>,

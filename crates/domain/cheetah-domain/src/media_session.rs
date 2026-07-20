@@ -203,11 +203,15 @@ pub struct MediaSession {
     error: Option<MediaSessionError>,
     /// Generation of the session; incremented when a new binding must be created
     /// during migration or retry. 同一 generation 最多一个有效 MediaBinding。
+    #[serde(default)]
     generation: u64,
     /// Playback time window persisted so a migration can rebuild the same range.
     /// Only meaningful when `purpose` is `Playback`.
+    #[serde(default)]
     playback_start_time: Option<UtcTimestamp>,
+    #[serde(default)]
     playback_end_time: Option<UtcTimestamp>,
+    #[serde(default)]
     playback_scale: Option<f64>,
     created_at: UtcTimestamp,
     updated_at: UtcTimestamp,
