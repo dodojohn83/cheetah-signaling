@@ -641,6 +641,13 @@ impl Default for Gb28181Config {
     }
 }
 
+/// Default GB28181 logical domain id used when the legacy `sip_domain` is unset.
+///
+/// Mirrors the historical single-listener default so devices provisioned against
+/// the built-in domain keep the same digest realm after the migration to
+/// explicit listeners.
+pub const DEFAULT_GB28181_DOMAIN_ID: &str = "34020000002000000001";
+
 /// A single GB28181 SIP listener with an explicit realm/domain/tenant mapping.
 ///
 /// Each listener may bind a UDP and/or a TCP socket. The Request-URI/To domain
@@ -848,12 +855,21 @@ impl Gb28181Config {
             return (Vec::new(), false);
         }
         let udp_bind = SocketAddr::from(([0, 0, 0, 0], self.sip_port));
+        // Preserve the historical single-listener default: an unset SIP domain
+        // resolved to DEFAULT_GB28181_DOMAIN_ID for both the domain id and the
+        // digest realm, so devices provisioned against the built-in default can
+        // still authenticate after the migration to explicit listeners.
+        let domain = if self.sip_domain.is_empty() {
+            DEFAULT_GB28181_DOMAIN_ID.to_string()
+        } else {
+            self.sip_domain.clone()
+        };
         let listener = Gb28181ListenerConfig {
             id: "legacy".to_string(),
             tenant_id: self.default_tenant_id.clone().unwrap_or_default(),
-            local_device_id: self.sip_domain.clone(),
-            realm: self.sip_domain.clone(),
-            domain: self.sip_domain.clone(),
+            local_device_id: domain.clone(),
+            realm: domain.clone(),
+            domain,
             udp_bind: Some(udp_bind),
             tcp_bind: None,
             digest_secret_ref: self.digest_secret_ref.clone().unwrap_or_default(),
@@ -1141,6 +1157,23 @@ mod gb28181_listener_tests {
         assert_eq!(listeners.len(), 1);
         assert_eq!(listeners[0].domain, "3402000000");
         assert_eq!(listeners[0].udp_bind.unwrap().port(), 5060);
+    }
+
+    #[test]
+    fn legacy_empty_sip_domain_defaults_realm_and_domain() {
+        let cfg = Gb28181Config {
+            sip_domain: String::new(),
+            sip_port: 5060,
+            digest_secret_ref: Some("secret://digest".to_string()),
+            ..Gb28181Config::default()
+        };
+        assert!(cfg.validate().is_ok());
+        let (listeners, legacy) = cfg.resolve_listeners();
+        assert!(legacy);
+        assert_eq!(listeners.len(), 1);
+        assert_eq!(listeners[0].domain, DEFAULT_GB28181_DOMAIN_ID);
+        assert_eq!(listeners[0].realm, DEFAULT_GB28181_DOMAIN_ID);
+        assert_eq!(listeners[0].local_device_id, DEFAULT_GB28181_DOMAIN_ID);
     }
 
     #[test]
