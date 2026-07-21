@@ -26,6 +26,7 @@ pub struct RuntimeMetrics {
     timers_cancelled: AtomicU64,
     timers_dropped: AtomicU64,
     pending_timer_dispatch: AtomicU64,
+    timer_lag_ms: AtomicU64,
 }
 
 impl RuntimeMetrics {
@@ -109,6 +110,13 @@ impl RuntimeMetrics {
         self.pending_timer_dispatch.store(value, Ordering::Relaxed);
     }
 
+    /// Records the most recent observed timer-wheel tick lag in milliseconds,
+    /// i.e. how much later than its scheduled resolution a tick fired. This is
+    /// a gauge reflecting the latest sample, not a cumulative counter.
+    pub fn set_timer_lag_ms(&self, value: u64) {
+        self.timer_lag_ms.store(value, Ordering::Relaxed);
+    }
+
     /// Returns a consistent point-in-time snapshot of all metrics.
     pub fn snapshot(&self) -> RuntimeMetricsSnapshot {
         RuntimeMetricsSnapshot {
@@ -123,6 +131,7 @@ impl RuntimeMetrics {
             timers_cancelled: self.timers_cancelled.load(Ordering::Relaxed),
             timers_dropped: self.timers_dropped.load(Ordering::Relaxed),
             pending_timer_dispatch: self.pending_timer_dispatch.load(Ordering::Relaxed),
+            timer_lag_ms: self.timer_lag_ms.load(Ordering::Relaxed),
         }
     }
 }
@@ -152,6 +161,8 @@ pub struct RuntimeMetricsSnapshot {
     pub timers_dropped: u64,
     /// Timers waiting to be dispatched to a shard (gauge).
     pub pending_timer_dispatch: u64,
+    /// Most recent timer-wheel tick lag in milliseconds (gauge).
+    pub timer_lag_ms: u64,
 }
 
 #[cfg(test)]

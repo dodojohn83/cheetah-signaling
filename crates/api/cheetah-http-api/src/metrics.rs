@@ -106,6 +106,7 @@ impl RequestMetrics {
 pub fn metrics_response(
     metrics: Arc<RequestMetrics>,
     media_metrics: Option<Arc<dyn MetricsExporter>>,
+    gb_metrics: Option<Arc<dyn MetricsExporter>>,
 ) -> Response {
     let requests_total = metrics.requests_total.load(Ordering::Relaxed);
     let responses_failed = metrics.responses_failed.load(Ordering::Relaxed);
@@ -157,6 +158,9 @@ pub fn metrics_response(
 
     if let Some(mm) = media_metrics {
         body.push_str(&mm.prometheus_text());
+    }
+    if let Some(gm) = gb_metrics {
+        body.push_str(&gm.prometheus_text());
     }
 
     ([("content-type", "text/plain; version=0.0.4")], body).into_response()

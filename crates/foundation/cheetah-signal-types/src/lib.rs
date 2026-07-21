@@ -12,6 +12,7 @@ pub mod config;
 pub mod context;
 pub mod error;
 pub mod event;
+pub mod gb_metrics;
 pub mod id;
 pub mod metrics;
 pub mod net;
@@ -30,6 +31,10 @@ pub use context::{
 };
 pub use error::{FieldViolation, Result, SignalError, SignalErrorKind};
 pub use event::Event;
+pub use gb_metrics::{
+    GbCommandMethod, GbCommandOutcome, GbDevicePresence, GbMediaSessionState, GbMetricsRecorder,
+    NoopGbMetricsRecorder,
+};
 pub use id::{
     ChannelId, CorrelationId, DeliveryId, DeviceId, EndpointId, EventId, MediaBindingId,
     MediaNodeInstanceEpoch, MediaSessionId, MessageId, NodeId, NodeInstanceId, OperationId,
