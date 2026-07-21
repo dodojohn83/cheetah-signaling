@@ -246,6 +246,7 @@ async fn sqlite_startup_graceful_shutdown_and_crash_recovery() {
         .dispatch(&ctx, &mut *uow, tenant, op2.operation_id)
         .await
         .unwrap();
+    uow.commit().await.unwrap();
     let mut uow = storage.begin().await.unwrap();
     let pending_before_crash = uow.outbox().pending(clock.now_wall(), 10).await.unwrap();
     uow.commit().await.unwrap();
@@ -323,6 +324,7 @@ async fn sqlite_startup_graceful_shutdown_and_crash_recovery() {
         .dispatch(&ctx, &mut *uow, tenant, stale_op.operation_id)
         .await
         .unwrap();
+    uow.commit().await.unwrap();
     assert_eq!(
         stale_dispatched.status,
         OperationStatus::Failed,
