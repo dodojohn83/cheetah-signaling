@@ -187,19 +187,19 @@ python3 scripts/audit_architecture.py
 
 ## 11. 实施任务
 
-- [ ] `GB4-TST-001`：扩充 SIP/XML/SDP/MANSRTSP golden、metadata、property 和 fuzz corpus。
+- [x] `GB4-TST-001`：扩充 SIP/XML/SDP/MANSRTSP golden、metadata、property 和 fuzz corpus。见 [reports/gb4-tst-001.md](reports/gb4-tst-001.md)。
 - [ ] `GB4-TST-002`：建立 access/command/catalog/media/cascade 合法/非法迁移表测试。
-- [ ] `GB4-TST-003`：建立 driver-core-module、repository/message/media/architecture contract suite。
+- [ ] `GB4-TST-003`：建立 driver-core-module、repository/message/media/architecture contract suite。架构契约部分完成，repository/message/media 待后续阶段补充，见 [reports/gb4-tst-003.md](reports/gb4-tst-003.md)。
 - [ ] `GB4-TST-004`：重构 fixed-shard simulator 和 deterministic fault scenario DSL。
 - [ ] `GB4-SYS-001`：完成 edge SQLite + fake media 全 GB vertical system test。
 - [ ] `GB4-SYS-002`：完成 cluster PostgreSQL/NATS + real media 全 GB vertical system test。
-- [ ] `GB4-SYS-003`：完成至少两类真实设备/NVR互操作报告。
+- [ ] `GB4-SYS-003`：完成至少两类真实设备/NVR互操作报告。当前 `Blocked`，报告见 [reports/gb4-sys-003.md](reports/gb4-sys-003.md)。
 - [ ] `GB4-SYS-004`：完成上级/下级平台级联互操作报告。
 - [ ] `GB4-SYS-005`：完成安全、过载和敏感信息泄漏测试报告。
 - [ ] `GB4-SYS-006`：完成三节点 chaos/rolling upgrade 报告。
 - [ ] `GB4-SYS-007`：完成 10万/30万/100万容量与水平扩展报告。
 - [Blocked] `GB4-SYS-008`：完成 24h development endurance 和 72h release soak 报告。报告：[gb4-sys-008-endurance-release-soak.md](reports/gb4-sys-008-endurance-release-soak.md)
-- [ ] `GB4-SYS-009`：完成 x86_64/aarch64、SBOM/license/advisory、migration 和 release checklist。
+- [x] `GB4-SYS-009`：完成 x86_64/aarch64、SBOM/license/advisory、migration 和 release checklist。见 [reports/gb4-sys-009.md](reports/gb4-sys-009.md)。
 
 ## 12. 最终退出门禁
 

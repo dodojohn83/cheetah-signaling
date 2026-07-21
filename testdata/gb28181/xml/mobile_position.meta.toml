@@ -1,0 +1,6 @@
+source = "synthetic"
+standard = "GB/T 28181-2022"
+profile = "generic"
+expected = "MobilePosition Notify with CmdType=MobilePosition, SN=5, synthetic longitude/latitude"
+desensitization = "All device IDs, coordinates, timestamps and record metadata are synthetic."
+license = "MIT-0"

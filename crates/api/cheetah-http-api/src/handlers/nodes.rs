@@ -148,7 +148,9 @@ pub async fn force_cleanup_media_node(
         correlation_id: Some(ctx.0.correlation_id.to_string()),
         source_ip: None,
         node_id: state.config.node_id,
-        details: Some(format!("cleaned={cleaned}")),
+        details: Some(cheetah_signal_types::SafeDetails::new(format!(
+            "cleaned={cleaned}"
+        ))),
     });
 
     Ok(Json(serde_json::json!({ "cleaned": cleaned })))

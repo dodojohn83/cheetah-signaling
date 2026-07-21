@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<Response>
+    <CmdType>DeviceInfo</CmdType>
+    <SN>2</SN>
+    <DeviceID>34020000001320000001</DeviceID>
+    <DeviceName>synthetic</DeviceName>
+    <Manufacturer>Example</Manufacturer>
+    <Model>IPC-001</Model>
+    <Firmware>V1.0.0</Firmware>
+    <Result>OK</Result>
+</Response>

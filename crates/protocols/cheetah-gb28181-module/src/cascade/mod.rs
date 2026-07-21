@@ -4,6 +4,7 @@ mod bridge;
 mod catalog;
 mod keepalive;
 mod machine;
+mod machine_response;
 mod registration;
 mod report;
 mod request_handler;

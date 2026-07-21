@@ -1,4 +1,8 @@
 //! Sans-I/O GB28181 access state machine.
+//!
+//! Implements [`cheetah_gb28181_core::GbAccessMachine`] for the GB28181 module.
+//! The input/output contract lives in `cheetah-gb28181-core` so the driver can
+//! execute the machine without depending on this module.
 
 use crate::config::{AuthPolicy, Gb28181DomainConfig};
 use crate::error::AccessError;
@@ -12,10 +16,10 @@ use crate::xml::{
     extract_record_info, parse_xml,
 };
 use cheetah_gb28181_core::{
-    DigestContext, DigestQop, DigestReplayCache, HeaderName, Method, SipMessage,
+    AccessInput, AccessOutput, DigestContext, DigestQop, DigestReplayCache, GbAccessMachine,
+    HeaderName, Method, SipMessage,
 };
 use secrecy::ExposeSecret;
-use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::warn;
 
@@ -29,47 +33,6 @@ use parse::{
 use response::{
     build_challenge_response, build_error_response, build_message_response, build_success_response,
 };
-
-/// An input to the GB28181 access module.
-#[derive(Clone)]
-pub struct AccessInput {
-    /// Source address of the message.
-    pub source: SocketAddr,
-    /// Monotonic second counter used for nonce TTL and replay windows.
-    pub now: u64,
-    /// Parsed SIP message.
-    pub message: SipMessage,
-}
-
-impl std::fmt::Debug for AccessInput {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AccessInput")
-            .field("source", &self.source)
-            .field("now", &self.now)
-            .field("message", &"[REDACTED]")
-            .finish()
-    }
-}
-
-/// An output from the GB28181 access module.
-#[derive(Clone)]
-pub enum AccessOutput {
-    /// Send a SIP response to the transport.
-    SendResponse(SipMessage),
-    /// Emit a domain event for downstream consumers.
-    EmitEvent(Gb28181Event),
-}
-
-impl std::fmt::Debug for AccessOutput {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            AccessOutput::SendResponse(_) => {
-                f.debug_tuple("SendResponse").field(&"[REDACTED]").finish()
-            }
-            AccessOutput::EmitEvent(event) => f.debug_tuple("EmitEvent").field(event).finish(),
-        }
-    }
-}
 
 /// Sans-I/O state machine for GB28181 device access.
 pub struct Gb28181Access<P: CredentialProvider> {
@@ -114,9 +77,17 @@ impl<P: CredentialProvider> Gb28181Access<P> {
             registrations: RegistrationTable::new(max_registrations),
         })
     }
+}
+
+impl<P: CredentialProvider> GbAccessMachine for Gb28181Access<P> {
+    type Event = Gb28181Event;
+    type Error = AccessError;
 
     /// Processes a single SIP message and returns the ordered outputs.
-    pub fn process(&mut self, input: AccessInput) -> Result<Vec<AccessOutput>, AccessError> {
+    fn process(
+        &mut self,
+        input: AccessInput,
+    ) -> Result<Vec<AccessOutput<Gb28181Event>>, AccessError> {
         match &input.message {
             SipMessage::Request { line, .. } if line.method == Method::Register => {
                 self.process_register(input)
@@ -131,7 +102,49 @@ impl<P: CredentialProvider> Gb28181Access<P> {
         }
     }
 
-    fn process_register(&mut self, input: AccessInput) -> Result<Vec<AccessOutput>, AccessError> {
+    /// Advances the registration timer wheel and returns any resulting events.
+    fn tick(&mut self, now: u64) -> Result<Vec<AccessOutput<Gb28181Event>>, AccessError> {
+        let heartbeat_timeout = self.config.heartbeat_timeout_seconds();
+        let mut outputs = Vec::new();
+        let mut expired = Vec::new();
+
+        for (device_id, reg) in self.registrations.iter_mut() {
+            if now.saturating_sub(reg.registered_at) >= reg.expires as u64 {
+                expired.push(device_id.clone());
+                outputs.push(AccessOutput::EmitEvent(Gb28181Event::DeviceUnregistered {
+                    domain_id: self.config.domain_id().clone(),
+                    device_id: device_id.clone(),
+                    source: reg.source,
+                }));
+                continue;
+            }
+
+            if !reg.offline && now.saturating_sub(reg.last_seen) >= heartbeat_timeout {
+                reg.offline = true;
+                outputs.push(AccessOutput::EmitEvent(
+                    Gb28181Event::DevicePresenceChanged {
+                        domain_id: self.config.domain_id().clone(),
+                        device_id: device_id.clone(),
+                        source: reg.source,
+                        presence: DevicePresence::Offline,
+                    },
+                ));
+            }
+        }
+
+        for device_id in expired {
+            self.registrations.remove(&device_id);
+        }
+
+        Ok(outputs)
+    }
+}
+
+impl<P: CredentialProvider> Gb28181Access<P> {
+    fn process_register(
+        &mut self,
+        input: AccessInput,
+    ) -> Result<Vec<AccessOutput<Gb28181Event>>, AccessError> {
         let AccessInput {
             source,
             now,
@@ -282,10 +295,10 @@ impl<P: CredentialProvider> Gb28181Access<P> {
         contact_uri: &cheetah_gb28181_core::SipUri,
         expires: u32,
         device_id: DeviceId,
-        source: SocketAddr,
+        source: std::net::SocketAddr,
         user_agent: Option<String>,
         now: u64,
-    ) -> Result<Vec<AccessOutput>, AccessError> {
+    ) -> Result<Vec<AccessOutput<Gb28181Event>>, AccessError> {
         if expires == 0 {
             self.registrations.remove(&device_id);
             let response = build_success_response(message, contact_uri, expires, self.next_tag());
@@ -333,7 +346,10 @@ impl<P: CredentialProvider> Gb28181Access<P> {
         }
     }
 
-    fn process_message(&mut self, input: AccessInput) -> Result<Vec<AccessOutput>, AccessError> {
+    fn process_message(
+        &mut self,
+        input: AccessInput,
+    ) -> Result<Vec<AccessOutput<Gb28181Event>>, AccessError> {
         let AccessInput {
             source,
             now,
@@ -365,10 +381,10 @@ impl<P: CredentialProvider> Gb28181Access<P> {
 
     fn process_message_body(
         &mut self,
-        source: SocketAddr,
+        source: std::net::SocketAddr,
         now: u64,
         message: &SipMessage,
-    ) -> Result<Vec<AccessOutput>, AccessError> {
+    ) -> Result<Vec<AccessOutput<Gb28181Event>>, AccessError> {
         let SipMessage::Request { headers, body, .. } = message else {
             return Err(AccessError::Internal("expected request".to_string()));
         };
@@ -529,52 +545,12 @@ impl<P: CredentialProvider> Gb28181Access<P> {
         Ok(outputs)
     }
 
-    /// Advances the registration timer wheel and returns any resulting events.
-    ///
-    /// Should be called by the driver at regular intervals with a monotonic
-    /// second counter.
-    pub fn tick(&mut self, now: u64) -> Vec<AccessOutput> {
-        let heartbeat_timeout = self.config.heartbeat_timeout_seconds();
-        let mut outputs = Vec::new();
-        let mut expired = Vec::new();
-
-        for (device_id, reg) in self.registrations.iter_mut() {
-            if now.saturating_sub(reg.registered_at) >= reg.expires as u64 {
-                expired.push(device_id.clone());
-                outputs.push(AccessOutput::EmitEvent(Gb28181Event::DeviceUnregistered {
-                    domain_id: self.config.domain_id().clone(),
-                    device_id: device_id.clone(),
-                    source: reg.source,
-                }));
-                continue;
-            }
-
-            if !reg.offline && now.saturating_sub(reg.last_seen) >= heartbeat_timeout {
-                reg.offline = true;
-                outputs.push(AccessOutput::EmitEvent(
-                    Gb28181Event::DevicePresenceChanged {
-                        domain_id: self.config.domain_id().clone(),
-                        device_id: device_id.clone(),
-                        source: reg.source,
-                        presence: DevicePresence::Offline,
-                    },
-                ));
-            }
-        }
-
-        for device_id in expired {
-            self.registrations.remove(&device_id);
-        }
-
-        outputs
-    }
-
     fn next_tag(&self) -> String {
         let n = self.tag_counter.fetch_add(1, Ordering::Relaxed);
         format!("gb{n}")
     }
 
-    fn bad_request_response(&self, request: &SipMessage) -> Vec<AccessOutput> {
+    fn bad_request_response(&self, request: &SipMessage) -> Vec<AccessOutput<Gb28181Event>> {
         vec![AccessOutput::SendResponse(build_error_response(
             request,
             400,
@@ -588,7 +564,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
         request: &SipMessage,
         now: u64,
         stale: bool,
-    ) -> Result<Vec<AccessOutput>, AccessError> {
+    ) -> Result<Vec<AccessOutput<Gb28181Event>>, AccessError> {
         let challenge = if stale {
             self.digest_context.generate_stale_challenge(now)
         } else {

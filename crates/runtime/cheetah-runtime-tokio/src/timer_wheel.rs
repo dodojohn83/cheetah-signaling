@@ -6,7 +6,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
-use cheetah_runtime_api::{DeviceKey, RuntimeMessage, ShardRouter, TimerId};
+use cheetah_runtime_api::{DeviceKey, RuntimeMessage, RuntimeMetrics, ShardRouter, TimerId};
 use tokio::sync::mpsc;
 use tokio::time::{Instant, Interval, MissedTickBehavior};
 
@@ -46,6 +46,7 @@ pub(crate) struct TimerWheel;
 
 impl TimerWheel {
     /// Starts the timer wheel task.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn run(
         mut commands_rx: mpsc::Receiver<TimerCommand>,
         mut shutdown_rx: mpsc::Receiver<()>,
@@ -53,17 +54,21 @@ impl TimerWheel {
         router: ShardRouter,
         tick_resolution_ms: u64,
         max_pending_dispatch: usize,
+        metrics: Arc<RuntimeMetrics>,
     ) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>> {
         Box::pin(async move {
-            let mut interval = interval(Duration::from_millis(tick_resolution_ms));
+            let tick_period = Duration::from_millis(tick_resolution_ms);
+            let mut interval = interval(tick_period);
             let mut pending_dispatch: VecDeque<RuntimeMessage> = VecDeque::new();
             let mut timers_by_deadline: BTreeMap<Instant, Vec<TimerEntry>> = BTreeMap::new();
             let mut timer_map: BTreeMap<TimerId, Instant> = BTreeMap::new();
+            let mut last_tick: Option<Instant> = None;
 
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
                         let now = Instant::now();
+                        record_timer_lag(&mut last_tick, now, tick_period, &metrics);
                         process_expired(
                             &senders,
                             &router,
@@ -72,13 +77,16 @@ impl TimerWheel {
                             &mut pending_dispatch,
                             now,
                             max_pending_dispatch,
+                            &metrics,
                         );
                         process_pending_dispatch(
                             &senders,
                             &router,
                             &mut pending_dispatch,
                             max_pending_dispatch,
+                            &metrics,
                         );
+                        metrics.set_pending_timer_dispatch(pending_dispatch.len() as u64);
                     }
                     cmd = commands_rx.recv() => {
                         match cmd {
@@ -88,6 +96,7 @@ impl TimerWheel {
                                 &mut timer_map,
                                 &mut pending_dispatch,
                                 max_pending_dispatch,
+                                &metrics,
                             ),
                             None => break,
                         }
@@ -99,6 +108,26 @@ impl TimerWheel {
             }
         })
     }
+}
+
+/// Records how much later than its scheduled period the current tick fired.
+///
+/// The lag is the elapsed time since the previous tick minus the configured
+/// tick period, clamped at zero. It is exported as a gauge reflecting the most
+/// recent sample so that persistently late ticks (a saturated or starved
+/// runtime) are observable without unbounded label growth.
+fn record_timer_lag(
+    last_tick: &mut Option<Instant>,
+    now: Instant,
+    tick_period: Duration,
+    metrics: &RuntimeMetrics,
+) {
+    if let Some(previous) = *last_tick {
+        let elapsed = now.saturating_duration_since(previous);
+        let lag = elapsed.saturating_sub(tick_period);
+        metrics.set_timer_lag_ms(lag.as_millis().min(u64::MAX as u128) as u64);
+    }
+    *last_tick = Some(now);
 }
 
 fn interval(period: Duration) -> Interval {
@@ -113,6 +142,7 @@ fn process_command(
     timer_map: &mut BTreeMap<TimerId, Instant>,
     pending_dispatch: &mut VecDeque<RuntimeMessage>,
     max_pending_dispatch: usize,
+    metrics: &RuntimeMetrics,
 ) {
     match cmd {
         TimerCommand::Schedule {
@@ -130,6 +160,7 @@ fn process_command(
                     timer_id,
                     kind,
                 });
+            metrics.record_timer_scheduled();
         }
         TimerCommand::Cancel {
             timer_id,
@@ -146,11 +177,13 @@ fn process_command(
             pending_dispatch.retain(
                 |msg| !matches!(msg, RuntimeMessage::Timer { timer_id: id, .. } if *id == timer_id),
             );
-            enforce_limit(pending_dispatch, max_pending_dispatch);
+            enforce_limit(pending_dispatch, max_pending_dispatch, metrics);
+            metrics.record_timer_cancelled();
         }
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn process_expired(
     senders: &Arc<Vec<mpsc::Sender<RuntimeMessage>>>,
     router: &ShardRouter,
@@ -159,6 +192,7 @@ fn process_expired(
     pending_dispatch: &mut VecDeque<RuntimeMessage>,
     now: Instant,
     max_pending_dispatch: usize,
+    metrics: &RuntimeMetrics,
 ) {
     while let Some((deadline, timers)) = timers_by_deadline.pop_first() {
         if deadline > now {
@@ -168,6 +202,7 @@ fn process_expired(
 
         for entry in timers {
             if timer_map.remove(&entry.timer_id).is_some() {
+                metrics.record_timer_fired();
                 let msg = RuntimeMessage::Timer {
                     device_key: entry.device_key,
                     timer_id: entry.timer_id,
@@ -175,7 +210,7 @@ fn process_expired(
                 };
                 if let Err(msg) = dispatch(senders, router, msg) {
                     pending_dispatch.push_back(msg);
-                    enforce_limit(pending_dispatch, max_pending_dispatch);
+                    enforce_limit(pending_dispatch, max_pending_dispatch, metrics);
                 }
             }
         }
@@ -187,6 +222,7 @@ fn process_pending_dispatch(
     router: &ShardRouter,
     pending_dispatch: &mut VecDeque<RuntimeMessage>,
     max_pending_dispatch: usize,
+    metrics: &RuntimeMetrics,
 ) {
     let mut remaining = VecDeque::new();
     let pending = std::mem::take(pending_dispatch);
@@ -198,7 +234,7 @@ fn process_pending_dispatch(
     }
 
     *pending_dispatch = remaining;
-    enforce_limit(pending_dispatch, max_pending_dispatch);
+    enforce_limit(pending_dispatch, max_pending_dispatch, metrics);
 }
 
 fn dispatch(
@@ -225,7 +261,11 @@ fn dispatch(
     }
 }
 
-fn enforce_limit(pending_dispatch: &mut VecDeque<RuntimeMessage>, max_pending_dispatch: usize) {
+fn enforce_limit(
+    pending_dispatch: &mut VecDeque<RuntimeMessage>,
+    max_pending_dispatch: usize,
+    metrics: &RuntimeMetrics,
+) {
     let overflow = pending_dispatch.len().saturating_sub(max_pending_dispatch);
     if overflow > 0 {
         tracing::warn!(
@@ -233,6 +273,7 @@ fn enforce_limit(pending_dispatch: &mut VecDeque<RuntimeMessage>, max_pending_di
             max_pending_dispatch,
             "timer dispatch queue overflow; dropping oldest timers"
         );
+        metrics.record_timers_dropped(overflow as u64);
     }
     while pending_dispatch.len() > max_pending_dispatch {
         pending_dispatch.pop_front();

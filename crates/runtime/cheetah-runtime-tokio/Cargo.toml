@@ -18,6 +18,7 @@ time = { workspace = true }
 
 [dev-dependencies]
 cheetah-domain = { path = "../../domain/cheetah-domain", features = ["test-util"] }
+tokio = { workspace = true, features = ["test-util", "rt", "macros", "time", "sync"] }
 
 [lints]
 workspace = true

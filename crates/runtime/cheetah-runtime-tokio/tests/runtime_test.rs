@@ -252,6 +252,121 @@ async fn shutdown_drains_actor() -> Result<(), RuntimeError> {
     Ok(())
 }
 
+#[tokio::test]
+async fn runtime_exposes_health_metrics() -> Result<(), RuntimeError> {
+    let config = RuntimeConfig::default();
+    let (runtime, mut output_rx) = Runtime::<FakeActor>::start(config)?;
+    let (tenant_id, device_id) = (TenantId::generate(), DeviceId::generate());
+    let key = DeviceKey::new(tenant_id, device_id);
+    runtime.send_message(
+        key,
+        RuntimeMessage::ProtocolEvent {
+            device_key: key,
+            payload: vec![1, 2, 3],
+        },
+    )?;
+    let _ = output_rx
+        .recv()
+        .await
+        .ok_or_else(|| RuntimeError::Internal("no output".into()))?;
+
+    let metrics = runtime.metrics();
+    assert!(metrics.messages_enqueued >= 1);
+    assert!(metrics.messages_processed >= 1);
+    assert_eq!(metrics.actors_created, 1);
+    assert_eq!(metrics.active_actors, 1);
+
+    runtime.shutdown().await?;
+    Ok(())
+}
+
+/// Actor that schedules a configurable number of timers from a single event and
+/// emits one output per fired timer.
+#[derive(Default)]
+struct TimerStormActor;
+
+#[async_trait]
+impl DeviceActor for TimerStormActor {
+    type SessionHandle = ();
+    type Output = ();
+    type Error = RuntimeError;
+
+    fn create(
+        _ctx: cheetah_runtime_api::ActorContext<Self::SessionHandle>,
+    ) -> Result<Self, Self::Error> {
+        Ok(Self)
+    }
+
+    async fn handle(
+        &mut self,
+        message: RuntimeMessage,
+        ctx: &cheetah_runtime_api::ActorContext<Self::SessionHandle>,
+    ) -> Result<Vec<Self::Output>, Self::Error> {
+        match message {
+            RuntimeMessage::ProtocolEvent { payload, .. } => {
+                let count = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
+                for _ in 0..count {
+                    ctx.schedule_timer(DurationMs::from_millis(10), "storm")
+                        .await?;
+                }
+                Ok(vec![])
+            }
+            RuntimeMessage::Timer { .. } => Ok(vec![()]),
+            _ => Ok(vec![]),
+        }
+    }
+
+    async fn shutdown(
+        self,
+        _ctx: &cheetah_runtime_api::ActorContext<Self::SessionHandle>,
+    ) -> Result<Vec<Self::Output>, Self::Error> {
+        Ok(vec![])
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn timer_wheel_fires_many_timers_under_paused_time() -> Result<(), RuntimeError> {
+    const N: usize = 100_000;
+    let config = RuntimeConfig {
+        shard_count: 1,
+        shard_mailbox_capacity: N + 16,
+        timer_command_channel_capacity: N + 16,
+        output_channel_capacity: 1024,
+        timer_tick_resolution_ms: 1,
+        max_pending_dispatch: N + 16,
+        actor_idle_timeout_ms: 0,
+        ..Default::default()
+    };
+    let (runtime, mut output_rx) = Runtime::<TimerStormActor>::start(config)?;
+    let (tenant_id, device_id) = (TenantId::generate(), DeviceId::generate());
+    let key = DeviceKey::new(tenant_id, device_id);
+
+    runtime.send_message(
+        key,
+        RuntimeMessage::ProtocolEvent {
+            device_key: key,
+            payload: (N as u32).to_le_bytes().to_vec(),
+        },
+    )?;
+
+    let mut fired = 0usize;
+    while fired < N {
+        output_rx
+            .recv()
+            .await
+            .ok_or_else(|| RuntimeError::Internal("timer output channel closed".into()))?;
+        fired += 1;
+    }
+    assert_eq!(fired, N);
+
+    let metrics = runtime.metrics();
+    assert_eq!(metrics.timers_scheduled, N as u64);
+    assert_eq!(metrics.timers_fired, N as u64);
+
+    runtime.shutdown().await?;
+    Ok(())
+}
+
 fn make_command(device_id: DeviceId, tenant_id: TenantId) -> Command {
     let id_generator = InMemoryIdGenerator::new();
     let clock = InMemoryClock::new();

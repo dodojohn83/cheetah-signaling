@@ -612,6 +612,7 @@ dependencies = [
  "secrecy",
  "thiserror",
  "tokio",
+ "tokio-util",
  "tracing",
 ]
 
@@ -619,9 +620,7 @@ dependencies = [
 name = "cheetah-gb28181-module"
 version = "0.1.0"
 dependencies = [
- "async-trait",
  "cheetah-gb28181-core",
- "cheetah-plugin-sdk",
  "cheetah-signal-types",
  "encoding_rs",
  "hex",
@@ -632,7 +631,6 @@ dependencies = [
  "serde_json",
  "sha2",
  "thiserror",
- "tokio",
  "tracing",
 ]
 
@@ -666,6 +664,7 @@ dependencies = [
  "cheetah-domain",
  "cheetah-message-api",
  "cheetah-message-local",
+ "cheetah-runtime-tokio",
  "cheetah-signal-application",
  "cheetah-signal-types",
  "cheetah-storage-api",
@@ -1094,7 +1093,6 @@ dependencies = [
  "cheetah-storage-postgres",
  "cheetah-storage-sqlite",
  "futures",
- "hex",
  "secrecy",
  "semver",
  "serde_json",

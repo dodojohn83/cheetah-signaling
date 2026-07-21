@@ -5,7 +5,7 @@
 //! stdout, or a message bus, but the trait itself is synchronous and
 //! fire-and-forget.
 
-use crate::{NodeId, TenantId, UtcTimestamp};
+use crate::{NodeId, SafeDetails, TenantId, UtcTimestamp};
 
 /// A security/operational audit event.
 #[derive(Clone, Debug, PartialEq)]
@@ -33,7 +33,7 @@ pub struct AuditEvent {
     /// Node that processed the request.
     pub node_id: NodeId,
     /// Optional safe details; must never contain secrets or raw protocol bodies.
-    pub details: Option<String>,
+    pub details: Option<SafeDetails>,
 }
 
 /// Result of an audited action.
