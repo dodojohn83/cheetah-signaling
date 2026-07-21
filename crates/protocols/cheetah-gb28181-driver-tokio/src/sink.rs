@@ -1,26 +1,28 @@
-//! Event sink abstraction for GB28181 domain events.
+//! Generic event sink abstraction for GB28181 access machines.
+//!
+//! The sink is generic over the event type so the driver can be driven by any
+//! [`cheetah_gb28181_core::GbAccessMachine`] without depending on a concrete
+//! event enum.
 
-use cheetah_gb28181_module::Gb28181Event;
-
-/// Receives [`Gb28181Event`]s produced by the driver.
+/// Receives events produced by a GB28181 access driver.
 ///
 /// Implementations are expected to be non-blocking and should not propagate
 /// backpressure into the UDP receive loop.
-pub trait EventSink: Send + Sync {
-    /// Emits a domain event.
-    fn emit(&self, event: Gb28181Event);
+pub trait EventSink<E: Send>: Send + Sync {
+    /// Emits an event.
+    fn emit(&self, event: E);
 }
 
 /// An event sink that discards all events.
 #[derive(Debug)]
 pub struct NoOpEventSink;
 
-impl EventSink for NoOpEventSink {
-    fn emit(&self, _event: Gb28181Event) {}
+impl<E: Send> EventSink<E> for NoOpEventSink {
+    fn emit(&self, _event: E) {}
 }
 
-impl EventSink for tokio::sync::mpsc::Sender<Gb28181Event> {
-    fn emit(&self, event: Gb28181Event) {
+impl<E: Send> EventSink<E> for tokio::sync::mpsc::Sender<E> {
+    fn emit(&self, event: E) {
         if let Err(e) = self.try_send(event) {
             tracing::warn!(error = %e, "event sink full; dropping GB28181 event");
         }

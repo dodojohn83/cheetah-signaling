@@ -6,7 +6,8 @@ use std::time::Duration;
 
 use cheetah_runtime_api::{
     AdmissionController as AdmissionControllerTrait, DeviceActor, RuntimeConfig, RuntimeError,
-    RuntimeMessage, Scheduler, SessionRegistry, ShardRouter,
+    RuntimeMessage, RuntimeMetrics, RuntimeMetricsSnapshot, Scheduler, SessionRegistry,
+    ShardRouter,
 };
 use cheetah_signal_types::Clock;
 use tokio::sync::mpsc;
@@ -27,6 +28,7 @@ struct RuntimeInner<A: DeviceActor> {
     config: RuntimeConfig,
     admission: AdmissionController,
     session_registry: SessionRegistry<A::SessionHandle>,
+    metrics: Arc<RuntimeMetrics>,
     timer_shutdown_tx: mpsc::Sender<()>,
     join_handles: Mutex<Option<Vec<JoinHandle<()>>>>,
 }
@@ -63,6 +65,7 @@ impl<A: DeviceActor> Runtime<A> {
         let scheduler: Arc<dyn Scheduler> = Arc::new(TimerScheduler::new(timer_tx));
         let id_gen = Arc::new(AtomicU64::new(1));
         let session_registry = SessionRegistry::new(config.max_sessions);
+        let metrics = Arc::new(RuntimeMetrics::new());
 
         let mut shard_senders = Vec::with_capacity(config.shard_count);
         let mut join_handles = Vec::with_capacity(config.shard_count + 1);
@@ -78,6 +81,7 @@ impl<A: DeviceActor> Runtime<A> {
                 clock.clone(),
                 id_gen.clone(),
                 session_registry.clone(),
+                metrics.clone(),
             )));
         }
 
@@ -86,6 +90,7 @@ impl<A: DeviceActor> Runtime<A> {
             router.clone(),
             senders.clone(),
             config.shard_mailbox_capacity,
+            metrics.clone(),
         );
 
         join_handles.push(tokio::spawn(TimerWheel::run(
@@ -95,12 +100,14 @@ impl<A: DeviceActor> Runtime<A> {
             router,
             config.timer_tick_resolution_ms,
             config.max_pending_dispatch,
+            metrics.clone(),
         )));
 
         let inner = Arc::new(RuntimeInner {
             config,
             admission,
             session_registry,
+            metrics,
             timer_shutdown_tx,
             join_handles: Mutex::new(Some(join_handles)),
         });
@@ -192,5 +199,10 @@ impl<A: DeviceActor> Runtime<A> {
     /// Returns the admission controller.
     pub fn admission(&self) -> &dyn AdmissionControllerTrait {
         &self.inner.admission
+    }
+
+    /// Returns a point-in-time snapshot of runtime health metrics.
+    pub fn metrics(&self) -> RuntimeMetricsSnapshot {
+        self.inner.metrics.snapshot()
     }
 }

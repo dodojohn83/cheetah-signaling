@@ -12,6 +12,8 @@ pub use device_actor::{ActorContext, DeviceActor};
 pub use error::RuntimeError;
 /// Stable key and identifier types.
 pub use keys::{DeviceKey, SessionKey, TimerId};
+/// Runtime health metrics.
+pub use metrics::{RuntimeMetrics, RuntimeMetricsSnapshot};
 /// Runtime messages.
 pub use runtime_message::RuntimeMessage;
 /// Timer scheduler port.
@@ -31,6 +33,8 @@ pub mod device_actor;
 pub mod error;
 /// Stable key and identifier types.
 pub mod keys;
+/// Runtime health metrics.
+pub mod metrics;
 /// Runtime messages.
 pub mod runtime_message;
 /// Timer scheduler port.

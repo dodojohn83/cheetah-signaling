@@ -18,10 +18,7 @@ use cheetah_domain::ports::{DeviceOwnerResolver, MediaPort};
 use cheetah_domain::{DomainEvent, EventPublisher, MediaEventHandler};
 use cheetah_gb28181_driver_tokio::Gb28181UdpDriver;
 use cheetah_gb28181_driver_tokio::config::DriverConfig as GbDriverConfig;
-use cheetah_gb28181_module::Gb28181DriverFactory;
-use cheetah_gb28181_module::config::{AuthPolicy, Gb28181DomainConfig};
-use cheetah_gb28181_module::ports::{CredentialError, CredentialProvider};
-use cheetah_gb28181_module::types::DeviceId as GbDeviceId;
+use cheetah_gb28181_module::{GbAccessSettings, build_access};
 use cheetah_http_api::audit::TracingAuditLog;
 use cheetah_http_api::state::{ApiConfig, ApiServer, ApiState};
 use cheetah_media_client::{MediaClientConfig, MediaControlClient};
@@ -48,7 +45,7 @@ use cheetah_signal_types::{
 use cheetah_storage_api::Storage;
 use cheetah_storage_sqlite::SqliteStorage;
 use futures::future::select_all;
-use secrecy::{ExposeSecret, SecretSlice, SecretString};
+use secrecy::{ExposeSecret, SecretString};
 use semver::Version;
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
@@ -272,53 +269,6 @@ impl cheetah_plugin_host::SecretProvider for ProcessSecretProvider {
             Ok(secret) => Ok(Some(secret)),
             Err(e) if e.kind() == cheetah_signal_types::SignalErrorKind::NotFound => Ok(None),
             Err(e) => Err(cheetah_plugin_sdk::PluginError::Driver(e.to_string())),
-        }
-    }
-}
-
-/// Credential provider backed by the process secret store.
-///
-/// The configured `device_password_ref` template may contain the `{device_id}`
-/// placeholder, which is replaced with the GB28181 device identifier before the
-/// secret store is queried. Missing optional secrets return `Ok(None)` so the
-/// domain can fall back to challenge-based authentication when enabled; backend
-/// failures are returned as `Err(CredentialError::Backend(...))`.
-#[derive(Clone)]
-struct SecretStoreCredentialProvider {
-    store: Arc<dyn SecretStore>,
-    ref_template: Option<String>,
-}
-
-impl std::fmt::Debug for SecretStoreCredentialProvider {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SecretStoreCredentialProvider")
-            .field("ref_template", &self.ref_template)
-            .finish_non_exhaustive()
-    }
-}
-
-impl SecretStoreCredentialProvider {
-    fn new(store: Arc<dyn SecretStore>, ref_template: Option<String>) -> Self {
-        Self {
-            store,
-            ref_template,
-        }
-    }
-}
-
-impl CredentialProvider for SecretStoreCredentialProvider {
-    fn password_for(
-        &self,
-        device_id: &GbDeviceId,
-    ) -> Result<Option<SecretString>, CredentialError> {
-        let Some(template) = self.ref_template.as_ref() else {
-            return Ok(None);
-        };
-        let key = template.replace("{device_id}", device_id.as_ref());
-        match self.store.get(&key) {
-            Ok(secret) => Ok(Some(secret)),
-            Err(e) if e.kind() == cheetah_signal_types::SignalErrorKind::NotFound => Ok(None),
-            Err(e) => Err(CredentialError::Backend(e.to_string())),
         }
     }
 }
@@ -553,25 +503,6 @@ impl cheetah_storage_api::NodeRepository for StorageBackedNodeRepo {
             .mark_draining(node_id, instance_id, updated_at)
             .await
     }
-}
-
-/// Resolves the GB28181 SIP digest secret from the secret store.
-fn resolve_gb28181_digest_secret(
-    secret_store: &dyn SecretStore,
-    ref_key: &str,
-) -> Result<SecretSlice<u8>, Box<dyn std::error::Error + Send + Sync>> {
-    let secret = secret_store
-        .get(ref_key)
-        .map_err(|e| format!("failed to resolve gb28181 digest secret ({ref_key}): {e}"))?;
-    let hex_secret = secret.expose_secret();
-    let bytes = hex::decode(hex_secret.trim())
-        .map_err(|e| format!("gb28181 digest secret ({ref_key}) must be hex-encoded: {e}"))?;
-    if bytes.len() < 32 {
-        return Err(
-            format!("gb28181 digest secret ({ref_key}) must decode to at least 32 bytes").into(),
-        );
-    }
-    Ok(SecretSlice::from(bytes))
 }
 
 /// Assembles storage, local bus, application services, protocol drivers and the HTTP API.
@@ -867,19 +798,14 @@ pub async fn start(
         config.onvif.request_timeout_ms,
         secret_provider,
     );
-    let gb_factory = Gb28181DriverFactory::new();
-    let gb_name = gb_factory.name();
-    plugin_host
-        .register_builtin(gb_name.clone(), Box::new(gb_factory))
-        .map_err(|e| format!("failed to register gb28181 plugin factory: {e}"))?;
     let onvif_factory = OnvifTokioDriverFactory::new();
     let onvif_name = onvif_factory.name();
     plugin_host
         .register_builtin(onvif_name.clone(), Box::new(onvif_factory))
         .map_err(|e| format!("failed to register onvif plugin factory: {e}"))?;
 
-    let (gb_plugin_id, onvif_plugin_id) = builtin_plugin_ids(id_generator.as_ref());
-    // Activate ONVIF first (start is lightweight). GB activation needs digest config.
+    let onvif_plugin_id = builtin_plugin_ids(id_generator.as_ref()).1;
+    // Activate ONVIF first (start is lightweight).
     if let Err(e) = plugin_host
         .activate_builtin(onvif_plugin_id, onvif_name, serde_json::json!({}), None)
         .await
@@ -887,31 +813,6 @@ pub async fn start(
         warn!(error = %e, "failed to activate built-in ONVIF plugin instance");
     } else {
         info!(%onvif_plugin_id, "activated built-in ONVIF plugin instance");
-    }
-    if config.gb28181.sip_port > 0 {
-        let domain_id = if config.gb28181.sip_domain.is_empty() {
-            "34020000002000000001".to_string()
-        } else {
-            config.gb28181.sip_domain.clone()
-        };
-        let digest_name = config
-            .gb28181
-            .digest_secret_ref
-            .clone()
-            .unwrap_or_else(|| "gb28181.digest".to_string());
-        let gb_config = serde_json::json!({
-            "domain_id": domain_id,
-            "realm": domain_id,
-            "digest_secret_name": digest_name,
-        });
-        if let Err(e) = plugin_host
-            .activate_builtin(gb_plugin_id, gb_name, gb_config, None)
-            .await
-        {
-            warn!(error = %e, "failed to activate built-in GB28181 plugin instance");
-        } else {
-            info!(%gb_plugin_id, "activated built-in GB28181 plugin instance");
-        }
     }
 
     if config.plugins.enabled {
@@ -999,39 +900,27 @@ pub async fn start(
         .transpose()
         .map_err(|e| format!("gb28181.default_tenant_id is not a valid UUID: {e}"))?;
 
-    // GB28181 UDP access listener.
+    // GB28181 access listener. All protocol business mapping (domain defaults,
+    // auth policy, digest secret resolution, credential provider) lives in the
+    // module's assembly adapter; here we only inject dependencies and manage
+    // the driver lifecycle.
     let mut gb28181_addr = None;
     if config.gb28181.sip_port > 0 {
-        let domain_id = if config.gb28181.sip_domain.is_empty() {
-            "34020000002000000001".to_string()
-        } else {
-            config.gb28181.sip_domain.clone()
-        };
-        let realm = domain_id.clone();
-        let digest_ref = config
-            .gb28181
-            .digest_secret_ref
-            .as_deref()
-            .ok_or("gb28181.digest_secret_ref is required when sip_port > 0")?;
-        let digest_secret = resolve_gb28181_digest_secret(&*secret_store, digest_ref)?;
-        // Production default is Required. ChallengeOptional is a development
-        // profile only and must be opted in via gb28181.challenge_optional.
-        let auth_policy = if config.gb28181.challenge_optional {
+        if config.gb28181.challenge_optional {
             warn!(
                 "gb28181.challenge_optional is enabled; unauthenticated REGISTER is accepted (dev profile only)"
             );
-            AuthPolicy::ChallengeOptional
-        } else {
-            AuthPolicy::Required
-        };
-        let domain_config = Gb28181DomainConfig::new(&domain_id, &realm, digest_secret)
-            .map_err(|e| format!("gb28181 domain config: {e}"))?
-            .with_auth_policy(auth_policy);
-
-        let credential_provider = SecretStoreCredentialProvider::new(
-            secret_store.clone(),
-            config.gb28181.device_password_ref.clone(),
-        );
+        }
+        let digest_ref = config
+            .gb28181
+            .digest_secret_ref
+            .clone()
+            .ok_or("gb28181.digest_secret_ref is required when sip_port > 0")?;
+        let settings = GbAccessSettings::new(&config.gb28181.sip_domain, digest_ref)
+            .with_challenge_optional(config.gb28181.challenge_optional)
+            .with_device_password_ref(config.gb28181.device_password_ref.clone());
+        let access = build_access(&settings, &secret_store)
+            .map_err(|e| format!("gb28181 access assembly failed: {e}"))?;
 
         let bind = SocketAddr::from(([0, 0, 0, 0], config.gb28181.sip_port));
         let driver_config = GbDriverConfig::new(bind);
@@ -1045,22 +934,18 @@ pub async fn start(
             cancel.child_token(),
         );
         workers.push(gb_event_handle);
-        let (driver, local) =
-            Gb28181UdpDriver::bind(driver_config, domain_config, credential_provider, sink)
-                .await
-                .map_err(|e| format!("gb28181 bind failed: {e}"))?;
+        let (driver, local) = Gb28181UdpDriver::bind(driver_config, access, sink)
+            .await
+            .map_err(|e| format!("gb28181 bind failed: {e}"))?;
         gb28181_addr = Some(local);
         let worker_cancel = cancel.child_token();
         workers.push(tokio::spawn(async move {
-            tokio::select! {
-                _ = worker_cancel.cancelled() => {
-                    info!("gb28181 driver cancelled");
-                }
-                result = driver.run() => {
-                    if let Err(e) = result {
-                        warn!(error = %e, "gb28181 driver exited with error");
-                    }
-                }
+            // The driver observes cancellation directly and performs a bounded
+            // drain of in-flight connections before returning.
+            if let Err(e) = driver.run_with_cancellation(worker_cancel).await {
+                warn!(error = %e, "gb28181 driver exited with error");
+            } else {
+                info!("gb28181 driver stopped");
             }
         }));
         info!(%local, "gb28181 SIP UDP listening");

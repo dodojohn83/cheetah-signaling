@@ -5,18 +5,19 @@
 //!
 //! # Crate boundaries
 //!
-//! - `cheetah-gb28181-core` provides the SIP/Digest state machines.
+//! - `cheetah-gb28181-core` provides the SIP/Digest state machines and the
+//!   `GbAccessMachine` input/output contract.
 //! - This module adds GB28181 business logic: tenant/realm selection, device
 //!   identity validation, authentication and command/event mapping.
 //! - `cheetah-gb28181-driver-tokio` handles UDP/TCP sockets and timer
-//!   injection.
+//!   injection by driving any `GbAccessMachine` implementation.
 
 #![warn(missing_docs)]
 
 pub mod access;
+pub mod assembly;
 pub mod cascade;
 pub mod config;
-pub mod driver;
 pub mod error;
 pub mod events;
 pub mod media;
@@ -25,13 +26,17 @@ mod registration;
 pub mod types;
 pub mod xml;
 
-pub use access::{AccessInput, AccessOutput, Gb28181Access};
+pub use access::Gb28181Access;
+pub use assembly::{
+    GbAccessSettings, GbAssemblyError, SecretStoreCredentialProvider, build_access,
+    build_domain_config,
+};
 pub use cascade::{
     CascadeConfig, CascadeCredentialProvider, CascadeError, CascadeEvent, CascadeInput,
     CascadeOutput, Gb28181Cascade,
 };
+pub use cheetah_gb28181_core::{AccessInput, AccessOutput, GbAccessMachine};
 pub use config::{AuthPolicy, CharsetPolicy, Gb28181DomainConfig};
-pub use driver::{Gb28181DriverFactory, Gb28181ProtocolDriver};
 pub use error::AccessError;
 pub use events::{DevicePresence, Gb28181Event};
 pub use media::{

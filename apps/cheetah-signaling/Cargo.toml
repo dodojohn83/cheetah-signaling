@@ -41,7 +41,6 @@ futures = { workspace = true }
 tonic = { workspace = true, features = ["tls-ring"] }
 x509-parser = { workspace = true }
 async-trait = { workspace = true }
-hex = { workspace = true }
 secrecy = { workspace = true }
 time = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal", "sync", "time"] }

@@ -189,7 +189,7 @@ python3 scripts/audit_architecture.py
 
 - [x] `GB4-TST-001`：扩充 SIP/XML/SDP/MANSRTSP golden、metadata、property 和 fuzz corpus。见 [reports/gb4-tst-001.md](reports/gb4-tst-001.md)。
 - [ ] `GB4-TST-002`：建立 access/command/catalog/media/cascade 合法/非法迁移表测试。
-- [ ] `GB4-TST-003`：建立 driver-core-module、repository/message/media/architecture contract suite。
+- [ ] `GB4-TST-003`：建立 driver-core-module、repository/message/media/architecture contract suite。架构契约部分完成，repository/message/media 待后续阶段补充，见 [reports/gb4-tst-003.md](reports/gb4-tst-003.md)。
 - [ ] `GB4-TST-004`：重构 fixed-shard simulator 和 deterministic fault scenario DSL。
 - [ ] `GB4-SYS-001`：完成 edge SQLite + fake media 全 GB vertical system test。
 - [ ] `GB4-SYS-002`：完成 cluster PostgreSQL/NATS + real media 全 GB vertical system test。

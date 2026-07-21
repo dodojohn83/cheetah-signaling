@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use cheetah_runtime_api::{
     AdmissionController as AdmissionControllerTrait, DeviceKey, RuntimeError, RuntimeMessage,
-    ShardRouter,
+    RuntimeMetrics, ShardRouter,
 };
 use tokio::sync::mpsc;
 
@@ -14,6 +14,7 @@ pub struct AdmissionController {
     router: ShardRouter,
     senders: Arc<Vec<mpsc::Sender<RuntimeMessage>>>,
     max_pending: usize,
+    metrics: Arc<RuntimeMetrics>,
 }
 
 impl std::fmt::Debug for AdmissionController {
@@ -31,11 +32,13 @@ impl AdmissionController {
         router: ShardRouter,
         senders: Arc<Vec<mpsc::Sender<RuntimeMessage>>>,
         max_pending: usize,
+        metrics: Arc<RuntimeMetrics>,
     ) -> Self {
         Self {
             router,
             senders,
             max_pending,
+            metrics,
         }
     }
 
@@ -53,8 +56,14 @@ impl AdmissionControllerTrait for AdmissionController {
             .get(index)
             .ok_or_else(|| RuntimeError::Internal("invalid shard index".into()))?;
         match sender.try_send(message) {
-            Ok(()) => Ok(()),
-            Err(mpsc::error::TrySendError::Full(_)) => Err(RuntimeError::Overloaded),
+            Ok(()) => {
+                self.metrics.record_message_enqueued();
+                Ok(())
+            }
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                self.metrics.record_message_rejected();
+                Err(RuntimeError::Overloaded)
+            }
             Err(mpsc::error::TrySendError::Closed(_)) => Err(RuntimeError::Shutdown),
         }
     }
