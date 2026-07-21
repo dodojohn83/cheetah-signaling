@@ -1,0 +1,6 @@
+source = "synthetic"
+standard = "GB/T 28181-2022"
+profile = "generic"
+expected = "Alarm Notify with CmdType=Alarm, SN=4, synthetic alarm time and type"
+desensitization = "All device IDs, coordinates, timestamps and record metadata are synthetic."
+license = "MIT-0"
