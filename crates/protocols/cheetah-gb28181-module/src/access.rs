@@ -17,9 +17,10 @@ use crate::xml::{
 };
 use cheetah_gb28181_core::{
     AccessInput, AccessOutput, AuthRateLimiter, DigestContext, DigestQop, DigestReplayCache,
-    GbAccessMachine, HeaderName, Method, SipMessage,
+    EndpointRoute, GbAccessMachine, HeaderName, Method, SipMessage,
 };
 use secrecy::ExposeSecret;
+use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::warn;
 
@@ -123,7 +124,7 @@ impl<P: CredentialProvider> GbAccessMachine for Gb28181Access<P> {
                 outputs.push(AccessOutput::EmitEvent(Gb28181Event::DeviceUnregistered {
                     domain_id: self.config.domain_id().clone(),
                     device_id: device_id.clone(),
-                    source: reg.source,
+                    source: reg.source(),
                 }));
                 continue;
             }
@@ -134,7 +135,7 @@ impl<P: CredentialProvider> GbAccessMachine for Gb28181Access<P> {
                     Gb28181Event::DevicePresenceChanged {
                         domain_id: self.config.domain_id().clone(),
                         device_id: device_id.clone(),
-                        source: reg.source,
+                        source: reg.source(),
                         presence: DevicePresence::Offline,
                     },
                 ));
@@ -336,9 +337,20 @@ impl<P: CredentialProvider> Gb28181Access<P> {
             ])
         } else {
             let contact = contact_uri.encode();
+            // Build the endpoint route from the authenticated REGISTER: the
+            // observed source, the top Via `received`/`rport`, and the Contact
+            // URI. This is the only sanctioned way to (re)establish the send
+            // route; keepalive/MESSAGE packets never move it.
+            let top_via = message
+                .headers()
+                .get_all(&HeaderName::Via)
+                .next()
+                .map(|v| v.as_str());
+            let route =
+                EndpointRoute::from_registration(source, top_via, Some(contact_uri.clone()));
             if let Err(e) = self.registrations.upsert(
                 device_id.clone(),
-                source,
+                route,
                 contact.clone(),
                 expires,
                 now,
@@ -543,14 +555,27 @@ impl<P: CredentialProvider> Gb28181Access<P> {
             other => return Err(AccessError::UnsupportedCmdType(other.to_string())),
         };
 
-        let Some(was_offline) = self.registrations.touch(&device_id, source, now) else {
+        let Some(touch) = self.registrations.touch(&device_id, source, now) else {
             // Business messages from a device that is not currently registered
             // must not bypass the registration policy.
             return Err(AccessError::NotRegistered);
         };
 
+        if touch.source_drift {
+            // A keepalive/MESSAGE arrived from an address other than the one
+            // established by the authenticated REGISTER. The stored send route
+            // is intentionally left unchanged (source hijack regression); the
+            // packet is still accepted for presence to avoid dropping a
+            // legitimate device that roamed without re-registering. Only an
+            // authenticated REGISTER may move the send route.
+            warn!(
+                device_id = %device_id,
+                "gb28181 keepalive/MESSAGE source differs from registered route; endpoint not moved"
+            );
+        }
+
         let mut outputs = Vec::with_capacity(3);
-        if was_offline {
+        if touch.was_offline {
             outputs.push(AccessOutput::EmitEvent(
                 Gb28181Event::DevicePresenceChanged {
                     domain_id,
@@ -567,6 +592,21 @@ impl<P: CredentialProvider> Gb28181Access<P> {
             self.next_tag(),
         )));
         Ok(outputs)
+    }
+
+    /// Returns the resolved send target for a registered device.
+    ///
+    /// This is the address the server should send server-initiated requests
+    /// (and out-of-dialog responses) to, computed from the NAT/`rport` policy
+    /// of the endpoint route established at registration. Returns `None` when
+    /// the device is not currently registered.
+    pub fn device_send_target(&self, device_id: &DeviceId) -> Option<SocketAddr> {
+        self.registrations.send_target(device_id)
+    }
+
+    /// Returns the full endpoint route for a registered device, if any.
+    pub fn device_route(&self, device_id: &DeviceId) -> Option<EndpointRoute> {
+        self.registrations.route(device_id)
     }
 
     fn next_tag(&self) -> String {

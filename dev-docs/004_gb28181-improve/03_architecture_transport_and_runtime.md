@@ -198,7 +198,7 @@ device_credential_namespace = "gb28181/tenant-a/devices"
 - [x] `GB4-SIP-003`：完成 REGISTER/MESSAGE/INVITE/ACK/CANCEL/BYE/INFO/SUBSCRIBE/NOTIFY/OPTIONS method 路由。详见 [`reports/gb4-sip-002.md`](reports/gb4-sip-002.md)。
 - [x] `GB4-SIP-004`：实现 credential resolution output/input、Digest replay/stale/algorithm/rate-limit 生产链路（`SecretStoreCredentialProvider` 解析 per-device password 与 node digest secret，`AuthRateLimiter` 在 digest 计算前按 source IP 有界限流，MD5/SHA-256/replay/stale/downgrade/brute-force 均有测试）。详见 [`reports/gb4-sip-004.md`](reports/gb4-sip-004.md)。
 - [x] `GB4-SIP-005`：实现 multi-listener/domain/realm/tenant 路由与旧配置兼容窗口（`Gb28181ListenerConfig` 显式映射 realm/domain/tenant，拒绝重复 id/domain/realm/bind 及新旧混用；legacy `sip_port/sip_domain/default_tenant_id` 转换为单 listener 并输出弃用日志）。详见 [`reports/gb4-sip-004.md`](reports/gb4-sip-004.md)。
-- [ ] `GB4-SIP-006`：实现 endpoint route 模型、NAT/rport 策略和 source hijack regression。
+- [x] `GB4-SIP-006`：实现 endpoint route 模型、NAT/rport 策略和 source hijack regression（`cheetah-gb28181-core` 新增类型化 `EndpointRoute`，区分 `observed_source`/`via_received_rport`/`contact_uri`/`advertised_endpoint`/`dialog_remote_target`，send target 遵循 `received:rport` → Contact host:port → observed source 优先级；REGISTER 依据 Via `received`/`rport` 与 Contact 建立 route，keepalive/MESSAGE 只更新在线状态、不改写 route，非认证 source drift 被拒绝并记录）。详见 [`reports/gb4-sip-006.md`](reports/gb4-sip-006.md)。
 
 ## 11. 测试与退出门禁
 

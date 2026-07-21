@@ -26,6 +26,10 @@ pub use sip::digest::{
     DigestQop, DigestReplayCache, DigestResponse,
 };
 pub use sip::encoder::encode_message;
+pub use sip::endpoint::{
+    DEFAULT_SIP_PORT, EndpointRoute, RouteUpdateContext, Rport, ViaRouteParams,
+    socket_addr_from_uri,
+};
 pub use sip::error::{SipError, SipErrorKind};
 pub use sip::headers::{HeaderName, HeaderValue, SipHeaders};
 pub use sip::message::{Body, Method, RequestLine, ResponseClass, SipMessage, StatusLine};

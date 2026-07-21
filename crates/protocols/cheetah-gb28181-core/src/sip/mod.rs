@@ -4,6 +4,7 @@ pub mod dialog;
 pub mod dialog_manager;
 pub mod digest;
 pub mod encoder;
+pub mod endpoint;
 pub mod error;
 pub mod headers;
 pub mod message;
