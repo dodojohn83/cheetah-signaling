@@ -1,3 +1,5 @@
+#![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
+
 //! Architecture contract test for `cheetah-gb28181-module`.
 //!
 //! Verifies that the module layer remains Sans-I/O and does not pull in

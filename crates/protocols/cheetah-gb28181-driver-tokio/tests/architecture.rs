@@ -1,3 +1,5 @@
+#![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
+
 //! Architecture contract test for `cheetah-gb28181-driver-tokio`.
 //!
 //! Verifies that production dependencies remain aligned with the six-layer
