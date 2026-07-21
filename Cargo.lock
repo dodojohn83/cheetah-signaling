@@ -620,9 +620,11 @@ dependencies = [
 name = "cheetah-gb28181-module"
 version = "0.1.0"
 dependencies = [
+ "cheetah-domain",
  "cheetah-gb28181-core",
  "cheetah-signal-types",
  "encoding_rs",
+ "futures",
  "hex",
  "proptest",
  "quick-xml",
@@ -632,6 +634,7 @@ dependencies = [
  "sha2",
  "thiserror",
  "tracing",
+ "uuid",
 ]
 
 [[package]]

@@ -626,6 +626,17 @@ pub struct Gb28181Config {
     /// after issuing a challenge. Production deployments must leave this
     /// `false` (the default). Development profiles may enable it explicitly.
     pub challenge_optional: bool,
+    /// Interval between protocol-session expiry reaper sweeps. Each sweep marks
+    /// registrations whose `expiry_at` has passed offline. `0` disables the
+    /// reaper.
+    pub session_reaper_interval_ms: DurationMs,
+    /// Page size used when the reaper scans expired sessions. Bounds the number
+    /// of rows read per repository query.
+    pub session_reaper_batch_size: u32,
+    /// Maximum number of sessions the reaper marks offline in a single sweep.
+    /// Bounds the work performed per tick so one node cannot monopolise the
+    /// database.
+    pub session_reaper_max_per_tick: u32,
 }
 
 impl Default for Gb28181Config {
@@ -640,6 +651,9 @@ impl Default for Gb28181Config {
             catalog_fragment_max_entries: 1024,
             catalog_fragment_max_items: 8192,
             challenge_optional: false,
+            session_reaper_interval_ms: DurationMs::from_millis(30_000),
+            session_reaper_batch_size: 256,
+            session_reaper_max_per_tick: 4_096,
         }
     }
 }

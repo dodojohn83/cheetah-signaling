@@ -9,6 +9,7 @@ use cheetah_cluster_registry::NodeLeaseService;
 use cheetah_domain::{
     Clock, Command, DeviceOwnerResolver, NodeLoad, OwnerInfo, ProcessedMessageStatus, Protocol,
 };
+use cheetah_gb28181_module::ProtocolSessionLink;
 use cheetah_message_api::RawCommandBus;
 use cheetah_plugin_host::PluginHost;
 use cheetah_plugin_sdk::{DriverCommand, PluginName};
@@ -187,6 +188,50 @@ pub fn spawn_inbox_worker(
             result = inbox.run(&subject, &group) => {
                 if let Err(e) = result {
                     warn!(error = %e, "inbox consumer exited with error");
+                }
+            }
+        }
+    })
+}
+
+/// Spawns the GB28181 protocol-session expiry reaper.
+///
+/// Each tick performs a bounded sweep over expired `ProtocolSession`s (those
+/// whose `expiry_at` has passed) and marks the still-active ones offline,
+/// making the expiry transition authoritative without relying on a per-device
+/// timer. The sweep is idempotent: sessions already offline are skipped and
+/// concurrent modifications by another owner are ignored.
+#[allow(clippy::too_many_arguments)]
+pub fn spawn_protocol_session_reaper_worker(
+    storage: Arc<dyn Storage>,
+    clock: Arc<dyn Clock>,
+    id_generator: Arc<dyn IdGenerator>,
+    interval: Duration,
+    batch_size: u32,
+    max_per_tick: usize,
+    cancel: CancellationToken,
+) -> tokio::task::JoinHandle<()> {
+    let link = ProtocolSessionLink::new(clock.clone(), id_generator);
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(interval);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tokio::select! {
+                _ = cancel.cancelled() => {
+                    info!("protocol session reaper cancelled");
+                    break;
+                }
+                _ = ticker.tick() => {
+                    let mut repo = storage.protocol_session_repository();
+                    let now = clock.now_wall();
+                    match link
+                        .reap_expired(repo.as_mut(), now, batch_size, max_per_tick)
+                        .await
+                    {
+                        Ok(0) => {}
+                        Ok(count) => info!(count, "protocol session reaper marked sessions offline"),
+                        Err(e) => warn!(error = %e, "protocol session reaper sweep failed"),
+                    }
                 }
             }
         }

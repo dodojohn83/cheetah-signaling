@@ -148,7 +148,7 @@ OperationStep outcome: succeeded / failed / unknown-outcome / cancelled
 ## 10. 实施任务
 
 - [x] `GB4-ACC-001`：实现持久化 ProtocolSession、双数据库 migration 和 repository contract。详见 `dev-docs/004_gb28181-improve/reports/gb4-acc-001.md`。
-- [ ] `GB4-ACC-002`：完成 REGISTER/注销/续期/expiry/keepalive/owner acquisition 事务链路。
+- [x] `GB4-ACC-002`：完成 REGISTER/注销/续期/expiry/keepalive/owner acquisition 事务链路。详见 `dev-docs/004_gb28181-improve/reports/gb4-acc-002.md`。
 - [ ] `GB4-ACC-003`：完成 listener tenant、body identity、protocol session generation 和 endpoint 安全校验。
 - [ ] `GB4-ACC-004`：完成 Catalog/DeviceInfo/DeviceStatus bootstrap/query Operation。
 - [ ] `GB4-ACC-005`：完成 bounded Catalog/RecordInfo aggregation 和 channel mapping。

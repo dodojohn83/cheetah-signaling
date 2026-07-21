@@ -9,7 +9,8 @@ use crate::workers::{
     OwnerCommandHandler, SingleNodeOwnerResolver, StorageDeviceProtocolLookup,
     build_assignment_service, build_drain_service, build_takeover_service, builtin_plugin_ids,
     spawn_drain_migration_worker, spawn_inbox_worker, spawn_node_lease_worker,
-    spawn_owner_lease_renew_worker, spawn_takeover_health_worker,
+    spawn_owner_lease_renew_worker, spawn_protocol_session_reaper_worker,
+    spawn_takeover_health_worker,
 };
 use ::time::{OffsetDateTime, UtcOffset};
 use cheetah_cluster_ownership::{CachingDeviceOwnerResolver, OwnerLeaseService};
@@ -934,6 +935,25 @@ pub async fn start(
             cancel.child_token(),
         );
         workers.push(gb_event_handle);
+
+        let reaper_interval_ms = config.gb28181.session_reaper_interval_ms.as_millis();
+        if reaper_interval_ms > 0 {
+            let interval =
+                Duration::from_millis(u64::try_from(reaper_interval_ms).unwrap_or(30_000));
+            workers.push(spawn_protocol_session_reaper_worker(
+                state.storage.clone(),
+                state.clock.clone(),
+                state.id_generator.clone(),
+                interval,
+                config.gb28181.session_reaper_batch_size.max(1),
+                config.gb28181.session_reaper_max_per_tick as usize,
+                cancel.child_token(),
+            ));
+            info!("gb28181 protocol session reaper worker started");
+        } else {
+            warn!("gb28181.session_reaper_interval_ms is 0; expiry reaper not started");
+        }
+
         let (driver, local) = Gb28181UdpDriver::bind(driver_config, access, sink)
             .await
             .map_err(|e| format!("gb28181 bind failed: {e}"))?;
