@@ -1,7 +1,6 @@
 //! Driver errors.
 
 use cheetah_gb28181_core::SipError;
-use cheetah_gb28181_module::AccessError;
 use std::io;
 
 /// Errors returned by the UDP driver.
@@ -15,7 +14,7 @@ pub enum DriverError {
     Parse(#[from] SipError),
     /// The access state machine rejected processing.
     #[error("access error: {0}")]
-    Access(#[from] AccessError),
+    Access(Box<dyn std::error::Error + Send + Sync + 'static>),
     /// Binding the UDP socket failed.
     #[error("failed to bind socket: {0}")]
     Bind(io::Error),

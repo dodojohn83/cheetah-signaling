@@ -18,7 +18,7 @@ use cheetah_domain::ports::{DeviceOwnerResolver, MediaPort};
 use cheetah_domain::{DomainEvent, EventPublisher, MediaEventHandler};
 use cheetah_gb28181_driver_tokio::Gb28181UdpDriver;
 use cheetah_gb28181_driver_tokio::config::DriverConfig as GbDriverConfig;
-use cheetah_gb28181_module::Gb28181DriverFactory;
+use cheetah_gb28181_module::Gb28181Access;
 use cheetah_gb28181_module::config::{AuthPolicy, Gb28181DomainConfig};
 use cheetah_gb28181_module::ports::{CredentialError, CredentialProvider};
 use cheetah_gb28181_module::types::DeviceId as GbDeviceId;
@@ -867,19 +867,14 @@ pub async fn start(
         config.onvif.request_timeout_ms,
         secret_provider,
     );
-    let gb_factory = Gb28181DriverFactory::new();
-    let gb_name = gb_factory.name();
-    plugin_host
-        .register_builtin(gb_name.clone(), Box::new(gb_factory))
-        .map_err(|e| format!("failed to register gb28181 plugin factory: {e}"))?;
     let onvif_factory = OnvifTokioDriverFactory::new();
     let onvif_name = onvif_factory.name();
     plugin_host
         .register_builtin(onvif_name.clone(), Box::new(onvif_factory))
         .map_err(|e| format!("failed to register onvif plugin factory: {e}"))?;
 
-    let (gb_plugin_id, onvif_plugin_id) = builtin_plugin_ids(id_generator.as_ref());
-    // Activate ONVIF first (start is lightweight). GB activation needs digest config.
+    let onvif_plugin_id = builtin_plugin_ids(id_generator.as_ref()).1;
+    // Activate ONVIF first (start is lightweight).
     if let Err(e) = plugin_host
         .activate_builtin(onvif_plugin_id, onvif_name, serde_json::json!({}), None)
         .await
@@ -887,31 +882,6 @@ pub async fn start(
         warn!(error = %e, "failed to activate built-in ONVIF plugin instance");
     } else {
         info!(%onvif_plugin_id, "activated built-in ONVIF plugin instance");
-    }
-    if config.gb28181.sip_port > 0 {
-        let domain_id = if config.gb28181.sip_domain.is_empty() {
-            "34020000002000000001".to_string()
-        } else {
-            config.gb28181.sip_domain.clone()
-        };
-        let digest_name = config
-            .gb28181
-            .digest_secret_ref
-            .clone()
-            .unwrap_or_else(|| "gb28181.digest".to_string());
-        let gb_config = serde_json::json!({
-            "domain_id": domain_id,
-            "realm": domain_id,
-            "digest_secret_name": digest_name,
-        });
-        if let Err(e) = plugin_host
-            .activate_builtin(gb_plugin_id, gb_name, gb_config, None)
-            .await
-        {
-            warn!(error = %e, "failed to activate built-in GB28181 plugin instance");
-        } else {
-            info!(%gb_plugin_id, "activated built-in GB28181 plugin instance");
-        }
     }
 
     if config.plugins.enabled {
@@ -1045,10 +1015,11 @@ pub async fn start(
             cancel.child_token(),
         );
         workers.push(gb_event_handle);
-        let (driver, local) =
-            Gb28181UdpDriver::bind(driver_config, domain_config, credential_provider, sink)
-                .await
-                .map_err(|e| format!("gb28181 bind failed: {e}"))?;
+        let access = Gb28181Access::new(domain_config, credential_provider)
+            .map_err(|e| format!("gb28181 access machine failed: {e}"))?;
+        let (driver, local) = Gb28181UdpDriver::bind(driver_config, access, sink)
+            .await
+            .map_err(|e| format!("gb28181 bind failed: {e}"))?;
         gb28181_addr = Some(local);
         let worker_cancel = cancel.child_token();
         workers.push(tokio::spawn(async move {

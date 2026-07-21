@@ -7,9 +7,11 @@
 
 #![warn(missing_docs)]
 
+pub mod access;
 pub mod sdp;
 pub mod sip;
 
+pub use access::{AccessInput, AccessOutput, GbAccessMachine};
 pub use sdp::{
     RtpMap, SdpAttribute, SdpConnection, SdpConnectionType, SdpDirection, SdpError, SdpMedia,
     SdpOrigin, SdpParserConfig, SdpSession, SdpSetup, SdpTime, encode_sdp, parse_sdp,

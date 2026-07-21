@@ -3,8 +3,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use cheetah_gb28181_core::{
-    DigestContext, DigestQop, HeaderName, HeaderValue, Method, RequestLine, SipHeaders, SipMessage,
-    SipUri,
+    DigestContext, DigestQop, GbAccessMachine, HeaderName, HeaderValue, Method, RequestLine,
+    SipHeaders, SipMessage, SipUri,
 };
 use cheetah_gb28181_module::{
     AccessInput, AccessOutput, AuthPolicy, CredentialError, CredentialProvider, DeviceId,
@@ -174,7 +174,7 @@ fn extract_nonce(header: &str) -> String {
         .expect("nonce in challenge")
 }
 
-fn find_response(outputs: &[AccessOutput]) -> &SipMessage {
+fn find_response(outputs: &[AccessOutput<Gb28181Event>]) -> &SipMessage {
     outputs
         .iter()
         .find_map(|o| match o {
@@ -184,7 +184,7 @@ fn find_response(outputs: &[AccessOutput]) -> &SipMessage {
         .expect("a response")
 }
 
-fn find_events(outputs: &[AccessOutput]) -> impl Iterator<Item = &Gb28181Event> + '_ {
+fn find_events(outputs: &[AccessOutput<Gb28181Event>]) -> impl Iterator<Item = &Gb28181Event> + '_ {
     outputs.iter().filter_map(|o| match o {
         AccessOutput::EmitEvent(e) => Some(e),
         _ => None,
@@ -574,7 +574,7 @@ fn heartbeat_timeout_emits_offline_event() {
     let (mut access, now) = make_registered_access();
     let heartbeat_timeout = 90;
 
-    let offline_outputs = access.tick(now + heartbeat_timeout + 1);
+    let offline_outputs = access.tick(now + heartbeat_timeout + 1).unwrap();
     assert_eq!(offline_outputs.len(), 1);
     let event = find_events(&offline_outputs).next().expect("an event");
     match event {
@@ -591,7 +591,7 @@ fn keepalive_after_offline_restores_online() {
     let (mut access, now) = make_registered_access();
     let heartbeat_timeout = 90;
 
-    let _offline_outputs = access.tick(now + heartbeat_timeout + 1);
+    let _offline_outputs = access.tick(now + heartbeat_timeout + 1).unwrap();
 
     let request = make_message_request(&keepalive_body());
     let outputs = access
@@ -625,7 +625,7 @@ fn malformed_keepalive_from_offline_returns_400_and_does_not_commit_online() {
     let (mut access, now) = make_registered_access();
     let heartbeat_timeout = 90;
 
-    let _offline_outputs = access.tick(now + heartbeat_timeout + 1);
+    let _offline_outputs = access.tick(now + heartbeat_timeout + 1).unwrap();
 
     // Keepalive is missing the required <Status> element.
     let malformed_body = br#"<?xml version="1.0"?>
@@ -700,7 +700,7 @@ fn registration_expiry_removes_registration() {
         })
         .unwrap();
 
-    let expired_outputs = access.tick(1006);
+    let expired_outputs = access.tick(1006).unwrap();
     assert_eq!(expired_outputs.len(), 1);
     let event = find_events(&expired_outputs).next().expect("an event");
     assert!(matches!(event, Gb28181Event::DeviceUnregistered { .. }));
@@ -1563,7 +1563,7 @@ fn malformed_message_does_not_commit_online_presence_transition() {
     let heartbeat_timeout = 90;
 
     // Trigger offline state.
-    let _offline_outputs = access.tick(now + heartbeat_timeout + 1);
+    let _offline_outputs = access.tick(now + heartbeat_timeout + 1).unwrap();
 
     // An unsupported command with a matching DeviceID returns 400 but must not
     // mark the device online, otherwise the next valid keepalive would not

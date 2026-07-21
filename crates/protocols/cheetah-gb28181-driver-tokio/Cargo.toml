@@ -9,12 +9,12 @@ repository.workspace = true
 
 [dependencies]
 cheetah-gb28181-core = { path = "../cheetah-gb28181-core" }
-cheetah-gb28181-module = { path = "../cheetah-gb28181-module" }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["net", "rt", "time", "sync", "macros"] }
 tracing = { workspace = true }
 
 [dev-dependencies]
+cheetah-gb28181-module = { path = "../cheetah-gb28181-module" }
 secrecy = { workspace = true }
 
 [lints]
