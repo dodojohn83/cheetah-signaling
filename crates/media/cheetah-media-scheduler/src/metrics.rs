@@ -278,10 +278,13 @@ impl MetricsExporter for MediaMetrics {
              cheetah_media_forced_cleanup_total {forced_cleanup_total}\n"
         );
 
-        for (reason, count) in rejected_reasons {
-            body.push_str(&format!(
-                "cheetah_media_reservations_rejected_by_reason_total{{reason=\"{reason}\"}} {count}\n"
-            ));
+        if !rejected_reasons.is_empty() {
+            body.push_str("# TYPE cheetah_media_reservations_rejected_by_reason_total counter\n");
+            for (reason, count) in rejected_reasons {
+                body.push_str(&format!(
+                    "cheetah_media_reservations_rejected_by_reason_total{{reason=\"{reason}\"}} {count}\n"
+                ));
+            }
         }
 
         body.push_str("# TYPE cheetah_media_rpc_duration_seconds histogram\n");
