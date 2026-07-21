@@ -368,81 +368,89 @@ impl MediaService {
     ) -> crate::Result<()> {
         let tenant_id = context.tenant_id;
 
-        let reservation: crate::Result<(MediaReservation, MediaBindingId)> = async {
-            let (device, channel) = self
-                .ensure_device_and_channel_ready(
-                    uow,
-                    tenant_id,
-                    session.device_id(),
-                    session.channel_id(),
-                )
-                .await?;
-            let requirements = build_media_requirements(
-                &device,
-                &channel,
-                session.purpose(),
-                session.media_session_id(),
-                std::collections::BTreeMap::new(),
-            );
-            let media_binding_id = self.id_generator.generate_media_binding_id();
-            let reservation = match session.purpose() {
-                MediaPurpose::Live => {
-                    self.media_port
-                        .reserve_live(
-                            tenant_id,
-                            session.device_id(),
-                            session.channel_id(),
-                            session.media_session_id(),
-                            media_binding_id,
-                            MediaPurpose::Live,
-                            &requirements,
-                            self.clock.as_ref(),
-                        )
-                        .await
-                }
-                MediaPurpose::Playback => {
-                    let now = self.clock.now_wall();
-                    let start_time = session.playback_start_time().unwrap_or(now);
-                    let end_time = session.playback_end_time().unwrap_or(now);
-                    let scale = session.playback_scale().unwrap_or(1.0);
-                    self.media_port
-                        .reserve_playback(
-                            tenant_id,
-                            session.device_id(),
-                            session.channel_id(),
-                            session.media_session_id(),
-                            media_binding_id,
-                            start_time,
-                            end_time,
-                            scale,
-                            &requirements,
-                            self.clock.as_ref(),
-                        )
-                        .await
-                }
-                MediaPurpose::Talk => {
-                    self.media_port
-                        .reserve_talk(
-                            tenant_id,
-                            session.device_id(),
-                            session.channel_id(),
-                            session.media_session_id(),
-                            media_binding_id,
-                            &requirements,
-                            self.clock.as_ref(),
-                        )
-                        .await
-                }
-                _ => Err(DomainError::invalid_argument(
-                    "unknown media purpose for migration",
-                )),
-            }?;
-            Ok((reservation, media_binding_id))
-        }
-        .await;
+        // Flush any pending writes from earlier sessions in this node batch before
+        // the next media-node RPC, then re-acquire a read transaction only for
+        // device/channel lookup.
+        uow.commit().await?;
 
-        let (reservation, media_binding_id) = match reservation {
-            Ok(tuple) => tuple,
+        let (device, channel) = self
+            .ensure_device_and_channel_ready(
+                uow,
+                tenant_id,
+                session.device_id(),
+                session.channel_id(),
+            )
+            .await?;
+
+        let requirements = build_media_requirements(
+            &device,
+            &channel,
+            session.purpose(),
+            session.media_session_id(),
+            std::collections::BTreeMap::new(),
+        );
+        let media_binding_id = self.id_generator.generate_media_binding_id();
+
+        // Commit before the reservation network call so the DB write lock is not
+        // held across the media-node RPC.
+        uow.commit().await?;
+
+        let reservation: crate::Result<MediaReservation> = match session.purpose() {
+            MediaPurpose::Live => {
+                self.media_port
+                    .reserve_live(
+                        tenant_id,
+                        session.device_id(),
+                        session.channel_id(),
+                        session.media_session_id(),
+                        media_binding_id,
+                        MediaPurpose::Live,
+                        &requirements,
+                        self.clock.as_ref(),
+                    )
+                    .await
+            }
+            MediaPurpose::Playback => {
+                let now = self.clock.now_wall();
+                let start_time = session.playback_start_time().unwrap_or(now);
+                let end_time = session.playback_end_time().unwrap_or(now);
+                let scale = session.playback_scale().unwrap_or(1.0);
+                self.media_port
+                    .reserve_playback(
+                        tenant_id,
+                        session.device_id(),
+                        session.channel_id(),
+                        session.media_session_id(),
+                        media_binding_id,
+                        start_time,
+                        end_time,
+                        scale,
+                        &requirements,
+                        self.clock.as_ref(),
+                    )
+                    .await
+            }
+            MediaPurpose::Talk => {
+                self.media_port
+                    .reserve_talk(
+                        tenant_id,
+                        session.device_id(),
+                        session.channel_id(),
+                        session.media_session_id(),
+                        media_binding_id,
+                        &requirements,
+                        self.clock.as_ref(),
+                    )
+                    .await
+            }
+            _ => Err(DomainError::invalid_argument(
+                "unknown media purpose for migration",
+            )),
+        }
+        .map_err(crate::SignalError::from);
+
+        let reservation = match reservation {
+            Ok(reservation) => reservation,
             Err(_) => {
                 if !session.is_terminal() {
                     self.fail_session(context, uow, session, binding, code, message)
