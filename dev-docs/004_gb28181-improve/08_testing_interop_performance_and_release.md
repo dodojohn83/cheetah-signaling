@@ -199,7 +199,7 @@ python3 scripts/audit_architecture.py
 - [ ] `GB4-SYS-006`：完成三节点 chaos/rolling upgrade 报告。
 - [ ] `GB4-SYS-007`：完成 10万/30万/100万容量与水平扩展报告。
 - [ ] `GB4-SYS-008`：完成 24h development endurance 和 72h release soak 报告。
-- [ ] `GB4-SYS-009`：完成 x86_64/aarch64、SBOM/license/advisory、migration 和 release checklist。
+- [x] `GB4-SYS-009`：完成 x86_64/aarch64、SBOM/license/advisory、migration 和 release checklist。见 [reports/gb4-sys-009.md](reports/gb4-sys-009.md)。
 
 ## 12. 最终退出门禁
 
