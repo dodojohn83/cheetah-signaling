@@ -108,6 +108,16 @@ impl SignalConfig {
                 ),
             ));
         }
+        if self.gb28181.session_reaper_max_per_tick == 0
+            || self.gb28181.session_reaper_max_per_tick > SESSION_REAPER_MAX_PER_TICK_LIMIT
+        {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                format!(
+                    "gb28181.session_reaper_max_per_tick must be between 1 and {SESSION_REAPER_MAX_PER_TICK_LIMIT}"
+                ),
+            ));
+        }
         if self.onvif.enabled {
             if self.onvif.connect_timeout_ms.as_millis() <= 0 {
                 return Err(SignalError::new(
@@ -606,6 +616,11 @@ pub struct PluginsConfig {
     pub max_plugin_instances: u32,
 }
 
+/// Upper bound for [`Gb28181Config::session_reaper_max_per_tick`]. Caps how
+/// many expired sessions a single sweep buffers in memory before marking them
+/// offline, so a misconfigured value cannot read an unbounded number of rows.
+pub const SESSION_REAPER_MAX_PER_TICK_LIMIT: u32 = 1_000_000;
+
 /// GB28181 protocol configuration.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
@@ -646,7 +661,7 @@ pub struct Gb28181Config {
     pub session_reaper_batch_size: u32,
     /// Maximum number of sessions the reaper marks offline in a single sweep.
     /// Bounds the work performed per tick so one node cannot monopolise the
-    /// database.
+    /// database. Must be in `1..=SESSION_REAPER_MAX_PER_TICK_LIMIT`.
     pub session_reaper_max_per_tick: u32,
 }
 

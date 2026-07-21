@@ -946,7 +946,7 @@ pub async fn start(
                 state.id_generator.clone(),
                 interval,
                 config.gb28181.session_reaper_batch_size.max(1),
-                config.gb28181.session_reaper_max_per_tick as usize,
+                config.gb28181.session_reaper_max_per_tick.max(1) as usize,
                 cancel.child_token(),
             ));
             info!("gb28181 protocol session reaper worker started");
