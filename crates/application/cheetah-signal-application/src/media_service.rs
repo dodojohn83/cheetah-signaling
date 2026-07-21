@@ -131,9 +131,16 @@ impl MediaService {
         if session.is_terminal() {
             // The session is already stopped/failed: create a terminal stop
             // operation as compensation and return the existing session.
+            let submitted_revision = operation.revision().0;
+            let op_started_event = operation
+                .start(self.clock.as_ref())
+                .map_err(crate::SignalError::from)?;
+            let started_revision = operation.revision().0;
             let op_complete_event = operation
                 .complete(OperationResult::success(), self.clock.as_ref())
                 .map_err(crate::SignalError::from)?;
+            let completed_revision = operation.revision().0;
+
             uow.operation_repository().save(&operation).await?;
             uow.outbox()
                 .append(wrap_event(
@@ -142,7 +149,7 @@ impl MediaService {
                     context,
                     tenant_id,
                     operation_resource_ref(tenant_id, operation.operation_id()),
-                    operation.revision().0,
+                    submitted_revision,
                     op_event,
                 ))
                 .await?;
@@ -153,7 +160,18 @@ impl MediaService {
                     context,
                     tenant_id,
                     operation_resource_ref(tenant_id, operation.operation_id()),
-                    operation.revision().0,
+                    started_revision,
+                    op_started_event,
+                ))
+                .await?;
+            uow.outbox()
+                .append(wrap_event(
+                    self.id_generator.as_ref(),
+                    self.clock.as_ref(),
+                    context,
+                    tenant_id,
+                    operation_resource_ref(tenant_id, operation.operation_id()),
+                    completed_revision,
                     op_complete_event,
                 ))
                 .await?;

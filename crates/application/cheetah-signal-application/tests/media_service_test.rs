@@ -105,6 +105,22 @@ async fn media_service_start_live_and_stop_idempotent() {
             .unwrap();
         assert_eq!(same.media_session_id, session.media_session_id);
     }
+
+    // A fresh idempotency key against an already-stopped session should also
+    // succeed as compensation, creating a terminal stop operation.
+    let compensated = ctx
+        .media_service
+        .stop_live(
+            &context,
+            &mut ctx.uow,
+            StopLiveRequest {
+                media_session_id: session.media_session_id.to_string(),
+                idempotency_key: "stop-2".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(compensated.media_session_id, session.media_session_id);
 }
 
 #[tokio::test(flavor = "current_thread")]
