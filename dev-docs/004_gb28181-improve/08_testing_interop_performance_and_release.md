@@ -193,7 +193,7 @@ python3 scripts/audit_architecture.py
 - [ ] `GB4-TST-004`：重构 fixed-shard simulator 和 deterministic fault scenario DSL。
 - [ ] `GB4-SYS-001`：完成 edge SQLite + fake media 全 GB vertical system test。
 - [ ] `GB4-SYS-002`：完成 cluster PostgreSQL/NATS + real media 全 GB vertical system test。
-- [ ] `GB4-SYS-003`：完成至少两类真实设备/NVR互操作报告。
+- [ ] `GB4-SYS-003`：完成至少两类真实设备/NVR互操作报告。当前 `Blocked`，报告见 [reports/gb4-sys-003.md](reports/gb4-sys-003.md)。
 - [ ] `GB4-SYS-004`：完成上级/下级平台级联互操作报告。
 - [ ] `GB4-SYS-005`：完成安全、过载和敏感信息泄漏测试报告。
 - [ ] `GB4-SYS-006`：完成三节点 chaos/rolling upgrade 报告。
