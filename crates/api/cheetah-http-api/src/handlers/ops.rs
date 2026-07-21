@@ -221,13 +221,13 @@ pub async fn reconcile(
         correlation_id: Some(ctx.0.correlation_id.to_string()),
         source_ip: None,
         node_id: state.config.node_id,
-        details: Some(format!(
+        details: Some(cheetah_signal_types::SafeDetails::new(format!(
             "scanned={} repaired={} failed={} orphans={}",
             report.nodes_scanned,
             report.missing_released + report.migrations_succeeded,
             report.missing_failed + report.migrations_failed,
             report.orphans_detected
-        )),
+        ))),
     });
 
     Ok((StatusCode::OK, Json(report)))
