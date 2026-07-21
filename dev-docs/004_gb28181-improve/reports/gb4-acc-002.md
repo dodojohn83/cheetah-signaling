@@ -25,11 +25,11 @@
 4. 运行期接线（expiry reaper）：
    - `apps/cheetah-signaling/src/workers.rs` 新增 `spawn_protocol_session_reaper_worker`，按固定间隔从 `Storage::protocol_session_repository()` 取仓储并调用 `ProtocolSessionLink::reap_expired`，取消令牌向下传播，重复 tick 幂等。
    - `apps/cheetah-signaling/src/assembly.rs` 在 GB28181 监听装配处按配置启动该 worker（间隔为 0 时不启动）。
-   - `cheetah-signal-types::config::Gb28181Config` 新增有界可配置项 `session_reaper_interval_ms`/`session_reaper_batch_size`/`session_reaper_max_per_tick`（含默认值）。
+   - `cheetah-signal-types::config::Gb28181Config` 新增有界可配置项 `session_reaper_interval_ms`/`session_reaper_batch_size`/`session_reaper_max_per_tick`（含默认值）。`SignalConfig::validate` 校验 `session_reaper_batch_size ∈ [1, MAX_PAGE_SIZE]`（启动即失败），`reap_expired` 另对 `page_size` 做 `clamp(1, MAX_PAGE_SIZE)` 兜底，避免误配置静默禁用清扫。
 
 ## 测试
 
-新增集成测试 `crates/protocols/cheetah-gb28181-module/tests/session_link.rs`（14 项，全部通过），使用 `FakeClock`/确定性 ID 与 `InMemoryProtocolSessionRepository`：
+新增集成测试 `crates/protocols/cheetah-gb28181-module/tests/session_link.rs`（15 项，全部通过），使用 `FakeClock`/确定性 ID 与 `InMemoryProtocolSessionRepository`：
 
 - REGISTER 创建会话并分配 owner；续期更新 expiry/endpoint/revision 且不新建会话；续期拒绝 CSeq 回退；
 - endpoint 漂移在续期后更新 observed source；

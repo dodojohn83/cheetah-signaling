@@ -379,6 +379,20 @@ fn reap_expired_marks_offline_and_is_idempotent() {
 }
 
 #[test]
+fn reap_expired_clamps_oversized_page_size() {
+    let mut h = Harness::new();
+    h.register(1, 1, "203.0.113.10:5060");
+    h.clock
+        .advance(DurationMs::from_seconds(i64::from(EXPIRES_SECS) + 1));
+    let now = h.clock.now_wall();
+
+    // A page size above MAX_PAGE_SIZE (1000) must be clamped rather than
+    // erroring out and silently disabling the sweep.
+    let reaped = block_on(h.link.reap_expired(&mut h.repo, now, 50_000, 1000)).unwrap();
+    assert_eq!(reaped, 1);
+}
+
+#[test]
 fn reap_expired_pages_and_skips_fresh_sessions() {
     let clock = Arc::new(InMemoryClock::new());
     let id_generator = Arc::new(InMemoryIdGenerator::new());

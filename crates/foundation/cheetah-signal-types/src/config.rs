@@ -97,6 +97,17 @@ impl SignalConfig {
                 "gb28181.catalog_fragment_max_items must be greater than zero",
             ));
         }
+        if self.gb28181.session_reaper_batch_size == 0
+            || self.gb28181.session_reaper_batch_size > crate::MAX_PAGE_SIZE
+        {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                format!(
+                    "gb28181.session_reaper_batch_size must be between 1 and {}",
+                    crate::MAX_PAGE_SIZE
+                ),
+            ));
+        }
         if self.onvif.enabled {
             if self.onvif.connect_timeout_ms.as_millis() <= 0 {
                 return Err(SignalError::new(

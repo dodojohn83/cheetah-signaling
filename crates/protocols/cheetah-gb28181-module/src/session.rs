@@ -31,7 +31,7 @@ use cheetah_domain::{
     ProtocolSession, ProtocolSessionRepository, RegistrationInfo, SessionEndpoint, SipTransport,
 };
 use cheetah_signal_types::{
-    Clock, DeviceId, IdGenerator, NodeId, OwnerEpoch, PageRequest, ProtocolIdentity,
+    Clock, DeviceId, IdGenerator, MAX_PAGE_SIZE, NodeId, OwnerEpoch, PageRequest, ProtocolIdentity,
     ProtocolSessionId, Revision, TenantId, UtcTimestamp,
 };
 
@@ -297,6 +297,9 @@ impl ProtocolSessionLink {
     /// sessions are skipped, and a concurrent modification on one session is
     /// skipped rather than aborting the whole sweep. Returns the number of
     /// sessions transitioned to offline.
+    ///
+    /// `page_size` is clamped to `[1, MAX_PAGE_SIZE]` so an out-of-range
+    /// configuration cannot disable the sweep.
     pub async fn reap_expired(
         &self,
         repo: &mut dyn ProtocolSessionRepository,
@@ -304,6 +307,7 @@ impl ProtocolSessionLink {
         page_size: u32,
         max_sessions: usize,
     ) -> Result<usize, SessionLinkError> {
+        let page_size = page_size.clamp(1, MAX_PAGE_SIZE);
         let mut expired: Vec<ProtocolSession> = Vec::new();
         let mut cursor: Option<String> = None;
         while expired.len() < max_sessions {
