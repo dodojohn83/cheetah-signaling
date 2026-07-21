@@ -373,14 +373,37 @@ impl MediaService {
         // device/channel lookup.
         uow.commit().await?;
 
-        let (device, channel) = self
+        let (device, channel) = match self
             .ensure_device_and_channel_ready(
                 uow,
                 tenant_id,
                 session.device_id(),
                 session.channel_id(),
             )
-            .await?;
+            .await
+        {
+            Ok(tuple) => tuple,
+            Err(_) => {
+                if !session.is_terminal() {
+                    self.fail_session(context, uow, session, binding, code, message)
+                        .await?;
+                    uow.commit().await?;
+                }
+                if let Err(e2) = self
+                    .media_port
+                    .release(tenant_id, binding.media_binding_id(), self.clock.as_ref())
+                    .await
+                {
+                    tracing::warn!(
+                        tenant_id = %tenant_id,
+                        binding_id = %binding.media_binding_id(),
+                        "failed to release scheduler reservation after device/channel check failure: {e2}"
+                    );
+                }
+                report.migrations_failed += 1;
+                return Ok(());
+            }
+        };
 
         let requirements = build_media_requirements(
             &device,
