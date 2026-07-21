@@ -16,8 +16,8 @@ use crate::xml::{
     extract_record_info, parse_xml,
 };
 use cheetah_gb28181_core::{
-    AccessInput, AccessOutput, DigestContext, DigestQop, DigestReplayCache, GbAccessMachine,
-    HeaderName, Method, SipMessage,
+    AccessInput, AccessOutput, AuthRateLimiter, DigestContext, DigestQop, DigestReplayCache,
+    GbAccessMachine, HeaderName, Method, SipMessage,
 };
 use secrecy::ExposeSecret;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -31,7 +31,8 @@ use parse::{
     resolve_expires,
 };
 use response::{
-    build_challenge_response, build_error_response, build_message_response, build_success_response,
+    build_challenge_response, build_error_response, build_message_response,
+    build_rate_limited_response, build_success_response,
 };
 
 /// Sans-I/O state machine for GB28181 device access.
@@ -39,6 +40,7 @@ pub struct Gb28181Access<P: CredentialProvider> {
     config: Gb28181DomainConfig,
     digest_context: DigestContext,
     replay_cache: DigestReplayCache,
+    auth_rate_limiter: AuthRateLimiter,
     credential_provider: P,
     tag_counter: AtomicU64,
     registrations: RegistrationTable,
@@ -50,6 +52,7 @@ impl<P: CredentialProvider> std::fmt::Debug for Gb28181Access<P> {
             .field("config", &self.config)
             .field("digest_context", &self.digest_context)
             .field("replay_cache", &self.replay_cache)
+            .field("auth_rate_limiter", &self.auth_rate_limiter)
             .field("credential_provider", &"<dyn CredentialProvider>")
             .field("tag_counter", &self.tag_counter)
             .finish()
@@ -68,10 +71,16 @@ impl<P: CredentialProvider> Gb28181Access<P> {
             .preferred_algorithm(config.preferred_algorithm())
             .qop(Some(DigestQop::Auth))
             .map_err(|e| AccessError::Internal(e.to_string()))?;
+        let auth_rate_limiter = AuthRateLimiter::new(
+            config.auth_max_failures_per_source(),
+            config.auth_rate_window_seconds(),
+            config.auth_rate_max_sources(),
+        );
         Ok(Self {
             config,
             digest_context: ctx,
             replay_cache: DigestReplayCache::new(1024),
+            auth_rate_limiter,
             credential_provider,
             tag_counter: AtomicU64::new(1),
             registrations: RegistrationTable::new(max_registrations),
@@ -188,6 +197,12 @@ impl<P: CredentialProvider> Gb28181Access<P> {
         let mut auth_ok = false;
         let mut auth_attempted = false;
         if let Some(auth_header) = headers.get(&HeaderName::Authorization) {
+            // Rate limiting is applied before any digest computation so that a
+            // brute-force source cannot force expensive hashing. A blocked
+            // source is rejected with 429 and a Retry-After hint.
+            if self.auth_rate_limiter.is_blocked(source.ip(), now) {
+                return Ok(self.rate_limited_response(&message, now, source.ip()));
+            }
             if self.config.auth_policy() == AuthPolicy::Required {
                 let digest = match parse_authorization(auth_header.as_str()) {
                     Ok(d) => d,
@@ -198,12 +213,12 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                     ) => {
                         return Ok(self.bad_request_response(&message));
                     }
-                    Err(_) => return self.authentication_failure_response(&message, now, false),
+                    Err(_) => return self.auth_failed(&message, now, false, source),
                 };
                 let password = match self.credential_provider.password_for(&device_id) {
                     Ok(Some(p)) => p,
                     Ok(None) => {
-                        return self.authentication_failure_response(&message, now, false);
+                        return self.auth_failed(&message, now, false, source);
                     }
                     Err(e) => {
                         warn!(device_id = %device_id, error = %e, "credential provider backend error during REGISTER");
@@ -223,7 +238,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                     Err(cheetah_gb28181_core::DigestError::StaleNonce) => {
                         return self.authentication_failure_response(&message, now, true);
                     }
-                    Err(_) => return self.authentication_failure_response(&message, now, false),
+                    Err(_) => return self.auth_failed(&message, now, false, source),
                 }
             } else {
                 // ChallengeOptional: missing password is acceptable, but a backend
@@ -240,7 +255,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                                 | cheetah_gb28181_core::DigestError::InvalidQop,
                             ) => return Ok(self.bad_request_response(&message)),
                             Err(_) => {
-                                return self.authentication_failure_response(&message, now, false);
+                                return self.auth_failed(&message, now, false, source);
                             }
                         };
                         let request_uri = line.uri.encode();
@@ -256,7 +271,10 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                             Err(cheetah_gb28181_core::DigestError::StaleNonce) => {
                                 return self.authentication_failure_response(&message, now, true);
                             }
-                            Err(_) => auth_attempted = true,
+                            Err(_) => {
+                                self.auth_rate_limiter.record_failure(source.ip(), now);
+                                auth_attempted = true;
+                            }
                         }
                     }
                     Ok(None) => {
@@ -269,6 +287,12 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                     }
                 }
             }
+        }
+
+        if auth_ok {
+            // A successful authentication clears any accumulated failures so a
+            // legitimate device is never penalised by earlier bad attempts.
+            self.auth_rate_limiter.record_success(source.ip());
         }
 
         if auth_ok
@@ -555,6 +579,36 @@ impl<P: CredentialProvider> Gb28181Access<P> {
             request,
             400,
             "Bad Request",
+            self.next_tag(),
+        ))]
+    }
+
+    /// Records a per-source authentication failure and returns the challenge
+    /// response. Used when a device presents credentials that fail to validate,
+    /// so repeated attempts from the same source accrue toward the rate limit.
+    fn auth_failed(
+        &mut self,
+        request: &SipMessage,
+        now: u64,
+        stale: bool,
+        source: std::net::SocketAddr,
+    ) -> Result<Vec<AccessOutput<Gb28181Event>>, AccessError> {
+        self.auth_rate_limiter.record_failure(source.ip(), now);
+        self.authentication_failure_response(request, now, stale)
+    }
+
+    /// Builds a 429 Too Many Requests response with a `Retry-After` hint for a
+    /// source that has exceeded the authentication failure budget.
+    fn rate_limited_response(
+        &self,
+        request: &SipMessage,
+        now: u64,
+        source: std::net::IpAddr,
+    ) -> Vec<AccessOutput<Gb28181Event>> {
+        let retry_after = self.auth_rate_limiter.retry_after_seconds(source, now);
+        vec![AccessOutput::SendResponse(build_rate_limited_response(
+            request,
+            retry_after,
             self.next_tag(),
         ))]
     }

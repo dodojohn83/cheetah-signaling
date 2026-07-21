@@ -49,6 +49,30 @@ pub(crate) fn build_error_response(
     }
 }
 
+pub(crate) fn build_rate_limited_response(
+    request: &SipMessage,
+    retry_after_seconds: u64,
+    tag: String,
+) -> SipMessage {
+    let mut headers = copy_common_headers(request);
+    if let Some(to) = request.headers().get(&HeaderName::To) {
+        headers.append(
+            HeaderName::To,
+            HeaderValue::new(add_or_replace_tag(to.as_str(), &tag)),
+        );
+    }
+    headers.append(
+        HeaderName::parse("Retry-After"),
+        HeaderValue::new(retry_after_seconds.to_string()),
+    );
+    headers.append(HeaderName::ContentLength, HeaderValue::new("0"));
+    SipMessage::Response {
+        line: StatusLine::new(429, "Too Many Requests"),
+        headers,
+        body: Vec::new(),
+    }
+}
+
 pub(crate) fn build_success_response(
     request: &SipMessage,
     contact: &SipUri,
