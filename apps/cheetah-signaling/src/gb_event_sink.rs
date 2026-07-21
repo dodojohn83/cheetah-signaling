@@ -35,7 +35,7 @@ pub struct GbApplicationEventSink {
     metrics: Arc<RequestMetrics>,
 }
 
-impl EventSink for GbApplicationEventSink {
+impl EventSink<Gb28181Event> for GbApplicationEventSink {
     fn emit(&self, event: Gb28181Event) {
         if let Err(e) = self.tx.try_send(event) {
             self.metrics.record_gb28181_event_dropped();
@@ -55,11 +55,14 @@ pub fn spawn(
     catalog_max_entries: usize,
     catalog_max_items: usize,
     cancel: tokio_util::sync::CancellationToken,
-) -> (Arc<dyn EventSink>, tokio::task::JoinHandle<()>) {
+) -> (
+    Arc<dyn EventSink<Gb28181Event>>,
+    tokio::task::JoinHandle<()>,
+) {
     let queue_depth = queue_depth.max(1);
     let (tx, mut rx) = mpsc::channel(queue_depth);
     let metrics = state.metrics.clone();
-    let sink = Arc::new(GbApplicationEventSink { tx, metrics }) as Arc<dyn EventSink>;
+    let sink = Arc::new(GbApplicationEventSink { tx, metrics }) as Arc<dyn EventSink<Gb28181Event>>;
     let mut catalog_buffer = CatalogBuffer::new(catalog_max_entries, catalog_max_items);
     let mut cleanup = tokio::time::interval(CATALOG_CLEANUP_INTERVAL);
     cleanup.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);

@@ -1,8 +1,8 @@
 //! Tokio-based UDP driver for the GB28181 access module.
 //!
 //! The driver binds a UDP socket, parses incoming SIP datagrams, forwards them
-//! to the Sans-I/O [`Gb28181Access`] state machine, and sends any produced SIP
-//! responses back to the source address. Domain events are emitted through an
+//! to any Sans-I/O [`GbAccessMachine`], and sends any produced SIP responses
+//! back to the source address. Domain events are emitted through a generic
 //! [`EventSink`] so the caller can forward them to a message bus or log them.
 
 #![warn(missing_docs)]
@@ -11,8 +11,7 @@ pub mod config;
 pub mod error;
 pub mod sink;
 
-use cheetah_gb28181_core::{SipParser, encode_message};
-use cheetah_gb28181_module::{AccessInput, AccessOutput, CredentialProvider, Gb28181Access};
+use cheetah_gb28181_core::{AccessInput, AccessOutput, GbAccessMachine, SipParser, encode_message};
 use config::DriverConfig;
 use error::DriverError;
 use sink::EventSink;
@@ -23,17 +22,17 @@ use tokio::net::UdpSocket;
 use tokio::time::MissedTickBehavior;
 use tracing::{debug, trace, warn};
 
-/// A UDP transport driver that executes the GB28181 access state machine.
-pub struct Gb28181UdpDriver<P: CredentialProvider> {
+/// A UDP transport driver that executes a GB28181 access state machine.
+pub struct Gb28181UdpDriver<M: GbAccessMachine> {
     socket: Arc<UdpSocket>,
-    access: Mutex<Gb28181Access<P>>,
-    sink: Arc<dyn EventSink>,
+    access: Mutex<M>,
+    sink: Arc<dyn EventSink<M::Event>>,
     parser_config: cheetah_gb28181_core::SipParserConfig,
     max_datagram_size: usize,
     started_at: Instant,
 }
 
-impl<P: CredentialProvider> std::fmt::Debug for Gb28181UdpDriver<P> {
+impl<M: GbAccessMachine> std::fmt::Debug for Gb28181UdpDriver<M> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Gb28181UdpDriver")
             .field("local_addr", &self.socket.local_addr())
@@ -43,23 +42,21 @@ impl<P: CredentialProvider> std::fmt::Debug for Gb28181UdpDriver<P> {
     }
 }
 
-impl<P: CredentialProvider + Send + 'static> Gb28181UdpDriver<P> {
-    /// Creates a driver bound to `config.bind_addr`.
+impl<M: GbAccessMachine + Send + 'static> Gb28181UdpDriver<M> {
+    /// Creates a driver bound to `config.bind_addr` with the supplied state
+    /// machine and event sink.
     ///
     /// Returns the driver and the local address it actually bound to (useful
     /// when `config.bind_addr` uses port `0`).
     pub async fn bind(
         config: DriverConfig,
-        domain_config: cheetah_gb28181_module::Gb28181DomainConfig,
-        credential_provider: P,
-        sink: Arc<dyn EventSink>,
+        access: M,
+        sink: Arc<dyn EventSink<M::Event>>,
     ) -> Result<(Self, SocketAddr), DriverError> {
         let socket = UdpSocket::bind(config.bind_addr)
             .await
             .map_err(DriverError::Bind)?;
         let local_addr = socket.local_addr().map_err(DriverError::Bind)?;
-        let access =
-            Gb28181Access::new(domain_config, credential_provider).map_err(DriverError::Access)?;
 
         Ok((
             Self {
@@ -76,7 +73,7 @@ impl<P: CredentialProvider + Send + 'static> Gb28181UdpDriver<P> {
 
     /// Runs the driver loop until the socket is closed.
     ///
-    /// Incoming datagrams are parsed and forwarded to [`Gb28181Access`]. A
+    /// Incoming datagrams are parsed and forwarded to [`GbAccessMachine`]. A
     /// periodic tick (once per second) is also forwarded so that registration
     /// expiry and heartbeat timeouts are processed.
     pub async fn run(self) -> Result<(), DriverError> {
@@ -119,7 +116,9 @@ impl<P: CredentialProvider + Send + 'static> Gb28181UdpDriver<P> {
 
         let outputs = {
             let mut access = self.access.lock().map_err(|_| DriverError::AccessLock)?;
-            access.process(input).map_err(DriverError::Access)?
+            access
+                .process(input)
+                .map_err(|e| DriverError::Access(Box::new(e)))?
         };
 
         self.dispatch_outputs(outputs, Some(source)).await
@@ -129,7 +128,9 @@ impl<P: CredentialProvider + Send + 'static> Gb28181UdpDriver<P> {
         let now = self.now_seconds();
         let outputs = {
             let mut access = self.access.lock().map_err(|_| DriverError::AccessLock)?;
-            access.tick(now)
+            access
+                .tick(now)
+                .map_err(|e| DriverError::Access(Box::new(e)))?
         };
 
         self.dispatch_outputs(outputs, None).await
@@ -137,7 +138,7 @@ impl<P: CredentialProvider + Send + 'static> Gb28181UdpDriver<P> {
 
     async fn dispatch_outputs(
         &self,
-        outputs: Vec<AccessOutput>,
+        outputs: Vec<AccessOutput<M::Event>>,
         response_target: Option<SocketAddr>,
     ) -> Result<(), DriverError> {
         for output in outputs {
@@ -175,7 +176,10 @@ mod tests {
     use cheetah_gb28181_core::{
         HeaderName, HeaderValue, Method, RequestLine, SipHeaders, SipMessage, SipUri,
     };
-    use cheetah_gb28181_module::{AuthPolicy, CredentialError, Gb28181DomainConfig};
+    use cheetah_gb28181_module::{
+        AuthPolicy, CredentialError, CredentialProvider, DeviceId, Gb28181Access,
+        Gb28181DomainConfig, Gb28181Event,
+    };
     use secrecy::SecretString;
     use sink::NoOpEventSink;
     use std::collections::HashMap;
@@ -196,7 +200,7 @@ mod tests {
     fn test_credential_provider(
         passwords: HashMap<String, SecretString>,
     ) -> impl CredentialProvider + 'static {
-        move |id: &cheetah_gb28181_module::DeviceId| -> Result<Option<SecretString>, CredentialError> {
+        move |id: &DeviceId| -> Result<Option<SecretString>, CredentialError> {
             Ok(passwords.get(&id.to_string()).cloned())
         }
     }
@@ -235,10 +239,11 @@ mod tests {
         let config = DriverConfig::new("127.0.0.1:0".parse().unwrap());
         let domain = test_domain_config(AuthPolicy::Required);
         let provider = test_credential_provider(HashMap::new());
-        let (driver, local_addr) =
-            Gb28181UdpDriver::bind(config, domain, provider, Arc::new(NoOpEventSink))
-                .await
-                .expect("bind");
+        let access = Gb28181Access::new(domain, provider).expect("valid access");
+        let sink: Arc<dyn EventSink<Gb28181Event>> = Arc::new(NoOpEventSink);
+        let (driver, local_addr) = Gb28181UdpDriver::bind(config, access, sink)
+            .await
+            .expect("bind");
 
         let handle = tokio::spawn(driver.run());
 
@@ -279,10 +284,11 @@ mod tests {
             SecretString::new("ignored".into()),
         );
         let provider = test_credential_provider(passwords);
-        let (driver, local_addr) =
-            Gb28181UdpDriver::bind(config, domain, provider, Arc::new(NoOpEventSink))
-                .await
-                .expect("bind");
+        let access = Gb28181Access::new(domain, provider).expect("valid access");
+        let sink: Arc<dyn EventSink<Gb28181Event>> = Arc::new(NoOpEventSink);
+        let (driver, local_addr) = Gb28181UdpDriver::bind(config, access, sink)
+            .await
+            .expect("bind");
 
         let handle = tokio::spawn(driver.run());
 

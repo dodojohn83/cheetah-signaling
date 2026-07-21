@@ -186,7 +186,7 @@ device_credential_namespace = "gb28181/tenant-a/devices"
 
 ## 10. 实施任务
 
-- [ ] `GB4-ARC-001`：移动 wire 状态机并移除 driver → module、module → Tokio/plugin SDK 依赖；更新三个 crate README。
+- [x] `GB4-ARC-001`：移动 wire 状态机并移除 driver → module、module → Tokio/plugin SDK 依赖；更新三个 crate README。
 - [ ] `GB4-ARC-002`：删除双入口和 Noop/plugin command 生产路径，建立唯一 runtime handle。
 - [ ] `GB4-ARC-003`：实现固定 shard、惰性 session、bounded mailbox 和 timer wheel，并暴露健康指标。
 - [ ] `GB4-ARC-004`：将 assembly 中 GB 业务映射迁到 module/application adapter，assembly 只保留 DI/lifecycle。
