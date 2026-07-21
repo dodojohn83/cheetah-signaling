@@ -57,15 +57,18 @@ impl TimerWheel {
         metrics: Arc<RuntimeMetrics>,
     ) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>> {
         Box::pin(async move {
-            let mut interval = interval(Duration::from_millis(tick_resolution_ms));
+            let tick_period = Duration::from_millis(tick_resolution_ms);
+            let mut interval = interval(tick_period);
             let mut pending_dispatch: VecDeque<RuntimeMessage> = VecDeque::new();
             let mut timers_by_deadline: BTreeMap<Instant, Vec<TimerEntry>> = BTreeMap::new();
             let mut timer_map: BTreeMap<TimerId, Instant> = BTreeMap::new();
+            let mut last_tick: Option<Instant> = None;
 
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
                         let now = Instant::now();
+                        record_timer_lag(&mut last_tick, now, tick_period, &metrics);
                         process_expired(
                             &senders,
                             &router,
@@ -105,6 +108,26 @@ impl TimerWheel {
             }
         })
     }
+}
+
+/// Records how much later than its scheduled period the current tick fired.
+///
+/// The lag is the elapsed time since the previous tick minus the configured
+/// tick period, clamped at zero. It is exported as a gauge reflecting the most
+/// recent sample so that persistently late ticks (a saturated or starved
+/// runtime) are observable without unbounded label growth.
+fn record_timer_lag(
+    last_tick: &mut Option<Instant>,
+    now: Instant,
+    tick_period: Duration,
+    metrics: &RuntimeMetrics,
+) {
+    if let Some(previous) = *last_tick {
+        let elapsed = now.saturating_duration_since(previous);
+        let lag = elapsed.saturating_sub(tick_period);
+        metrics.set_timer_lag_ms(lag.as_millis().min(u64::MAX as u128) as u64);
+    }
+    *last_tick = Some(now);
 }
 
 fn interval(period: Duration) -> Interval {

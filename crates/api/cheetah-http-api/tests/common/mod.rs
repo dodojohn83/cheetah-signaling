@@ -186,6 +186,7 @@ impl TestServer {
             requests: webhook_requests.clone(),
         });
 
+        let gb_metrics = Arc::new(cheetah_runtime_tokio::GbMetrics::new(4, 1024));
         let state = ApiState::new(
             config,
             storage,
@@ -195,6 +196,8 @@ impl TestServer {
             Arc::new(InMemoryDeviceOwnerResolver::new()),
             Arc::new(InMemoryMediaPort::new(Arc::clone(&id_generator))),
         )
+        .with_gb_metrics(gb_metrics.clone())
+        .with_runtime_health(gb_metrics)
         .with_webhook_service(
             secret_store,
             http_client,

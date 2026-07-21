@@ -92,6 +92,8 @@ pub fn build_router(state: ApiState) -> Router {
     let api = Router::new()
         .route("/health/live", get(health::live))
         .route("/health/ready", get(health::ready))
+        .route("/healthz", get(health::healthz))
+        .route("/readyz", get(health::readyz))
         .route("/metrics", get(health::metrics))
         .route("/api/v1/tenants", get(tenants::list_tenants))
         .route("/api/v1/tenants", post(tenants::create_tenant))

@@ -1,5 +1,6 @@
 //! Application services for Cheetah Signaling.
 
+pub mod admission_control;
 pub mod command_dispatcher;
 pub mod device_service;
 pub mod dto;
@@ -18,6 +19,7 @@ pub mod owner_reconciler;
 pub mod takeover_service;
 pub mod webhook_service;
 
+pub use admission_control::{IngressAdmission, IngressAdmissionConfig, TenantIngressAdmission};
 pub use command_dispatcher::CommandDispatcher;
 pub use device_service::DeviceService;
 pub use dto::*;

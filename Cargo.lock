@@ -667,6 +667,7 @@ dependencies = [
  "cheetah-domain",
  "cheetah-message-api",
  "cheetah-message-local",
+ "cheetah-runtime-tokio",
  "cheetah-signal-application",
  "cheetah-signal-types",
  "cheetah-storage-api",

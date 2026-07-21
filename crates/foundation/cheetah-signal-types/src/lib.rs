@@ -7,11 +7,13 @@
 
 #![doc = include_str!("../README.md")]
 
+pub mod admission;
 pub mod audit;
 pub mod config;
 pub mod context;
 pub mod error;
 pub mod event;
+pub mod gb_metrics;
 pub mod id;
 pub mod metrics;
 pub mod net;
@@ -22,6 +24,11 @@ pub mod test_support;
 pub mod time;
 pub mod trace_context;
 
+pub use admission::{
+    BacklogController, BacklogObservation, BacklogState, CoalesceDecision, Coalescer,
+    DeadLetterEntry, DeadLetterQueue, DeadLetterReason, KeyedRateLimiter, Priority, TokenBucket,
+    TokenBucketConfig, TrafficClass,
+};
 pub use audit::{AuditEvent, AuditLog, AuditOutcome, NoOpAuditLog};
 pub use config::{ConfigSource, DeploymentProfile, SignalConfig};
 pub use context::{
@@ -30,6 +37,10 @@ pub use context::{
 };
 pub use error::{FieldViolation, Result, SignalError, SignalErrorKind};
 pub use event::Event;
+pub use gb_metrics::{
+    GbCommandMethod, GbCommandOutcome, GbDevicePresence, GbMediaSessionState, GbMetricsRecorder,
+    NoopGbMetricsRecorder,
+};
 pub use id::{
     ChannelId, CorrelationId, DeliveryId, DeviceId, EndpointId, EventId, MediaBindingId,
     MediaNodeInstanceEpoch, MediaSessionId, MessageId, NodeId, NodeInstanceId, OperationId,

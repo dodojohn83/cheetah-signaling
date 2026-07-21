@@ -26,6 +26,13 @@ pub struct RuntimeMetrics {
     timers_cancelled: AtomicU64,
     timers_dropped: AtomicU64,
     pending_timer_dispatch: AtomicU64,
+    timer_lag_ms: AtomicU64,
+    messages_rate_limited: AtomicU64,
+    messages_coalesced: AtomicU64,
+    messages_shed: AtomicU64,
+    messages_dead_lettered: AtomicU64,
+    messages_redriven: AtomicU64,
+    backlog_overload_transitions: AtomicU64,
 }
 
 impl RuntimeMetrics {
@@ -109,6 +116,46 @@ impl RuntimeMetrics {
         self.pending_timer_dispatch.store(value, Ordering::Relaxed);
     }
 
+    /// Records that a message was rejected by a per-source/per-method rate limit.
+    pub fn record_message_rate_limited(&self) {
+        self.messages_rate_limited.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Records that a redundant event was coalesced into a pending one.
+    pub fn record_message_coalesced(&self) {
+        self.messages_coalesced.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Records that a low-priority message was shed during overload.
+    pub fn record_message_shed(&self) {
+        self.messages_shed.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Records that a message was moved to the dead-letter queue.
+    pub fn record_message_dead_lettered(&self) {
+        self.messages_dead_lettered.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Records that `count` dead-lettered messages were successfully redriven.
+    pub fn record_messages_redriven(&self, count: u64) {
+        if count > 0 {
+            self.messages_redriven.fetch_add(count, Ordering::Relaxed);
+        }
+    }
+
+    /// Records that the runtime transitioned into a backlog overload state.
+    pub fn record_backlog_overload_transition(&self) {
+        self.backlog_overload_transitions
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Records the most recent observed timer-wheel tick lag in milliseconds,
+    /// i.e. how much later than its scheduled resolution a tick fired. This is
+    /// a gauge reflecting the latest sample, not a cumulative counter.
+    pub fn set_timer_lag_ms(&self, value: u64) {
+        self.timer_lag_ms.store(value, Ordering::Relaxed);
+    }
+
     /// Returns a consistent point-in-time snapshot of all metrics.
     pub fn snapshot(&self) -> RuntimeMetricsSnapshot {
         RuntimeMetricsSnapshot {
@@ -123,6 +170,13 @@ impl RuntimeMetrics {
             timers_cancelled: self.timers_cancelled.load(Ordering::Relaxed),
             timers_dropped: self.timers_dropped.load(Ordering::Relaxed),
             pending_timer_dispatch: self.pending_timer_dispatch.load(Ordering::Relaxed),
+            timer_lag_ms: self.timer_lag_ms.load(Ordering::Relaxed),
+            messages_rate_limited: self.messages_rate_limited.load(Ordering::Relaxed),
+            messages_coalesced: self.messages_coalesced.load(Ordering::Relaxed),
+            messages_shed: self.messages_shed.load(Ordering::Relaxed),
+            messages_dead_lettered: self.messages_dead_lettered.load(Ordering::Relaxed),
+            messages_redriven: self.messages_redriven.load(Ordering::Relaxed),
+            backlog_overload_transitions: self.backlog_overload_transitions.load(Ordering::Relaxed),
         }
     }
 }
@@ -152,6 +206,20 @@ pub struct RuntimeMetricsSnapshot {
     pub timers_dropped: u64,
     /// Timers waiting to be dispatched to a shard (gauge).
     pub pending_timer_dispatch: u64,
+    /// Most recent timer-wheel tick lag in milliseconds (gauge).
+    pub timer_lag_ms: u64,
+    /// Messages rejected by per-source/per-method rate limiting.
+    pub messages_rate_limited: u64,
+    /// Redundant events coalesced into a pending event.
+    pub messages_coalesced: u64,
+    /// Low-priority messages shed during overload.
+    pub messages_shed: u64,
+    /// Messages moved to the dead-letter queue.
+    pub messages_dead_lettered: u64,
+    /// Dead-lettered messages successfully redriven.
+    pub messages_redriven: u64,
+    /// Transitions into the backlog overload state.
+    pub backlog_overload_transitions: u64,
 }
 
 #[cfg(test)]
