@@ -17,7 +17,7 @@
    - `unregister`：显式注销（`Expires=0`）。删除注册绑定；无绑定时幂等返回 `None`；删除带 revision 条件。
    - `keepalive`：记录 `last_keepalive_at`、维持在线并 bump revision；对“无会话”返回 `NotRegistered`、对已过期返回 `Expired`（要求重新 REGISTER）、对旧 owner epoch 返回 `StaleOwner`。
    - `acquire_owner`：分片接管设备时更新 `owner_node_id`/`owner_epoch`，要求 epoch 严格递增，相等或更旧一律拒绝为 `StaleOwner`；无会话返回 `None`。
-   - `reap_expired`：运维 reaper，用稳定游标分页有界扫描（`page_size`/`max_sessions` 双上限）已过期会话，将仍在线者 `mark_offline("expired")`；已 offline 跳过、并发冲突跳过而不中断整轮，返回本轮转 offline 数量。
+   - `reap_expired`：运维 reaper，用稳定游标分页有界扫描（`page_size`/`max_sessions` 双上限）已过期会话，将仍在线者 `mark_offline("expired")`；并发冲突跳过而不中断整轮，返回本轮转 offline 数量。已 offline 的过期会话在分页时跳过且**不计入** `max_sessions` 预算——由于 `list_expired` 按 `(updated_at, id)` 升序排列、旧的已 offline 会话排在前面，若计入预算会随 backlog 增长逐步耗尽预算而导致新过期会话永远无法被处理（starvation），故显式跳过并继续翻页。
    - `SessionLinkError` 为稳定 enum（`NotRegistered`/`Expired`/`StaleOwner`/`Repository(DomainError)`），不靠字符串判型；不记录任何原始 SIP/XML body。
    - `SessionContext` 承载由 application 解析的 tenant、内部 `DeviceId`、`ProtocolIdentity`、`LocalIdentity`、`SipTransport`、owner node/epoch 与 `CompatibilityProfile`——link 只消费这些受信输入，不自行做 listener 路由。
 2. 模块依赖：`cheetah-gb28181-module` 新增对 `cheetah-domain` 的依赖（层 4 → 层 6，向下依赖，架构审计允许）；未引入任何存储/NATS/SQLx 依赖，未改动 `cheetah-gb28181-core`/`cheetah-gb28181-driver-tokio`。driver 仍只做 SIP↔`AccessInput`/`AccessOutput` 映射。
@@ -29,14 +29,14 @@
 
 ## 测试
 
-新增集成测试 `crates/protocols/cheetah-gb28181-module/tests/session_link.rs`（15 项，全部通过），使用 `FakeClock`/确定性 ID 与 `InMemoryProtocolSessionRepository`：
+新增集成测试 `crates/protocols/cheetah-gb28181-module/tests/session_link.rs`（16 项，全部通过），使用 `FakeClock`/确定性 ID 与 `InMemoryProtocolSessionRepository`：
 
 - REGISTER 创建会话并分配 owner；续期更新 expiry/endpoint/revision 且不新建会话；续期拒绝 CSeq 回退；
 - endpoint 漂移在续期后更新 observed source；
 - 显式注销删除绑定且幂等；
 - keepalive 记录在线并 bump revision、无会话被拒、过期被拒、旧 owner epoch 被拒；
 - owner 获取递增 epoch 并 fence 旧 epoch、无会话返回 `None`；REGISTER 期间 owner takeover 生效；
-- reaper 将过期会话置 offline 且幂等、分页扫描多页、放过未过期会话。
+- reaper 将过期会话置 offline 且幂等、分页扫描多页、放过未过期会话；已 offline backlog 不占用 `max_sessions` 预算（starvation 回归测试）、page_size 超限被 clamp。
 
 ## 验证
 

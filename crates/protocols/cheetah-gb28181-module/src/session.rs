@@ -292,11 +292,16 @@ impl ProtocolSessionLink {
     /// Marks offline every session whose `expiry_at` has passed at `now`.
     ///
     /// Intended to be called from a `Runtime` tick/reaper. The sweep reads
-    /// expired sessions in bounded pages (at most `max_sessions`), then marks
-    /// each still-online session offline. It is idempotent: already-offline
-    /// sessions are skipped, and a concurrent modification on one session is
-    /// skipped rather than aborting the whole sweep. Returns the number of
-    /// sessions transitioned to offline.
+    /// expired sessions in bounded pages, collecting up to `max_sessions`
+    /// still-online sessions, then marks each of them offline. It is
+    /// idempotent: already-offline sessions are skipped, and a concurrent
+    /// modification on one session is skipped rather than aborting the whole
+    /// sweep. Returns the number of sessions transitioned to offline.
+    ///
+    /// Already-offline sessions do **not** consume the `max_sessions` budget:
+    /// the reaper keeps paging past them so a growing backlog of expired-and-
+    /// offline sessions cannot starve newly-expired ones (which the expiry
+    /// scan orders after the older, already-reaped rows).
     ///
     /// `page_size` is clamped to `[1, MAX_PAGE_SIZE]` so an out-of-range
     /// configuration cannot disable the sweep.
@@ -316,6 +321,9 @@ impl ProtocolSessionLink {
             page.cursor = cursor;
             let result = repo.list_expired(now, page).await?;
             for session in result.items {
+                if session.presence() == PresenceState::Offline {
+                    continue;
+                }
                 if expired.len() >= max_sessions {
                     break;
                 }
@@ -329,9 +337,6 @@ impl ProtocolSessionLink {
 
         let mut reaped = 0;
         for mut session in expired {
-            if session.presence() == PresenceState::Offline {
-                continue;
-            }
             session.mark_offline(self.clock.as_ref(), REASON_EXPIRED);
             match repo.save(&session).await {
                 Ok(()) => reaped += 1,

@@ -393,6 +393,77 @@ fn reap_expired_clamps_oversized_page_size() {
 }
 
 #[test]
+fn reap_expired_offline_backlog_does_not_starve_budget() {
+    let clock = Arc::new(InMemoryClock::new());
+    let id_generator = Arc::new(InMemoryIdGenerator::new());
+    let link = ProtocolSessionLink::new(clock.clone(), id_generator);
+    let mut repo = InMemoryProtocolSessionRepository::new();
+    let tenant_id = TenantId::from_uuid(uuid::Uuid::from_u128(9));
+    let node_id = NodeId::from_uuid(uuid::Uuid::from_u128(10));
+
+    let make_ctx = |device_id: DeviceId, identity: &str| SessionContext {
+        tenant_id,
+        device_id,
+        protocol_identity: ProtocolIdentity::new(identity).unwrap(),
+        local_identity: LocalIdentity {
+            listener_id: "listener-a".to_string(),
+            local_device_id: "34020000002000000001".to_string(),
+            domain: "3402000000".to_string(),
+            realm: "3402000000".to_string(),
+        },
+        transport: SipTransport::Udp,
+        owner_node_id: node_id,
+        owner_epoch: OwnerEpoch(1),
+        compatibility: CompatibilityProfile::default(),
+    };
+    let make_params = |call_id: &str, expires_secs: u32| RegisterParams {
+        endpoint: SessionEndpoint {
+            observed_source: "203.0.113.10:5060".to_string(),
+            contact_uri: "sip:x@203.0.113.10:5060".to_string(),
+            advertised_endpoint: "192.0.2.1:5060".to_string(),
+        },
+        registration: RegistrationInfo {
+            call_id: call_id.to_string(),
+            cseq: 1,
+            expires_secs,
+        },
+        expiry_at: clock
+            .now_wall()
+            .checked_add(DurationMs::from_seconds(i64::from(expires_secs)))
+            .unwrap(),
+    };
+
+    // A device that expires early and gets marked offline first, so it sorts
+    // ahead of later-expiring devices in the expiry scan.
+    let dead_device = DeviceId::from_uuid(uuid::Uuid::from_u128(300));
+    let dead_ctx = make_ctx(dead_device, "34020000001320000300");
+    block_on(link.register(&mut repo, &dead_ctx, make_params("dead", 10))).unwrap();
+    clock.advance(DurationMs::from_seconds(20));
+    let now = clock.now_wall();
+    assert_eq!(
+        block_on(link.reap_expired(&mut repo, now, 100, 100)).unwrap(),
+        1
+    );
+
+    // A second device registers later and then expires while the first stays
+    // offline in the expiry set.
+    let live_device = DeviceId::from_uuid(uuid::Uuid::from_u128(301));
+    let live_ctx = make_ctx(live_device, "34020000001320000301");
+    block_on(link.register(&mut repo, &live_ctx, make_params("live", 10))).unwrap();
+    clock.advance(DurationMs::from_seconds(20));
+    let now = clock.now_wall();
+
+    // Budget of one: the already-offline backlog must not consume it, so the
+    // newly-expired device is still reaped.
+    let reaped = block_on(link.reap_expired(&mut repo, now, 100, 1)).unwrap();
+    assert_eq!(reaped, 1);
+    let live = block_on(repo.get_by_device(tenant_id, Protocol::Gb28181, live_device))
+        .unwrap()
+        .unwrap();
+    assert_eq!(live.presence(), PresenceState::Offline);
+}
+
+#[test]
 fn reap_expired_pages_and_skips_fresh_sessions() {
     let clock = Arc::new(InMemoryClock::new());
     let id_generator = Arc::new(InMemoryIdGenerator::new());
