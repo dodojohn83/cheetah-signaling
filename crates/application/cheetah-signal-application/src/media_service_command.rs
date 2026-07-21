@@ -193,7 +193,9 @@ impl MediaService {
                     uow.media_session_repository().save(&session).await?;
                 }
 
-                if binding.state() == MediaBindingState::Active {
+                if binding.state() == MediaBindingState::Active
+                    || binding.state() == MediaBindingState::Reserved
+                {
                     let ev = binding
                         .release(self.clock.as_ref())
                         .map_err(crate::SignalError::from)?;
@@ -266,7 +268,7 @@ impl MediaService {
                 // The media node accepted the stop asynchronously. Record the
                 // stop intent durably so a lost completion still converges to a
                 // terminal state during reconciliation.
-                if !session.is_terminal() {
+                if !session.is_terminal() && session.state() != MediaSessionState::Stopping {
                     let ev = session
                         .stop(self.clock.as_ref())
                         .map_err(crate::SignalError::from)?;
