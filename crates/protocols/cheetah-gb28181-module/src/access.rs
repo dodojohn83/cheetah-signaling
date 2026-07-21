@@ -576,11 +576,16 @@ impl<P: CredentialProvider> Gb28181Access<P> {
 
         let mut outputs = Vec::with_capacity(3);
         if touch.was_offline {
+            // Presence events report the authoritative registered route, not the
+            // (spoofable) packet source, so online/offline/expiry events stay
+            // consistent and a drifting keepalive cannot publish an untrusted
+            // address.
+            let presence_source = self.registrations.send_target(&device_id).unwrap_or(source);
             outputs.push(AccessOutput::EmitEvent(
                 Gb28181Event::DevicePresenceChanged {
                     domain_id,
                     device_id: device_id.clone(),
-                    source,
+                    source: presence_source,
                     presence: DevicePresence::Online,
                 },
             ));
