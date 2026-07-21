@@ -20,6 +20,7 @@ pub mod media_session;
 pub mod node;
 pub mod operation;
 pub mod ports;
+pub mod tenant;
 pub mod webhook;
 
 #[cfg(any(test, feature = "test-util"))]
@@ -48,4 +49,5 @@ pub use operation::{
     OperationStatus, OperationStep, OperationStepStatus,
 };
 pub use ports::*;
+pub use tenant::{MAX_TENANT_NAME_LEN, Tenant};
 pub use webhook::{DeliveryStatus, WebhookConfig, WebhookDelivery, sign_webhook_payload};

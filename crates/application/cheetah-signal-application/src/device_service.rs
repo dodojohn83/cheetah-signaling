@@ -347,11 +347,15 @@ impl DeviceService {
     }
 
     /// Updates device capabilities and metadata.
+    ///
+    /// `expected_revision` is the client-observed revision from `If-Match` /
+    /// `ETag`. A mismatch returns [`DomainError::ConcurrentModification`].
     pub async fn update_device_capabilities(
         &self,
         context: &RequestContext,
         uow: &mut dyn UnitOfWork,
         device_id: DeviceId,
+        expected_revision: cheetah_signal_types::Revision,
         request: UpdateDeviceCapabilitiesRequest,
     ) -> crate::Result<DeviceDto> {
         let tenant_id = context.tenant_id;
@@ -365,6 +369,17 @@ impl DeviceService {
                     device_id.to_string(),
                 ))
             })?;
+
+        let current = device.revision();
+        if current != expected_revision {
+            return Err(crate::SignalError::new(
+                cheetah_signal_types::SignalErrorKind::FailedPrecondition,
+                format!(
+                    "device revision mismatch: If-Match {}, current {}",
+                    expected_revision.0, current.0
+                ),
+            ));
+        }
 
         let capabilities = if let Some(dtos) = request.capabilities {
             Some(

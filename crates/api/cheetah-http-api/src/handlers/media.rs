@@ -2,15 +2,17 @@
 
 #![allow(missing_docs)]
 
-use crate::{ApiRequestContext, ApiState, HttpError, IdempotencyKey, ListQuery};
+use crate::{ApiRequestContext, ApiState, HttpError, IdempotencyKey, JsonBody, ListQuery};
 use axum::{
     Json,
     extract::{Path, Query, State},
-    http::StatusCode,
+    http::{HeaderValue, StatusCode, header},
+    response::IntoResponse,
 };
+use cheetah_domain::DomainError;
 use cheetah_signal_application::dto::{
-    ControlPlaybackRequest, StartLiveRequest, StartPlaybackRequest, StartTalkRequest,
-    StopLiveRequest,
+    ControlPlaybackRequest, MediaSessionDto, StartLiveRequest, StartPlaybackRequest,
+    StartTalkRequest, StopLiveRequest,
 };
 use cheetah_signal_types::{AuditOutcome, DeviceId, MediaSessionId, Page, UtcTimestamp};
 use std::sync::Arc;
@@ -19,7 +21,7 @@ pub async fn list_sessions(
     Query(query): Query<ListQuery>,
     State(state): State<Arc<ApiState>>,
     ctx: ApiRequestContext,
-) -> Result<Json<Page<cheetah_signal_application::dto::MediaSessionDto>>, HttpError> {
+) -> Result<Json<Page<MediaSessionDto>>, HttpError> {
     ctx.require_scope("viewer")?;
     let page = query.page_request()?;
     let device_id = query
@@ -47,17 +49,15 @@ pub async fn list_sessions(
         )
         .await
         .map_err(HttpError::from)?;
-    Ok(Json(result.map(|s| {
-        cheetah_signal_application::dto::MediaSessionDto::from(&s)
-    })))
+    Ok(Json(result.map(|s| MediaSessionDto::from(&s))))
 }
 
 pub async fn create_session(
     State(state): State<Arc<ApiState>>,
     ctx: ApiRequestContext,
     idempotency: IdempotencyKey,
-    Json(body): Json<serde_json::Value>,
-) -> Result<(StatusCode, Json<serde_json::Value>), HttpError> {
+    JsonBody(body): JsonBody<serde_json::Value>,
+) -> Result<axum::response::Response, HttpError> {
     ctx.require_scope("operator")?;
     let mut uow = state.storage.begin().await.map_err(HttpError::from)?;
     let purpose = body
@@ -110,23 +110,37 @@ pub async fn create_session(
         &ctx,
         "media.session.create",
         "media_session",
-        Some(session_id),
+        Some(session_id.clone()),
         None,
         AuditOutcome::Success,
     );
-    Ok((StatusCode::ACCEPTED, Json(body)))
+    let mut response = (StatusCode::ACCEPTED, Json(body)).into_response();
+    if let Ok(value) = HeaderValue::from_str(&format!("/api/v1/media/sessions/{session_id}")) {
+        response.headers_mut().insert(header::LOCATION, value);
+    }
+    Ok(response)
 }
 
 pub async fn get_session(
     Path(id): Path<String>,
-    State(_state): State<Arc<ApiState>>,
+    State(state): State<Arc<ApiState>>,
     ctx: ApiRequestContext,
-) -> Result<Json<serde_json::Value>, HttpError> {
+) -> Result<Json<MediaSessionDto>, HttpError> {
     ctx.require_scope("viewer")?;
-    let _media_session_id = id.parse::<MediaSessionId>().map_err(HttpError::from)?;
-    Err(HttpError::NotImplemented(
-        "get_session not implemented".to_string(),
-    ))
+    let media_session_id = id.parse::<MediaSessionId>().map_err(HttpError::from)?;
+    let mut uow = state.storage.begin().await.map_err(HttpError::from)?;
+    let session = uow
+        .media_session_repository()
+        .get(ctx.tenant_id, media_session_id)
+        .await
+        .map_err(HttpError::from)?
+        .ok_or_else(|| {
+            HttpError::from(DomainError::not_found(
+                "media session",
+                media_session_id.to_string(),
+            ))
+        })?;
+    Ok(Json(MediaSessionDto::from(&session)))
 }
 
 pub async fn stop_session(
@@ -134,7 +148,7 @@ pub async fn stop_session(
     State(state): State<Arc<ApiState>>,
     ctx: ApiRequestContext,
     idempotency: IdempotencyKey,
-    Json(_body): Json<serde_json::Value>,
+    JsonBody(_body): JsonBody<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, HttpError> {
     ctx.require_scope("operator")?;
     let media_session_id = id.parse::<MediaSessionId>().map_err(HttpError::from)?;
@@ -167,7 +181,7 @@ pub async fn control_session(
     State(state): State<Arc<ApiState>>,
     ctx: ApiRequestContext,
     idempotency: IdempotencyKey,
-    Json(body): Json<serde_json::Value>,
+    JsonBody(body): JsonBody<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, HttpError> {
     ctx.require_scope("operator")?;
     let media_session_id = id.parse::<MediaSessionId>().map_err(HttpError::from)?;

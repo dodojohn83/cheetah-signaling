@@ -4,11 +4,13 @@
 
 扫描所有router、OpenAPI和handler：
 
-- [ ] tenant list/create；
-- [ ] node/media-node list；
-- [ ] media session get；
-- [ ] operation入口；
-- [ ] 其他`NotImplemented`、空page或固定成功入口。
+- [x] tenant list/create；
+- [x] node/media-node list；
+- [x] media session get；
+- [x] operation入口；
+- [x] 其他`NotImplemented`、空page或固定成功入口。
+
+证据：[`reports/prod-api-001-not-implemented-closure.md`](reports/prod-api-001-not-implemented-closure.md)。
 
 每个入口只能选择：
 
@@ -19,14 +21,21 @@
 
 ## 2. PROD-API-002：REST 契约
 
-- `/api/v1`使用typed DTO和显式domain mapper。
-- async操作返回202、Operation location/ID和可轮询结果。
-- 写请求强制Idempotency-Key；更新强制ETag/revision。
-- 列表使用稳定opaque cursor和max page size。
-- RFC 9457错误包含稳定code、safe detail、violations和request ID。
-- path tenant与token tenant不一致返回403且不泄漏资源存在。
+- [x] `/api/v1`使用typed DTO和显式domain mapper（写路径 `JsonBody` → domain DTO）。
+- [x] async操作返回202、`Location`（Operation / MediaSession）和可轮询结果。
+- [x] 写请求强制`Idempotency-Key`（operation/media create/stop/control）。
+- [x] 更新强制ETag/revision（device/webhook PATCH 要求 `If-Match`；GET/更新返回 `ETag`；不匹配 → 412 `FAILED_PRECONDITION`）。
+- [x] 列表使用稳定opaque cursor和max page size。
+- [x] RFC 9457错误包含稳定code、safe detail、violations和`request_id`（含 JSON 解析失败）。
+- [x] path/token tenant 不一致返回403（`extract::resolve_tenant_id`）。
 
-测试覆盖成功、400、401、403、404、409、412、429、timeout、unsupported、unavailable和敏感信息。
+证据：
+
+- [`reports/prod-api-002-rest-contract.md`](reports/prod-api-002-rest-contract.md)
+- [`reports/prod-api-002-error-matrix.md`](reports/prod-api-002-error-matrix.md)
+
+测试覆盖：成功路径 + 400 / 401 / 403 / 404 / 412 / 429 Problem Details；
+409 / timeout / unsupported / unavailable 仍可按能力补齐。
 
 ## 3. PROD-API-003：SSE/Webhook
 

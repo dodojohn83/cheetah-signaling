@@ -3,6 +3,7 @@
 mod assembly;
 mod gb_event_sink;
 mod onvif_discovery;
+mod workers;
 
 use cheetah_signal_types::config::ConfigSource;
 use std::time::Duration;

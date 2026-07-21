@@ -18,6 +18,68 @@ paths:
       responses:
         '200':
           description: Service is ready.
+  /api/v1/tenants:
+    get:
+      operationId: listTenants
+      parameters:
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+        - name: cursor
+          in: query
+          schema:
+            type: string
+        - name: name_prefix
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: A page of tenants.
+    post:
+      operationId: createTenant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: Tenant created.
+        '200':
+          description: Idempotent hit of an existing tenant.
+  /api/v1/nodes:
+    get:
+      operationId: listNodes
+      parameters:
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+        - name: cursor
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: A page of alive signaling nodes.
+  /api/v1/media-nodes:
+    get:
+      operationId: listMediaNodes
+      parameters:
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+        - name: cursor
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: A page of alive media nodes.
   /api/v1/devices:
     get:
       operationId: listDevices
@@ -83,6 +145,20 @@ paths:
         '200':
           description: Operation details.
   /api/v1/media/sessions:
+    get:
+      operationId: listMediaSessions
+      parameters:
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+        - name: cursor
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: A page of media sessions.
     post:
       operationId: createMediaSession
       requestBody:
@@ -94,6 +170,21 @@ paths:
       responses:
         '202':
           description: Media session accepted.
+  /api/v1/media/sessions/{id}:
+    get:
+      operationId: getMediaSession
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Media session details.
+        '404':
+          description: Media session not found.
   /api/v1/events/stream:
     get:
       operationId: eventStream

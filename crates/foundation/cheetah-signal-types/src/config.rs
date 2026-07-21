@@ -544,6 +544,18 @@ pub struct ClusterConfig {
     pub heartbeat_interval_ms: DurationMs,
 }
 
+/// Whether at least one alive media node is required for process readiness.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum MediaReadinessPolicy {
+    /// Media nodes are optional; API readiness does not depend on them.
+    #[default]
+    Optional,
+    /// At least one media node with a valid lease is required for readiness.
+    Required,
+}
+
 /// Media coordination configuration.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
@@ -555,6 +567,8 @@ pub struct MediaConfig {
     pub max_sessions_per_device: u32,
     /// Default timeout for media invitations.
     pub default_invite_timeout_ms: DurationMs,
+    /// Whether readiness requires an alive media node.
+    pub readiness_policy: MediaReadinessPolicy,
 }
 
 impl Default for MediaConfig {
@@ -563,6 +577,7 @@ impl Default for MediaConfig {
             default_media_node_selector: "round-robin".to_string(),
             max_sessions_per_device: 4,
             default_invite_timeout_ms: DurationMs::from_seconds(30),
+            readiness_policy: MediaReadinessPolicy::Optional,
         }
     }
 }
@@ -607,6 +622,10 @@ pub struct Gb28181Config {
     /// Maximum number of catalog items that may be accumulated for a single
     /// (tenant, device, sequence number) before the partial assembly is dropped.
     pub catalog_fragment_max_items: u32,
+    /// When true, accept REGISTER without successful digest authentication
+    /// after issuing a challenge. Production deployments must leave this
+    /// `false` (the default). Development profiles may enable it explicitly.
+    pub challenge_optional: bool,
 }
 
 impl Default for Gb28181Config {
@@ -620,6 +639,7 @@ impl Default for Gb28181Config {
             default_tenant_id: None,
             catalog_fragment_max_entries: 1024,
             catalog_fragment_max_items: 8192,
+            challenge_optional: false,
         }
     }
 }

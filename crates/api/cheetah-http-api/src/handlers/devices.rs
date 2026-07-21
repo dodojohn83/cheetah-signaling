@@ -2,11 +2,12 @@
 
 #![allow(missing_docs)]
 
-use crate::{ApiRequestContext, ApiState, HttpError, ListQuery};
+use crate::{ApiRequestContext, ApiState, HttpError, IfMatchRevision, JsonBody, ListQuery};
 use axum::{
     Json,
     extract::{Path, Query, State},
-    http::StatusCode,
+    http::{HeaderValue, StatusCode, header},
+    response::IntoResponse,
 };
 use cheetah_domain::DomainError;
 use cheetah_signal_application::dto::{
@@ -50,7 +51,7 @@ pub async fn list_devices(
 pub async fn create_device(
     State(state): State<Arc<ApiState>>,
     ctx: ApiRequestContext,
-    Json(request): Json<RegisterDeviceRequest>,
+    JsonBody(request): JsonBody<RegisterDeviceRequest>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), HttpError> {
     ctx.require_scope("operator")?;
     let mut uow = state.storage.begin().await.map_err(HttpError::from)?;
@@ -87,7 +88,7 @@ pub async fn get_device(
     Path(id): Path<String>,
     State(state): State<Arc<ApiState>>,
     ctx: ApiRequestContext,
-) -> Result<Json<serde_json::Value>, HttpError> {
+) -> Result<axum::response::Response, HttpError> {
     ctx.require_scope("viewer")?;
     let device_id = id.parse::<DeviceId>().map_err(HttpError::from)?;
     let mut uow = state.storage.begin().await.map_err(HttpError::from)?;
@@ -97,27 +98,33 @@ pub async fn get_device(
         .await
         .map_err(HttpError::from)?
         .ok_or_else(|| HttpError::from(DomainError::not_found("device", device_id.to_string())))?;
-    Ok(Json(
-        serde_json::to_value(cheetah_signal_application::dto::DeviceDto::from(&device))
-            .map_err(HttpError::from)?,
-    ))
+    let dto = cheetah_signal_application::dto::DeviceDto::from(&device);
+    let revision = dto.revision.0;
+    let body = serde_json::to_value(dto).map_err(HttpError::from)?;
+    let mut response = (StatusCode::OK, Json(body)).into_response();
+    if let Ok(etag) = HeaderValue::from_str(&format!("\"{revision}\"")) {
+        response.headers_mut().insert(header::ETAG, etag);
+    }
+    Ok(response)
 }
 
 pub async fn update_device(
     Path(id): Path<String>,
     State(state): State<Arc<ApiState>>,
     ctx: ApiRequestContext,
-    Json(request): Json<UpdateDeviceCapabilitiesRequest>,
-) -> Result<Json<serde_json::Value>, HttpError> {
+    if_match: IfMatchRevision,
+    JsonBody(request): JsonBody<UpdateDeviceCapabilitiesRequest>,
+) -> Result<axum::response::Response, HttpError> {
     ctx.require_scope("operator")?;
     let device_id = id.parse::<DeviceId>().map_err(HttpError::from)?;
     let mut uow = state.storage.begin().await.map_err(HttpError::from)?;
     let result = state
         .device_service
-        .update_device_capabilities(&ctx.0, &mut *uow, device_id, request)
+        .update_device_capabilities(&ctx.0, &mut *uow, device_id, if_match.0, request)
         .await
         .map_err(HttpError::from)?;
     let target_id = Some(result.device_id.to_string());
+    let revision = result.revision.0;
     let body = serde_json::to_value(result).map_err(HttpError::from)?;
     crate::audit::record(
         &state,
@@ -128,7 +135,11 @@ pub async fn update_device(
         None,
         AuditOutcome::Success,
     );
-    Ok(Json(body))
+    let mut response = (StatusCode::OK, Json(body)).into_response();
+    if let Ok(etag) = HeaderValue::from_str(&format!("\"{revision}\"")) {
+        response.headers_mut().insert(header::ETAG, etag);
+    }
+    Ok(response)
 }
 
 pub async fn retire_device(

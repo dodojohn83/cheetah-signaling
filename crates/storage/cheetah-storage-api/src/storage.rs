@@ -2,7 +2,7 @@
 
 use crate::{
     MediaNodeRepository, Migration, NodeRepository, OperationStepRepository, OwnerRepository,
-    StorageError,
+    StorageError, TenantRepository,
 };
 use cheetah_domain::UnitOfWork;
 
@@ -29,6 +29,9 @@ pub trait Storage: Send + Sync {
 
     /// Returns the media node repository backed by the storage pools.
     fn media_node_repository(&self) -> Box<dyn MediaNodeRepository>;
+
+    /// Returns the tenant repository backed by the storage pools.
+    fn tenant_repository(&self) -> Box<dyn TenantRepository>;
 
     /// Gracefully closes the storage.
     async fn close(self) -> Result<(), StorageError>;

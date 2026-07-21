@@ -242,7 +242,7 @@ impl ListQuery {
     }
 }
 
-/// Extractor for the `Idempotency-Key` header.
+/// Extractor for the required `Idempotency-Key` header on mutating write paths.
 #[derive(Clone, Debug)]
 pub struct IdempotencyKey(pub String);
 
@@ -270,13 +270,78 @@ fn idempotency_key_from_header(
                 ))
             })?;
             if key.is_empty() {
-                Ok(uuid::Uuid::now_v7().to_string())
-            } else {
-                Ok(key.to_string())
+                return Err(HttpError::Signal(SignalError::new(
+                    SignalErrorKind::InvalidArgument,
+                    "Idempotency-Key header must not be empty",
+                )));
             }
+            Ok(key.to_string())
         }
-        None => Ok(uuid::Uuid::now_v7().to_string()),
+        None => Err(HttpError::Signal(SignalError::new(
+            SignalErrorKind::InvalidArgument,
+            "Idempotency-Key header is required",
+        ))),
     }
+}
+
+/// Extractor for the required `If-Match` revision used by optimistic updates.
+///
+/// Accepts bare integers (`42`), quoted ETags (`"42"`), and weak ETags (`W/"42"`).
+#[derive(Clone, Copy, Debug)]
+pub struct IfMatchRevision(pub cheetah_signal_types::Revision);
+
+impl FromRequestParts<Arc<ApiState>> for IfMatchRevision {
+    type Rejection = HttpError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        _state: &Arc<ApiState>,
+    ) -> Result<Self, Self::Rejection> {
+        let header = parts.headers.get("if-match").ok_or_else(|| {
+            HttpError::Signal(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                "If-Match header is required for this update",
+            ))
+        })?;
+        let text = header.to_str().map_err(|_| {
+            HttpError::Signal(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                "If-Match header is not valid UTF-8",
+            ))
+        })?;
+        let revision = parse_if_match_revision(text)?;
+        Ok(Self(revision))
+    }
+}
+
+fn parse_if_match_revision(value: &str) -> Result<cheetah_signal_types::Revision, HttpError> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed == "*" {
+        return Err(HttpError::Signal(SignalError::new(
+            SignalErrorKind::InvalidArgument,
+            "If-Match must be a specific revision ETag, not empty or *",
+        )));
+    }
+    // Clients may send a comma-separated list; require a single tag for v1.
+    if trimmed.contains(',') {
+        return Err(HttpError::Signal(SignalError::new(
+            SignalErrorKind::InvalidArgument,
+            "If-Match must contain a single revision ETag",
+        )));
+    }
+    let tag = trimmed
+        .strip_prefix("W/")
+        .or_else(|| trimmed.strip_prefix("w/"))
+        .unwrap_or(trimmed)
+        .trim()
+        .trim_matches('"');
+    let number = tag.parse::<u64>().map_err(|_| {
+        HttpError::Signal(SignalError::new(
+            SignalErrorKind::InvalidArgument,
+            "If-Match must be a numeric revision ETag",
+        ))
+    })?;
+    Ok(cheetah_signal_types::Revision(number))
 }
 
 #[cfg(test)]
@@ -301,9 +366,19 @@ mod tests {
     }
 
     #[test]
-    fn idempotency_key_from_header_generates_uuid_when_missing() {
-        let key = idempotency_key_from_header(None).unwrap();
-        assert!(!key.is_empty());
+    fn idempotency_key_from_header_requires_header() {
+        assert!(idempotency_key_from_header(None).is_err());
+        let empty = axum::http::HeaderValue::from_static("");
+        assert!(idempotency_key_from_header(Some(&empty)).is_err());
+    }
+
+    #[test]
+    fn parse_if_match_revision_accepts_quoted_and_weak_etags() {
+        assert_eq!(parse_if_match_revision("42").unwrap().0, 42);
+        assert_eq!(parse_if_match_revision("\"7\"").unwrap().0, 7);
+        assert_eq!(parse_if_match_revision("W/\"9\"").unwrap().0, 9);
+        assert!(parse_if_match_revision("*").is_err());
+        assert!(parse_if_match_revision("").is_err());
     }
 
     fn auth_with_tenant(tenant_id: Option<TenantId>) -> AuthContext {

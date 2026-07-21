@@ -1,7 +1,7 @@
 //! Extension repository ports that do not belong to the domain UnitOfWork.
 
 use crate::StorageError;
-use cheetah_domain::{ClusterNode, MediaNode, NodeLoad, OwnerInfo};
+use cheetah_domain::{ClusterNode, MediaNode, NodeLoad, OwnerInfo, Tenant};
 use cheetah_signal_types::{
     DeviceId, NodeId, NodeInstanceId, OperationId, Page, PageRequest, TenantId, UtcTimestamp,
 };
@@ -174,6 +174,25 @@ pub trait NodeRepository: Send + Sync {
         instance_id: NodeInstanceId,
         updated_at: UtcTimestamp,
     ) -> Result<bool, StorageError>;
+}
+
+/// Repository for tenant records.
+#[async_trait::async_trait]
+pub trait TenantRepository: Send + Sync {
+    /// Creates or updates a tenant. Soft-deleted rows may be resurrected by a
+    /// create with the same `tenant_id`.
+    async fn save(&mut self, tenant: &Tenant) -> Result<(), StorageError>;
+
+    /// Returns a non-deleted tenant by id.
+    async fn get(&self, tenant_id: TenantId) -> Result<Option<Tenant>, StorageError>;
+
+    /// Lists non-deleted tenants with stable cursor pagination ordered by
+    /// `(updated_at, tenant_id)`.
+    async fn list(
+        &self,
+        name_prefix: Option<&str>,
+        page: PageRequest,
+    ) -> Result<Page<Tenant>, StorageError>;
 }
 
 /// Repository for media node registrations and leases.

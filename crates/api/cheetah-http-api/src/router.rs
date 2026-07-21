@@ -7,8 +7,9 @@ use crate::handlers::{
 use crate::rate_limit::rate_limit_middleware;
 use axum::{
     Router,
+    body::Body,
     extract::DefaultBodyLimit,
-    http::{HeaderValue, Request, Response, StatusCode},
+    http::{HeaderValue, Request, Response, StatusCode, header},
     middleware::{Next, from_fn, from_fn_with_state},
     response::Json,
     routing::{delete, get, patch, post},
@@ -24,6 +25,10 @@ use tower_http::{
     trace::TraceLayer,
 };
 use tracing::Span;
+
+/// Extension carrying the request identifier for correlation.
+#[derive(Clone, Debug)]
+pub struct RequestId(pub String);
 
 /// Builds the public API router.
 pub fn build_router(state: ApiState) -> Router {
@@ -167,7 +172,7 @@ pub fn build_router(state: ApiState) -> Router {
 
     api.layer(
         ServiceBuilder::new()
-            .layer(from_fn(trace_context_middleware))
+            .layer(from_fn(request_id_and_trace_middleware))
             .layer(trace_layer)
             .layer(CompressionLayer::new())
             .layer(cors)
@@ -179,12 +184,17 @@ pub fn build_router(state: ApiState) -> Router {
     )
 }
 
-/// Echoes incoming `traceparent` and `tracestate` headers back to the response
-/// so HTTP callers can correlate distributed traces end-to-end.
-async fn trace_context_middleware(
-    request: Request<axum::body::Body>,
-    next: Next,
-) -> Response<axum::body::Body> {
+/// Propagates W3C trace headers, assigns a stable `x-request-id`, and injects
+/// `request_id` into RFC 9457 Problem Details error bodies when missing.
+async fn request_id_and_trace_middleware(mut request: Request<Body>, next: Next) -> Response<Body> {
+    let request_id = request
+        .headers()
+        .get("x-request-id")
+        .and_then(|v| v.to_str().ok())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
+
     let traceparent = request
         .headers()
         .get("traceparent")
@@ -195,14 +205,76 @@ async fn trace_context_middleware(
         .get("tracestate")
         .cloned()
         .filter(|v| v.to_str().ok().and_then(validate_tracestate).is_some());
+
+    request
+        .extensions_mut()
+        .insert(RequestId(request_id.clone()));
+
     let mut response = next.run(request).await;
+
+    if let Ok(value) = HeaderValue::from_str(&request_id) {
+        response.headers_mut().insert("x-request-id", value);
+    }
     if let Some(tp) = traceparent {
         response.headers_mut().insert("traceparent", tp);
     }
     if let Some(ts) = tracestate {
         response.headers_mut().insert("tracestate", ts);
     }
-    response
+
+    inject_request_id_into_problem_details(response, &request_id).await
+}
+
+async fn inject_request_id_into_problem_details(
+    response: Response<Body>,
+    request_id: &str,
+) -> Response<Body> {
+    let status = response.status();
+    if !(status.is_client_error() || status.is_server_error()) {
+        return response;
+    }
+    let content_type = response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    if !content_type.contains("json") {
+        return response;
+    }
+
+    let (parts, body) = response.into_parts();
+    let bytes = match axum::body::to_bytes(body, 64 * 1024).await {
+        Ok(b) => b,
+        Err(_) => {
+            return Response::from_parts(parts, Body::empty());
+        }
+    };
+
+    let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return Response::from_parts(parts, Body::from(bytes));
+    };
+    let Some(obj) = value.as_object_mut() else {
+        return Response::from_parts(parts, Body::from(bytes));
+    };
+    // Only rewrite RFC 9457-style problem objects that expose a stable code.
+    if !obj.contains_key("code") {
+        return Response::from_parts(parts, Body::from(bytes));
+    }
+    let missing = match obj.get("request_id") {
+        None => true,
+        Some(v) => v.is_null() || v.as_str().is_some_and(str::is_empty),
+    };
+    if !missing {
+        return Response::from_parts(parts, Body::from(bytes));
+    }
+    obj.insert(
+        "request_id".to_string(),
+        serde_json::Value::String(request_id.to_string()),
+    );
+    match serde_json::to_vec(&value) {
+        Ok(new_bytes) => Response::from_parts(parts, Body::from(new_bytes)),
+        Err(_) => Response::from_parts(parts, Body::from(bytes)),
+    }
 }
 
 fn build_cors_layer(origins: &[String]) -> CorsLayer {

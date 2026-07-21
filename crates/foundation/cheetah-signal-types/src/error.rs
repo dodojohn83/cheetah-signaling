@@ -37,6 +37,8 @@ pub enum SignalErrorKind {
     Unsupported,
     /// A version mismatch was detected.
     VersionMismatch,
+    /// A precondition such as If-Match revision failed.
+    FailedPrecondition,
     /// The supplied pagination cursor has expired or is no longer valid.
     CursorExpired,
     /// A protocol level operation failed.
@@ -67,6 +69,7 @@ impl SignalErrorKind {
             Self::Unavailable => "UNAVAILABLE",
             Self::Unsupported => "UNSUPPORTED",
             Self::VersionMismatch => "VERSION_MISMATCH",
+            Self::FailedPrecondition => "FAILED_PRECONDITION",
             Self::CursorExpired => "CURSOR_EXPIRED",
             Self::ProtocolFailed => "PROTOCOL_FAILED",
             Self::MediaFailed => "MEDIA_FAILED",
@@ -107,6 +110,7 @@ impl SignalErrorKind {
             Self::Unavailable => 503,
             Self::Unsupported => 501,
             Self::VersionMismatch => 409,
+            Self::FailedPrecondition => 412,
             Self::CursorExpired => 400,
             Self::ProtocolFailed => 502,
             Self::MediaFailed => 502,
@@ -132,6 +136,7 @@ impl SignalErrorKind {
             Self::Unavailable => 14,
             Self::Unsupported => 12,
             Self::VersionMismatch => 9,
+            Self::FailedPrecondition => 9,
             Self::CursorExpired => 3,
             Self::ProtocolFailed => 14,
             Self::MediaFailed => 14,

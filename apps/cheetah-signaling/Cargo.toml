@@ -24,6 +24,7 @@ cheetah-message-api = { path = "../../crates/messaging/cheetah-message-api" }
 cheetah-message-local = { path = "../../crates/messaging/cheetah-message-local" }
 cheetah-message-nats = { path = "../../crates/messaging/cheetah-message-nats" }
 cheetah-cluster-ownership = { path = "../../crates/cluster/cheetah-cluster-ownership" }
+cheetah-cluster-registry = { path = "../../crates/cluster/cheetah-cluster-registry" }
 cheetah-media-scheduler = { path = "../../crates/media/cheetah-media-scheduler" }
 cheetah-media-client = { path = "../../crates/media/cheetah-media-client" }
 cheetah-gb28181-module = { path = "../../crates/protocols/cheetah-gb28181-module" }

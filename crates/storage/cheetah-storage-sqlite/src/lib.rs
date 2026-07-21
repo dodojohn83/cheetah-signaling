@@ -11,6 +11,7 @@ mod operation_step;
 mod owner;
 mod repository;
 mod storage;
+mod tenant;
 mod unit_of_work;
 mod webhook;
 
@@ -20,3 +21,4 @@ pub use node::SqliteNodeRepository;
 pub use operation_step::SqliteOperationStepRepository;
 pub use owner::{SqliteDeviceOwnerResolver, SqliteOwnerRepository};
 pub use storage::SqliteStorage;
+pub use tenant::SqliteTenantRepository;

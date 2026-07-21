@@ -46,10 +46,13 @@ pub struct ApiConfig {
     pub log_format: LogFormat,
     /// Whether raw protocol body logging is enabled.
     pub protocol_body_logging: bool,
+    /// When true, readiness requires at least one alive media node.
+    pub media_nodes_required: bool,
 }
 
 impl From<&SignalConfig> for ApiConfig {
     fn from(config: &SignalConfig) -> Self {
+        use cheetah_signal_types::config::MediaReadinessPolicy;
         Self {
             listen_addr: config.http.listen_addr.clone(),
             port: config.http.port,
@@ -64,6 +67,10 @@ impl From<&SignalConfig> for ApiConfig {
             log_level: config.system.log_level.clone(),
             log_format: config.observability.log_format,
             protocol_body_logging: config.observability.protocol_body_logging,
+            media_nodes_required: matches!(
+                config.media.readiness_policy,
+                MediaReadinessPolicy::Required
+            ),
         }
     }
 }

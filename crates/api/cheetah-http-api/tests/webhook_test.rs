@@ -84,9 +84,17 @@ async fn webhook_crud_and_validation() {
         .await
         .unwrap();
     assert_eq!(get.status(), 200);
+    let etag = get
+        .headers()
+        .get("etag")
+        .and_then(|v| v.to_str().ok())
+        .expect("ETag on GET")
+        .to_string();
+    let got: serde_json::Value = get.json().await.unwrap();
+    let revision = got["revision"].as_u64().expect("revision");
 
-    // Update webhook.
-    let update = server
+    // Update without If-Match is rejected.
+    let missing = server
         .request(
             reqwest::Method::PATCH,
             &format!("/api/v1/webhooks/{webhook_id}"),
@@ -98,9 +106,26 @@ async fn webhook_crud_and_validation() {
         .send()
         .await
         .unwrap();
+    assert_eq!(missing.status(), 400);
+
+    // Update webhook with matching ETag.
+    let update = server
+        .request(
+            reqwest::Method::PATCH,
+            &format!("/api/v1/webhooks/{webhook_id}"),
+        )
+        .header("If-Match", etag)
+        .json(&serde_json::json!({
+            "url": "http://example.com/webhook-v2",
+            "event_types": ["device.offline"],
+        }))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(update.status(), 200);
     let updated: serde_json::Value = update.json().await.unwrap();
     assert_eq!(updated["url"], "http://example.com/webhook-v2");
+    assert!(updated["revision"].as_u64().unwrap() > revision);
 
     // Trigger a manual delivery.
     let trigger = server

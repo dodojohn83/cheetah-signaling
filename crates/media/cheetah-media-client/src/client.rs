@@ -181,6 +181,11 @@ impl MediaControlClient {
         cheetah_signal_contracts::cheetah::common::v1::MediaControlExecuteResponse,
         MediaClientError,
     > {
+        validate_media_target(
+            endpoint,
+            request.media_node_id,
+            request.target_media_node_instance_epoch,
+        )?;
         let key = self.pool_key(
             endpoint,
             request.media_node_id,
@@ -279,6 +284,11 @@ impl MediaControlClient {
         request: MediaListSessionsRequest,
     ) -> Result<cheetah_signal_contracts::cheetah::common::v1::ListSessionsResponse, MediaClientError>
     {
+        validate_media_target(
+            endpoint,
+            request.media_node_id,
+            request.media_node_instance_epoch,
+        )?;
         let key = self.pool_key(
             endpoint,
             request.media_node_id,
@@ -596,6 +606,43 @@ impl std::fmt::Debug for MediaControlClient {
             .field("config", &self.config)
             .finish_non_exhaustive()
     }
+}
+
+/// Validates endpoint and fencing identifiers before establishing a connection.
+fn validate_media_target(
+    endpoint: &str,
+    media_node_id: NodeId,
+    instance_epoch: MediaNodeInstanceEpoch,
+) -> Result<(), MediaClientError> {
+    if endpoint.trim().is_empty() {
+        return Err(MediaClientError::InvalidEndpoint(
+            "endpoint must not be empty".to_string(),
+        ));
+    }
+    if media_node_id.as_uuid().is_nil() {
+        return Err(MediaClientError::MissingIdentifier {
+            field: "media_node_id",
+            reason: "must not be nil".to_string(),
+        });
+    }
+    if instance_epoch.0 == 0 {
+        return Err(MediaClientError::MissingIdentifier {
+            field: "media_node_instance_epoch",
+            reason: "must be non-zero for fencing".to_string(),
+        });
+    }
+    let uri = endpoint
+        .parse::<Uri>()
+        .map_err(|_| MediaClientError::InvalidEndpoint(endpoint.to_string()))?;
+    let scheme = uri
+        .scheme_str()
+        .ok_or_else(|| MediaClientError::InvalidEndpoint(endpoint.to_string()))?;
+    if !(scheme.eq_ignore_ascii_case("https") || scheme.eq_ignore_ascii_case("http")) {
+        return Err(MediaClientError::InvalidEndpoint(format!(
+            "unsupported scheme '{scheme}'"
+        )));
+    }
+    Ok(())
 }
 
 fn build_command_envelope(request: MediaControlRequest) -> CommandEnvelope {

@@ -31,8 +31,27 @@ pub async fn ready(State(state): State<Arc<ApiState>>) -> Result<impl IntoRespon
     if migration.status != MigrationStatus::Current {
         return Ok((
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(serde_json::json!({"status": "not_ready"})),
+            Json(serde_json::json!({"status": "not_ready", "reason": "migration"})),
         ));
+    }
+    if state.config.media_nodes_required {
+        let now = state.clock.now_wall();
+        let page = cheetah_signal_types::PageRequest::new(1).map_err(HttpError::from)?;
+        let alive = state
+            .storage
+            .media_node_repository()
+            .list_alive(now, page)
+            .await
+            .map_err(HttpError::from)?;
+        if alive.items.is_empty() {
+            return Ok((
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({
+                    "status": "not_ready",
+                    "reason": "media_nodes_unavailable"
+                })),
+            ));
+        }
     }
     Ok((StatusCode::OK, Json(serde_json::json!({"status": "ready"}))))
 }

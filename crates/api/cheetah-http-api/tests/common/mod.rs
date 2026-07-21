@@ -25,6 +25,25 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+/// Options controlling how [`TestServer`] is assembled.
+///
+/// Defaults disable rate limiting and JWT, and enable the static API key.
+#[derive(Clone, Debug, Default)]
+pub struct TestServerOptions {
+    /// Token-bucket requests per second. Zero disables rate limiting.
+    pub rate_limit_requests_per_second: u32,
+    /// Token-bucket burst capacity. Zero disables rate limiting.
+    pub rate_limit_burst: u32,
+    /// Optional PEM-encoded RSA public key for JWT validation.
+    pub jwt_public_key_pem: Option<String>,
+    /// JWT audience claims accepted by the server.
+    pub jwt_audience: Vec<String>,
+    /// JWT issuer claims accepted by the server.
+    pub jwt_issuer: Vec<String>,
+    /// When true, leave `static_api_key` empty so only JWT auth is available.
+    pub disable_static_api_key: bool,
+}
+
 /// A running HTTP API server and its client for tests.
 pub struct TestServer {
     base_url: String,
@@ -86,13 +105,6 @@ struct TestWebhookHttpClient {
     requests: Arc<Mutex<Vec<WebhookHttpRequest>>>,
 }
 
-impl TestWebhookHttpClient {
-    fn take_requests(&self) -> Vec<WebhookHttpRequest> {
-        let mut requests = self.requests.lock().unwrap();
-        std::mem::take(&mut *requests)
-    }
-}
-
 #[async_trait::async_trait]
 impl WebhookHttpClient for TestWebhookHttpClient {
     async fn send(
@@ -111,6 +123,11 @@ impl WebhookHttpClient for TestWebhookHttpClient {
 impl TestServer {
     /// Starts a new server on a random local port with an empty SQLite database.
     pub async fn new() -> Self {
+        Self::with_options(TestServerOptions::default()).await
+    }
+
+    /// Starts a server with custom rate-limit / auth options.
+    pub async fn with_options(options: TestServerOptions) -> Self {
         let id_generator: Arc<dyn IdGenerator> = Arc::new(InMemoryIdGenerator::new());
         let node_id = id_generator.generate_node_id();
         let temp_suffix = format!("{}-{}", node_id, uuid::Uuid::now_v7());
@@ -127,10 +144,19 @@ impl TestServer {
         );
         storage.migration().run().await.expect("run migrations");
 
-        let api_key = "test-api-key-with-at-least-32-characters".to_string();
+        let api_key = if options.disable_static_api_key {
+            String::new()
+        } else {
+            "test-api-key-with-at-least-32-characters".to_string()
+        };
         let tenant_id = uuid::Uuid::now_v7().to_string();
         let security = SecurityConfig {
             static_api_key: SecretString::from(api_key.clone()),
+            jwt_public_key_ref: SecretString::from(
+                options.jwt_public_key_pem.clone().unwrap_or_default(),
+            ),
+            jwt_audience: options.jwt_audience.clone(),
+            jwt_issuer: options.jwt_issuer.clone(),
             ..Default::default()
         };
         let config = ApiConfig {
@@ -139,14 +165,15 @@ impl TestServer {
             read_timeout_ms: 5000,
             request_body_limit_bytes: 1024 * 1024,
             cors_allowed_origins: Vec::new(),
-            rate_limit_requests_per_second: 0,
-            rate_limit_burst: 0,
+            rate_limit_requests_per_second: options.rate_limit_requests_per_second,
+            rate_limit_burst: options.rate_limit_burst,
             webhook_delivery_interval_ms: 0,
             node_id,
             security,
             log_level: "info".to_string(),
             log_format: LogFormat::Json,
             protocol_body_logging: false,
+            media_nodes_required: false,
         };
 
         cheetah_http_api::logging::init_tracing(&config.log_level, config.log_format);
@@ -187,8 +214,11 @@ impl TestServer {
         };
         let base_url = format!("http://127.0.0.1:{}", addr.port());
 
+        // Bypass ambient HTTP(S)_PROXY so tests hit the local listener directly.
+        // Environments often set no_proxy=localhost but not 127.0.0.1.
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(5))
+            .no_proxy()
             .build()
             .expect("build client");
 
@@ -227,10 +257,11 @@ impl TestServer {
     /// Returns an authenticated request builder for the given method and path.
     pub fn request(&self, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
         let url = format!("{}{}", self.base_url, path);
-        self.client
-            .request(method, url)
-            .header("x-api-key", &self.api_key)
-            .header("x-tenant-id", &self.tenant_id)
+        let mut builder = self.client.request(method, url);
+        if !self.api_key.is_empty() {
+            builder = builder.header("x-api-key", &self.api_key);
+        }
+        builder.header("x-tenant-id", &self.tenant_id)
     }
 
     /// Returns an unauthenticated request builder for the given method and path.

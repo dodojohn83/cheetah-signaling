@@ -76,6 +76,7 @@ async fn device_service_register_update_and_retire() {
             &context,
             &mut ctx.uow,
             device.device_id,
+            device.revision,
             UpdateDeviceCapabilitiesRequest {
                 capabilities: Some(capabilities),
                 metadata: None,

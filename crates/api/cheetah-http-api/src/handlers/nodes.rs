@@ -2,46 +2,74 @@
 
 #![allow(missing_docs)]
 
-use crate::{ApiRequestContext, ApiState, HttpError};
+use crate::{ApiRequestContext, ApiState, HttpError, ListQuery};
 use axum::{
     Json,
     extract::{Path, Query, State},
     http::StatusCode,
 };
+use cheetah_domain::ClusterNode;
 use cheetah_signal_types::{NodeId, Page};
-
 use std::sync::Arc;
 
-use crate::ListQuery;
-
 pub async fn list_nodes(
-    Query(_query): Query<ListQuery>,
-    State(_state): State<Arc<ApiState>>,
+    Query(query): Query<ListQuery>,
+    State(state): State<Arc<ApiState>>,
     ctx: ApiRequestContext,
-) -> Result<Json<Page<serde_json::Value>>, HttpError> {
+) -> Result<Json<Page<ClusterNode>>, HttpError> {
     ctx.require_scope("viewer")?;
-    Err(HttpError::NotImplemented(
-        "signaling node list pagination is not yet implemented".to_string(),
-    ))
+    let page = query.page_request()?;
+    let now = state.clock.now_wall();
+    let result = state
+        .storage
+        .node_repository()
+        .list_alive(now, page)
+        .await
+        .map_err(HttpError::from)?;
+    Ok(Json(result))
 }
 
 pub async fn list_media_nodes(
-    Query(_query): Query<ListQuery>,
+    Query(query): Query<ListQuery>,
     State(state): State<Arc<ApiState>>,
     ctx: ApiRequestContext,
 ) -> Result<Json<Page<serde_json::Value>>, HttpError> {
     ctx.require_scope("viewer")?;
+    let page = query.page_request()?;
+    let now = state.clock.now_wall();
 
+    // Prefer the persistent registry (cursor-stable) when available; fall back
+    // to the media-port scheduler view for environments without a registry table.
+    let registry_page = state
+        .storage
+        .media_node_repository()
+        .list_alive(now, page)
+        .await
+        .map_err(HttpError::from)?;
+
+    if !registry_page.items.is_empty() || registry_page.next_cursor.is_none() {
+        let items: Result<Vec<_>, _> = registry_page
+            .items
+            .into_iter()
+            .map(serde_json::to_value)
+            .collect();
+        let items = items.map_err(HttpError::from)?;
+        return Ok(Json(Page {
+            items,
+            next_cursor: registry_page.next_cursor,
+            total: registry_page.total,
+        }));
+    }
+
+    // Empty registry with no next_cursor: also consult the live media port.
     let nodes = state
         .media_service
         .list_media_nodes(&ctx.0)
         .await
         .map_err(HttpError::from)?;
-
     let total = nodes.len() as u64;
     let items: Result<Vec<_>, _> = nodes.into_iter().map(serde_json::to_value).collect();
     let items = items.map_err(HttpError::from)?;
-
     Ok(Json(Page {
         items,
         next_cursor: None,

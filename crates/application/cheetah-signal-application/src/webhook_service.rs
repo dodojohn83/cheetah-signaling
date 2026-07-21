@@ -168,10 +168,14 @@ impl WebhookService {
     }
 
     /// Updates a webhook configuration.
+    ///
+    /// `expected_revision` is the client-observed revision from `If-Match` /
+    /// `ETag`. A mismatch returns a failed-precondition error (HTTP 412).
     pub async fn update_webhook(
         &self,
         context: &RequestContext,
         webhook_id: WebhookId,
+        expected_revision: cheetah_signal_types::Revision,
         request: UpdateWebhookRequest,
     ) -> crate::Result<WebhookConfig> {
         let mut uow = self.begin().await?;
@@ -180,6 +184,16 @@ impl WebhookService {
             .get(context.tenant_id, webhook_id)
             .await?
             .ok_or_else(|| DomainError::not_found("webhook", webhook_id.to_string()))?;
+        let current = config.revision();
+        if current != expected_revision {
+            return Err(crate::SignalError::new(
+                cheetah_signal_types::SignalErrorKind::FailedPrecondition,
+                format!(
+                    "webhook revision mismatch: If-Match {}, current {}",
+                    expected_revision.0, current.0
+                ),
+            ));
+        }
         config.update(
             self.clock.as_ref(),
             request.url,

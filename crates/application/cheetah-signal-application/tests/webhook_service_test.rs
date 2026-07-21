@@ -209,6 +209,7 @@ async fn webhook_create_list_and_update_round_trip() {
         .update_webhook(
             &context,
             config.webhook_id(),
+            config.revision(),
             UpdateWebhookRequest {
                 url: Some("http://example.com/webhook-v2".to_string()),
                 secret_ref: None,

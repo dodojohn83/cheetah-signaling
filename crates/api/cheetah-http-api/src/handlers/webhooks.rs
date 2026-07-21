@@ -1,10 +1,10 @@
 //! Webhook HTTP handlers.
 
-use crate::{ApiRequestContext, ApiState, HttpError, ListQuery};
+use crate::{ApiRequestContext, ApiState, HttpError, IfMatchRevision, JsonBody, ListQuery};
 use axum::{
     Json,
     extract::{Path, Query, State},
-    http::StatusCode,
+    http::{HeaderValue, StatusCode, header},
     response::IntoResponse,
 };
 use cheetah_signal_application::{
@@ -40,10 +40,11 @@ pub async fn list_webhooks(
 pub async fn create_webhook(
     State(state): State<Arc<ApiState>>,
     ctx: ApiRequestContext,
-    Json(body): Json<CreateWebhookRequest>,
+    JsonBody(body): JsonBody<CreateWebhookRequest>,
 ) -> Result<impl IntoResponse, HttpError> {
     ctx.require_scope("operator")?;
     let config = state.webhook_service()?.create_webhook(&ctx, body).await?;
+    let revision = config.revision().0;
     crate::audit::record(
         &state,
         &ctx,
@@ -53,7 +54,11 @@ pub async fn create_webhook(
         None,
         AuditOutcome::Success,
     );
-    Ok((StatusCode::CREATED, Json(config)))
+    let mut response = (StatusCode::CREATED, Json(config)).into_response();
+    if let Ok(etag) = HeaderValue::from_str(&format!("\"{revision}\"")) {
+        response.headers_mut().insert(header::ETAG, etag);
+    }
+    Ok(response)
 }
 
 /// Gets a webhook configuration by id.
@@ -68,7 +73,12 @@ pub async fn get_webhook(
         .webhook_service()?
         .get_webhook(&ctx, webhook_id)
         .await?;
-    Ok((StatusCode::OK, Json(config)))
+    let revision = config.revision().0;
+    let mut response = (StatusCode::OK, Json(config)).into_response();
+    if let Ok(etag) = HeaderValue::from_str(&format!("\"{revision}\"")) {
+        response.headers_mut().insert(header::ETAG, etag);
+    }
+    Ok(response)
 }
 
 /// Updates a webhook configuration.
@@ -76,14 +86,16 @@ pub async fn update_webhook(
     Path(id): Path<String>,
     State(state): State<Arc<ApiState>>,
     ctx: ApiRequestContext,
-    Json(body): Json<UpdateWebhookRequest>,
+    if_match: IfMatchRevision,
+    JsonBody(body): JsonBody<UpdateWebhookRequest>,
 ) -> Result<impl IntoResponse, HttpError> {
     ctx.require_scope("operator")?;
     let webhook_id = parse_webhook_id(&id)?;
     let config = state
         .webhook_service()?
-        .update_webhook(&ctx, webhook_id, body)
+        .update_webhook(&ctx, webhook_id, if_match.0, body)
         .await?;
+    let revision = config.revision().0;
     crate::audit::record(
         &state,
         &ctx,
@@ -93,7 +105,11 @@ pub async fn update_webhook(
         None,
         AuditOutcome::Success,
     );
-    Ok((StatusCode::OK, Json(config)))
+    let mut response = (StatusCode::OK, Json(config)).into_response();
+    if let Ok(etag) = HeaderValue::from_str(&format!("\"{revision}\"")) {
+        response.headers_mut().insert(header::ETAG, etag);
+    }
+    Ok(response)
 }
 
 /// Deletes a webhook configuration.

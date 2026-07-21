@@ -694,6 +694,7 @@ async fn update_device_info(
             context,
             &mut *uow,
             device.device_id(),
+            device.revision(),
             UpdateDeviceCapabilitiesRequest {
                 capabilities: None,
                 metadata: Some(merged),

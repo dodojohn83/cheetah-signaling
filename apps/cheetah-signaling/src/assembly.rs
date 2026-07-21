@@ -5,8 +5,15 @@
 
 use crate::gb_event_sink;
 use crate::onvif_discovery;
+use crate::workers::{
+    OwnerCommandHandler, SingleNodeOwnerResolver, StorageDeviceProtocolLookup,
+    build_assignment_service, build_drain_service, build_takeover_service, builtin_plugin_ids,
+    spawn_drain_migration_worker, spawn_inbox_worker, spawn_node_lease_worker,
+    spawn_owner_lease_renew_worker, spawn_takeover_health_worker,
+};
 use ::time::{OffsetDateTime, UtcOffset};
-use cheetah_cluster_ownership::lease::CachingDeviceOwnerResolver;
+use cheetah_cluster_ownership::{CachingDeviceOwnerResolver, OwnerLeaseService};
+use cheetah_cluster_registry::NodeLeaseService;
 use cheetah_domain::ports::{DeviceOwnerResolver, MediaPort};
 use cheetah_domain::{DomainEvent, EventPublisher, MediaEventHandler};
 use cheetah_gb28181_driver_tokio::Gb28181UdpDriver;
@@ -23,8 +30,8 @@ use cheetah_media_scheduler::{
     MediaEventConsumerConfig, MediaRegistryConfig, NoopReconciliationHandler, PeerIdentity,
     PersistentMediaNodeRegistry, SchedulerConfig, SchedulerMediaPort,
 };
-use cheetah_message_api::RawEventBus;
 use cheetah_message_api::publisher::publish_domain_event;
+use cheetah_message_api::{RawCommandBus, RawEventBus};
 use cheetah_message_local::InProcessMessageBus;
 use cheetah_message_nats::NatsBus;
 use cheetah_onvif_driver_tokio::OnvifTokioDriverFactory;
@@ -91,7 +98,7 @@ pub struct SignalingRuntime {
     pub grpc_addr: SocketAddr,
     /// Plugin host with built-in factories and validated external manifests.
     #[allow(dead_code)]
-    pub plugin_host: PluginHost,
+    pub plugin_host: Arc<tokio::sync::Mutex<PluginHost>>,
     /// Readiness flag: true only after all startup stages have completed.
     pub ready: Arc<AtomicBool>,
     /// Observed health of supervised background components.
@@ -250,6 +257,25 @@ impl IdGenerator for UuidIdGenerator {
     }
 }
 
+/// Plugin secret provider backed by the process secret store.
+struct ProcessSecretProvider {
+    store: Arc<dyn SecretStore>,
+}
+
+#[async_trait::async_trait]
+impl cheetah_plugin_host::SecretProvider for ProcessSecretProvider {
+    async fn get_secret(
+        &self,
+        name: &str,
+    ) -> Result<Option<SecretString>, cheetah_plugin_sdk::PluginError> {
+        match self.store.get(name) {
+            Ok(secret) => Ok(Some(secret)),
+            Err(e) if e.kind() == cheetah_signal_types::SignalErrorKind::NotFound => Ok(None),
+            Err(e) => Err(cheetah_plugin_sdk::PluginError::Driver(e.to_string())),
+        }
+    }
+}
+
 /// Credential provider backed by the process secret store.
 ///
 /// The configured `device_password_ref` template may contain the `{device_id}`
@@ -374,6 +400,161 @@ fn resolve_node_id(
     Ok(id)
 }
 
+/// Owner repository that mints a fresh pool-backed handle per call.
+struct StorageBackedOwnerRepo {
+    storage: Arc<dyn Storage>,
+}
+
+#[async_trait::async_trait]
+impl cheetah_storage_api::OwnerRepository for StorageBackedOwnerRepo {
+    async fn get(
+        &self,
+        tenant_id: TenantId,
+        device_id: DeviceId,
+    ) -> Result<Option<cheetah_domain::OwnerInfo>, cheetah_storage_api::StorageError> {
+        self.storage
+            .owner_repository()
+            .get(tenant_id, device_id)
+            .await
+    }
+
+    async fn set(
+        &mut self,
+        tenant_id: TenantId,
+        device_id: DeviceId,
+        owner: cheetah_domain::OwnerInfo,
+    ) -> Result<(), cheetah_storage_api::StorageError> {
+        self.storage
+            .owner_repository()
+            .set(tenant_id, device_id, owner)
+            .await
+    }
+
+    async fn clear(
+        &mut self,
+        tenant_id: TenantId,
+        device_id: DeviceId,
+    ) -> Result<(), cheetah_storage_api::StorageError> {
+        self.storage
+            .owner_repository()
+            .clear(tenant_id, device_id)
+            .await
+    }
+
+    async fn acquire(
+        &mut self,
+        tenant_id: TenantId,
+        device_id: DeviceId,
+        node_id: NodeId,
+        now: UtcTimestamp,
+        lease_until: UtcTimestamp,
+    ) -> Result<cheetah_domain::OwnerInfo, cheetah_storage_api::StorageError> {
+        self.storage
+            .owner_repository()
+            .acquire(tenant_id, device_id, node_id, now, lease_until)
+            .await
+    }
+
+    async fn renew(
+        &mut self,
+        tenant_id: TenantId,
+        device_id: DeviceId,
+        node_id: NodeId,
+        lease_until: UtcTimestamp,
+    ) -> Result<Option<cheetah_domain::OwnerInfo>, cheetah_storage_api::StorageError> {
+        self.storage
+            .owner_repository()
+            .renew(tenant_id, device_id, node_id, lease_until)
+            .await
+    }
+
+    async fn release(
+        &mut self,
+        tenant_id: TenantId,
+        device_id: DeviceId,
+        node_id: NodeId,
+        epoch: cheetah_signal_types::OwnerEpoch,
+    ) -> Result<(), cheetah_storage_api::StorageError> {
+        self.storage
+            .owner_repository()
+            .release(tenant_id, device_id, node_id, epoch)
+            .await
+    }
+
+    async fn list_by_node(
+        &self,
+        node_id: NodeId,
+        page: cheetah_signal_types::PageRequest,
+    ) -> Result<
+        cheetah_signal_types::Page<cheetah_storage_api::OwnedDevice>,
+        cheetah_storage_api::StorageError,
+    > {
+        self.storage
+            .owner_repository()
+            .list_by_node(node_id, page)
+            .await
+    }
+}
+
+/// Node repository that mints a fresh pool-backed handle per call.
+struct StorageBackedNodeRepo {
+    storage: Arc<dyn Storage>,
+}
+
+#[async_trait::async_trait]
+impl cheetah_storage_api::NodeRepository for StorageBackedNodeRepo {
+    async fn register(
+        &mut self,
+        node: cheetah_domain::ClusterNode,
+    ) -> Result<(), cheetah_storage_api::StorageError> {
+        self.storage.node_repository().register(node).await
+    }
+
+    async fn heartbeat(
+        &mut self,
+        node_id: NodeId,
+        instance_id: cheetah_signal_types::NodeInstanceId,
+        lease_until: UtcTimestamp,
+        updated_at: UtcTimestamp,
+        load: cheetah_domain::NodeLoad,
+    ) -> Result<Option<cheetah_domain::ClusterNode>, cheetah_storage_api::StorageError> {
+        self.storage
+            .node_repository()
+            .heartbeat(node_id, instance_id, lease_until, updated_at, load)
+            .await
+    }
+
+    async fn get(
+        &self,
+        node_id: NodeId,
+    ) -> Result<Option<cheetah_domain::ClusterNode>, cheetah_storage_api::StorageError> {
+        self.storage.node_repository().get(node_id).await
+    }
+
+    async fn list_alive(
+        &self,
+        now: UtcTimestamp,
+        page: cheetah_signal_types::PageRequest,
+    ) -> Result<
+        cheetah_signal_types::Page<cheetah_domain::ClusterNode>,
+        cheetah_storage_api::StorageError,
+    > {
+        self.storage.node_repository().list_alive(now, page).await
+    }
+
+    async fn mark_draining(
+        &mut self,
+        node_id: NodeId,
+        instance_id: cheetah_signal_types::NodeInstanceId,
+        updated_at: UtcTimestamp,
+    ) -> Result<bool, cheetah_storage_api::StorageError> {
+        self.storage
+            .node_repository()
+            .mark_draining(node_id, instance_id, updated_at)
+            .await
+    }
+}
+
 /// Resolves the GB28181 SIP digest secret from the secret store.
 fn resolve_gb28181_digest_secret(
     secret_store: &dyn SecretStore,
@@ -448,62 +629,96 @@ pub async fn start(
         }
     };
 
-    let owner_repo: Arc<dyn cheetah_storage_api::OwnerRepository> =
-        storage.owner_repository().into();
-    let owner_resolver: Arc<dyn DeviceOwnerResolver> = Arc::new(CachingDeviceOwnerResolver::new(
-        owner_repo,
+    let owner_repo_arc: Arc<dyn cheetah_storage_api::OwnerRepository> =
+        Arc::new(StorageBackedOwnerRepo {
+            storage: storage.clone(),
+        });
+    let owner_repo_mutex: Arc<tokio::sync::Mutex<dyn cheetah_storage_api::OwnerRepository>> =
+        Arc::new(tokio::sync::Mutex::new(StorageBackedOwnerRepo {
+            storage: storage.clone(),
+        }));
+
+    let lease_ttl = if config.cluster.lease_ttl_ms.as_millis() > 0 {
+        config.cluster.lease_ttl_ms
+    } else {
+        DurationMs::from_millis(10_000)
+    };
+    let owner_lease = Arc::new(OwnerLeaseService::new(
+        owner_repo_mutex.clone(),
+        clock.clone(),
+        node_id,
+        lease_ttl,
+    ));
+
+    let caching_resolver = CachingDeviceOwnerResolver::new(
+        owner_repo_arc.clone(),
         clock.clone(),
         DurationMs::from_millis(1000),
         1024,
-    ));
+    );
+    // Edge/single-node: auto-acquire ownership when missing. Cluster still uses
+    // the caching resolver; assignment workers fill ownership separately.
+    let owner_resolver: Arc<dyn DeviceOwnerResolver> = if config.cluster.enabled {
+        Arc::new(caching_resolver)
+    } else {
+        Arc::new(SingleNodeOwnerResolver::new(
+            OwnerLeaseService::new(owner_repo_mutex.clone(), clock.clone(), node_id, lease_ttl),
+            caching_resolver,
+        ))
+    };
 
-    let bus: Arc<dyn RawEventBus> = match config.messaging.backend {
-        MessagingBackend::Local => Arc::new(InProcessMessageBus::new(
-            config.messaging.max_pending.max(64),
-            config.messaging.max_pending.max(64),
-        )),
-        MessagingBackend::Nats => {
-            let url = if let Some(ref_key) = config.messaging.nats_url_ref.as_deref() {
-                secret_store
-                    .get(ref_key)
-                    .map_err(|e| {
-                        format!("failed to resolve messaging.nats_url_ref ({ref_key}): {e}")
-                    })?
-                    .expose_secret()
-                    .to_string()
-            } else {
-                config.messaging.nats_url.clone()
-            };
-            if url.is_empty() {
-                return Err(
-                    "messaging.nats_url or messaging.nats_url_ref is required when backend=nats"
-                        .into(),
-                );
+    let (bus, command_bus): (Arc<dyn RawEventBus>, Arc<dyn RawCommandBus>) =
+        match config.messaging.backend {
+            MessagingBackend::Local => {
+                let local = Arc::new(InProcessMessageBus::new(
+                    config.messaging.max_pending.max(64),
+                    config.messaging.max_pending.max(64),
+                ));
+                (local.clone(), local)
             }
-            let scheme = url.split("://").next().unwrap_or(&url).to_lowercase();
-            if !matches!(scheme.as_str(), "tls" | "wss") {
-                return Err(
+            MessagingBackend::Nats => {
+                let url = if let Some(ref_key) = config.messaging.nats_url_ref.as_deref() {
+                    secret_store
+                        .get(ref_key)
+                        .map_err(|e| {
+                            format!("failed to resolve messaging.nats_url_ref ({ref_key}): {e}")
+                        })?
+                        .expose_secret()
+                        .to_string()
+                } else {
+                    config.messaging.nats_url.clone()
+                };
+                if url.is_empty() {
+                    return Err(
+                        "messaging.nats_url or messaging.nats_url_ref is required when backend=nats"
+                            .into(),
+                    );
+                }
+                let scheme = url.split("://").next().unwrap_or(&url).to_lowercase();
+                if !matches!(scheme.as_str(), "tls" | "wss") {
+                    return Err(
                     "messaging.nats_url must use tls:// or wss:// scheme for cluster deployments"
                         .into(),
                 );
+                }
+                let connect_timeout = Duration::from_secs(5);
+                let operation_timeout = Duration::from_secs(30);
+                let nats = Arc::new(
+                    NatsBus::connect(
+                        url,
+                        node_id,
+                        owner_resolver.clone(),
+                        connect_timeout,
+                        operation_timeout,
+                    )
+                    .await?,
+                );
+                (nats.clone(), nats)
             }
-            let connect_timeout = Duration::from_secs(5);
-            let operation_timeout = Duration::from_secs(30);
-            Arc::new(
-                NatsBus::connect(
-                    url,
-                    node_id,
-                    owner_resolver.clone(),
-                    connect_timeout,
-                    operation_timeout,
-                )
-                .await?,
-            ) as Arc<dyn RawEventBus>
-        }
-        _ => {
-            return Err("unsupported messaging.backend; use local or nats".into());
-        }
-    };
+            _ => {
+                return Err("unsupported messaging.backend; use local or nats".into());
+            }
+        };
     let publisher: Arc<dyn EventPublisher> = Arc::new(EventBusPublisher::new(bus.clone()));
 
     let mut media_registry_config = MediaRegistryConfig::production();
@@ -555,6 +770,52 @@ pub async fn start(
         info!("outbox relay worker started");
     }
 
+    // Placeholder; plugin_host is constructed below and shared with the command handler.
+    // Inbox is started after plugin activation so handle_command can reach real drivers.
+
+    // Owner lease renew for devices currently owned by this node.
+    {
+        let renew_interval = Duration::from_millis(
+            u64::try_from(lease_ttl.as_millis().max(1_000) / 3).unwrap_or(3_000),
+        );
+        workers.push(spawn_owner_lease_renew_worker(
+            owner_lease.clone(),
+            owner_repo_arc.clone(),
+            node_id,
+            renew_interval,
+            cancel.child_token(),
+        ));
+        info!(?renew_interval, "owner lease renew worker started");
+    }
+
+    // Cluster/edge node registration + heartbeat against cluster_nodes table.
+    {
+        let node_repo: Arc<tokio::sync::Mutex<dyn cheetah_storage_api::NodeRepository>> =
+            Arc::new(tokio::sync::Mutex::new(StorageBackedNodeRepo {
+                storage: storage.clone(),
+            }));
+        let heartbeat_ms = if config.cluster.heartbeat_interval_ms.as_millis() > 0 {
+            config.cluster.heartbeat_interval_ms.as_millis()
+        } else {
+            3_000
+        };
+        let node_lease = NodeLeaseService::new(
+            node_repo,
+            clock.clone(),
+            id_generator.clone(),
+            node_id,
+            config.system.node_name.clone(),
+            env!("CARGO_PKG_VERSION"),
+            lease_ttl,
+        );
+        workers.push(spawn_node_lease_worker(
+            node_lease,
+            Duration::from_millis(u64::try_from(heartbeat_ms).unwrap_or(3_000)),
+            cancel.child_token(),
+        ));
+        info!("node lease/heartbeat worker started");
+    }
+
     // Shared application state is constructed before protocol adapters so that
     // inbound protocol events can be routed through application services.
     let audit: Arc<dyn cheetah_signal_types::AuditLog> = Arc::new(TracingAuditLog);
@@ -565,7 +826,7 @@ pub async fn start(
         clock.clone(),
         id_generator.clone(),
         bus.clone(),
-        owner_resolver,
+        owner_resolver.clone(),
         media_port,
     )
     .with_media_metrics(media_metrics.clone())
@@ -594,18 +855,64 @@ pub async fn start(
     }));
     info!("media event consumer worker started");
 
-    // Plugin host: register built-in GB28181 and ONVIF factories and validate
-    // any external plugin manifests before protocol workers start.
+    // Plugin host: register built-in GB28181 and ONVIF factories, activate them,
+    // and validate any external plugin manifests before protocol workers start.
     let host_sdk_version = Version::new(0, 1, 0);
-    let mut plugin_host = PluginHost::new(host_sdk_version, config.onvif.request_timeout_ms);
+    let secret_provider: Arc<dyn cheetah_plugin_host::SecretProvider> =
+        Arc::new(ProcessSecretProvider {
+            store: secret_store.clone(),
+        });
+    let mut plugin_host = PluginHost::with_secret_provider(
+        host_sdk_version,
+        config.onvif.request_timeout_ms,
+        secret_provider,
+    );
     let gb_factory = Gb28181DriverFactory::new();
+    let gb_name = gb_factory.name();
     plugin_host
-        .register_builtin(gb_factory.name(), Box::new(gb_factory))
+        .register_builtin(gb_name.clone(), Box::new(gb_factory))
         .map_err(|e| format!("failed to register gb28181 plugin factory: {e}"))?;
     let onvif_factory = OnvifTokioDriverFactory::new();
+    let onvif_name = onvif_factory.name();
     plugin_host
-        .register_builtin(onvif_factory.name(), Box::new(onvif_factory))
+        .register_builtin(onvif_name.clone(), Box::new(onvif_factory))
         .map_err(|e| format!("failed to register onvif plugin factory: {e}"))?;
+
+    let (gb_plugin_id, onvif_plugin_id) = builtin_plugin_ids(id_generator.as_ref());
+    // Activate ONVIF first (start is lightweight). GB activation needs digest config.
+    if let Err(e) = plugin_host
+        .activate_builtin(onvif_plugin_id, onvif_name, serde_json::json!({}), None)
+        .await
+    {
+        warn!(error = %e, "failed to activate built-in ONVIF plugin instance");
+    } else {
+        info!(%onvif_plugin_id, "activated built-in ONVIF plugin instance");
+    }
+    if config.gb28181.sip_port > 0 {
+        let domain_id = if config.gb28181.sip_domain.is_empty() {
+            "34020000002000000001".to_string()
+        } else {
+            config.gb28181.sip_domain.clone()
+        };
+        let digest_name = config
+            .gb28181
+            .digest_secret_ref
+            .clone()
+            .unwrap_or_else(|| "gb28181.digest".to_string());
+        let gb_config = serde_json::json!({
+            "domain_id": domain_id,
+            "realm": domain_id,
+            "digest_secret_name": digest_name,
+        });
+        if let Err(e) = plugin_host
+            .activate_builtin(gb_plugin_id, gb_name, gb_config, None)
+            .await
+        {
+            warn!(error = %e, "failed to activate built-in GB28181 plugin instance");
+        } else {
+            info!(%gb_plugin_id, "activated built-in GB28181 plugin instance");
+        }
+    }
 
     if config.plugins.enabled {
         validate_external_plugins(
@@ -614,6 +921,74 @@ pub async fn start(
             config.plugins.max_plugin_instances,
         )
         .await?;
+    }
+
+    let plugin_host = Arc::new(tokio::sync::Mutex::new(plugin_host));
+
+    // Inbox consumer after plugins so handle_command can reach real adapters.
+    {
+        let handler: Arc<dyn cheetah_signal_application::CommandHandler> =
+            Arc::new(OwnerCommandHandler::new(plugin_host.clone(), clock.clone()));
+        workers.push(spawn_inbox_worker(
+            storage.clone(),
+            command_bus.clone(),
+            owner_resolver.clone(),
+            handler,
+            clock.clone(),
+            node_id,
+            cancel.child_token(),
+        ));
+        info!("inbox consumer worker started");
+    }
+
+    // Cluster drain/migration + takeover service (armed for reconnect paths).
+    if config.cluster.enabled {
+        let assignment = build_assignment_service(
+            Arc::new(tokio::sync::Mutex::new(StorageBackedNodeRepo {
+                storage: storage.clone(),
+            })),
+            owner_repo_mutex.clone(),
+            clock.clone(),
+            lease_ttl,
+        );
+        let drain_service = Arc::new(build_drain_service(
+            assignment,
+            owner_repo_mutex.clone(),
+            Arc::new(tokio::sync::Mutex::new(StorageBackedNodeRepo {
+                storage: storage.clone(),
+            })),
+            clock.clone(),
+        ));
+        let protocol_lookup: Arc<dyn cheetah_cluster_ownership::DeviceProtocolLookup> =
+            Arc::new(StorageDeviceProtocolLookup::new(storage.clone()));
+        workers.push(spawn_drain_migration_worker(
+            drain_service,
+            Arc::new(StorageBackedNodeRepo {
+                storage: storage.clone(),
+            }),
+            protocol_lookup,
+            clock.clone(),
+            node_id,
+            Duration::from_secs(30),
+            cancel.child_token(),
+        ));
+        info!("drain migration worker started");
+    }
+
+    {
+        let takeover = Arc::new(build_takeover_service(
+            storage.clone(),
+            clock.clone(),
+            id_generator.clone(),
+            node_id,
+            lease_ttl,
+        ));
+        workers.push(spawn_takeover_health_worker(
+            takeover,
+            Duration::from_secs(60),
+            cancel.child_token(),
+        ));
+        info!("takeover service armed");
     }
 
     let default_tenant_id = config
@@ -639,9 +1014,19 @@ pub async fn start(
             .as_deref()
             .ok_or("gb28181.digest_secret_ref is required when sip_port > 0")?;
         let digest_secret = resolve_gb28181_digest_secret(&*secret_store, digest_ref)?;
+        // Production default is Required. ChallengeOptional is a development
+        // profile only and must be opted in via gb28181.challenge_optional.
+        let auth_policy = if config.gb28181.challenge_optional {
+            warn!(
+                "gb28181.challenge_optional is enabled; unauthenticated REGISTER is accepted (dev profile only)"
+            );
+            AuthPolicy::ChallengeOptional
+        } else {
+            AuthPolicy::Required
+        };
         let domain_config = Gb28181DomainConfig::new(&domain_id, &realm, digest_secret)
             .map_err(|e| format!("gb28181 domain config: {e}"))?
-            .with_auth_policy(AuthPolicy::ChallengeOptional);
+            .with_auth_policy(auth_policy);
 
         let credential_provider = SecretStoreCredentialProvider::new(
             secret_store.clone(),

@@ -6,12 +6,13 @@ use crate::migration::PostgresMigration;
 use crate::node::PostgresNodeRepository;
 use crate::operation_step::PostgresOperationStepRepository;
 use crate::owner::{PostgresDeviceOwnerResolver, PostgresOwnerRepository};
+use crate::tenant::PostgresTenantRepository;
 use crate::unit_of_work::PostgresUnitOfWork;
 use cheetah_domain::Clock;
 use cheetah_domain::ports::DeviceOwnerResolver;
 use cheetah_storage_api::{
     MediaNodeRepository, Migration as MigrationTrait, NodeRepository, OperationStepRepository,
-    OwnerRepository, Storage, StorageError,
+    OwnerRepository, Storage, StorageError, TenantRepository,
 };
 use sqlx::PgPool;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
@@ -117,6 +118,13 @@ impl Storage for PostgresStorage {
 
     fn media_node_repository(&self) -> Box<dyn MediaNodeRepository> {
         Box::new(PostgresMediaNodeRepository::new(
+            self.read_pool.clone(),
+            self.write_pool.clone(),
+        ))
+    }
+
+    fn tenant_repository(&self) -> Box<dyn TenantRepository> {
+        Box::new(PostgresTenantRepository::new(
             self.read_pool.clone(),
             self.write_pool.clone(),
         ))

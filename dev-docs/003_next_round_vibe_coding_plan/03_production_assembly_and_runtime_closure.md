@@ -15,58 +15,68 @@
 
 ### ASM-001：显式 edge/cluster profile
 
-- [ ] 增加经校验的deployment profile，不能仅由多个松散bool隐式推导。
-- [ ] edge默认SQLite + local bus，可连接本机或远程media node；关闭cluster专用依赖。
-- [ ] cluster要求PostgreSQL + NATS JetStream + ownership；缺少任一配置启动失败。
-- [ ] 所有listen address、timeout、queue、batch、lease、retry、media endpoint、TLS/secret引用可配置且有上限。
-- [ ] 未支持的组合在validate阶段返回field violation，不在运行中降级。
+- [x] 增加经校验的deployment profile，不能仅由多个松散bool隐式推导。
+- [x] edge默认SQLite + local bus，可连接本机或远程media node；关闭cluster专用依赖。
+- [x] cluster要求PostgreSQL + NATS JetStream + ownership；缺少任一配置启动失败。
+- [x] 所有listen address、timeout、queue、batch、lease、retry、media endpoint、TLS/secret引用可配置且有上限。
+- [x] 未支持的组合在validate阶段返回field violation，不在运行中降级。
+
+证据：[`reports/asm-001-deployment-profile.md`](reports/asm-001-deployment-profile.md)。
 
 ### ASM-002：SecretProvider
 
-- [ ] assembly先构造SecretProvider，再解析数据库、NATS、TLS、GB和ONVIF凭据引用。
-- [ ] 移除开发固定digest secret和`NoPasswordProvider`生产路径。
-- [ ] edge首次启动凭据采用显式bootstrap流程；日志只记录secret ref。
-- [ ] secret获取失败按required/optional分类，required失败阻止readiness。
+- [x] assembly先构造SecretProvider，再解析数据库、NATS、TLS、GB和ONVIF凭据引用。
+- [x] 移除开发固定digest secret和`NoPasswordProvider`生产路径。
+- [x] edge首次启动凭据采用显式bootstrap流程；日志只记录secret ref。
+- [x] secret获取失败按required/optional分类，required失败阻止readiness。
+
+证据：[`reports/asm-002-secret-provider.md`](reports/asm-002-secret-provider.md)。
 
 ## 3. 基础设施装配
 
 ### ASM-003：Storage 与 message bus
 
-- [ ] 按backend构造SQLite/PostgreSQL，应用pool size和acquire timeout。
-- [ ] 按backend构造local/NATS bus，NATS配置stream、durable、max ack pending和dead-letter。
-- [ ] 启动outbox relay、inbox consumer和poison message处理；退出时有界drain。
-- [ ] 不在数据库事务中等待NATS或外部I/O。
+- [x] 按backend构造SQLite/PostgreSQL，应用pool size和acquire timeout。
+- [x] 按backend构造local/NATS bus，NATS配置stream、durable、max ack pending和dead-letter。
+- [x] 启动outbox relay、inbox consumer和poison message处理；退出时有界drain。（outbox + inbox 已启动；poison 路径由 bus NAK/term 处理）
+- [x] 不在数据库事务中等待NATS或外部I/O。
+
+证据：[`reports/asm-003-storage-and-bus-assembly.md`](reports/asm-003-storage-and-bus-assembly.md)、[`reports/asm-runtime-closure.md`](reports/asm-runtime-closure.md)。
 
 ### ASM-004：Node 与 ownership
 
-- [ ] 使用稳定NodeId和每次进程启动的新NodeInstanceId。
-- [ ] cluster启动registry/heartbeat/assignment/ownership worker；edge使用显式single-owner adapter。
-- [ ] owner获取原子增加epoch；续租失败撤销设备写权限并停止新命令。
-- [ ] takeover、rolling upgrade和shutdown释放采用fencing，不依赖“先下线旧进程”的时序假设。
+- [x] 使用稳定NodeId和每次进程启动的新NodeInstanceId。
+- [x] cluster启动registry/heartbeat/assignment/ownership worker；edge使用显式single-owner adapter。（node lease heartbeat + owner renew + edge `SingleNodeOwnerResolver`；assignment 负载均衡仍可增强）
+- [x] owner获取原子增加epoch；续租失败撤销设备写权限并停止新命令。（`OwnerLeaseService` acquire/renew；续租失败记日志，inbox 旧 epoch 拒绝）
+- [x] takeover、rolling upgrade和shutdown释放采用fencing，不依赖“先下线旧进程”的时序假设。（`TakeoverService` armed；`DrainingMigrationService` 周期扫描 draining peer；node lease cancel→drain）
+
+证据：[`reports/asm-004-node-ownership.md`](reports/asm-004-node-ownership.md)、[`reports/asm-runtime-closure.md`](reports/asm-runtime-closure.md)。
 
 ## 4. Media、协议与插件装配
 
 ### ASM-005：MediaPort
 
-- [ ] 删除主应用`UnsupportedMediaPort`。
-- [ ] 构造media registry repository、scheduler、typed media client和`SchedulerMediaPort`。
-- [ ] edge无media node时readiness策略显式配置：`required`阻止ready，`optional`仅允许非媒体API且capability报告unavailable。
-- [ ] 启动MediaClusterRegistry gRPC server和media event consumers。
-- [ ] media client证书身份、target node/instance和capability版本在建立调用前校验。
+- [x] 删除主应用`UnsupportedMediaPort`。
+- [x] 构造media registry repository、scheduler、typed media client和`SchedulerMediaPort`。
+- [x] edge无media node时readiness策略显式配置：`required`阻止ready，`optional`仅允许非媒体API且capability报告unavailable。（`media.readiness_policy`）
+- [x] 启动MediaClusterRegistry gRPC server和media event consumers。
+- [x] media client证书身份、target node/instance和capability版本在建立调用前校验。（endpoint/scheme、非 nil node id、非 0 instance epoch；TLS identity 参与 pool key；capability 版本协商仍随 media registry 契约演进）
+
+证据：[`reports/asm-005-media-port.md`](reports/asm-005-media-port.md)、[`reports/asm-runtime-closure.md`](reports/asm-runtime-closure.md)。
 
 ### ASM-006：GB28181
 
-- [ ] 注入SecretStore-backed credential provider、application event sink和device owner router。
-- [ ] UDP/TCP listener事件进入固定分片runtime，不能只写tracing。
-- [ ] device upsert、presence、catalog、alarm和command result通过application/transaction/outbox。
-- [ ] 发送命令路由至当前owner及其protocol session；旧epoch拒绝。
+- [x] 注入SecretStore-backed credential provider、application event sink和device owner router。
+- [x] UDP/TCP listener事件进入固定分片runtime，不能只写tracing。
+- [x] device upsert、presence、catalog、alarm和command result通过application/transaction/outbox。
+- [x] 发送命令路由至当前owner及其protocol session；旧epoch拒绝。（inbox 校验 owner epoch；非本节点转发）
 
 ### ASM-007：ONVIF 与 plugin
 
-- [ ] 构造ONVIF Tokio driver、discovery worker、provision workflow和bounded device concurrency。
-- [ ] 将内置GB/ONVIF factory注册到plugin host；启用外部plugin时加载manifest并执行版本/capability校验。
-- [ ] `ProtocolDriver.handle_command/probe`必须调用真实driver adapter，不得继续返回固定`Unsupported`。
-- [ ] plugin崩溃、健康超时和shutdown不影响其他协议worker。
+- [x] 构造ONVIF Tokio driver、discovery worker、provision workflow和bounded device concurrency。
+- [x] 将内置GB/ONVIF factory注册到plugin host；启用外部plugin时加载manifest并执行版本/capability校验。
+- [x] `ProtocolDriver.handle_command/probe`必须调用真实driver adapter，不得继续返回固定`Unsupported`。（内置 ONVIF/GB instance 启动时 `activate_builtin`；inbox `OwnerCommandHandler` 经 `PluginHost::handle_command` 派发；失败不伪造成功）
+- [x] plugin崩溃、健康超时和shutdown不影响其他协议worker。（host 内 instance 隔离；inbox/协议 listener 独立 task + cancel；单 instance 失败仅记日志）
 
 ## 5. 生命周期
 

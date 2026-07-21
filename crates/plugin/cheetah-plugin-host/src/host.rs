@@ -397,6 +397,75 @@ impl PluginHost {
     pub fn instance_count(&self) -> usize {
         self.instances.len()
     }
+
+    /// Returns identifiers of active plugin instances.
+    pub fn instance_ids(&self) -> Vec<PluginId> {
+        self.instances.keys().copied().collect()
+    }
+
+    /// Returns the first active instance whose factory name matches `name`.
+    pub fn instance_id_for_name(&self, name: &PluginName) -> Option<PluginId> {
+        self.instances.iter().find_map(|(id, instance)| {
+            if instance.manifest.manifest.name == *name {
+                Some(*id)
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Activates a built-in factory with a host-provided No-op sink/source.
+    ///
+    /// Used by the signaling process to warm protocol adapters so
+    /// [`Self::handle_command`] / probe can reach real drivers.
+    pub async fn activate_builtin(
+        &mut self,
+        id: PluginId,
+        name: PluginName,
+        config: serde_json::Value,
+        timeout: Option<DurationMs>,
+    ) -> Result<(), PluginHostError> {
+        let factory = self
+            .registry
+            .get(&name)
+            .ok_or_else(|| PluginHostError::NotFound(name.to_string()))?;
+        let capabilities = factory.capabilities();
+        let manifest = PluginManifest {
+            name: name.clone(),
+            version: cheetah_plugin_sdk::PluginVersion::new("0.1.0")
+                .map_err(|e| PluginHostError::InvalidManifest(e.to_string()))?,
+            sdk_version: cheetah_plugin_sdk::SdkVersionReq::new(">=0.1.0, <1.0.0")
+                .map_err(|e| PluginHostError::InvalidManifest(e.to_string()))?,
+            protocols: capabilities,
+            entry: cheetah_plugin_sdk::PluginEntry::BuiltIn {
+                path: name.as_str().to_string(),
+            },
+            permissions: vec![
+                cheetah_plugin_sdk::PluginPermission::PublishEvents,
+                cheetah_plugin_sdk::PluginPermission::OutboundNetwork,
+                cheetah_plugin_sdk::PluginPermission::RequestMediaSession,
+            ],
+            config_schema: cheetah_plugin_sdk::ConfigSchema {
+                schema: serde_json::json!({"type": "object"}),
+                required: vec![],
+            },
+            resource_budget: ResourceBudget::default(),
+            checksum: None,
+            metadata: std::collections::HashMap::new(),
+        };
+        let payload = serde_json::to_vec(&manifest)
+            .map_err(|e| PluginHostError::InvalidManifest(e.to_string()))?;
+        self.activate(
+            id,
+            &manifest,
+            &payload,
+            config,
+            Arc::new(NoOpSink),
+            Arc::new(NoOpSource),
+            timeout,
+        )
+        .await
+    }
 }
 
 impl fmt::Debug for PluginHost {

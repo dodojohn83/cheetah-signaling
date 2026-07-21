@@ -2,12 +2,14 @@
 
 #![allow(missing_docs)]
 
-use crate::{ApiRequestContext, ApiState, HttpError, ListQuery};
+use crate::{ApiRequestContext, ApiState, HttpError, IdempotencyKey, JsonBody, ListQuery};
 use axum::{
     Json,
     extract::{Path, Query, State},
-    http::StatusCode,
+    http::{HeaderValue, StatusCode, header},
+    response::IntoResponse,
 };
+use cheetah_signal_application::dto::{OperationDto, SubmitOperationRequest};
 use cheetah_signal_types::{AuditOutcome, DeviceId, OperationId, Page, UtcTimestamp};
 use std::sync::Arc;
 
@@ -15,7 +17,7 @@ pub async fn list_operations(
     Query(query): Query<ListQuery>,
     State(state): State<Arc<ApiState>>,
     ctx: ApiRequestContext,
-) -> Result<Json<Page<cheetah_signal_application::dto::OperationDto>>, HttpError> {
+) -> Result<Json<Page<OperationDto>>, HttpError> {
     ctx.require_scope("viewer")?;
     let page = query.page_request()?;
     let device_id = query
@@ -36,27 +38,46 @@ pub async fn list_operations(
         .list(ctx.tenant_id, device_id, query.status, updated_after, page)
         .await
         .map_err(HttpError::from)?;
-    Ok(Json(result.map(|o| {
-        cheetah_signal_application::dto::OperationDto::from(&o)
-    })))
+    Ok(Json(result.map(|o| OperationDto::from(&o))))
 }
 
 pub async fn create_operation(
-    State(_state): State<Arc<ApiState>>,
+    State(state): State<Arc<ApiState>>,
     ctx: ApiRequestContext,
-    Json(_request): Json<serde_json::Value>,
-) -> Result<(StatusCode, Json<serde_json::Value>), HttpError> {
+    idempotency: IdempotencyKey,
+    JsonBody(mut request): JsonBody<SubmitOperationRequest>,
+) -> Result<axum::response::Response, HttpError> {
     ctx.require_scope("operator")?;
-    Err(HttpError::NotImplemented(
-        "generic operation submission is not implemented".to_string(),
-    ))
+    // Prefer the mandatory Idempotency-Key header as the authoritative key.
+    request.idempotency_key = idempotency.0;
+    let mut uow = state.storage.begin().await.map_err(HttpError::from)?;
+    let operation = state
+        .operation_service
+        .submit_operation(&ctx.0, &mut *uow, request)
+        .await
+        .map_err(HttpError::from)?;
+    let operation_id = operation.operation_id.to_string();
+    crate::audit::record(
+        &state,
+        &ctx,
+        "operation.create",
+        "operation",
+        Some(operation_id.clone()),
+        None,
+        AuditOutcome::Success,
+    );
+    let mut response = (StatusCode::ACCEPTED, Json(operation)).into_response();
+    if let Ok(value) = HeaderValue::from_str(&format!("/api/v1/operations/{operation_id}")) {
+        response.headers_mut().insert(header::LOCATION, value);
+    }
+    Ok(response)
 }
 
 pub async fn get_operation(
     Path(id): Path<String>,
     State(state): State<Arc<ApiState>>,
     ctx: ApiRequestContext,
-) -> Result<Json<serde_json::Value>, HttpError> {
+) -> Result<Json<OperationDto>, HttpError> {
     ctx.require_scope("viewer")?;
     let operation_id = id.parse::<OperationId>().map_err(HttpError::from)?;
     let mut uow = state.storage.begin().await.map_err(HttpError::from)?;
@@ -65,16 +86,14 @@ pub async fn get_operation(
         .get_operation(&mut *uow, ctx.tenant_id, operation_id)
         .await
         .map_err(HttpError::from)?;
-    Ok(Json(
-        serde_json::to_value(operation).map_err(HttpError::from)?,
-    ))
+    Ok(Json(operation))
 }
 
 pub async fn cancel_operation(
     Path(id): Path<String>,
     State(state): State<Arc<ApiState>>,
     ctx: ApiRequestContext,
-) -> Result<Json<serde_json::Value>, HttpError> {
+) -> Result<Json<OperationDto>, HttpError> {
     ctx.require_scope("operator")?;
     let operation_id = id.parse::<OperationId>().map_err(HttpError::from)?;
     let mut uow = state.storage.begin().await.map_err(HttpError::from)?;
@@ -83,7 +102,6 @@ pub async fn cancel_operation(
         .cancel_operation(&ctx.0, &mut *uow, operation_id)
         .await
         .map_err(HttpError::from)?;
-    let body = serde_json::to_value(operation).map_err(HttpError::from)?;
     crate::audit::record(
         &state,
         &ctx,
@@ -93,5 +111,5 @@ pub async fn cancel_operation(
         None,
         AuditOutcome::Success,
     );
-    Ok(Json(body))
+    Ok(Json(operation))
 }

@@ -16,7 +16,7 @@
 
 - [ ] 按tenant/domain/device从SecretProvider取digest凭据。
 - [ ] nonce、stale、algorithm、qop、重放窗口和失败rate limit遵循core语义。
-- [ ] challenge-optional仅允许显式开发profile，生产默认不启用。
+- [x] challenge-optional仅允许显式开发profile，生产默认不启用。（`gb28181.challenge_optional`，默认 false；见 assembly + config.example.toml）
 - [ ] Authorization、nonce material和原始SIP body不写日志。
 
 ## 4. GB-003：命令路由
