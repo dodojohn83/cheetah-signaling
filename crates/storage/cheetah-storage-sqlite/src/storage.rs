@@ -6,10 +6,11 @@ use crate::migration::SqliteMigration;
 use crate::node::SqliteNodeRepository;
 use crate::operation_step::SqliteOperationStepRepository;
 use crate::owner::{SqliteDeviceOwnerResolver, SqliteOwnerRepository};
+use crate::protocol_session::SqliteProtocolSessionRepository;
 use crate::tenant::SqliteTenantRepository;
 use crate::unit_of_work::SqliteUnitOfWork;
 use cheetah_domain::Clock;
-use cheetah_domain::ports::DeviceOwnerResolver;
+use cheetah_domain::ports::{DeviceOwnerResolver, ProtocolSessionRepository};
 use cheetah_storage_api::{
     MediaNodeRepository, Migration as MigrationTrait, NodeRepository, OperationStepRepository,
     OwnerRepository, Storage, StorageError, TenantRepository,
@@ -124,6 +125,13 @@ impl Storage for SqliteStorage {
 
     fn tenant_repository(&self) -> Box<dyn TenantRepository> {
         Box::new(SqliteTenantRepository::new(
+            self.read_pool.clone(),
+            self.write_pool.clone(),
+        ))
+    }
+
+    fn protocol_session_repository(&self) -> Box<dyn ProtocolSessionRepository> {
+        Box::new(SqliteProtocolSessionRepository::new(
             self.read_pool.clone(),
             self.write_pool.clone(),
         ))

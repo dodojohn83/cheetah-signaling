@@ -20,6 +20,7 @@ pub mod media_session;
 pub mod node;
 pub mod operation;
 pub mod ports;
+pub mod protocol_session;
 pub mod tenant;
 pub mod webhook;
 
@@ -49,5 +50,9 @@ pub use operation::{
     OperationStatus, OperationStep, OperationStepStatus,
 };
 pub use ports::*;
+pub use protocol_session::{
+    CompatibilityProfile, LocalIdentity, NewProtocolSession, PresenceState, ProtocolSession,
+    RegistrationInfo, SessionEndpoint, SipTransport,
+};
 pub use tenant::{MAX_TENANT_NAME_LEN, Tenant};
 pub use webhook::{DeliveryStatus, WebhookConfig, WebhookDelivery, sign_webhook_payload};
