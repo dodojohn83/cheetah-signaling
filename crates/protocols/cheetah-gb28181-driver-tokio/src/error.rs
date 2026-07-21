@@ -15,10 +15,13 @@ pub enum DriverError {
     /// The access state machine rejected processing.
     #[error("access error: {0}")]
     Access(Box<dyn std::error::Error + Send + Sync + 'static>),
-    /// Binding the UDP socket failed.
+    /// Binding a socket failed.
     #[error("failed to bind socket: {0}")]
     Bind(io::Error),
     /// The access state lock was poisoned.
     #[error("access lock poisoned")]
     AccessLock,
+    /// No UDP or TCP bind address was configured.
+    #[error("no bind address configured")]
+    NoBindAddress,
 }

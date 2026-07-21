@@ -15,6 +15,7 @@
 #![warn(missing_docs)]
 
 pub mod access;
+pub mod assembly;
 pub mod cascade;
 pub mod config;
 pub mod error;
@@ -26,6 +27,10 @@ pub mod types;
 pub mod xml;
 
 pub use access::Gb28181Access;
+pub use assembly::{
+    GbAccessSettings, GbAssemblyError, SecretStoreCredentialProvider, build_access,
+    build_domain_config,
+};
 pub use cascade::{
     CascadeConfig, CascadeCredentialProvider, CascadeError, CascadeEvent, CascadeInput,
     CascadeOutput, Gb28181Cascade,

@@ -12,6 +12,10 @@ its outputs are returned to a driver or application layer for execution.
   position, device control and record-info workflows.
 - Manufacturer/version compatibility profile selection.
 - `Gb28181Access`, an implementation of `cheetah_gb28181_core::GbAccessMachine`.
+- Assembly adapter (`assembly`): maps GB configuration and secret references into
+  a domain config and a secret-store-backed `CredentialProvider`, so the app
+  assembly layer only performs dependency injection and lifecycle management and
+  holds no GB business mapping.
 
 ## Allowed dependencies
 
@@ -40,3 +44,5 @@ No optional features.
 - `Gb28181Event`, `DevicePresence` from `events`.
 - `CredentialProvider` from `ports`.
 - `DeviceId`, `DomainId` from `types`.
+- `GbAccessSettings`, `GbAssemblyError`, `SecretStoreCredentialProvider`,
+  `build_domain_config`, `build_access` from `assembly`.

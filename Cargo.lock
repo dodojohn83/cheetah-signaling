@@ -612,6 +612,7 @@ dependencies = [
  "secrecy",
  "thiserror",
  "tokio",
+ "tokio-util",
  "tracing",
 ]
 
@@ -1091,7 +1092,6 @@ dependencies = [
  "cheetah-storage-postgres",
  "cheetah-storage-sqlite",
  "futures",
- "hex",
  "secrecy",
  "semver",
  "serde_json",

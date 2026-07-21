@@ -189,11 +189,11 @@ device_credential_namespace = "gb28181/tenant-a/devices"
 - [x] `GB4-ARC-001`：移动 wire 状态机并移除 driver → module、module → Tokio/plugin SDK 依赖；更新三个 crate README。
 - [x] `GB4-ARC-002`：删除双入口和 Noop/plugin command 生产路径，建立唯一 runtime handle（`Gb28181UdpDriver` 直接由 assembly 构造，插件 driver 路径与 `NoopCredentialProvider` 已移除）。
 - [x] `GB4-ARC-003`：实现固定 shard、惰性 session、bounded mailbox 和 timer wheel，并暴露健康指标（`cheetah-runtime-api`/`cheetah-runtime-tokio`：`ShardRouter` 稳定哈希固定分片、actor 惰性创建 + `actor_idle_timeout_ms` 空闲卸载、`AdmissionController` 有界 `try_send`、单 worker 时间轮、`RuntimeMetrics`/`RuntimeMetricsSnapshot` 聚合健康指标（无高基数设备 label），并含空闲卸载与 10 万 timer 暂停时间测试）。
-- [ ] `GB4-ARC-004`：将 assembly 中 GB 业务映射迁到 module/application adapter，assembly 只保留 DI/lifecycle。
+- [x] `GB4-ARC-004`：将 assembly 中 GB 业务映射迁到 module/application adapter，assembly 只保留 DI/lifecycle。
 - [x] `GB4-ARC-005`：拆分超过 800 行的生产源文件，并对超过 500 行文件给出拆分或保留理由。
   - 已拆分 GB 相关 `cascade/machine.rs`（原 824 行）：命令驱动的注册流程与共享 helper 留在 `machine.rs`（483 行），SIP 响应分发与 REGISTER/deregister/keepalive 响应处理（含 digest challenge/resend）移入新 `machine_response.rs`（361 行）。
   - 其余 >800 行文件均不属于 GB28181 改造范围，按 AGENTS 规范以理由保留、由各自模块的独立工单跟踪拆分，不在本 GB4 变更内做无关重构：`crates/domain/cheetah-domain/src/in_memory.rs`、`crates/domain/cheetah-domain/src/operation.rs`（领域测试替身与聚合逻辑）、`apps/cheetah-signaling/src/assembly.rs`（装配/生命周期，属 `GB4-ARC-004` 范围）、`crates/storage/cheetah-storage-sqlite/src/repository.rs`、`crates/storage/cheetah-storage-postgres/src/repository.rs`（共享 repository contract 实现）、`crates/cluster/cheetah-cluster-ownership/src/assignment.rs`、`crates/cluster/cheetah-cluster-ownership/src/rolling_upgrade.rs`、`crates/foundation/cheetah-signal-types/src/config.rs`、`crates/media/cheetah-media-scheduler/src/grpc.rs`、`tools/onvif-simulator/src/main.rs`。
-- [ ] `GB4-SIP-001`：完成 UDP/TCP/IPv4/IPv6 driver contract，含 framing、连接上限、cancel 和 shutdown。
+- [x] `GB4-SIP-001`：完成 UDP/TCP/IPv4/IPv6 driver contract，含 framing、连接上限、cancel 和 shutdown。
 - [ ] `GB4-SIP-002`：接入 transaction/dialog，覆盖 retransmission、duplicate、late/out-of-order 和 deadline。
 - [ ] `GB4-SIP-003`：完成 REGISTER/MESSAGE/INVITE/ACK/CANCEL/BYE/INFO/SUBSCRIBE/NOTIFY/OPTIONS method 路由。
 - [ ] `GB4-SIP-004`：实现 credential resolution output/input、Digest replay/stale/algorithm/rate-limit 生产链路。
