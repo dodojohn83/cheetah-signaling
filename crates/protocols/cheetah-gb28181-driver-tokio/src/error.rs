@@ -1,7 +1,6 @@
 //! Driver errors.
 
 use cheetah_gb28181_core::SipError;
-use cheetah_gb28181_module::AccessError;
 use std::io;
 
 /// Errors returned by the UDP driver.
@@ -15,11 +14,14 @@ pub enum DriverError {
     Parse(#[from] SipError),
     /// The access state machine rejected processing.
     #[error("access error: {0}")]
-    Access(#[from] AccessError),
-    /// Binding the UDP socket failed.
+    Access(Box<dyn std::error::Error + Send + Sync + 'static>),
+    /// Binding a socket failed.
     #[error("failed to bind socket: {0}")]
     Bind(io::Error),
     /// The access state lock was poisoned.
     #[error("access lock poisoned")]
     AccessLock,
+    /// No UDP or TCP bind address was configured.
+    #[error("no bind address configured")]
+    NoBindAddress,
 }

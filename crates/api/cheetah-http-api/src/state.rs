@@ -6,6 +6,7 @@ use crate::metrics::RequestMetrics;
 use crate::rate_limit::RateLimiter;
 use cheetah_domain::ports::{DeviceOwnerResolver, IdGenerator, MediaPort};
 use cheetah_message_api::RawEventBus;
+use cheetah_runtime_tokio::RuntimeHealthSource;
 use cheetah_signal_application::{
     DeviceService, MediaService, OperationService, WebhookDeliveryConfig, WebhookHttpClient,
     WebhookService,
@@ -102,6 +103,10 @@ pub struct ApiState {
     pub metrics: Arc<RequestMetrics>,
     /// Optional media scheduler metrics exporter.
     pub media_metrics: Option<Arc<dyn MetricsExporter>>,
+    /// Optional GB28181 runtime/application metrics exporter.
+    pub gb_metrics: Option<Arc<dyn MetricsExporter>>,
+    /// Optional GB28181 runtime health source for readiness reporting.
+    pub runtime_health: Option<Arc<dyn RuntimeHealthSource>>,
     /// Per-key request rate limiter.
     pub rate_limiter: RateLimiter,
     /// Audit sink for security-relevant events.
@@ -156,6 +161,8 @@ impl ApiState {
             config,
             metrics: Arc::new(RequestMetrics::default()),
             media_metrics: None,
+            gb_metrics: None,
+            runtime_health: None,
             rate_limiter,
             audit: Arc::new(TracingAuditLog),
             cancel: CancellationToken::new(),
@@ -171,6 +178,18 @@ impl ApiState {
     /// Wires media scheduler metrics into the metrics endpoint.
     pub fn with_media_metrics(mut self, metrics: Arc<dyn MetricsExporter>) -> Self {
         self.media_metrics = Some(metrics);
+        self
+    }
+
+    /// Wires GB28181 runtime/application metrics into the metrics endpoint.
+    pub fn with_gb_metrics(mut self, metrics: Arc<dyn MetricsExporter>) -> Self {
+        self.gb_metrics = Some(metrics);
+        self
+    }
+
+    /// Wires a GB28181 runtime health source into the readiness endpoint.
+    pub fn with_runtime_health(mut self, health: Arc<dyn RuntimeHealthSource>) -> Self {
+        self.runtime_health = Some(health);
         self
     }
 

@@ -1,6 +1,7 @@
 # cheetah-gb28181-core
 
-Sans-I/O GB28181 SIP message model, URI handling, parser and encoder.
+Sans-I/O GB28181 SIP message model, URI handling, parser and encoder, plus the
+`GbAccessMachine` input/output contract.
 
 ## Responsibility
 
@@ -8,6 +9,8 @@ Sans-I/O GB28181 SIP message model, URI handling, parser and encoder.
 - Streaming parser for UDP datagrams and TCP byte streams.
 - Stable CRLF encoder with correct `Content-Length`.
 - Configurable size limits and safe error reporting without echoing credentials.
+- Generic `GbAccessMachine` trait and `AccessInput`/`AccessOutput` types used by
+  the module and driver layers.
 
 ## Allowed dependencies
 
@@ -26,4 +29,7 @@ No optional features.
 
 ## Public entry
 
-`lib.rs` re-exports `sip` modules and the primary `SipParser`, `SipMessage`, `Method`, `StatusLine`, `SipUri`, `HeaderName`, and `encode_message`. Digest primitives are exposed under `sip::digest`.
+`lib.rs` re-exports `sip` modules and the primary `SipParser`, `SipMessage`,
+`Method`, `StatusLine`, `SipUri`, `HeaderName`, and `encode_message`. Digest
+primitives are exposed under `sip::digest`. The access machine contract is
+exposed under `access` as `GbAccessMachine`, `AccessInput` and `AccessOutput`.

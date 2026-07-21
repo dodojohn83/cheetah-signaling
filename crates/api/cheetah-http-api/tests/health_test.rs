@@ -32,6 +32,48 @@ async fn ready_returns_ok_after_migrations() {
 }
 
 #[tokio::test]
+async fn healthz_alias_returns_ok() {
+    let server = common::TestServer::new().await;
+    let response = server
+        .request(reqwest::Method::GET, "/healthz")
+        .send()
+        .await
+        .expect("send request");
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+}
+
+#[tokio::test]
+async fn readyz_reports_ready_and_not_degraded_without_pressure() {
+    let server = common::TestServer::new().await;
+    let response = server
+        .request(reqwest::Method::GET, "/readyz")
+        .send()
+        .await
+        .expect("send request");
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let body = response
+        .json::<serde_json::Value>()
+        .await
+        .expect("read body");
+    assert_eq!(body["status"], "ready");
+}
+
+#[tokio::test]
+async fn metrics_includes_gb28181_families() {
+    let server = common::TestServer::new().await;
+    let metrics = server
+        .request(reqwest::Method::GET, "/metrics")
+        .send()
+        .await
+        .expect("send request");
+    assert_eq!(metrics.status(), reqwest::StatusCode::OK);
+    let body = metrics.text().await.expect("read metrics body");
+    assert!(body.contains("gb28181_shard_mailbox_depth"));
+    assert!(body.contains("gb28181_command_total"));
+    assert!(body.contains("gb28181_timer_lag_seconds"));
+}
+
+#[tokio::test]
 async fn metrics_returns_counters() {
     let server = common::TestServer::new().await;
 

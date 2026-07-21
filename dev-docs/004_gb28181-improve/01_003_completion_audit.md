@@ -8,7 +8,7 @@
 
 ## 2. 审计环境与实际验证
 
-- signaling HEAD：`1ebfbe3ed1fd7ea33f0fd21030140a33e17ba0d1`
+- signaling HEAD：`96c76efc9b6c5bdf4956ab6a4c100429d0e8e8da`（当前执行基线；后续基线变化时由 `GB4-AUD-003` 复验）
 - Rust：`rustc 1.96.1`
 - 当前工作区审计前无用户改动
 - 当前环境缺少 `buf` 和 `cargo-nextest`，无法重跑完整提交门禁
@@ -129,7 +129,7 @@ OwnerCommandHandler 将 PTZ、StartLive、StopMediaSession、StartPlayback、Sta
 
 ## 6. 审计退出门禁
 
-- [ ] `GB4-AUD-001`：将本审计的命令结果写入当前 commit 的正式报告。
-- [ ] `GB4-AUD-002`：逐项核对 [91 registry](91_003_requirement_registry.md)，不存在未归属的 003 GB/媒体/系统要求。
-- [ ] `GB4-AUD-003`：当代码基线变化时重新运行 checkbox、生产装配、依赖图、占位实现和验证工具审计。
+- [x] `GB4-AUD-001`：将本审计的命令结果写入当前 commit 的正式报告（见 [reports/gb4-aud-001.md](reports/gb4-aud-001.md)）。
+- [x] `GB4-AUD-002`：逐项核对 [91 registry](91_003_requirement_registry.md)，不存在未归属的 003 GB/媒体/系统要求；新增 `scripts/verify_gb4_registry.py` 自动化核对。
+- [x] `GB4-AUD-003`：当代码基线变化时重新运行 checkbox、生产装配、依赖图、占位实现和验证工具审计；复验命令记录于 [reports/gb4-aud-001.md](reports/gb4-aud-001.md)。
 - 阶段门禁：所有“已完成”判断同时具有生产入口、故障语义、测试和报告，不再仅依据 checkbox 或代码量。

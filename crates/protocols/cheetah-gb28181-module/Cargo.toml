@@ -9,9 +9,7 @@ repository.workspace = true
 
 [dependencies]
 cheetah-gb28181-core = { path = "../cheetah-gb28181-core" }
-cheetah-plugin-sdk = { path = "../../plugin/cheetah-plugin-sdk" }
 cheetah-signal-types = { path = "../../foundation/cheetah-signal-types" }
-async-trait = { workspace = true }
 quick-xml = { workspace = true }
 encoding_rs = { workspace = true }
 serde = { workspace = true }
@@ -19,7 +17,6 @@ serde_json = { workspace = true }
 secrecy = { workspace = true }
 sha2 = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["sync"] }
 tracing = { workspace = true }
 hex = { workspace = true }
 

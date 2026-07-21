@@ -5,7 +5,9 @@ use axum::{
     extract::{ConnectInfo, FromRequestParts},
     http::request::Parts,
 };
-use cheetah_signal_types::{AuditEvent, AuditOutcome, Principal, PrincipalKind, TenantId};
+use cheetah_signal_types::{
+    AuditEvent, AuditOutcome, Principal, PrincipalKind, SafeDetails, TenantId,
+};
 use jsonwebtoken::{Algorithm, DecodingKey, TokenData, Validation, decode};
 use secrecy::ExposeSecret;
 use serde::Deserialize;
@@ -257,7 +259,7 @@ fn record_auth_audit(parts: &Parts, state: &ApiState, result: &Result<AuthContex
         correlation_id,
         source_ip,
         node_id: state.config.node_id,
-        details,
+        details: details.map(SafeDetails::new),
     };
     state.audit.record(event);
 }

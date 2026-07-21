@@ -17,8 +17,9 @@ use cheetah_signal_application::{
     ReplaceChannelCatalogRequest, UpdateDeviceCapabilitiesRequest,
 };
 use cheetah_signal_types::{
-    ChannelId, CorrelationId, DeviceId, MessageId, NodeId, Principal, PrincipalKind,
-    ProtocolIdentity, RequestContext, SignalError, SignalErrorKind, TenantId,
+    ChannelId, CorrelationId, DeviceId, GbCommandMethod, GbCommandOutcome, GbMetricsRecorder,
+    MessageId, NodeId, Principal, PrincipalKind, ProtocolIdentity, RequestContext, SignalError,
+    SignalErrorKind, TenantId,
 };
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -35,7 +36,7 @@ pub struct GbApplicationEventSink {
     metrics: Arc<RequestMetrics>,
 }
 
-impl EventSink for GbApplicationEventSink {
+impl EventSink<Gb28181Event> for GbApplicationEventSink {
     fn emit(&self, event: Gb28181Event) {
         if let Err(e) = self.tx.try_send(event) {
             self.metrics.record_gb28181_event_dropped();
@@ -47,6 +48,7 @@ impl EventSink for GbApplicationEventSink {
 /// Spawns a background worker that consumes GB28181 events and applies them
 /// through `DeviceService` using bounded in-memory queueing. Returns the sink
 /// to be given to the UDP driver and a handle to the spawned worker.
+#[allow(clippy::too_many_arguments)]
 pub fn spawn(
     state: ApiState,
     node_id: NodeId,
@@ -54,12 +56,16 @@ pub fn spawn(
     queue_depth: usize,
     catalog_max_entries: usize,
     catalog_max_items: usize,
+    gb_metrics: Arc<dyn GbMetricsRecorder>,
     cancel: tokio_util::sync::CancellationToken,
-) -> (Arc<dyn EventSink>, tokio::task::JoinHandle<()>) {
+) -> (
+    Arc<dyn EventSink<Gb28181Event>>,
+    tokio::task::JoinHandle<()>,
+) {
     let queue_depth = queue_depth.max(1);
     let (tx, mut rx) = mpsc::channel(queue_depth);
     let metrics = state.metrics.clone();
-    let sink = Arc::new(GbApplicationEventSink { tx, metrics }) as Arc<dyn EventSink>;
+    let sink = Arc::new(GbApplicationEventSink { tx, metrics }) as Arc<dyn EventSink<Gb28181Event>>;
     let mut catalog_buffer = CatalogBuffer::new(catalog_max_entries, catalog_max_items);
     let mut cleanup = tokio::time::interval(CATALOG_CLEANUP_INTERVAL);
     cleanup.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -73,7 +79,7 @@ pub fn spawn(
                 }
                 maybe_event = rx.recv() => {
                     match maybe_event {
-                        Some(event) => process_event(&state, node_id, tenant_id, event, &mut catalog_buffer).await,
+                        Some(event) => process_event(&state, node_id, tenant_id, event, &mut catalog_buffer, gb_metrics.as_ref()).await,
                         None => break,
                     }
                 }
@@ -90,6 +96,7 @@ async fn process_event(
     tenant_id: Option<TenantId>,
     event: Gb28181Event,
     catalog_buffer: &mut CatalogBuffer,
+    gb_metrics: &dyn GbMetricsRecorder,
 ) {
     let tenant_id = match tenant_id {
         Some(id) => id,
@@ -130,10 +137,15 @@ async fn process_event(
             num,
             items,
             ..
-        } => match catalog_buffer.accumulate(tenant_id, &device_id, &sn, sum_num, num, items) {
-            Some(merged) => replace_catalog(state, &context, tenant_id, &device_id, &merged).await,
-            None => Ok(()),
-        },
+        } => {
+            gb_metrics.record_catalog_fragment();
+            match catalog_buffer.accumulate(tenant_id, &device_id, &sn, sum_num, num, items) {
+                Some(merged) => {
+                    replace_catalog(state, &context, tenant_id, &device_id, &merged).await
+                }
+                None => Ok(()),
+            }
+        }
         Gb28181Event::DeviceInfoReceived {
             device_id,
             result,
@@ -198,6 +210,7 @@ async fn process_event(
             result,
             ..
         } => {
+            gb_metrics.record_command(GbCommandMethod::DeviceControl, control_outcome(&result));
             info!(%device_id, %sn, ?result, "gb28181 control response received; no application handler wired yet");
             Ok(())
         }
@@ -530,6 +543,15 @@ impl CatalogBuffer {
                 "gb28181 catalog fragment buffer evicted stale entries"
             );
         }
+    }
+}
+
+/// Maps a GB28181 DeviceControl response result string to a bounded outcome.
+fn control_outcome(result: &Option<String>) -> GbCommandOutcome {
+    match result {
+        Some(value) if value.eq_ignore_ascii_case("OK") => GbCommandOutcome::Succeeded,
+        Some(_) => GbCommandOutcome::Failed,
+        None => GbCommandOutcome::Unknown,
     }
 }
 

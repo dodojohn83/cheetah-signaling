@@ -13,7 +13,7 @@ use cheetah_signal_contracts::cheetah::common::v1::{
 };
 use cheetah_signal_contracts::cheetah::media::v1 as media_proto;
 use cheetah_signal_types::{
-    AuditEvent, AuditLog, AuditOutcome, Clock, IdGenerator, NodeId, is_internal_ip,
+    AuditEvent, AuditLog, AuditOutcome, Clock, IdGenerator, NodeId, SafeDetails, is_internal_ip,
 };
 use std::str::FromStr;
 use std::sync::Arc;
@@ -84,7 +84,7 @@ impl MediaClusterRegistryService {
             correlation_id: None,
             source_ip: None,
             node_id: self.node_id,
-            details,
+            details: details.map(SafeDetails::new),
         });
     }
 }
