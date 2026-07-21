@@ -354,6 +354,10 @@ impl MediaPort for SchedulerMediaPort {
         );
     }
 
+    fn record_forced_cleanup(&self, count: u64) {
+        self.metrics.record_forced_cleanup(count);
+    }
+
     async fn drain_node(
         &self,
         tenant_id: TenantId,

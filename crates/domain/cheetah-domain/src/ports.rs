@@ -407,6 +407,9 @@ pub trait MediaPort: Send + Sync {
     ) {
     }
 
+    /// Records that `count` media sessions were forcibly cleaned up.
+    fn record_forced_cleanup(&self, _count: u64) {}
+
     /// Marks the given media node as draining.
     async fn drain_node(
         &self,

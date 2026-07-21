@@ -488,6 +488,10 @@ impl Operation {
         match self.status {
             OperationStatus::Pending => {
                 self.status = OperationStatus::Running;
+                if self.steps.is_empty() {
+                    self.steps
+                        .push(OperationStep::new(self.command.clone(), clock));
+                }
                 if let Some(step) = self.current_step_mut() {
                     step.start(clock);
                 }

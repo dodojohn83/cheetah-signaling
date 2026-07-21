@@ -13,7 +13,7 @@ const RPC_DURATION_BUCKETS_S: [f64; 9] = [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 
 ///
 /// Counters are intentionally low cardinality. Node IDs and tenant IDs are never
 /// used as labels; per-node load is aggregated into a distribution instead.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct MediaMetrics {
     media_nodes_active: AtomicU64,
     media_nodes_expired: AtomicU64,
@@ -41,14 +41,42 @@ pub struct MediaMetrics {
     reservation_rejected_reasons: Mutex<HashMap<String, u64>>,
 }
 
+impl Default for MediaMetrics {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MediaMetrics {
     /// Creates a new metrics instance.
     pub fn new() -> Self {
         Self {
+            media_nodes_active: AtomicU64::new(0),
+            media_nodes_expired: AtomicU64::new(0),
+            media_nodes_draining: AtomicU64::new(0),
+            reservations_total: AtomicU64::new(0),
+            reservations_success: AtomicU64::new(0),
+            reservations_rejected: AtomicU64::new(0),
+            rpc_total: AtomicU64::new(0),
+            rpc_errors: AtomicU64::new(0),
+            rpc_duration_sum_ns: AtomicU64::new(0),
             rpc_duration_buckets: (0..RPC_DURATION_BUCKETS_S.len() + 1)
                 .map(|_| AtomicU64::new(0))
                 .collect(),
-            ..Self::default()
+            event_lag_ms: AtomicU64::new(0),
+            event_gaps: AtomicU64::new(0),
+            event_reconnects: AtomicU64::new(0),
+            reconcile_scanned: AtomicU64::new(0),
+            reconcile_repaired: AtomicU64::new(0),
+            reconcile_failed: AtomicU64::new(0),
+            reconcile_orphans: AtomicU64::new(0),
+            node_load_sum: AtomicU64::new(0),
+            node_load_count: AtomicU64::new(0),
+            register_total: AtomicU64::new(0),
+            drain_total: AtomicU64::new(0),
+            deregister_total: AtomicU64::new(0),
+            forced_cleanup_total: AtomicU64::new(0),
+            reservation_rejected_reasons: Mutex::new(HashMap::new()),
         }
     }
 
@@ -99,9 +127,10 @@ impl MediaMetrics {
         self.deregister_total.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Records a forced cleanup of an orphan media session.
-    pub fn record_forced_cleanup(&self) {
-        self.forced_cleanup_total.fetch_add(1, Ordering::Relaxed);
+    /// Records a forced cleanup of `count` orphan media session(s).
+    pub fn record_forced_cleanup(&self, count: u64) {
+        self.forced_cleanup_total
+            .fetch_add(count, Ordering::Relaxed);
     }
 
     /// Records a reservation attempt. `reason` is a low-cardinality label such
@@ -113,13 +142,12 @@ impl MediaMetrics {
             self.reservations_success.fetch_add(1, Ordering::Relaxed);
         } else {
             self.reservations_rejected.fetch_add(1, Ordering::Relaxed);
-            if let Some(reason) = reason {
-                let mut map = self
-                    .reservation_rejected_reasons
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner());
-                *map.entry(reason.to_string()).or_insert(0) += 1;
-            }
+            let reason = reason.unwrap_or("unspecified");
+            let mut map = self
+                .reservation_rejected_reasons
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            *map.entry(reason.to_string()).or_insert(0) += 1;
         }
     }
 
@@ -236,9 +264,9 @@ impl MetricsExporter for MediaMetrics {
              cheetah_media_reconcile_failed_total {reconcile_failed}\n\
              # TYPE cheetah_media_reconcile_orphans_total counter\n\
              cheetah_media_reconcile_orphans_total {reconcile_orphans}\n\
-             # TYPE cheetah_media_node_load_sum counter\n\
+             # TYPE cheetah_media_node_load_sum gauge\n\
              cheetah_media_node_load_sum {node_load_sum}\n\
-             # TYPE cheetah_media_node_load_count counter\n\
+             # TYPE cheetah_media_node_load_count gauge\n\
              cheetah_media_node_load_count {node_load_count}\n\
              # TYPE cheetah_media_register_total counter\n\
              cheetah_media_register_total {register_total}\n\
@@ -250,10 +278,13 @@ impl MetricsExporter for MediaMetrics {
              cheetah_media_forced_cleanup_total {forced_cleanup_total}\n"
         );
 
-        for (reason, count) in rejected_reasons {
-            body.push_str(&format!(
-                "cheetah_media_reservations_rejected_total{{reason=\"{reason}\"}} {count}\n"
-            ));
+        if !rejected_reasons.is_empty() {
+            body.push_str("# TYPE cheetah_media_reservations_rejected_by_reason_total counter\n");
+            for (reason, count) in rejected_reasons {
+                body.push_str(&format!(
+                    "cheetah_media_reservations_rejected_by_reason_total{{reason=\"{reason}\"}} {count}\n"
+                ));
+            }
         }
 
         body.push_str("# TYPE cheetah_media_rpc_duration_seconds histogram\n");
