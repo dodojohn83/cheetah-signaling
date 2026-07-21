@@ -751,6 +751,14 @@ pub async fn start(
     // inbound protocol events can be routed through application services.
     let audit: Arc<dyn cheetah_signal_types::AuditLog> = Arc::new(TracingAuditLog);
     let api_config = ApiConfig::from(&config);
+    // GB28181 runtime/application metrics aggregator. It is exposed on the
+    // `/metrics` endpoint and drives runtime readiness/degraded reporting on
+    // `/readyz`. Series cardinality is fixed by the shard count and the bounded
+    // label enums, so no tenant/device identifiers reach Prometheus.
+    let gb_metrics = Arc::new(cheetah_runtime_tokio::GbMetrics::new(
+        config.runtime.worker_threads.max(1),
+        config.runtime.queue_depth as u64,
+    ));
     let mut state = ApiState::new(
         api_config,
         storage.clone(),
@@ -761,6 +769,8 @@ pub async fn start(
         media_port,
     )
     .with_media_metrics(media_metrics.clone())
+    .with_gb_metrics(gb_metrics.clone())
+    .with_runtime_health(gb_metrics.clone())
     .with_audit(audit.clone());
     state.cancel = cancel.clone();
 
@@ -931,6 +941,7 @@ pub async fn start(
             config.runtime.queue_depth,
             config.gb28181.catalog_fragment_max_entries as usize,
             config.gb28181.catalog_fragment_max_items as usize,
+            gb_metrics.clone(),
             cancel.child_token(),
         );
         workers.push(gb_event_handle);

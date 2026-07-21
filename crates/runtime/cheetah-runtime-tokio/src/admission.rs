@@ -46,6 +46,21 @@ impl AdmissionController {
     pub(crate) fn senders(&self) -> &[mpsc::Sender<RuntimeMessage>] {
         &self.senders[..]
     }
+
+    /// Returns the current occupancy of each shard mailbox, indexed by shard.
+    ///
+    /// Depth is derived from the bounded MPSC channel as
+    /// `max_capacity - available_capacity`, giving a per-shard gauge whose
+    /// label cardinality is fixed by the (bounded) shard count.
+    pub fn shard_mailbox_depths(&self) -> Vec<u64> {
+        self.senders
+            .iter()
+            .map(|sender| {
+                let used = sender.max_capacity().saturating_sub(sender.capacity());
+                used as u64
+            })
+            .collect()
+    }
 }
 
 impl AdmissionControllerTrait for AdmissionController {

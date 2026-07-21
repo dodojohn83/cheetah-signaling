@@ -12,11 +12,13 @@ pub mod config;
 pub mod context;
 pub mod error;
 pub mod event;
+pub mod gb_metrics;
 pub mod id;
 pub mod metrics;
 pub mod net;
 pub mod pagination;
 pub mod ports;
+pub mod redaction;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
 pub mod time;
@@ -30,6 +32,10 @@ pub use context::{
 };
 pub use error::{FieldViolation, Result, SignalError, SignalErrorKind};
 pub use event::Event;
+pub use gb_metrics::{
+    GbCommandMethod, GbCommandOutcome, GbDevicePresence, GbMediaSessionState, GbMetricsRecorder,
+    NoopGbMetricsRecorder,
+};
 pub use id::{
     ChannelId, CorrelationId, DeliveryId, DeviceId, EndpointId, EventId, MediaBindingId,
     MediaNodeInstanceEpoch, MediaSessionId, MessageId, NodeId, NodeInstanceId, OperationId,
@@ -39,6 +45,7 @@ pub use metrics::MetricsExporter;
 pub use net::is_internal_ip;
 pub use pagination::{DEFAULT_PAGE_SIZE, ListCursor, MAX_PAGE_SIZE, Page, PageRequest};
 pub use ports::{Clock, IdGenerator, NetworkFaultPolicy, RandomSource, SecretStore};
+pub use redaction::{Redacted, SafeDetails, redact_details};
 #[cfg(any(test, feature = "test-support"))]
 pub use test_support::{
     FakeClock, FakeIdGenerator, FakeNetworkFault, FakeRandom, NoOpNetworkFault, TestSeed,

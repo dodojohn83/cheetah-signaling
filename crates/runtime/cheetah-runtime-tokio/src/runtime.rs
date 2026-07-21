@@ -205,4 +205,18 @@ impl<A: DeviceActor> Runtime<A> {
     pub fn metrics(&self) -> RuntimeMetricsSnapshot {
         self.inner.metrics.snapshot()
     }
+
+    /// Returns the current occupancy of each shard mailbox, indexed by shard.
+    pub fn shard_mailbox_depths(&self) -> Vec<u64> {
+        self.inner.admission.shard_mailbox_depths()
+    }
+
+    /// Samples the current runtime state into `gb_metrics`.
+    ///
+    /// Feeds the runtime-derived GB28181 gauges (per-shard mailbox depth,
+    /// active actors, timer lag) from a single consistent read. Intended to be
+    /// called periodically by a supervising sampler.
+    pub fn sample_gb_metrics(&self, gb_metrics: &crate::gb_metrics::GbMetrics) {
+        gb_metrics.record_runtime_sample(&self.metrics(), &self.shard_mailbox_depths());
+    }
 }
