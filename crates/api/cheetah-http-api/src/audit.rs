@@ -1,7 +1,7 @@
 //! HTTP API audit sink backed by `tracing`.
 
 use crate::{ApiRequestContext, ApiState};
-use cheetah_signal_types::{AuditEvent, AuditLog, AuditOutcome};
+use cheetah_signal_types::{AuditEvent, AuditLog, AuditOutcome, SafeDetails};
 
 /// Audit sink that emits each event as a structured `tracing::info!` log.
 ///
@@ -44,7 +44,7 @@ impl AuditLog for TracingAuditLog {
 
 /// Records an audit event for a request.
 ///
-/// `details` must not contain secrets or raw protocol bodies.
+/// `details` is redacted before being stored; callers do not need to pre-filter.
 pub fn record(
     state: &ApiState,
     ctx: &ApiRequestContext,
@@ -66,7 +66,7 @@ pub fn record(
         correlation_id: Some(ctx.correlation_id.to_string()),
         source_ip: ctx.source_ip.clone(),
         node_id: ctx.node_id.unwrap_or(state.config.node_id),
-        details,
+        details: details.map(SafeDetails::new),
     };
     state.audit.record(event);
 }

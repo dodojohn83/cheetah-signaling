@@ -143,7 +143,7 @@ Device/session/request ID 等高基数值不得成为 Prometheus label。指标 
 - [ ] `GB4-SEC-001`：更新 GB threat model，加入 parser/auth/endpoint/tenant/control/cascade/media callback 风险与测试映射。
 - [ ] `GB4-SEC-002`：完成 SecretStore、Digest algorithm/replay、auth rate-limit 和 insecure profile 启动策略。
 - [ ] `GB4-SEC-003`：完成 Contact/SDP/级联 endpoint、DNS/network zone 和 redirect policy。
-- [ ] `GB4-SEC-004`：实现日志/trace redaction、诊断采样和审计事件 contract。
+- [x] `GB4-SEC-004`：实现日志/trace redaction、诊断采样和审计事件 contract。见 [reports/gb4-sec-004.md](reports/gb4-sec-004.md)。
 - [x] `GB4-OPS-001`：实现 transport/core/shard/application/cascade/media 指标与有界 labels。参见 `dev-docs/004_gb28181-improve/reports/gb4-ops-001.md`。
 - [x] `GB4-OPS-002`：实现 GB runtime readiness/degraded、queue saturation 和 dependency health。参见 `dev-docs/004_gb28181-improve/reports/gb4-ops-001.md`。
 - [x] `GB4-OPS-003`：实现 admission、priority、coalescing、dead-letter 和 backlog recovery 策略。参见 `dev-docs/004_gb28181-improve/reports/gb4-ops-003.md`。
