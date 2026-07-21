@@ -140,7 +140,7 @@ Device/session/request ID 等高基数值不得成为 Prometheus label。指标 
 
 ## 9. 实施任务
 
-- [ ] `GB4-SEC-001`：更新 GB threat model，加入 parser/auth/endpoint/tenant/control/cascade/media callback 风险与测试映射。
+- [x] `GB4-SEC-001`：更新 GB threat model，加入 parser/auth/endpoint/tenant/control/cascade/media callback 风险与测试映射。见 [reports/gb4-sec-001.md](reports/gb4-sec-001.md)。
 - [ ] `GB4-SEC-002`：完成 SecretStore、Digest algorithm/replay、auth rate-limit 和 insecure profile 启动策略。
 - [ ] `GB4-SEC-003`：完成 Contact/SDP/级联 endpoint、DNS/network zone 和 redirect policy。
 - [ ] `GB4-SEC-004`：实现日志/trace redaction、诊断采样和审计事件 contract。
@@ -159,4 +159,3 @@ Device/session/request ID 等高基数值不得成为 Prometheus label。指标 
 - DB/NATS/SecretStore/MediaPort 降速或短断不会产生无界队列或假成功。
 - SIGTERM、worker panic、node crash 和 rolling drain 后资源释放且 reconciler 收敛。
 - metrics cardinality 测试证明设备数量增长不增加 label series 的设备维度。
-
