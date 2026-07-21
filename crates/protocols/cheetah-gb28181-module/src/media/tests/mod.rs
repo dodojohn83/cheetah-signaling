@@ -210,3 +210,4 @@ mod bye_tests;
 mod invite_tests;
 mod playback_tests;
 mod sdp_tests;
+mod transition_table;

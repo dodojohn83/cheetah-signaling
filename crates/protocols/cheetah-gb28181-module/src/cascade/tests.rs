@@ -727,3 +727,4 @@ mod catalog;
 mod catalog_security;
 mod report;
 mod tests_keepalive;
+mod transition_table;

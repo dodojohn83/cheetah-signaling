@@ -453,6 +453,23 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
     }
 }
 
+#[cfg(test)]
+impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
+    /// Returns a stable label for the current registration state discriminant.
+    ///
+    /// Test-only accessor used by the state-transition table tests to observe
+    /// the resulting state without exposing the private `State` enum.
+    pub(super) fn state_label(&self) -> &'static str {
+        match &self.state {
+            State::Idle => "Idle",
+            State::Registering(_) => "Registering",
+            State::Registered(_) => "Registered",
+            State::Failed { .. } => "Failed",
+            State::Deregistering(_) => "Deregistering",
+        }
+    }
+}
+
 pub(super) fn extract_challenge(msg: &SipMessage) -> Result<Option<DigestChallenge>, CascadeError> {
     let Some(value) = msg.headers().get(&HeaderName::WwwAuthenticate) else {
         return Ok(None);
