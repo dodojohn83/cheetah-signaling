@@ -197,7 +197,7 @@ python3 scripts/audit_architecture.py
 - [ ] `GB4-SYS-004`：完成上级/下级平台级联互操作报告。
 - [ ] `GB4-SYS-005`：完成安全、过载和敏感信息泄漏测试报告。
 - [ ] `GB4-SYS-006`：完成三节点 chaos/rolling upgrade 报告。
-- [ ] `GB4-SYS-007`：完成 10万/30万/100万容量与水平扩展报告。
+- [Blocked] `GB4-SYS-007`：完成 10万/30万/100万容量与水平扩展报告。报告：[gb4-sys-007-capacity-horizontal-scaling.md](reports/gb4-sys-007-capacity-horizontal-scaling.md)
 - [ ] `GB4-SYS-008`：完成 24h development endurance 和 72h release soak 报告。
 - [ ] `GB4-SYS-009`：完成 x86_64/aarch64、SBOM/license/advisory、migration 和 release checklist。
 
@@ -209,4 +209,3 @@ python3 scripts/audit_architecture.py
 - 公开 REST/Proto、配置和 migration 具有兼容策略。
 - 完整质量门禁、互操作、chaos、100 万在线和 72 小时 soak 报告可复现。
 - signaling Control Plane 边界通过依赖、端口和抓包三类审计。
-
