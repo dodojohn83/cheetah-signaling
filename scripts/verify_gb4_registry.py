@@ -3,8 +3,8 @@
 
 Cross-checks that:
 - All `GB4-*` IDs used as task checkboxes in dev-docs/004_gb28181-improve are unique.
-- All checkbox-defined IDs are covered by the ranges/groups in
-  91_003_requirement_registry.md.
+- All checkbox-defined IDs are covered by the explicit IDs and ranges in the
+  registry section (`91_003_requirement_registry.md` section 4).
 - All relative markdown links in the docs point to existing files.
 - Total unique checkbox-defined task count is 68.
 
@@ -16,11 +16,8 @@ import sys
 from pathlib import Path
 
 ID_RE = re.compile(r"GB4-[A-Z]{2,5}-[0-9]{3}")
-PREFIX_RE = re.compile(r"GB4-[A-Z]{2,5}")
 CHECKBOX_RE = re.compile(r"^\s*(?:-\s*\[\s*[xX ]\s*\]|\*\s*\[\s*[xX ]\s*\])")
-RANGE_RE = re.compile(
-    r"(GB4-[A-Z]{2,5})-([0-9]{3})\.\.([0-9]{3})"
-)
+RANGE_RE = re.compile(r"(GB4-[A-Z]{2,5})-([0-9]{3})\.\.([0-9]{3})")
 
 
 def main() -> int:
@@ -53,23 +50,21 @@ def main() -> int:
 
     registry_text = registry.read_text(encoding="utf-8")
 
-    # Build the explicit set of IDs declared in the registry by expanding ranges.
-    registry_ids: set[str] = set(ID_RE.findall(registry_text))
-    # Expand `GB4-XXX-001..005` patterns.
-    for match in RANGE_RE.finditer(registry_text):
+    # Only the task ID list section (section 4) declares the canonical set of IDs.
+    # Split on the heading and fall back to the whole file if the heading is missing.
+    section_marker = "## 4. 004 任务 ID 清单"
+    if section_marker in registry_text:
+        registry_section = registry_text.split(section_marker, 1)[1]
+    else:
+        registry_section = registry_text
+
+    registry_ids: set[str] = set(ID_RE.findall(registry_section))
+    for match in RANGE_RE.finditer(registry_section):
         prefix = match.group(1)
         start = int(match.group(2))
         end = int(match.group(3))
         for i in range(start, end + 1):
             registry_ids.add(f"{prefix}-{i:03d}")
-
-    # Bare group references like `GB4-REF` or `GB4-TST` cover all IDs with that prefix
-    # that are also defined as checkboxes in the phase docs.
-    prefix_references = set(PREFIX_RE.findall(registry_text))
-    for task_id in checkbox_ids:
-        prefix = PREFIX_RE.match(task_id)
-        if prefix and prefix.group(0) in prefix_references:
-            registry_ids.add(task_id)
 
     only_in_checkbox = sorted(checkbox_ids - registry_ids)
     only_in_registry = sorted(registry_ids - checkbox_ids)
