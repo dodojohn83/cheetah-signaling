@@ -16,6 +16,7 @@
 
 pub mod access;
 pub mod cascade;
+pub mod compat;
 pub mod config;
 pub mod error;
 pub mod events;
@@ -31,6 +32,13 @@ pub use cascade::{
     CascadeOutput, Gb28181Cascade,
 };
 pub use cheetah_gb28181_core::{AccessInput, AccessOutput, GbAccessMachine};
+pub use compat::{
+    CatalogOverrides, CharsetPreference, CompatibilityCapability, CompatibilityError,
+    CompatibilityProfile, CompatibilityProfileConfig, CompatibilityRegistry, DeviceDescriptor,
+    DigestAlgorithmPreference, EndpointBehavior, MatchSpecificity, MediaStatusOverrides,
+    PinnedProfile, ProfileId, ProfileMatchKey, ProfileRevision, ProfileSelection, RportPolicy,
+    SdpOverrides, SdpSetupPreference, SourceRoutePolicy, StandardVersion,
+};
 pub use config::{AuthPolicy, CharsetPolicy, Gb28181DomainConfig};
 pub use error::AccessError;
 pub use events::{DevicePresence, Gb28181Event};

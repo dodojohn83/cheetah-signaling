@@ -1,0 +1,30 @@
+# Example GB28181 compatibility profile for the AKStream interop scenario.
+#
+# This is the flat `CompatibilityProfileConfig` form (one profile per file). In
+# production deployment configuration these fields appear under a
+# `[[gb28181.compatibility_profiles]]` array element.
+id = "akstream-gb2016-generic"
+revision = 1
+standard_version = "2016"
+manufacturer = "AKStream"
+evidence_ref = "testdata/gb28181/compat/akstream-gb2016.profile.meta.toml"
+
+# AKStream exercises IPv6 transport, ConfigDownload, PresetQuery, voice
+# Broadcast and MediaStatus reporting.
+capabilities = [
+    "ipv6",
+    "config_download",
+    "preset_query",
+    "broadcast",
+    "media_status",
+]
+
+digest_algorithm = "md5"
+charset = "gbk_compatible"
+rport = "honor"
+source_route = "dialog_target"
+catalog_fragment_size = 64
+
+# Broadcast and MediaStatus overrides require their capabilities to be declared.
+broadcast_handshake = true
+media_status_accept_121 = true

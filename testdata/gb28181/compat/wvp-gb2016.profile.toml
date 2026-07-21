@@ -1,0 +1,21 @@
+# Example GB28181 compatibility profile for the WVP-GB28181-pro interop scenario.
+id = "wvp-gb2016-generic"
+revision = 1
+standard_version = "2016"
+manufacturer = "WVP"
+evidence_ref = "testdata/gb28181/compat/wvp-gb2016.profile.meta.toml"
+
+# WVP scenarios: device-level password, Catalog Notify, Alarm and
+# MobilePosition subscription, multiple upstream and virtual directory /
+# custom external IDs.
+capabilities = [
+    "catalog_notify",
+    "alarm_subscription",
+    "mobile_position_subscription",
+    "multiple_upstream",
+    "virtual_directory",
+    "custom_external_id",
+]
+
+digest_algorithm = "md5"
+charset = "gbk_compatible"
