@@ -4,7 +4,7 @@ use crate::dto::{ControlPlaybackRequest, MediaSessionDto, OperationDto, StopLive
 use cheetah_domain::{
     Channel, ChannelStatus, CommandPayload, Device, DeviceLifecycle, DeviceOwnerResolver,
     DomainError, DomainEvent, IdempotencyScope, MediaPort, MediaPurpose, MediaRequirements,
-    MediaSessionState, Operation, UnitOfWork,
+    MediaSessionState, Operation, OperationResult, UnitOfWork,
 };
 use cheetah_signal_types::{
     ChannelId, Clock, Deadline, DeviceId, Event, IdGenerator, MediaBindingId, MediaSessionId,
@@ -63,7 +63,7 @@ impl MediaService {
             .map_err(crate::SignalError::from)
     }
 
-    /// Stops a live media session.
+    /// Stops a media session (live, playback or talk).
     pub async fn stop_live(
         &self,
         context: &RequestContext,
@@ -82,11 +82,10 @@ impl MediaService {
         )
         .map_err(crate::SignalError::from)?;
 
-        if uow
+        if let Some(existing) = uow
             .operation_repository()
             .get_by_idempotency(&scope)
             .await?
-            .is_some()
         {
             let session = uow
                 .media_session_repository()
@@ -98,10 +97,13 @@ impl MediaService {
                         media_session_id.to_string(),
                     ))
                 })?;
+            // Re-emit the session state from the existing operation so the
+            // caller sees the idempotent result.
+            let _ = existing;
             return Ok(MediaSessionDto::from(&session));
         }
 
-        let session = uow
+        let mut session = uow
             .media_session_repository()
             .get(tenant_id, media_session_id)
             .await?
@@ -111,19 +113,9 @@ impl MediaService {
                     media_session_id.to_string(),
                 ))
             })?;
-        let binding = uow
-            .media_binding_repository()
-            .get_by_media_session(tenant_id, media_session_id)
-            .await?
-            .ok_or_else(|| {
-                crate::SignalError::from(DomainError::not_found(
-                    "media binding",
-                    media_session_id.to_string(),
-                ))
-            })?;
 
         let payload = CommandPayload::StopMediaSession { media_session_id };
-        let (operation, op_event) = Operation::new(
+        let (mut operation, op_event) = Operation::new(
             self.id_generator.as_ref(),
             self.clock.as_ref(),
             context,
@@ -136,7 +128,76 @@ impl MediaService {
         )
         .map_err(crate::SignalError::from)?;
 
+        if session.is_terminal() {
+            // The session is already stopped/failed: create a terminal stop
+            // operation as compensation and return the existing session.
+            let submitted_revision = operation.revision().0;
+            let op_started_event = operation
+                .start(self.clock.as_ref())
+                .map_err(crate::SignalError::from)?;
+            let started_revision = operation.revision().0;
+            let op_complete_event = operation
+                .complete(OperationResult::success(), self.clock.as_ref())
+                .map_err(crate::SignalError::from)?;
+            let completed_revision = operation.revision().0;
+
+            uow.operation_repository().save(&operation).await?;
+            uow.outbox()
+                .append(wrap_event(
+                    self.id_generator.as_ref(),
+                    self.clock.as_ref(),
+                    context,
+                    tenant_id,
+                    operation_resource_ref(tenant_id, operation.operation_id()),
+                    submitted_revision,
+                    op_event,
+                ))
+                .await?;
+            uow.outbox()
+                .append(wrap_event(
+                    self.id_generator.as_ref(),
+                    self.clock.as_ref(),
+                    context,
+                    tenant_id,
+                    operation_resource_ref(tenant_id, operation.operation_id()),
+                    started_revision,
+                    op_started_event,
+                ))
+                .await?;
+            uow.outbox()
+                .append(wrap_event(
+                    self.id_generator.as_ref(),
+                    self.clock.as_ref(),
+                    context,
+                    tenant_id,
+                    operation_resource_ref(tenant_id, operation.operation_id()),
+                    completed_revision,
+                    op_complete_event,
+                ))
+                .await?;
+            uow.commit().await?;
+            return Ok(MediaSessionDto::from(&session));
+        }
+
+        let binding = uow
+            .media_binding_repository()
+            .get_by_media_session(tenant_id, media_session_id)
+            .await?
+            .ok_or_else(|| {
+                crate::SignalError::from(DomainError::not_found(
+                    "media binding",
+                    media_session_id.to_string(),
+                ))
+            })?;
+
+        // Mark the session as stopping before the media-node RPC so new
+        // start/control commands on the same session are rejected.
+        let stop_event = session
+            .stop(self.clock.as_ref())
+            .map_err(crate::SignalError::from)?;
+
         uow.operation_repository().save(&operation).await?;
+        uow.media_session_repository().save(&session).await?;
         uow.outbox()
             .append(wrap_event(
                 self.id_generator.as_ref(),
@@ -146,6 +207,17 @@ impl MediaService {
                 operation_resource_ref(tenant_id, operation.operation_id()),
                 operation.revision().0,
                 op_event,
+            ))
+            .await?;
+        uow.outbox()
+            .append(wrap_event(
+                self.id_generator.as_ref(),
+                self.clock.as_ref(),
+                context,
+                tenant_id,
+                media_session_resource_ref(tenant_id, session.media_session_id()),
+                session.revision().0,
+                stop_event,
             ))
             .await?;
 
