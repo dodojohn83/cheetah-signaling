@@ -86,8 +86,14 @@ impl MediaService {
 
         // WF-002 step 4-6: atomically create Pending Operation, Requested MediaSession,
         // Reserved MediaBinding and outbox, then transition to Allocating.
+        let payload = CommandPayload::StartLive {
+            media_session_id,
+            channel_id,
+            media_node_id: reservation.media_node_id,
+            purpose: MediaPurpose::Live,
+        };
         let result = self
-            .persist_live_start_resources(
+            .persist_start_resources(
                 context,
                 uow,
                 scope,
@@ -98,6 +104,9 @@ impl MediaService {
                 &reservation,
                 owner.owner_epoch,
                 deadline,
+                payload,
+                MediaPurpose::Live,
+                None,
             )
             .await;
 
@@ -147,10 +156,10 @@ impl MediaService {
     }
 
     /// Atomically persists the Pending Operation, Requested MediaSession and
-    /// Reserved MediaBinding for a live start, then transitions the session to
+    /// Reserved MediaBinding for a start request, then transitions the session to
     /// Allocating. All writes and outbox events are committed in one transaction.
     #[allow(clippy::too_many_arguments)]
-    async fn persist_live_start_resources(
+    async fn persist_start_resources(
         &self,
         context: &RequestContext,
         uow: &mut dyn UnitOfWork,
@@ -162,6 +171,9 @@ impl MediaService {
         reservation: &cheetah_domain::MediaReservation,
         owner_epoch: OwnerEpoch,
         deadline: Option<Deadline>,
+        payload: CommandPayload,
+        purpose: MediaPurpose,
+        playback: Option<(UtcTimestamp, UtcTimestamp, f64)>,
     ) -> crate::Result<(
         Operation,
         MediaSession,
@@ -173,13 +185,6 @@ impl MediaService {
         CommandPayload,
     )> {
         let tenant_id = context.tenant_id;
-
-        let payload = CommandPayload::StartLive {
-            media_session_id,
-            channel_id,
-            media_node_id: reservation.media_node_id,
-            purpose: MediaPurpose::Live,
-        };
 
         let (operation, op_event) = Operation::new(
             self.id_generator.as_ref(),
@@ -200,7 +205,7 @@ impl MediaService {
             tenant_id,
             device_id,
             channel_id,
-            MediaPurpose::Live,
+            purpose,
             MediaSessionDesiredState::Active,
             owner_epoch,
             operation.operation_id(),
@@ -208,6 +213,10 @@ impl MediaService {
             deadline,
         )
         .map_err(crate::SignalError::from)?;
+
+        if let Some((start_time, end_time, scale)) = playback {
+            session.set_playback_window(start_time, end_time, scale);
+        }
 
         let (binding, binding_event) = MediaBinding::new(
             self.clock.as_ref(),
@@ -323,6 +332,9 @@ impl MediaService {
             return Ok(MediaSessionDto::from(&existing));
         }
 
+        // Persist nothing yet; close the read transaction before external calls.
+        uow.commit().await?;
+
         let owner = self
             .owner_resolver
             .resolve(tenant_id, device_id)
@@ -358,120 +370,31 @@ impl MediaService {
             )
             .await?;
 
-        let result = async {
-            let (operation, op_event) = Operation::new(
-                self.id_generator.as_ref(),
-                self.clock.as_ref(),
+        let payload = CommandPayload::StartPlayback {
+            media_session_id,
+            channel_id,
+            media_node_id: reservation.media_node_id,
+            start_time,
+            end_time,
+            scale: request.scale,
+        };
+        let result = self
+            .persist_start_resources(
                 context,
-                scope.idempotency_key.clone(),
-                device_id,
-                scope.target,
-                CommandPayload::StartPlayback {
-                    media_session_id,
-                    channel_id,
-                    media_node_id: reservation.media_node_id,
-                    start_time,
-                    end_time,
-                    scale: request.scale,
-                },
-                deadline,
-                owner.owner_epoch,
-            )
-            .map_err(crate::SignalError::from)?;
-
-            let (mut session, session_event) = MediaSession::new(
-                self.clock.as_ref(),
-                media_session_id,
-                tenant_id,
+                uow,
+                scope,
                 device_id,
                 channel_id,
-                MediaPurpose::Playback,
-                MediaSessionDesiredState::Active,
-                owner.owner_epoch,
-                operation.operation_id(),
-                operation.idempotency_scope().clone(),
-                deadline,
-            )
-            .map_err(crate::SignalError::from)?;
-            session.set_playback_window(start_time, end_time, request.scale);
-
-            let (binding, binding_event) = MediaBinding::new(
-                self.clock.as_ref(),
+                media_session_id,
                 media_binding_id,
-                media_session_id,
-                tenant_id,
-                channel_id,
-                reservation.media_node_id,
-                owner.owner_epoch,
-                reservation.media_node_instance_epoch,
-            )
-            .map_err(crate::SignalError::from)?;
-
-            uow.operation_repository().save(&operation).await?;
-            uow.media_session_repository().save(&session).await?;
-            uow.media_binding_repository().save(&binding).await?;
-
-            uow.outbox()
-                .append(wrap_event(
-                    self.id_generator.as_ref(),
-                    self.clock.as_ref(),
-                    context,
-                    tenant_id,
-                    operation_resource_ref(tenant_id, operation.operation_id()),
-                    operation.revision().0,
-                    op_event,
-                ))
-                .await?;
-            uow.outbox()
-                .append(wrap_event(
-                    self.id_generator.as_ref(),
-                    self.clock.as_ref(),
-                    context,
-                    tenant_id,
-                    media_session_resource_ref(tenant_id, session.media_session_id()),
-                    session.revision().0,
-                    session_event,
-                ))
-                .await?;
-            uow.outbox()
-                .append(wrap_event(
-                    self.id_generator.as_ref(),
-                    self.clock.as_ref(),
-                    context,
-                    tenant_id,
-                    media_binding_resource_ref(tenant_id, binding.media_binding_id()),
-                    binding.revision().0,
-                    binding_event,
-                ))
-                .await?;
-
-            let allocating_event = session.allocating(self.clock.as_ref())?;
-            uow.media_session_repository().save(&session).await?;
-            uow.outbox()
-                .append(wrap_event(
-                    self.id_generator.as_ref(),
-                    self.clock.as_ref(),
-                    context,
-                    tenant_id,
-                    media_session_resource_ref(tenant_id, session.media_session_id()),
-                    session.revision().0,
-                    allocating_event,
-                ))
-                .await?;
-
-            uow.commit().await?;
-            Ok((
-                operation.operation_id(),
-                session.media_session_id(),
-                binding.media_binding_id(),
-                reservation,
+                &reservation,
                 owner.owner_epoch,
                 deadline,
-                scope.idempotency_key.clone(),
-                operation.command().payload().clone(),
-            ))
-        }
-        .await;
+                payload,
+                MediaPurpose::Playback,
+                Some((start_time, end_time, request.scale)),
+            )
+            .await;
 
         let released = if result.is_err() {
             self.media_port
@@ -481,14 +404,18 @@ impl MediaService {
             Ok(())
         };
         if let Err(e) = released {
-            tracing::warn!("failed to release media reservation after failed start_playback: {e}");
+            tracing::warn!(
+                tenant_id = %tenant_id,
+                binding_id = %media_binding_id,
+                "failed to release media reservation after failed start_playback: {e}"
+            );
         }
 
         match result {
             Ok((
-                operation_id,
-                media_session_id,
-                media_binding_id,
+                operation,
+                _session,
+                _binding,
                 reservation,
                 owner_epoch,
                 deadline,
@@ -498,7 +425,7 @@ impl MediaService {
                 self.dispatch_media_command(
                     context,
                     uow,
-                    operation_id,
+                    operation.operation_id(),
                     media_session_id,
                     media_binding_id,
                     &reservation,
@@ -546,6 +473,9 @@ impl MediaService {
             return Ok(MediaSessionDto::from(&existing));
         }
 
+        // Persist nothing yet; close the read transaction before external calls.
+        uow.commit().await?;
+
         let owner = self
             .owner_resolver
             .resolve(tenant_id, device_id)
@@ -578,116 +508,28 @@ impl MediaService {
             )
             .await?;
 
-        let result = async {
-            let (operation, op_event) = Operation::new(
-                self.id_generator.as_ref(),
-                self.clock.as_ref(),
+        let payload = CommandPayload::StartTalk {
+            media_session_id,
+            channel_id,
+            media_node_id: reservation.media_node_id,
+        };
+        let result = self
+            .persist_start_resources(
                 context,
-                scope.idempotency_key.clone(),
-                device_id,
-                scope.target,
-                CommandPayload::StartTalk {
-                    media_session_id,
-                    channel_id,
-                    media_node_id: reservation.media_node_id,
-                },
-                deadline,
-                owner.owner_epoch,
-            )
-            .map_err(crate::SignalError::from)?;
-
-            let (mut session, session_event) = MediaSession::new(
-                self.clock.as_ref(),
-                media_session_id,
-                tenant_id,
+                uow,
+                scope,
                 device_id,
                 channel_id,
-                MediaPurpose::Talk,
-                MediaSessionDesiredState::Active,
-                owner.owner_epoch,
-                operation.operation_id(),
-                operation.idempotency_scope().clone(),
-                deadline,
-            )
-            .map_err(crate::SignalError::from)?;
-
-            let (binding, binding_event) = MediaBinding::new(
-                self.clock.as_ref(),
+                media_session_id,
                 media_binding_id,
-                media_session_id,
-                tenant_id,
-                channel_id,
-                reservation.media_node_id,
-                owner.owner_epoch,
-                reservation.media_node_instance_epoch,
-            )
-            .map_err(crate::SignalError::from)?;
-
-            uow.operation_repository().save(&operation).await?;
-            uow.media_session_repository().save(&session).await?;
-            uow.media_binding_repository().save(&binding).await?;
-
-            uow.outbox()
-                .append(wrap_event(
-                    self.id_generator.as_ref(),
-                    self.clock.as_ref(),
-                    context,
-                    tenant_id,
-                    operation_resource_ref(tenant_id, operation.operation_id()),
-                    operation.revision().0,
-                    op_event,
-                ))
-                .await?;
-            uow.outbox()
-                .append(wrap_event(
-                    self.id_generator.as_ref(),
-                    self.clock.as_ref(),
-                    context,
-                    tenant_id,
-                    media_session_resource_ref(tenant_id, session.media_session_id()),
-                    session.revision().0,
-                    session_event,
-                ))
-                .await?;
-            uow.outbox()
-                .append(wrap_event(
-                    self.id_generator.as_ref(),
-                    self.clock.as_ref(),
-                    context,
-                    tenant_id,
-                    media_binding_resource_ref(tenant_id, binding.media_binding_id()),
-                    binding.revision().0,
-                    binding_event,
-                ))
-                .await?;
-
-            let allocating_event = session.allocating(self.clock.as_ref())?;
-            uow.media_session_repository().save(&session).await?;
-            uow.outbox()
-                .append(wrap_event(
-                    self.id_generator.as_ref(),
-                    self.clock.as_ref(),
-                    context,
-                    tenant_id,
-                    media_session_resource_ref(tenant_id, session.media_session_id()),
-                    session.revision().0,
-                    allocating_event,
-                ))
-                .await?;
-
-            uow.commit().await?;
-            Ok((
-                operation.operation_id(),
-                session.media_session_id(),
-                binding.media_binding_id(),
-                reservation,
+                &reservation,
                 owner.owner_epoch,
                 deadline,
-                scope.idempotency_key.clone(),
-                operation.command().payload().clone(),
-            ))
-        }
-        .await;
+                payload,
+                MediaPurpose::Talk,
+                None,
+            )
+            .await;
 
         let released = if result.is_err() {
             self.media_port
@@ -697,14 +539,18 @@ impl MediaService {
             Ok(())
         };
         if let Err(e) = released {
-            tracing::warn!("failed to release media reservation after failed start_talk: {e}");
+            tracing::warn!(
+                tenant_id = %tenant_id,
+                binding_id = %media_binding_id,
+                "failed to release media reservation after failed start_talk: {e}"
+            );
         }
 
         match result {
             Ok((
-                operation_id,
-                media_session_id,
-                media_binding_id,
+                operation,
+                _session,
+                _binding,
                 reservation,
                 owner_epoch,
                 deadline,
@@ -714,7 +560,7 @@ impl MediaService {
                 self.dispatch_media_command(
                     context,
                     uow,
-                    operation_id,
+                    operation.operation_id(),
                     media_session_id,
                     media_binding_id,
                     &reservation,
