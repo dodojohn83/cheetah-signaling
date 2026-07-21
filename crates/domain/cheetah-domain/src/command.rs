@@ -369,7 +369,9 @@ pub struct QueryCommand {
 }
 
 /// Kinds of query commands.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Default, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum QueryKind {
     /// Query device catalog.
@@ -416,7 +418,9 @@ pub struct DeviceControlCommand {
 }
 
 /// Kinds of device control actions.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Default, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum DeviceControlKind {
     /// Armed/guard status toggle.

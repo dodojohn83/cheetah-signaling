@@ -82,6 +82,7 @@ enum PresetAction {
   PRESET_ACTION_GOTO = 1;
   PRESET_ACTION_SET = 2;
   PRESET_ACTION_DELETE = 3;
+  PRESET_ACTION_LIST = 4;
 }
 
 message QueryCommand {
