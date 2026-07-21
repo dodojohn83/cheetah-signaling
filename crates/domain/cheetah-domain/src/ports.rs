@@ -4,12 +4,13 @@ use std::sync::Arc;
 
 use crate::{
     Channel, Command, CommandPayload, Device, DomainError, DomainEvent, MediaBinding, MediaSession,
-    Operation, WebhookConfig, WebhookDelivery,
+    Operation, Protocol, ProtocolSession, WebhookConfig, WebhookDelivery,
 };
 use cheetah_signal_types::{
     ChannelId, Deadline, DeliveryId, DeviceId, Event, EventId, MediaBindingId,
     MediaNodeInstanceEpoch, MediaSessionId, MessageId, MetricsExporter, NodeId, OperationId,
-    OwnerEpoch, Page, PageRequest, ProtocolIdentity, Revision, TenantId, UtcTimestamp, WebhookId,
+    OwnerEpoch, Page, PageRequest, ProtocolIdentity, ProtocolSessionId, Revision, TenantId,
+    UtcTimestamp, WebhookId,
 };
 
 pub use cheetah_signal_types::{Clock, IdGenerator};
@@ -154,6 +155,70 @@ pub trait DeviceRepository: Send {
         updated_after: Option<UtcTimestamp>,
         page: PageRequest,
     ) -> Result<Page<Device>>;
+}
+
+/// Repository for persistent protocol session aggregates.
+///
+/// Unlike the aggregates owned by [`UnitOfWork`], protocol sessions are managed
+/// through their own connection-scoped repository so a signaling node can query
+/// and expire registrations independently of a device write transaction.
+///
+/// Every method is tenant-scoped: reads filter by [`TenantId`] so a caller can
+/// never observe another tenant's session, and [`save`](Self::save) applies an
+/// optimistic-concurrency check on [`Revision`], mapping a zero-row update to
+/// [`DomainError::ConcurrentModification`].
+#[async_trait::async_trait]
+pub trait ProtocolSessionRepository: Send + Sync {
+    /// Gets a protocol session by id, scoped to a tenant.
+    async fn get(
+        &self,
+        tenant_id: TenantId,
+        protocol_session_id: ProtocolSessionId,
+    ) -> Result<Option<ProtocolSession>>;
+
+    /// Gets the protocol session for a device and protocol, scoped to a tenant.
+    async fn get_by_device(
+        &self,
+        tenant_id: TenantId,
+        protocol: Protocol,
+        device_id: DeviceId,
+    ) -> Result<Option<ProtocolSession>>;
+
+    /// Gets the protocol session by external protocol identity, scoped to a tenant.
+    async fn get_by_identity(
+        &self,
+        tenant_id: TenantId,
+        protocol: Protocol,
+        protocol_identity: ProtocolIdentity,
+    ) -> Result<Option<ProtocolSession>>;
+
+    /// Inserts or updates a protocol session.
+    ///
+    /// Updates must match the stored revision (`session.revision() - 1`); a
+    /// mismatch is reported as [`DomainError::ConcurrentModification`].
+    async fn save(&mut self, session: &ProtocolSession) -> Result<()>;
+
+    /// Deletes a protocol session if it still matches `expected_revision`.
+    ///
+    /// Returns [`DomainError::ConcurrentModification`] when the stored revision
+    /// differs, and [`DomainError::NotFound`] when no such session exists.
+    async fn delete(
+        &mut self,
+        tenant_id: TenantId,
+        protocol_session_id: ProtocolSessionId,
+        expected_revision: Revision,
+    ) -> Result<()>;
+
+    /// Lists sessions whose registration has expired at `now`, using stable
+    /// cursor pagination.
+    ///
+    /// This is an operational sweep used by the expiration reaper and therefore
+    /// spans tenants; each returned session still carries its own `tenant_id`.
+    async fn list_expired(
+        &self,
+        now: UtcTimestamp,
+        page: PageRequest,
+    ) -> Result<Page<ProtocolSession>>;
 }
 
 /// Repository for channel aggregates.
