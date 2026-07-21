@@ -11,6 +11,10 @@ pub enum RuntimeError {
     #[error("runtime is overloaded")]
     Overloaded,
 
+    /// The runtime is draining and no longer accepts new work.
+    #[error("runtime is draining")]
+    Draining,
+
     /// A configuration or argument value is invalid.
     #[error("invalid argument: {0}")]
     InvalidArgument(String),
