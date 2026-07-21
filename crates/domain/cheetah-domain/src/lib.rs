@@ -30,7 +30,10 @@ pub mod in_memory;
 pub use channel::{
     Channel, ChannelKind, ChannelStatus, PresetAction, PtzCapabilities, StreamProfile,
 };
-pub use command::{Command, CommandPayload, IdempotencyScope, MediaControl, PtzDirection};
+pub use command::{
+    Command, CommandPayload, DeviceControlCommand, DeviceControlKind, IdempotencyScope,
+    MediaControl, PresetCommand, PtzDirection, QueryCommand, QueryKind,
+};
 pub use device::{
     Capability, CapabilityValue, Connectivity, Device, DeviceKind, DeviceLifecycle, Protocol,
 };

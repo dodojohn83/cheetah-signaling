@@ -44,6 +44,80 @@ message ChannelCommand {
   string channel_id = 2;
   string command_type = 3;
   bytes payload = 4;
+  oneof detail {
+    PtzCommand ptz = 5;
+    PresetCommand preset = 6;
+    QueryCommand query = 7;
+    DeviceControlCommand device_control = 8;
+  }
+}
+
+message PtzCommand {
+  PtzDirection direction = 1;
+  double speed = 2;
+}
+
+enum PtzDirection {
+  PTZ_DIRECTION_UNSPECIFIED = 0;
+  PTZ_DIRECTION_STOP = 1;
+  PTZ_DIRECTION_UP = 2;
+  PTZ_DIRECTION_DOWN = 3;
+  PTZ_DIRECTION_LEFT = 4;
+  PTZ_DIRECTION_RIGHT = 5;
+  PTZ_DIRECTION_UP_LEFT = 6;
+  PTZ_DIRECTION_UP_RIGHT = 7;
+  PTZ_DIRECTION_DOWN_LEFT = 8;
+  PTZ_DIRECTION_DOWN_RIGHT = 9;
+  PTZ_DIRECTION_ZOOM_IN = 10;
+  PTZ_DIRECTION_ZOOM_OUT = 11;
+}
+
+message PresetCommand {
+  PresetAction action = 1;
+  uint32 preset_id = 2;
+}
+
+enum PresetAction {
+  PRESET_ACTION_UNSPECIFIED = 0;
+  PRESET_ACTION_GOTO = 1;
+  PRESET_ACTION_SET = 2;
+  PRESET_ACTION_DELETE = 3;
+}
+
+message QueryCommand {
+  QueryKind kind = 1;
+  string channel_id = 2;
+  int64 start_time_unix_ms = 3;
+  int64 end_time_unix_ms = 4;
+  string config_type = 5;
+  double scale = 6;
+}
+
+enum QueryKind {
+  QUERY_KIND_UNSPECIFIED = 0;
+  QUERY_KIND_CATALOG = 1;
+  QUERY_KIND_DEVICE_INFO = 2;
+  QUERY_KIND_DEVICE_STATUS = 3;
+  QUERY_KIND_RECORD_INFO = 4;
+  QUERY_KIND_PRESET_QUERY = 5;
+  QUERY_KIND_CONFIG_DOWNLOAD = 6;
+}
+
+message DeviceControlCommand {
+  DeviceControlKind kind = 1;
+  string channel_id = 2;
+  bool enabled = 3;
+  string param = 4;
+}
+
+enum DeviceControlKind {
+  DEVICE_CONTROL_KIND_UNSPECIFIED = 0;
+  DEVICE_CONTROL_KIND_GUARD = 1;
+  DEVICE_CONTROL_KIND_ALARM_RESET = 2;
+  DEVICE_CONTROL_KIND_RECORD = 3;
+  DEVICE_CONTROL_KIND_TELE_BOOT = 4;
+  DEVICE_CONTROL_KIND_I_FRAME = 5;
+  DEVICE_CONTROL_KIND_DEVICE_CONFIG = 6;
 }
 
 // Result of a control command.

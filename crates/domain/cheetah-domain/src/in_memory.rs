@@ -1339,8 +1339,11 @@ impl crate::MediaPort for InMemoryMediaPort {
                 Ok(MediaNodeCommandResult::Completed)
             }
             CommandPayload::ControlPlayback { .. } => Ok(MediaNodeCommandResult::Completed),
-            CommandPayload::Ptz { .. } => Err(DomainError::invalid_argument(
-                "PTZ command not dispatched through media node port",
+            CommandPayload::Ptz { .. }
+            | CommandPayload::Query { .. }
+            | CommandPayload::Preset { .. }
+            | CommandPayload::DeviceControl { .. } => Err(DomainError::invalid_argument(
+                "device command not dispatched through media node port",
             )),
         }
     }

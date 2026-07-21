@@ -197,7 +197,7 @@ impl PtzCapabilities {
 }
 
 /// Preset actions for PTZ preset commands.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum PresetAction {
