@@ -12,6 +12,8 @@ and the concrete runtime implementation. It contains no Tokio or I/O code.
 - `RuntimeMessage`: the fixed set of messages a shard can process.
 - `Scheduler`, `AdmissionController`, `ShardRouter`, `SessionRegistry`: ports and
   value objects.
+- `RuntimeMetrics` / `RuntimeMetricsSnapshot`: aggregate runtime health metrics
+  (no per-device labels).
 - `RuntimeConfig`, `RuntimeError`: shared configuration and error types.
 
 ## Allowed dependencies

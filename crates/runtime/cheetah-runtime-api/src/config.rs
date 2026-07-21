@@ -31,6 +31,12 @@ pub struct RuntimeConfig {
 
     /// Maximum number of sessions held in the session registry.
     pub max_sessions: usize,
+
+    /// Idle timeout after which a loaded actor's in-memory state is lazily
+    /// unloaded. A value of `0` disables idle eviction. Authoritative business
+    /// state is held by repositories/Operations, so an unloaded actor is
+    /// transparently recreated on the next message.
+    pub actor_idle_timeout_ms: u64,
 }
 
 impl Default for RuntimeConfig {
@@ -45,6 +51,7 @@ impl Default for RuntimeConfig {
             max_consecutive_per_device: 16,
             max_pending_dispatch: 65536,
             max_sessions: 1_000_000,
+            actor_idle_timeout_ms: 300_000,
         }
     }
 }
