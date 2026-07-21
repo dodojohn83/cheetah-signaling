@@ -187,7 +187,7 @@ python3 scripts/audit_architecture.py
 
 ## 11. 实施任务
 
-- [ ] `GB4-TST-001`：扩充 SIP/XML/SDP/MANSRTSP golden、metadata、property 和 fuzz corpus。
+- [x] `GB4-TST-001`：扩充 SIP/XML/SDP/MANSRTSP golden、metadata、property 和 fuzz corpus。见 [reports/gb4-tst-001.md](reports/gb4-tst-001.md)。
 - [ ] `GB4-TST-002`：建立 access/command/catalog/media/cascade 合法/非法迁移表测试。
 - [ ] `GB4-TST-003`：建立 driver-core-module、repository/message/media/architecture contract suite。
 - [ ] `GB4-TST-004`：重构 fixed-shard simulator 和 deterministic fault scenario DSL。
