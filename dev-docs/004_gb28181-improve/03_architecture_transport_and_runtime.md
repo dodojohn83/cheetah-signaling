@@ -196,8 +196,8 @@ device_credential_namespace = "gb28181/tenant-a/devices"
 - [x] `GB4-SIP-001`：完成 UDP/TCP/IPv4/IPv6 driver contract，含 framing、连接上限、cancel 和 shutdown。
 - [x] `GB4-SIP-002`：接入 transaction/dialog，覆盖 retransmission、duplicate、late/out-of-order 和 deadline。详见 [`reports/gb4-sip-002.md`](reports/gb4-sip-002.md)。
 - [x] `GB4-SIP-003`：完成 REGISTER/MESSAGE/INVITE/ACK/CANCEL/BYE/INFO/SUBSCRIBE/NOTIFY/OPTIONS method 路由。详见 [`reports/gb4-sip-002.md`](reports/gb4-sip-002.md)。
-- [ ] `GB4-SIP-004`：实现 credential resolution output/input、Digest replay/stale/algorithm/rate-limit 生产链路。
-- [ ] `GB4-SIP-005`：实现 multi-listener/domain/realm/tenant 路由与旧配置兼容窗口。
+- [x] `GB4-SIP-004`：实现 credential resolution output/input、Digest replay/stale/algorithm/rate-limit 生产链路（`SecretStoreCredentialProvider` 解析 per-device password 与 node digest secret，`AuthRateLimiter` 在 digest 计算前按 source IP 有界限流，MD5/SHA-256/replay/stale/downgrade/brute-force 均有测试）。详见 [`reports/gb4-sip-004.md`](reports/gb4-sip-004.md)。
+- [x] `GB4-SIP-005`：实现 multi-listener/domain/realm/tenant 路由与旧配置兼容窗口（`Gb28181ListenerConfig` 显式映射 realm/domain/tenant，拒绝重复 id/domain/realm/bind 及新旧混用；legacy `sip_port/sip_domain/default_tenant_id` 转换为单 listener 并输出弃用日志）。详见 [`reports/gb4-sip-004.md`](reports/gb4-sip-004.md)。
 - [ ] `GB4-SIP-006`：实现 endpoint route 模型、NAT/rport 策略和 source hijack regression。
 
 ## 11. 测试与退出门禁

@@ -22,8 +22,8 @@ pub use sip::dialog_manager::{
     DEFAULT_DIALOG_TTL, DEFAULT_MAX_DIALOGS, DialogManager, DialogManagerConfig, DialogRouting,
 };
 pub use sip::digest::{
-    DigestAlgorithm, DigestChallenge, DigestClient, DigestContext, DigestError, DigestQop,
-    DigestReplayCache, DigestResponse,
+    AuthRateLimiter, DigestAlgorithm, DigestChallenge, DigestClient, DigestContext, DigestError,
+    DigestQop, DigestReplayCache, DigestResponse,
 };
 pub use sip::encoder::encode_message;
 pub use sip::error::{SipError, SipErrorKind};
