@@ -3,6 +3,7 @@
 mod assembly;
 mod gb_catalog_buffer;
 mod gb_event_admission;
+mod gb_event_context;
 mod gb_event_processing;
 mod gb_event_sink;
 mod onvif_discovery;

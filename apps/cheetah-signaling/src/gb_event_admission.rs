@@ -293,7 +293,11 @@ impl AdmissionState {
                         self.drop_dead_letter_tagged(tagged, entry.attempts);
                     } else {
                         entry.payload = tagged.event;
+                        let dropped_before = self.dlq.dropped_total();
                         self.dlq.push_entry(entry);
+                        if self.dlq.dropped_total() > dropped_before {
+                            self.metrics.record_gb28181_event_dropped();
+                        }
                     }
                 }
             }

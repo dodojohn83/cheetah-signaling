@@ -3,22 +3,20 @@
 //! Maps inbound `Gb28181Event`s to application service calls and outbox events.
 
 use crate::gb_catalog_buffer::{CatalogBuffer, RecordInfoBuffer};
+use crate::gb_event_context::{build_context, control_outcome, serialize_record_items};
 use crate::gb_event_sink::{
     append_gb_event, build_gb_event, ensure_online, mark_offline, replace_catalog,
     resolve_device_id, storage_error, submit_bootstrap_queries, update_device_info,
 };
 use cheetah_domain::{DomainEvent, MediaSession, MediaSessionError, MediaSessionState, UnitOfWork};
 use cheetah_gb28181_module::Gb28181Event;
-use cheetah_gb28181_module::xml::RecordItem as GbRecordItem;
 use cheetah_http_api::state::ApiState;
 use cheetah_signal_types::{
-    CorrelationId, DeviceId, Event, GbCommandMethod, GbCommandOutcome, GbMetricsRecorder,
-    MediaSessionId, MessageId, NodeId, Principal, PrincipalKind, RequestContext, ResourceId,
-    ResourceKind, ResourceRef, SignalError, TenantId,
+    DeviceId, Event, GbCommandMethod, GbMetricsRecorder, MediaSessionId, NodeId, RequestContext,
+    ResourceId, ResourceKind, ResourceRef, SignalError, TenantId,
 };
 use std::collections::BTreeMap;
 use tracing::warn;
-use uuid::Uuid;
 
 /// Desired media session transition requested by a GB28181 driver event.
 pub(crate) enum MediaSessionTransition {
@@ -712,93 +710,4 @@ pub(crate) async fn process_event(
             .await
         }
     }
-}
-
-fn build_context(
-    _state: &ApiState,
-    node_id: NodeId,
-    tenant_id: TenantId,
-    event: &Gb28181Event,
-) -> RequestContext {
-    let source_ip = event_source(event).map(|s| s.ip().to_string());
-    RequestContext {
-        tenant_id,
-        principal: Principal {
-            id: "gb28181".to_string(),
-            kind: PrincipalKind::Service,
-            scopes: vec!["device:write".to_string()],
-        },
-        message_id: MessageId::from_uuid(Uuid::now_v7()),
-        correlation_id: CorrelationId::from_uuid(Uuid::now_v7()),
-        traceparent: None,
-        tracestate: None,
-        deadline: None,
-        node_id: Some(node_id),
-        source_ip,
-    }
-}
-
-fn event_source(event: &Gb28181Event) -> Option<&std::net::SocketAddr> {
-    match event {
-        Gb28181Event::DeviceRegistered { source, .. } => Some(source),
-        Gb28181Event::DeviceUnregistered { source, .. } => Some(source),
-        Gb28181Event::DevicePresenceChanged { source, .. } => Some(source),
-        Gb28181Event::Keepalive { source, .. } => Some(source),
-        Gb28181Event::CatalogReceived { source, .. } => Some(source),
-        Gb28181Event::DeviceInfoReceived { source, .. } => Some(source),
-        Gb28181Event::DeviceStatusReceived { source, .. } => Some(source),
-        Gb28181Event::AlarmReceived { source, .. } => Some(source),
-        Gb28181Event::MobilePositionReceived { source, .. } => Some(source),
-        Gb28181Event::DeviceControlResponseReceived { source, .. } => Some(source),
-        Gb28181Event::MediaSessionStarted { source, .. } => Some(source),
-        Gb28181Event::MediaSessionStopped { source, .. } => source.as_ref(),
-        Gb28181Event::MediaSessionFailed { source, .. } => source.as_ref(),
-        Gb28181Event::RecordInfoReceived { source, .. } => Some(source),
-        _ => None,
-    }
-}
-
-fn control_outcome(result: &Option<String>) -> GbCommandOutcome {
-    match result {
-        Some(value) if value.eq_ignore_ascii_case("OK") => GbCommandOutcome::Succeeded,
-        Some(_) => GbCommandOutcome::Failed,
-        None => GbCommandOutcome::Unknown,
-    }
-}
-
-/// Serializes a slice of GB28181 record items to a JSON array.
-fn serialize_record_items(records: &[GbRecordItem]) -> Option<String> {
-    let maps: Vec<BTreeMap<String, String>> = records
-        .iter()
-        .map(|r| {
-            let mut m = BTreeMap::new();
-            m.insert("device_id".to_string(), r.device_id.clone());
-            if let Some(v) = &r.name {
-                m.insert("name".to_string(), v.clone());
-            }
-            if let Some(v) = &r.file_path {
-                m.insert("file_path".to_string(), v.clone());
-            }
-            if let Some(v) = &r.start_time {
-                m.insert("start_time".to_string(), v.clone());
-            }
-            if let Some(v) = &r.end_time {
-                m.insert("end_time".to_string(), v.clone());
-            }
-            if let Some(v) = &r.secrecy {
-                m.insert("secrecy".to_string(), v.clone());
-            }
-            if let Some(v) = &r.record_type {
-                m.insert("record_type".to_string(), v.clone());
-            }
-            if let Some(v) = &r.recorder_id {
-                m.insert("recorder_id".to_string(), v.clone());
-            }
-            if let Some(v) = &r.file_size {
-                m.insert("file_size".to_string(), v.clone());
-            }
-            m
-        })
-        .collect();
-    serde_json::to_string(&maps).ok()
 }
