@@ -24,7 +24,10 @@ pub use command_dispatcher::CommandDispatcher;
 pub use device_service::DeviceService;
 pub use dto::*;
 pub use event_service::EventService;
-pub use inbox::{CommandHandler, CommandHandlerResult, InboxService};
+pub use inbox::{
+    CommandDispatch, CommandHandler, CommandHandlerResult, InboxReceipt, InboxService,
+    OperationStepOutcome,
+};
 pub use media_service::MediaService;
 pub use operation_reconciler::OperationReconciler;
 pub use operation_service::OperationService;

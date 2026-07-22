@@ -7,16 +7,140 @@ use cheetah_domain::{
 use cheetah_message_api::{bus::RawCommandBus, mapper::decode_command, subject::command_subject};
 use cheetah_signal_types::{DurationMs, NodeId, Result, SignalError};
 use cheetah_storage_api::Storage;
+use serde::Serialize;
 use std::sync::Arc;
 use tracing::{info, warn};
 
+/// Inbox-level receipt for a command delivery.
+///
+/// This describes what happened to the message from the inbox perspective,
+/// independent of the operation step outcome or transport dispatch status.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InboxReceipt {
+    /// The command was accepted and will be dispatched.
+    Accepted,
+    /// The delivery was a duplicate of an already processed message.
+    Duplicate,
+    /// The command was rejected before dispatch.
+    Rejected {
+        /// Stable reason for rejection.
+        reason: String,
+    },
+    /// The command was dead-lettered and will not be retried.
+    DeadLetter {
+        /// Stable reason the message was dead-lettered.
+        reason: String,
+    },
+}
+
+/// Status of the dispatch attempt for a command.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandDispatch {
+    /// The command was queued for dispatch.
+    Queued,
+    /// The command was sent to the downstream handler/driver.
+    Sent,
+    /// The command could not be sent due to a transport error.
+    TransportFailed {
+        /// Stable reason for the transport failure.
+        reason: String,
+    },
+    /// The dispatch attempt timed out before an acknowledgment.
+    TimedOut,
+}
+
+/// Outcome of the operation step that a command represents.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OperationStepOutcome {
+    /// The operation step completed successfully.
+    Succeeded,
+    /// The operation step failed with a stable reason.
+    Failed {
+        /// Stable reason for the failure.
+        reason: String,
+    },
+    /// The final outcome is not yet known; the operation remains active.
+    Unknown,
+    /// The operation step was cancelled before completion.
+    Cancelled,
+}
+
 /// Result of handling a single command inside the inbox.
+///
+/// The result separates three concerns that were previously conflated into a
+/// single `ProcessedMessageStatus::Completed`:
+///
+/// 1. `receipt` - what the inbox should record as the delivery disposition.
+/// 2. `dispatch` - what happened when the command was handed to the driver/plugin.
+/// 3. `outcome` - the business outcome of the operation step, if known.
 #[derive(Clone, Debug)]
 pub struct CommandHandlerResult {
-    /// Final status of the command.
-    pub status: ProcessedMessageStatus,
+    /// Inbox-level receipt for the delivery.
+    pub receipt: InboxReceipt,
+    /// Optional dispatch status reported by the handler.
+    pub dispatch: Option<CommandDispatch>,
+    /// Optional operation step outcome reported by the handler.
+    pub outcome: Option<OperationStepOutcome>,
     /// Optional JSON-encoded result payload.
     pub result_payload: Option<String>,
+}
+
+impl CommandHandlerResult {
+    /// Returns a receipt of `Accepted` with the given dispatch status and
+    /// operation step outcome.
+    pub fn accepted(dispatch: CommandDispatch, outcome: OperationStepOutcome) -> Self {
+        Self {
+            receipt: InboxReceipt::Accepted,
+            dispatch: Some(dispatch),
+            outcome: Some(outcome),
+            result_payload: None,
+        }
+    }
+
+    /// Returns a receipt of `Rejected` with the given reason.
+    pub fn rejected(reason: impl Into<String>) -> Self {
+        let reason = reason.into();
+        Self {
+            receipt: InboxReceipt::Rejected {
+                reason: reason.clone(),
+            },
+            dispatch: None,
+            outcome: Some(OperationStepOutcome::Failed { reason }),
+            result_payload: None,
+        }
+    }
+
+    /// Returns a receipt of `DeadLetter` with the given reason.
+    pub fn dead_letter(reason: impl Into<String>) -> Self {
+        let reason = reason.into();
+        Self {
+            receipt: InboxReceipt::DeadLetter {
+                reason: reason.clone(),
+            },
+            dispatch: None,
+            outcome: Some(OperationStepOutcome::Failed { reason }),
+            result_payload: None,
+        }
+    }
+
+    /// Returns a receipt of `Duplicate` with no dispatch or outcome.
+    pub fn duplicate() -> Self {
+        Self {
+            receipt: InboxReceipt::Duplicate,
+            dispatch: None,
+            outcome: None,
+            result_payload: None,
+        }
+    }
+
+    /// Attaches a JSON result payload to the result.
+    pub fn with_payload(mut self, payload: String) -> Self {
+        self.result_payload = Some(payload);
+        self
+    }
 }
 
 /// Handles a decoded [`Command`] and returns a result payload.
@@ -218,8 +342,11 @@ impl InboxService {
 
         match self.command_handler.handle(uow.as_mut(), &command).await {
             Ok(result) => {
-                let status = result.status;
-                let result_payload = result.result_payload;
+                let status = processed_status_from_receipt(&result.receipt);
+                let result_payload = result
+                    .result_payload
+                    .clone()
+                    .or_else(|| build_result_payload(&result));
                 let now = self.clock.now_wall();
                 if let Err(e) = uow
                     .processed_message_repository()
@@ -254,13 +381,18 @@ impl InboxService {
                 }
 
                 let now = self.clock.now_wall();
+                let payload = serde_json::json!({
+                    "receipt": "rejected",
+                    "reason": e.to_string(),
+                })
+                .to_string();
                 if let Err(e2) = uow
                     .processed_message_repository()
                     .complete(
                         tenant_id,
                         message_id,
                         ProcessedMessageStatus::Failed,
-                        None,
+                        Some(payload),
                         now,
                     )
                     .await
@@ -281,4 +413,32 @@ impl InboxService {
             }
         }
     }
+}
+
+fn processed_status_from_receipt(receipt: &InboxReceipt) -> ProcessedMessageStatus {
+    match receipt {
+        InboxReceipt::Accepted => ProcessedMessageStatus::Accepted,
+        InboxReceipt::Duplicate => ProcessedMessageStatus::Duplicate,
+        InboxReceipt::Rejected { .. } | InboxReceipt::DeadLetter { .. } => {
+            ProcessedMessageStatus::Failed
+        }
+    }
+}
+
+fn build_result_payload(result: &CommandHandlerResult) -> Option<String> {
+    #[derive(Serialize)]
+    struct Payload<'a> {
+        receipt: &'a InboxReceipt,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        dispatch: Option<&'a CommandDispatch>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        outcome: Option<&'a OperationStepOutcome>,
+    }
+
+    let payload = Payload {
+        receipt: &result.receipt,
+        dispatch: result.dispatch.as_ref(),
+        outcome: result.outcome.as_ref(),
+    };
+    serde_json::to_string(&payload).ok()
 }

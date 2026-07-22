@@ -13,7 +13,9 @@ use cheetah_domain::{Command, CommandPayload, Operation, ProcessedMessageStatus,
 use cheetah_message_api::bus::RawCommandBus;
 use cheetah_message_api::mapper::encode_command;
 use cheetah_message_local::InProcessMessageBus;
-use cheetah_signal_application::{CommandHandler, CommandHandlerResult, InboxService};
+use cheetah_signal_application::{
+    CommandDispatch, CommandHandler, CommandHandlerResult, InboxService, OperationStepOutcome,
+};
 use cheetah_signal_types::{Clock, IdGenerator, ResourceId, ResourceKind, ResourceRef};
 use cheetah_signal_types::{DurationMs, OwnerEpoch};
 use cheetah_storage_api::Storage;
@@ -31,10 +33,10 @@ impl CommandHandler for RecordingHandler {
         command: &Command,
     ) -> cheetah_signal_types::Result<CommandHandlerResult> {
         self.commands.lock().await.push(command.clone());
-        Ok(CommandHandlerResult {
-            status: ProcessedMessageStatus::Completed,
-            result_payload: Some(r#"{"ok":true}"#.to_string()),
-        })
+        Ok(
+            CommandHandlerResult::accepted(CommandDispatch::Sent, OperationStepOutcome::Unknown)
+                .with_payload(r#"{"ok":true}"#.to_string()),
+        )
     }
 }
 
@@ -165,7 +167,7 @@ async fn inbox_service_processes_command_once_and_deduplicates() {
         .expect("processed message record must exist");
     uow.commit().await.unwrap();
 
-    assert_eq!(record.status, ProcessedMessageStatus::Completed);
+    assert_eq!(record.status, ProcessedMessageStatus::Accepted);
     assert_eq!(record.result_payload.as_deref(), Some(r#"{"ok":true}"#));
 
     let _ = std::fs::remove_file(&path);
