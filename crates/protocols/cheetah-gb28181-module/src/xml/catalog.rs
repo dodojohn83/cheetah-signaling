@@ -137,17 +137,19 @@ pub(crate) fn extract_catalog_with_profile(
     // `Item` elements are malformed and dropped. Fall back to the number of
     // well-formed items we actually parsed when the attribute is missing or
     // invalid.
-    let declared_num = device_list
+    let (declared_num, declared_num_from_wire) = device_list
         .attributes
         .get("Num")
         .and_then(|v| parse_u32(v).ok())
-        .unwrap_or(items.len() as u32);
+        .map(|n| (n, true))
+        .unwrap_or((items.len() as u32, false));
 
     let allow_fragment = profile.has(CompatibilityCapability::CatalogCountFragment);
-    if !allow_fragment {
+    if !allow_fragment && declared_num_from_wire {
         // Count all <Item> elements present on the wire, including the malformed
         // ones intentionally dropped, so a single bad entry does not reject the
-        // whole catalog.
+        // whole catalog. This validation only runs when the device actually
+        // declared a count; when `Num` is absent there is nothing to validate.
         let present = items.len() as u32 + dropped;
         if declared_num != present {
             return Err(AccessError::InvalidXml(format!(
