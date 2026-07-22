@@ -144,24 +144,31 @@ pub(crate) fn extract_catalog_with_profile(
         .map(|n| (n, true))
         .unwrap_or((items.len() as u32, false));
 
-    let allow_fragment = profile.has(CompatibilityCapability::CatalogCountFragment);
-    if !allow_fragment && declared_num_from_wire {
+    if declared_num_from_wire {
         // Count all <Item> elements present on the wire, including the malformed
         // ones intentionally dropped, so a single bad entry does not reject the
-        // whole catalog. This validation only runs when the device actually
-        // declared a count; when `Num` is absent there is nothing to validate.
+        // whole catalog. GB28181 devices frequently declare inaccurate counts or
+        // split a directory across multiple fragments, so mismatches are accepted
+        // by default and logged as a diagnostic; callers that need strict
+        // validation can post-process `num`/`sum_num` against `items.len()`.
         let present = items.len() as u32 + dropped;
         if declared_num != present {
-            return Err(AccessError::InvalidXml(format!(
-                "Catalog Num {} does not match item element count {}",
-                declared_num, present
-            )));
+            tracing::warn!(
+                sn = %sn,
+                device_id = %device_id,
+                declared_num,
+                present,
+                "catalog Num does not match parsed item count; accepting anyway"
+            );
         }
         if sum_num > 0 && declared_num > sum_num {
-            return Err(AccessError::InvalidXml(format!(
-                "Catalog Num {} exceeds SumNum {}",
-                declared_num, sum_num
-            )));
+            tracing::warn!(
+                sn = %sn,
+                device_id = %device_id,
+                declared_num,
+                sum_num,
+                "catalog Num exceeds SumNum; accepting anyway"
+            );
         }
     }
 
@@ -419,5 +426,25 @@ mod tests {
         assert_eq!(catalog.sum_num, 2);
         assert_eq!(catalog.items.len(), 1);
         assert_eq!(catalog.items[0].device_id, "34020000001320000001");
+    }
+
+    #[test]
+    fn inconsistent_counts_are_accepted_by_default() {
+        let body = br#"<?xml version="1.0"?>
+<Response>
+    <CmdType>Catalog</CmdType>
+    <SN>3</SN>
+    <DeviceID>34020000001320000001</DeviceID>
+    <SumNum>3</SumNum>
+    <DeviceList Num="5">
+        <Item><DeviceID>34020000001320000001</DeviceID><Name>Cam1</Name><Status>ON</Status></Item>
+        <Item><DeviceID>34020000001320000002</DeviceID><Name>Cam2</Name><Status>ON</Status></Item>
+        <Item><DeviceID>34020000001320000003</DeviceID><Name>Cam3</Name><Status>ON</Status></Item>
+    </DeviceList>
+</Response>"#;
+        let catalog = parse_catalog(body).unwrap();
+        assert_eq!(catalog.items.len(), 3);
+        assert_eq!(catalog.num, 5);
+        assert_eq!(catalog.sum_num, 3);
     }
 }
