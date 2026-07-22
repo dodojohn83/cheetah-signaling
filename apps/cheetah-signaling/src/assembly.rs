@@ -1013,7 +1013,11 @@ pub async fn start(
         if gb28181_addr.is_none() {
             gb28181_addr = Some(local);
         }
-        gb_command_buses.insert(listener.id.clone(), driver.command_bus());
+        // Only adopt the command bus from a UDP-capable listener so outbound
+        // commands are never queued against a driver that cannot transmit them.
+        if listener.udp_bind.is_some() {
+            gb_command_buses.insert(listener.id.clone(), driver.command_bus());
+        }
         let worker_cancel = cancel.child_token();
         let listener_id = listener.id.clone();
         workers.push(tokio::spawn(async move {
@@ -1030,6 +1034,12 @@ pub async fn start(
 
     // Inbox consumer after GB28181 driver bind so the command bus is wired.
     {
+        if gb_command_buses.is_empty() && !gb_listeners.is_empty() {
+            warn!(
+                "no gb28181 listener has a UDP bind; outbound device commands are disabled and \
+                 will be rejected instead of silently dropped"
+            );
+        }
         let gb_bus: Option<Arc<dyn crate::workers::Gb28181CommandBus>> =
             if gb_command_buses.is_empty() {
                 None
