@@ -5,9 +5,12 @@ use cheetah_cluster_ownership::{
     DeviceAssignmentService, DeviceProtocolLookup, DrainingMigrationService, OwnerLeaseService,
     RateLimitConfig, RollingUpgradeError,
 };
+#[cfg(feature = "cluster")]
 use cheetah_cluster_registry::NodeLeaseService;
+#[cfg(feature = "cluster")]
+use cheetah_domain::NodeLoad;
 use cheetah_domain::{
-    Clock, Command, CommandPayload, DeviceOwnerResolver, NodeLoad, OwnerInfo, Protocol, UnitOfWork,
+    Clock, Command, CommandPayload, DeviceOwnerResolver, OwnerInfo, Protocol, UnitOfWork,
 };
 use cheetah_gb28181_module::{Gb28181Command, ProtocolSessionLink};
 use cheetah_message_api::RawCommandBus;
@@ -441,6 +444,7 @@ pub fn spawn_protocol_session_reaper_worker(
 }
 
 /// Spawns a node lease registration + heartbeat loop.
+#[cfg(feature = "cluster")]
 pub fn spawn_node_lease_worker(
     mut lease: NodeLeaseService,
     heartbeat_interval: Duration,

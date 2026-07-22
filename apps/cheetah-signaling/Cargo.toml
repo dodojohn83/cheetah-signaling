@@ -19,12 +19,14 @@ cheetah-signal-application = { path = "../../crates/application/cheetah-signal-a
 cheetah-domain = { path = "../../crates/domain/cheetah-domain" }
 cheetah-storage-api = { path = "../../crates/storage/cheetah-storage-api" }
 cheetah-storage-sqlite = { path = "../../crates/storage/cheetah-storage-sqlite" }
-cheetah-storage-postgres = { path = "../../crates/storage/cheetah-storage-postgres" }
 cheetah-message-api = { path = "../../crates/messaging/cheetah-message-api" }
 cheetah-message-local = { path = "../../crates/messaging/cheetah-message-local" }
-cheetah-message-nats = { path = "../../crates/messaging/cheetah-message-nats" }
 cheetah-cluster-ownership = { path = "../../crates/cluster/cheetah-cluster-ownership" }
-cheetah-cluster-registry = { path = "../../crates/cluster/cheetah-cluster-registry" }
+
+# Cluster-only adapters
+cheetah-storage-postgres = { path = "../../crates/storage/cheetah-storage-postgres", optional = true }
+cheetah-message-nats = { path = "../../crates/messaging/cheetah-message-nats", optional = true }
+cheetah-cluster-registry = { path = "../../crates/cluster/cheetah-cluster-registry", optional = true }
 cheetah-media-scheduler = { path = "../../crates/media/cheetah-media-scheduler" }
 cheetah-media-client = { path = "../../crates/media/cheetah-media-client" }
 cheetah-gb28181-core = { path = "../../crates/protocols/cheetah-gb28181-core" }
@@ -48,6 +50,11 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal", "
 tokio-util = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
+
+[features]
+default = ["edge"]
+edge = []
+cluster = ["dep:cheetah-storage-postgres", "dep:cheetah-message-nats", "dep:cheetah-cluster-registry"]
 
 [dev-dependencies]
 cheetah-domain = { path = "../../crates/domain/cheetah-domain", features = ["test-util"] }

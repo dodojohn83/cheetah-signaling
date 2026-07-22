@@ -119,3 +119,28 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
       - name: Generate descriptor and verify breaking compatibility
         run: ./scripts/generate_contract_baseline.sh
+
+  feature-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      matrix:
+        features:
+          - "--no-default-features"
+          - "--features edge"
+          - "--features cluster"
+          - "--no-default-features --features cluster"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.96.1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: v1-feature-matrix-${{ runner.os }}-${{ matrix.features }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          cache-on-failure: false
+      - uses: arduino/setup-protoc@v3
+        with:
+          version: "25.3"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - run: cargo clippy -p cheetah-signaling ${{ matrix.features }} --all-targets -- -D warnings

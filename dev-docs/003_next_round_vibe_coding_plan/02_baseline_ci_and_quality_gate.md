@@ -38,9 +38,9 @@ cargo deny check
 ```
 
 - [x] 增加 `cargo test --doc --workspace`：修复 `cheetah-message-nats` README 中的未完成示例（标记为 `rust,ignore`），并在 `.github/workflows/ci.yml` 新增 `doctest` job。
-- [ ] edge feature关闭时检查不链接PostgreSQL、NATS和cluster依赖。
-- [ ] cluster feature检查PostgreSQL/NATS/TLS组合。
-- [ ] 对所有公共feature执行feature matrix，防止feature改变领域语义。
+- [x] edge feature关闭时检查不链接PostgreSQL、NATS和cluster依赖：`apps/cheetah-signaling/Cargo.toml` 新增 `edge`/`cluster` feature，PostgreSQL、NATS 和 `cheetah-cluster-registry` 仅在 `cluster` 启用时为可选依赖；`cargo check -p cheetah-signaling --no-default-features` 通过，不链接上述依赖。
+- [x] cluster feature检查PostgreSQL/NATS/TLS组合：`cargo check -p cheetah-signaling --features cluster` 通过，启用 `cheetah-storage-postgres`、`cheetah-message-nats` 和 `cheetah-cluster-registry`；`tonic` 默认启用 `tls-ring`，内部 gRPC 使用同一 TLS 栈。
+- [x] 对所有公共feature执行feature matrix，防止feature改变领域语义：CI 新增 `feature-matrix` job，对 `cheetah-signaling` 执行 `--no-default-features`、`--features edge`、`--features cluster`、`--no-default-features --features cluster` 的 `cargo check`。
 - [x] 每条CI job有超时、缓存key包含toolchain/Cargo.lock且失败不被吞掉：`.github/workflows/ci.yml` 所有 `Swatinem/rust-cache@v2` 步骤已显式设置 `key: v1-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}` 和 `cache-on-failure: false`；各 job 均含 `timeout-minutes`。
 
 ## 5. BAS-004：架构与占位检查
@@ -78,4 +78,3 @@ cargo deny check
 - SQLite/PostgreSQL contract通过。
 - 架构检查无隐藏违规依赖。
 - 所有剩余失败已分配稳定任务ID；不得以“将在后续处理”直接通过本Phase。
-
