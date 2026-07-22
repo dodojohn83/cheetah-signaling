@@ -39,7 +39,7 @@ pub(crate) fn resolve_vendor_content_type(
     let without_params = raw.split(';').next().unwrap_or(raw).trim();
     let lower = without_params.to_ascii_lowercase();
     match lower.as_str() {
-        "application/manscdp+xml" => Ok(ContentType::Manscdp),
+        "application/manscdp+xml" | "application/xml" | "text/xml" => Ok(ContentType::Manscdp),
         "application/mansrtsp+xml" => Ok(ContentType::Mansrtsp),
         _ => {
             if profile.has(CompatibilityCapability::MimeAlias) {
@@ -63,13 +63,25 @@ mod tests {
     #[test]
     fn canonical_content_types_resolve_without_profile() {
         let default = CompatibilityProfile::default();
-        assert_eq!(
-            resolve_vendor_content_type(Some("application/manscdp+xml"), &default).unwrap(),
-            ContentType::Manscdp
-        );
+        for ct in [
+            "application/manscdp+xml",
+            "application/xml",
+            "text/xml",
+            "application/xml; charset=GBK",
+        ] {
+            assert_eq!(
+                resolve_vendor_content_type(Some(ct), &default).unwrap(),
+                ContentType::Manscdp,
+                "{ct} should default to MANSCDP"
+            );
+        }
         assert_eq!(
             resolve_vendor_content_type(Some("application/mansrtsp+xml"), &default).unwrap(),
             ContentType::Mansrtsp
+        );
+        assert_eq!(
+            resolve_vendor_content_type(None, &default).unwrap(),
+            ContentType::Manscdp
         );
     }
 

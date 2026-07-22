@@ -296,6 +296,17 @@ impl SipParser {
                 return None;
             }
             if self.buffer[consumed] == b'\r' && self.buffer.get(consumed + 1) == Some(&b'\n') {
+                // With HeaderNormalization, an empty line inside the header block
+                // may be followed by more headers; only treat it as the terminator
+                // when the next non-empty line does not look like a header.
+                if profile_has(
+                    self.profile.as_ref(),
+                    CompatibilityCapability::HeaderNormalization,
+                ) && self.looks_like_header_after_blank(consumed)
+                {
+                    consumed += 2;
+                    continue;
+                }
                 // End of headers
                 consumed += 2;
                 let content_length = match headers.get(&HeaderName::ContentLength) {
@@ -375,19 +386,6 @@ impl SipParser {
                     )));
                 }
 
-                let line_trimmed = line.trim();
-                if line_trimmed.is_empty()
-                    && profile_has(
-                        self.profile.as_ref(),
-                        CompatibilityCapability::HeaderNormalization,
-                    )
-                {
-                    // Non-ambiguous blank line inside the header block: skip it.
-                    let line_len_with_crlf = end - consumed + 2;
-                    consumed += line_len_with_crlf;
-                    continue;
-                }
-
                 let (name, value) = match line.split_once(':') {
                     Some(pair) => pair,
                     None => {
@@ -423,6 +421,35 @@ impl SipParser {
     fn find_crlf(&self, start: usize) -> Option<usize> {
         (start..self.buffer.len().saturating_sub(1))
             .find(|&i| self.buffer[i] == b'\r' && self.buffer.get(i + 1) == Some(&b'\n'))
+    }
+
+    /// Returns true if the line immediately after a blank line (at `consumed`)
+    /// looks like a SIP header (non-empty token, a colon, and no leading
+    /// whitespace). Used by `HeaderNormalization` to skip intra-header blank
+    /// lines without treating them as the body separator.
+    fn looks_like_header_after_blank(&self, consumed: usize) -> bool {
+        let start = consumed + 2; // skip the leading CRLF
+        if start >= self.buffer.len() {
+            return false;
+        }
+        let Some(end) = self.find_crlf(start) else {
+            return false;
+        };
+        let line = &self.buffer[start..end];
+        // Must not be empty or continuation.
+        if line.is_empty() || line[0].is_ascii_whitespace() {
+            return false;
+        }
+        let Some(colon) = line.iter().position(|&b| b == b':') else {
+            return false;
+        };
+        let name = &line[..colon];
+        if name.is_empty() {
+            return false;
+        }
+        // Header name must be a single token (no spaces or non-printable chars).
+        name.iter()
+            .all(|&b| b.is_ascii_alphanumeric() || b"-._!%$*&+^`{|}~".contains(&b))
     }
 }
 
@@ -601,5 +628,52 @@ mod tests {
             headers.get(&HeaderName::CSeq).unwrap().as_str(),
             "1 REGISTER"
         );
+    }
+
+    #[test]
+    fn header_normalization_skips_intra_header_blank_line() {
+        let profile = CompatibilityProfile {
+            capabilities: vec![CompatibilityCapability::HeaderNormalization],
+            ..Default::default()
+        };
+        let body_bytes = br#"<?xml version="1.0"?><Notify><CmdType>Keepalive</CmdType><SN>1</SN><DeviceID>34020000001320000001</DeviceID><Status>OK</Status></Notify>"#;
+        let raw = format!(
+            "MESSAGE sip:34020000002000000001@example.com SIP/2.0\r\n\
+Via: SIP/2.0/UDP 192.0.2.1:5060;branch=z9hG4bKabc\r\n\
+From: <sip:a@example.com>;tag=1\r\n\
+To: <sip:a@example.com>\r\n\
+Call-ID: call-1@example.com\r\n\
+CSeq: 1 message\r\n\
+\r\n\
+Content-Type: application/manscdp+xml\r\n\
+Content-Length: {}\r\n\r\n",
+            body_bytes.len()
+        );
+        let mut raw = raw.into_bytes();
+        raw.extend_from_slice(body_bytes);
+        let msg = SipParser::parse_datagram_with_profile(
+            &raw,
+            SipParserConfig::default(),
+            Some(&profile),
+        )
+        .expect("skip intra-header blank line");
+        let SipMessage::Request {
+            line,
+            headers,
+            body,
+        } = msg
+        else {
+            panic!("expected request");
+        };
+        assert_eq!(line.method, Method::Message);
+        assert_eq!(
+            headers.get(&HeaderName::CSeq).unwrap().as_str(),
+            "1 MESSAGE"
+        );
+        assert_eq!(
+            headers.get(&HeaderName::ContentType).unwrap().as_str(),
+            "application/manscdp+xml"
+        );
+        assert_eq!(body, body_bytes);
     }
 }
