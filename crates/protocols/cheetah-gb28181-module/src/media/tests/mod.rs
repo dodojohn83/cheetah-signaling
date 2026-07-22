@@ -206,6 +206,24 @@ fn start_talk(media_session_id: MediaSessionId, codec: &str) -> MediaCommand {
     }
 }
 
+fn start_broadcast(media_session_id: MediaSessionId, codec: &str) -> MediaCommand {
+    MediaCommand::StartBroadcast {
+        media_session_id,
+        channel_id: ChannelId::generate(),
+        device_id: DeviceId::new("34020000001320000001").unwrap(),
+        target: SipUri::parse("sip:34020000001320000001@192.168.1.20:5060").unwrap(),
+        call_id: "call-1".to_string(),
+        local_tag: "tag-local".to_string(),
+        cseq: 1,
+        branch: "z9hG4bK1234".to_string(),
+        subject_session: "0200000000".to_string(),
+        media_address: "192.168.1.100".to_string(),
+        media_port: 5000,
+        codec: codec.to_string(),
+        transport: MediaTransport::Udp,
+    }
+}
+
 mod bye_tests;
 mod invite_tests;
 mod playback_tests;

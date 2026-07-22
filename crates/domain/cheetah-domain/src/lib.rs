@@ -27,6 +27,9 @@ pub mod webhook;
 #[cfg(any(test, feature = "test-util"))]
 pub mod in_memory;
 
+#[cfg(any(test, feature = "test-util"))]
+pub mod media_contract;
+
 pub use channel::{
     Channel, ChannelKind, ChannelStatus, PresetAction, PtzCapabilities, StreamProfile,
 };

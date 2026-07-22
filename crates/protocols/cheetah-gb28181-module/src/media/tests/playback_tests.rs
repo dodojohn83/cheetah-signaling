@@ -67,6 +67,39 @@ fn start_talk_unsupported_codec_returns_unsupported() {
 }
 
 #[test]
+fn start_broadcast_emits_audio_sendonly_sdp() {
+    let mut media = Gb28181Media::new(config());
+    let sid = MediaSessionId::generate();
+    let outputs = media
+        .process(MediaInput::Command(start_broadcast(sid, "G.711A")))
+        .unwrap();
+    let MediaOutput::SendMessage(msg) = &outputs[0] else {
+        panic!("expected SendMessage");
+    };
+    let SipMessage::Request { body, .. } = msg else {
+        panic!("expected request");
+    };
+    let sdp = String::from_utf8_lossy(body);
+    assert!(sdp.contains("s=Broadcast"));
+    assert!(sdp.contains("m=audio 5000 RTP/AVP 8"));
+    // Broadcast is one-way from the platform to the device.
+    assert!(sdp.contains("a=sendonly"));
+    assert!(sdp.contains("a=rtpmap:8 PCMA/8000"));
+}
+
+#[test]
+fn start_broadcast_unsupported_codec_returns_unsupported_without_side_effects() {
+    let mut media = Gb28181Media::new(config());
+    let sid = MediaSessionId::generate();
+    let result = media.process(MediaInput::Command(start_broadcast(sid, "AAC")));
+    assert!(matches!(result, Err(MediaError::Unsupported(_))));
+    // The rejected broadcast must not create a session; a follow-up valid
+    // broadcast for the same id must succeed.
+    let ok = media.process(MediaInput::Command(start_broadcast(sid, "PCMU")));
+    assert!(ok.is_ok());
+}
+
+#[test]
 fn control_playback_emits_mansrtsp_info() {
     let mut media = Gb28181Media::new(config());
     let sid = MediaSessionId::generate();

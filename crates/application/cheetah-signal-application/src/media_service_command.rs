@@ -312,6 +312,73 @@ impl MediaService {
                 uow.commit().await?;
                 Ok(MediaSessionDto::from(&session))
             }
+            // The media node could not confirm whether the device-side teardown
+            // completed. Record the stop intent durably (like an accepted stop),
+            // perform bounded media cleanup by releasing the reservation, and
+            // leave the operation running so the reconciler confirms the outcome.
+            MediaNodeCommandResult::UnknownOutcome { code, message } => {
+                tracing::warn!(
+                    tenant_id = %context.tenant_id,
+                    media_binding_id = %media_binding_id,
+                    code = %code,
+                    "stop command returned unknown outcome; deferring to reconciler: {message}"
+                );
+                if !session.is_terminal() && session.state() != MediaSessionState::Stopping {
+                    let ev = session
+                        .stop(self.clock.as_ref())
+                        .map_err(crate::SignalError::from)?;
+                    uow.outbox()
+                        .append(wrap_event(
+                            self.id_generator.as_ref(),
+                            self.clock.as_ref(),
+                            context,
+                            context.tenant_id,
+                            media_session_resource_ref(
+                                context.tenant_id,
+                                session.media_session_id(),
+                            ),
+                            session.revision().0,
+                            ev,
+                        ))
+                        .await?;
+                    uow.media_session_repository().save(&session).await?;
+                }
+                if !binding.is_terminal() && binding.state() != MediaBindingState::Releasing {
+                    let ev = binding
+                        .release(self.clock.as_ref())
+                        .map_err(crate::SignalError::from)?;
+                    uow.outbox()
+                        .append(wrap_event(
+                            self.id_generator.as_ref(),
+                            self.clock.as_ref(),
+                            context,
+                            context.tenant_id,
+                            media_binding_resource_ref(
+                                context.tenant_id,
+                                binding.media_binding_id(),
+                            ),
+                            binding.revision().0,
+                            ev,
+                        ))
+                        .await?;
+                    uow.media_binding_repository().save(&binding).await?;
+                }
+
+                uow.commit().await?;
+
+                // Bounded media cleanup: release the reservation using the
+                // original binding (node instance epoch + idempotency key).
+                if let Err(e) = self
+                    .media_port
+                    .release(context.tenant_id, media_binding_id, self.clock.as_ref())
+                    .await
+                {
+                    tracing::warn!(
+                        "failed to release media binding after unknown stop outcome: {e}"
+                    );
+                }
+                Ok(MediaSessionDto::from(&session))
+            }
             MediaNodeCommandResult::Failed { code, message } => {
                 if !session.is_terminal() {
                     let session_event = session
@@ -455,6 +522,19 @@ impl MediaService {
                 Ok(OperationDto::from(&operation))
             }
             MediaNodeCommandResult::Accepted => {
+                uow.commit().await?;
+                Ok(OperationDto::from(&operation))
+            }
+            // The media node could not confirm whether the control command took
+            // effect. Leave the operation running for the reconciler rather than
+            // completing it as success or failure.
+            MediaNodeCommandResult::UnknownOutcome { code, message } => {
+                tracing::warn!(
+                    tenant_id = %context.tenant_id,
+                    operation_id = %operation.operation_id(),
+                    code = %code,
+                    "control command returned unknown outcome; deferring to reconciler: {message}"
+                );
                 uow.commit().await?;
                 Ok(OperationDto::from(&operation))
             }
@@ -652,6 +732,52 @@ impl MediaService {
                     .await?;
                 uow.commit().await?;
             }
+            // The media node could not confirm whether the start took effect.
+            // Do not fail terminally (which could orphan a started sender) and do
+            // not release the reservation; drive the session to Inviting and
+            // activate the binding like an accepted start, and leave the operation
+            // running so the reconciler resolves the real state by querying the node.
+            MediaNodeCommandResult::UnknownOutcome { code, message } => {
+                tracing::warn!(
+                    tenant_id = %context.tenant_id,
+                    media_session_id = %media_session_id,
+                    media_binding_id = %media_binding_id,
+                    code = %code,
+                    "start command returned unknown outcome; deferring to reconciler: {message}"
+                );
+                let session_event = session
+                    .inviting(self.clock.as_ref())
+                    .map_err(crate::SignalError::from)?;
+                let binding_event = binding
+                    .activate(self.clock.as_ref())
+                    .map_err(crate::SignalError::from)?;
+
+                uow.media_session_repository().save(&session).await?;
+                uow.media_binding_repository().save(&binding).await?;
+                uow.outbox()
+                    .append(wrap_event(
+                        self.id_generator.as_ref(),
+                        self.clock.as_ref(),
+                        context,
+                        context.tenant_id,
+                        media_session_resource_ref(context.tenant_id, session.media_session_id()),
+                        session.revision().0,
+                        session_event,
+                    ))
+                    .await?;
+                uow.outbox()
+                    .append(wrap_event(
+                        self.id_generator.as_ref(),
+                        self.clock.as_ref(),
+                        context,
+                        context.tenant_id,
+                        media_binding_resource_ref(context.tenant_id, binding.media_binding_id()),
+                        binding.revision().0,
+                        binding_event,
+                    ))
+                    .await?;
+                uow.commit().await?;
+            }
             MediaNodeCommandResult::Failed { code, message } => {
                 let session_event = session
                     .failed(MediaSessionError::new(&code, &message), self.clock.as_ref())
@@ -705,6 +831,10 @@ impl MediaService {
 
                 uow.commit().await?;
 
+                // Bilateral compensation: release the media-node sender/receiver
+                // reservation. The media node reports failure only after tearing
+                // down any dialog it opened, so releasing the reservation
+                // completes the signaling side of the compensation.
                 if let Err(e) = self
                     .media_port
                     .release(context.tenant_id, media_binding_id, self.clock.as_ref())

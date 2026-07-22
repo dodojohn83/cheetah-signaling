@@ -132,6 +132,23 @@ pub enum MediaCommand {
         codec: String,
         transport: MediaTransport,
     },
+    /// Start a one-way voice broadcast session (platform sends audio to the
+    /// device via a `sendonly` audio dialog).
+    StartBroadcast {
+        media_session_id: MediaSessionId,
+        channel_id: ChannelId,
+        device_id: DeviceId,
+        target: SipUri,
+        call_id: String,
+        local_tag: String,
+        cseq: u32,
+        branch: String,
+        subject_session: String,
+        media_address: String,
+        media_port: u16,
+        codec: String,
+        transport: MediaTransport,
+    },
     /// Send a playback control command on an active playback dialog.
     ControlPlayback {
         media_session_id: MediaSessionId,

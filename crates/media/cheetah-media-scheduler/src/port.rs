@@ -243,6 +243,19 @@ impl MediaPort for SchedulerMediaPort {
             Ok(cheetah_signal_contracts::cheetah::common::v1::CommandStatus::Accepted) => {
                 Ok(MediaNodeCommandResult::Accepted)
             }
+            // A timeout means the media node did not confirm the outcome; the
+            // side effect may or may not have been applied, so surface it as an
+            // unknown outcome for the reconciler rather than a terminal failure.
+            Ok(cheetah_signal_contracts::cheetah::common::v1::CommandStatus::Timeout) => {
+                Ok(MediaNodeCommandResult::UnknownOutcome {
+                    code: "timeout".to_string(),
+                    message: result
+                        .error
+                        .as_ref()
+                        .map(|e| e.message.clone())
+                        .unwrap_or_else(|| "media node command timed out".to_string()),
+                })
+            }
             Ok(s) => Ok(MediaNodeCommandResult::Failed {
                 code: format!("{s:?}"),
                 message: result
