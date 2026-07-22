@@ -4,6 +4,7 @@
 //! The input/output contract lives in `cheetah-gb28181-core` so the driver can
 //! execute the machine without depending on this module.
 
+use crate::command::Gb28181Command;
 use crate::config::{AuthPolicy, Gb28181DomainConfig};
 use crate::error::AccessError;
 use crate::events::{DevicePresence, Gb28181Event};
@@ -25,6 +26,7 @@ use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::warn;
 
+mod outbound;
 mod parse;
 mod response;
 
@@ -39,13 +41,13 @@ use response::{
 
 /// Sans-I/O state machine for GB28181 device access.
 pub struct Gb28181Access<P: CredentialProvider> {
-    config: Gb28181DomainConfig,
-    digest_context: DigestContext,
-    replay_cache: DigestReplayCache,
-    auth_rate_limiter: AuthRateLimiter,
-    credential_provider: P,
-    tag_counter: AtomicU64,
-    registrations: RegistrationTable,
+    pub(crate) config: Gb28181DomainConfig,
+    pub(crate) digest_context: DigestContext,
+    pub(crate) replay_cache: DigestReplayCache,
+    pub(crate) auth_rate_limiter: AuthRateLimiter,
+    pub(crate) credential_provider: P,
+    pub(crate) tag_counter: AtomicU64,
+    pub(crate) registrations: RegistrationTable,
 }
 
 impl<P: CredentialProvider> std::fmt::Debug for Gb28181Access<P> {
@@ -92,6 +94,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
 
 impl<P: CredentialProvider> GbAccessMachine for Gb28181Access<P> {
     type Event = Gb28181Event;
+    type CommandInput = Gb28181Command;
     type Error = AccessError;
 
     /// Processes a single SIP message and returns the ordered outputs.
@@ -111,6 +114,14 @@ impl<P: CredentialProvider> GbAccessMachine for Gb28181Access<P> {
             )]),
             SipMessage::Response { .. } => Ok(Vec::new()),
         }
+    }
+
+    /// Processes a domain command and returns an outbound SIP `MESSAGE`.
+    fn process_command(
+        &mut self,
+        input: Gb28181Command,
+    ) -> Result<Vec<AccessOutput<Gb28181Event>>, AccessError> {
+        outbound::process_command(self, input)
     }
 
     /// Advances the registration timer wheel and returns any resulting events.

@@ -25,11 +25,12 @@ pub use config::DriverConfig;
 pub use error::DriverError;
 
 use cheetah_gb28181_core::GbAccessMachine;
-use shared::Shared;
+use shared::{DriverAction, Shared};
 use sink::EventSink;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::{TcpListener, UdpSocket};
+use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 use tokio::time::{MissedTickBehavior, timeout};
 use tokio_util::sync::CancellationToken;
@@ -49,6 +50,8 @@ pub struct Gb28181UdpDriver<M: GbAccessMachine> {
     tick_interval: std::time::Duration,
     max_connections: usize,
     shutdown_drain: std::time::Duration,
+    command_tx: mpsc::Sender<M::CommandInput>,
+    command_rx: Option<mpsc::Receiver<M::CommandInput>>,
 }
 
 impl<M: GbAccessMachine> std::fmt::Debug for Gb28181UdpDriver<M> {
@@ -100,6 +103,9 @@ impl<M: GbAccessMachine + Send + 'static> Gb28181UdpDriver<M> {
             .copied()
             .ok_or(DriverError::NoBindAddress)?;
 
+        let (command_tx, command_rx) =
+            mpsc::channel::<M::CommandInput>(config.command_channel_capacity);
+
         let shared = Arc::new(Shared::new(
             access,
             sink,
@@ -123,6 +129,8 @@ impl<M: GbAccessMachine + Send + 'static> Gb28181UdpDriver<M> {
                 tick_interval: config.tick_interval,
                 max_connections: config.max_tcp_connections,
                 shutdown_drain: config.shutdown_drain,
+                command_tx,
+                command_rx: Some(command_rx),
             },
             primary,
         ))
@@ -136,6 +144,15 @@ impl<M: GbAccessMachine + Send + 'static> Gb28181UdpDriver<M> {
     /// Local TCP addresses the driver bound to.
     pub fn tcp_addrs(&self) -> &[SocketAddr] {
         &self.tcp_addrs
+    }
+
+    /// Returns a sender for the bounded command channel.
+    ///
+    /// Each call clones the sender; the driver will not start the command
+    /// consumer until [`run`](Self::run) or [`run_with_cancellation`](Self::run_with_cancellation)
+    /// is invoked.
+    pub fn command_bus(&self) -> mpsc::Sender<M::CommandInput> {
+        self.command_tx.clone()
     }
 
     /// Runs the driver until the process aborts the task.
@@ -154,7 +171,11 @@ impl<M: GbAccessMachine + Send + 'static> Gb28181UdpDriver<M> {
     /// loop stop immediately. In-flight TCP connections observe the same token
     /// and close; the driver waits up to `shutdown_drain` for their permits to
     /// be released before returning.
-    pub async fn run_with_cancellation(self, cancel: CancellationToken) -> Result<(), DriverError> {
+    pub async fn run_with_cancellation(
+        mut self,
+        cancel: CancellationToken,
+    ) -> Result<(), DriverError> {
+        let command_rx = self.command_rx.take();
         let Self {
             shared,
             udp_sockets,
@@ -170,6 +191,7 @@ impl<M: GbAccessMachine + Send + 'static> Gb28181UdpDriver<M> {
         // The ticker reuses the bound UDP sockets to emit transaction
         // retransmissions produced on timer expiry.
         let ticker_sockets = udp_sockets.clone();
+        let command_socket = udp_sockets.first().cloned();
 
         for socket in udp_sockets {
             let shared = shared.clone();
@@ -181,6 +203,42 @@ impl<M: GbAccessMachine + Send + 'static> Gb28181UdpDriver<M> {
             let shared = shared.clone();
             let cancel = cancel.clone();
             set.spawn(async move { tcp::run_tcp_listener(shared, listener, cancel).await });
+        }
+
+        if let Some(mut command_rx) = command_rx {
+            let shared = shared.clone();
+            let cancel = cancel.clone();
+            set.spawn(async move {
+                loop {
+                    tokio::select! {
+                        biased;
+                        _ = cancel.cancelled() => break,
+                        Some(command) = command_rx.recv() => {
+                            match shared.handle_command(command) {
+                                Ok(actions) => {
+                                    for action in actions {
+                                        match action {
+                                            DriverAction::Send { message, target } => {
+                                                if let Some(socket) = command_socket.as_ref() {
+                                                    let bytes = cheetah_gb28181_core::encode_message(&message);
+                                                    if let Err(e) = socket.send_to(&bytes, target).await {
+                                                        warn!(error = %e, target = %target, "failed to send command request");
+                                                    }
+                                                } else {
+                                                    warn!("no UDP socket available for command transmission");
+                                                }
+                                            }
+                                            DriverAction::Emit(event) => shared.emit(event),
+                                        }
+                                    }
+                                }
+                                Err(e) => warn!(error = %e, "handle_command failed"),
+                            }
+                        }
+                        else => break,
+                    }
+                }
+            });
         }
 
         {

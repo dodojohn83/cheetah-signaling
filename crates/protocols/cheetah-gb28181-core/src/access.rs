@@ -37,6 +37,13 @@ impl fmt::Debug for AccessInput {
 pub enum AccessOutput<E> {
     /// Send a SIP response to the transport.
     SendResponse(SipMessage),
+    /// Send a SIP request to a remote endpoint.
+    SendMessage {
+        /// Destination of the message.
+        target: SocketAddr,
+        /// Request to transmit.
+        message: SipMessage,
+    },
     /// Emit a domain/protocol event for downstream consumers.
     EmitEvent(E),
 }
@@ -47,6 +54,11 @@ impl<E: fmt::Debug> fmt::Debug for AccessOutput<E> {
             AccessOutput::SendResponse(_) => {
                 f.debug_tuple("SendResponse").field(&"[REDACTED]").finish()
             }
+            AccessOutput::SendMessage { target, .. } => f
+                .debug_struct("SendMessage")
+                .field("target", target)
+                .field("message", &"[REDACTED]")
+                .finish(),
             AccessOutput::EmitEvent(event) => f.debug_tuple("EmitEvent").field(event).finish(),
         }
     }
@@ -59,6 +71,8 @@ impl<E: fmt::Debug> fmt::Debug for AccessOutput<E> {
 pub trait GbAccessMachine {
     /// Event type emitted by this machine.
     type Event: Send + Clone + fmt::Debug + 'static;
+    /// Command input type dispatched from the application layer.
+    type CommandInput: Send + 'static;
     /// Error type returned on internal failures.
     type Error: std::error::Error + Send + Sync + 'static;
 
@@ -66,6 +80,12 @@ pub trait GbAccessMachine {
     fn process(
         &mut self,
         input: AccessInput,
+    ) -> Result<Vec<AccessOutput<Self::Event>>, Self::Error>;
+
+    /// Processes a domain command and returns ordered outputs.
+    fn process_command(
+        &mut self,
+        input: Self::CommandInput,
     ) -> Result<Vec<AccessOutput<Self::Event>>, Self::Error>;
 
     /// Processes a periodic tick (typically once per second) for expiry and

@@ -9,6 +9,7 @@ pub mod element;
 pub mod keepalive;
 pub mod limits;
 pub mod mobile_position;
+pub mod query;
 pub mod reader;
 pub mod record_info;
 pub mod writer;
@@ -18,6 +19,7 @@ pub use catalog::{
     CatalogItem, CatalogQuery, CatalogResponse, build_catalog_response, parse_catalog,
     parse_catalog_query,
 };
+pub use cheetah_domain::QueryKind;
 pub use device_control::{
     DeviceControlKind, DeviceControlRequest, DeviceControlResponse, PresetAction, PresetCommand,
     PtzCommand, parse_device_control_response,
@@ -32,6 +34,7 @@ pub use limits::XmlLimits;
 pub use mobile_position::{
     MobilePositionInfo, build_mobile_position_notify, parse_mobile_position,
 };
+pub use query::QueryRequest;
 pub use reader::parse_xml;
 pub(crate) use reader::parse_xml_with_profile;
 pub use record_info::{RecordInfoResponse, RecordItem, parse_record_info};
