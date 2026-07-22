@@ -97,6 +97,8 @@ default_media_node_selector = "round-robin"
 max_sessions_per_device = 4
 # Default SIP INVITE timeout in milliseconds. Default: 30000.
 default_invite_timeout_ms = 30000
+# Interval between periodic media reconciliations in milliseconds. Default: 30000.
+periodic_reconcile_interval_ms = 30000
 # Readiness policy for media nodes: "optional" (default) or "required".
 # When "required", /health/ready fails until at least one media node lease is alive.
 readiness_policy = "optional"
