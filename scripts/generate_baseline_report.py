@@ -188,12 +188,23 @@ def main() -> int:
             "ignored": total_ignore if name == "test" else None,
         })
 
-    # Collect active cargo features from the workspace root for the report.
+    # Collect active cargo features from workspace members for the report.
     try:
-        rc, out, _ = _run(["cargo", "metadata", "--format-version", "1", "--no-deps"], timeout=60)
+        rc, out, _ = _run(["cargo", "metadata", "--format-version", "1"], timeout=120)
         if rc == 0:
             meta = json.loads(out)
-            summary["features"] = sorted(set(meta.get("resolve", {}).get("root", "")))
+            members = set(meta.get("workspace_members", []))
+            features: set[str] = set()
+            resolve = meta.get("resolve")
+            if resolve:
+                for node in resolve.get("nodes", []):
+                    if node.get("id") in members:
+                        features.update(node.get("features", []))
+            else:
+                for pkg in meta.get("packages", []):
+                    if pkg.get("id") in members:
+                        features.update(pkg.get("features", {}).keys())
+            summary["features"] = sorted(features)
     except Exception:
         summary["features"] = []
 
@@ -232,6 +243,11 @@ def main() -> int:
             md.append(f"- `{u['command']}`: {u['reason']}\n")
     else:
         md.append("- All configured commands executed.\n")
+    md.append("\n## Features\n\n")
+    if summary["features"]:
+        md.append(", ".join(f"`{f}`" for f in summary["features"]) + "\n")
+    else:
+        md.append("- No workspace features captured.\n")
     md.append("\n## Warnings\n\n")
     if summary["warnings"]:
         for w in summary["warnings"][:20]:
