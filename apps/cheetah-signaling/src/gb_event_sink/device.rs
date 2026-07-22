@@ -69,7 +69,7 @@ pub(super) async fn ensure_online(
     let external_id = device_id.as_ref();
     if let Some(device) = resolve_device(state, tenant_id, external_id).await {
         let internal_id = device.device_id();
-        if force || !matches!(device.connectivity(), Connectivity::Online) {
+        if !matches!(device.connectivity(), Connectivity::Online) {
             let mut uow = state.storage.begin().await.map_err(storage_error)?;
             let _ = state
                 .device_service
