@@ -847,7 +847,7 @@ async fn sqlite_media_reconcile_stops_orphan_sessions_on_node_without_local_bind
         device.device_id,
         cheetah_domain::OwnerInfo {
             owner_node_id: source_node_id,
-            owner_epoch: OwnerEpoch::default(),
+            owner_epoch: OwnerEpoch(1),
             lease_until: None,
         },
     );

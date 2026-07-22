@@ -10,8 +10,8 @@ use cheetah_domain::{
     UnitOfWork,
 };
 use cheetah_signal_types::{
-    Deadline, DurationMs, MediaBindingId, MediaSessionId, NodeId, OwnerEpoch, PageRequest,
-    RequestContext, TenantId, UtcTimestamp,
+    Deadline, DeviceId, DurationMs, MediaBindingId, MediaSessionId, NodeId, OwnerEpoch,
+    PageRequest, RequestContext, TenantId, UtcTimestamp,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -804,6 +804,10 @@ impl MediaService {
     /// Sends a `StopMediaSession` command to a media node for a session that has
     /// no local signaling binding (orphan). This does not create a signaling
     /// operation or binding because the session is not tracked by this tenant.
+    ///
+    /// The owner epoch is resolved from the device owner resolver when the orphan
+    /// reference includes a device id; otherwise a sentinel non-zero epoch is used
+    /// because the real media scheduler rejects commands without an owner epoch.
     pub(crate) async fn stop_orphan_session(
         &self,
         tenant_id: TenantId,
@@ -811,6 +815,10 @@ impl MediaService {
         node: &MediaNode,
         orphan: &MediaNodeSessionRef,
     ) -> crate::Result<()> {
+        let owner_epoch = self
+            .resolve_orphan_owner_epoch(tenant_id, orphan.device_id)
+            .await;
+
         let now = self.clock.now_wall();
         let deadline = Deadline::from_now(now, DurationMs::from_seconds(30))
             .ok_or_else(|| DomainError::invalid_argument("deadline overflow"))?;
@@ -828,7 +836,7 @@ impl MediaService {
             media_node_id: node_id,
             media_node_instance_epoch: orphan.media_node_instance_epoch,
             operation_id: self.id_generator.generate_operation_id(),
-            owner_epoch: OwnerEpoch::default(),
+            owner_epoch,
             source_node_id: self.source_node_id,
             deadline: Some(deadline),
             idempotency_key,
@@ -841,6 +849,44 @@ impl MediaService {
             .execute(command, self.clock.as_ref())
             .await?;
         Ok(())
+    }
+
+    /// Resolves a non-zero owner epoch for an orphan session.
+    async fn resolve_orphan_owner_epoch(
+        &self,
+        tenant_id: TenantId,
+        device_id: Option<DeviceId>,
+    ) -> OwnerEpoch {
+        let Some(device_id) = device_id else {
+            return OwnerEpoch(1);
+        };
+        match self.owner_resolver.resolve(tenant_id, device_id).await {
+            Ok(Some(owner)) if owner.owner_epoch.0 > 0 => owner.owner_epoch,
+            Ok(Some(_)) => {
+                tracing::warn!(
+                    tenant_id = %tenant_id,
+                    device_id = %device_id,
+                    "resolved owner has zero epoch for orphan session; using sentinel"
+                );
+                OwnerEpoch(1)
+            }
+            Ok(None) => {
+                tracing::warn!(
+                    tenant_id = %tenant_id,
+                    device_id = %device_id,
+                    "no owner resolved for orphan session; using sentinel owner epoch"
+                );
+                OwnerEpoch(1)
+            }
+            Err(e) => {
+                tracing::warn!(
+                    tenant_id = %tenant_id,
+                    device_id = %device_id,
+                    "failed to resolve owner for orphan session: {e}; using sentinel owner epoch"
+                );
+                OwnerEpoch(1)
+            }
+        }
     }
 }
 
