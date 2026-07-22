@@ -22,6 +22,7 @@ use cheetah_signal_types::{
     SignalErrorKind, TenantId, UtcTimestamp,
 };
 use cheetah_storage_api::{NodeRepository, OwnerRepository, Storage};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Mutex, mpsc};
@@ -79,23 +80,32 @@ pub trait Gb28181CommandBus: Send + Sync {
     async fn send(&self, command: Gb28181Command) -> cheetah_signal_types::Result<()>;
 }
 
-/// Command bus backed by the GB28181 driver's bounded `mpsc` sender.
-pub struct DriverCommandBus {
-    tx: mpsc::Sender<Gb28181Command>,
+/// Command bus that routes outbound GB28181 commands to the driver bound to
+/// the target device's listener.
+pub struct MultiListenerCommandBus {
+    buses: HashMap<String, mpsc::Sender<Gb28181Command>>,
 }
 
-impl DriverCommandBus {
-    /// Creates a bus that wraps the supplied driver sender.
-    pub fn new(tx: mpsc::Sender<Gb28181Command>) -> Self {
-        Self { tx }
+impl MultiListenerCommandBus {
+    /// Creates a bus from a map of listener id to driver command sender.
+    pub fn new(buses: HashMap<String, mpsc::Sender<Gb28181Command>>) -> Self {
+        Self { buses }
     }
 }
 
 #[async_trait]
-impl Gb28181CommandBus for DriverCommandBus {
+impl Gb28181CommandBus for MultiListenerCommandBus {
     async fn send(&self, command: Gb28181Command) -> cheetah_signal_types::Result<()> {
-        self.tx
-            .send(command)
+        let tx = self.buses.get(&command.listener_id).ok_or_else(|| {
+            SignalError::new(
+                SignalErrorKind::Internal,
+                format!(
+                    "no gb28181 command bus for listener {}",
+                    command.listener_id
+                ),
+            )
+        })?;
+        tx.send(command)
             .await
             .map_err(|_| SignalError::new(SignalErrorKind::Internal, "gb28181 command bus closed"))
     }
@@ -108,6 +118,7 @@ impl Gb28181CommandBus for DriverCommandBus {
 pub struct OwnerCommandHandler {
     plugin_host: Arc<Mutex<PluginHost>>,
     clock: Arc<dyn Clock>,
+    storage: Arc<dyn Storage>,
     gb_bus: Option<Arc<dyn Gb28181CommandBus>>,
 }
 
@@ -116,11 +127,13 @@ impl OwnerCommandHandler {
     pub fn new(
         plugin_host: Arc<Mutex<PluginHost>>,
         clock: Arc<dyn Clock>,
+        storage: Arc<dyn Storage>,
         gb_bus: Option<Arc<dyn Gb28181CommandBus>>,
     ) -> Self {
         Self {
             plugin_host,
             clock,
+            storage,
             gb_bus,
         }
     }
@@ -174,10 +187,28 @@ impl OwnerCommandHandler {
             None => None,
         };
 
+        let listener_id = match self
+            .storage
+            .protocol_session_repository()
+            .get_by_device(tenant_id, Protocol::Gb28181, device_id)
+            .await
+        {
+            Ok(Some(session)) => session.local_identity().listener_id.clone(),
+            Ok(None) => {
+                warn!(tenant_id = %tenant_id, device_id = %device_id, "no active gb28181 protocol session for command");
+                return None;
+            }
+            Err(e) => {
+                warn!(tenant_id = %tenant_id, device_id = %device_id, error = %e, "failed to load gb28181 protocol session for command");
+                return None;
+            }
+        };
+
         Some(Gb28181Command::new(
             command.clone(),
             device_external_id,
             channel_external_id,
+            listener_id,
         ))
     }
 
