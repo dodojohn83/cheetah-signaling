@@ -193,7 +193,10 @@ async fn apply_started(
         let ev = session.active(service.clock.as_ref())?;
         append_session_event(service, context, uow, session, ev).await?;
     }
-    if binding.state() == MediaBindingState::Reserved {
+    if matches!(
+        binding.state(),
+        MediaBindingState::Reserved | MediaBindingState::NeedsVerification
+    ) {
         let ev = binding.activate(service.clock.as_ref())?;
         append_binding_event(service, context, uow, binding, ev).await?;
     }
@@ -223,7 +226,10 @@ async fn apply_stopped(
         append_session_event(service, context, uow, session, ev).await?;
     }
 
-    if binding.state() == MediaBindingState::Active {
+    if matches!(
+        binding.state(),
+        MediaBindingState::Active | MediaBindingState::NeedsVerification
+    ) {
         let ev = binding.release(service.clock.as_ref())?;
         append_binding_event(service, context, uow, binding, ev).await?;
     }

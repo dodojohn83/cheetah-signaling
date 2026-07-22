@@ -289,6 +289,14 @@ impl MediaPort for SchedulerMediaPort {
         Ok(nodes)
     }
 
+    async fn get_node(
+        &self,
+        node_id: NodeId,
+        clock: &dyn Clock,
+    ) -> Result<Option<cheetah_domain::MediaNode>, DomainError> {
+        Ok(self.scheduler.get_node(node_id, clock).await)
+    }
+
     async fn list_sessions(
         &self,
         tenant_id: TenantId,

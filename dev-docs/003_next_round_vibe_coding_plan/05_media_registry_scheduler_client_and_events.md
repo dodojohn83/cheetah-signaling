@@ -67,11 +67,11 @@
 
 ## 8. MED-R-007：Scheduler/registry reconciler
 
-- [ ] lease过期检查所有绑定，不立即伪造session停止。
-- [ ] draining节点按desired state迁移或有界等待自然结束。
-- [ ] 媒体有资源、信令无binding：保护窗口后按idempotency/metadata复核再清理。
-- [ ] 信令Active、媒体无资源：创建新binding或按policy失败，绝不复活旧终态binding。
-- [ ] 同generation最多一个有效binding，数据库约束和application检查同时保证。
+- [x] lease过期检查所有绑定，不立即伪造session停止：`MediaBindingState::NeedsVerification` 新增；`MediaService::reconcile` 在节点 lease 过期/unhealthy 时把 Active binding 标记为 `NeedsVerification`，session 保持 Active；回调恢复后 `verified()` 回到 Active，不重建 binding（PR #236）。
+- [x] draining节点按desired state迁移或有界等待自然结束：`reconcile` 主循环对 `node.draining` 调用 `migrate_or_fail`，先按 device/channel 与 reservation 创建新 binding 并发送 Start 命令，迁移失败再 `fail_session`；draining 但 lease 仍有效时仍出现在 active list 中并触发迁移（PR #236）。
+- [ ] 媒体有资源、信令无binding：保护窗口后按idempotency/metadata复核再清理：orphan 分支当前只记录 `orphans_detected` 和 warn；向媒体节点下发 orphan `StopMediaSession` 需要无 signaling binding 的命令/operation 模型，尚未实现，需后续补充。
+- [x] 信令Active、媒体无资源：创建新binding或按policy失败，绝不复活旧终态binding：`reconcile` 主循环对 missing session 调用 `migrate_or_fail`，`dispatch_reconnect_command` 先 `failed()` 旧 binding 再创建新 binding；若 reservation 失败则 `fail_session`，不会把旧终态 binding 重新激活（PR #236）。
+- [x] 同generation最多一个有效binding，数据库约束和application检查同时保证：`media_bindings` 表 `(tenant_id, media_session_id)` partial unique index `state NOT IN ('released','failed')`；`dispatch_reconnect_command` 在 `MediaBinding::new` 前先把旧 binding 置为 `Failed` 并保存，`migrate_or_fail` 失败路径也先 `fail_session` 再释放 reservation；`get_by_media_session` 只返回非终态 binding（PR #236）。
 
 ## 9. MED-R-008：观测和管理
 

@@ -1402,6 +1402,14 @@ impl crate::MediaPort for InMemoryMediaPort {
             .collect())
     }
 
+    async fn get_node(
+        &self,
+        _node_id: NodeId,
+        _clock: &dyn Clock,
+    ) -> crate::Result<Option<crate::MediaNode>> {
+        Ok(None)
+    }
+
     async fn list_sessions(
         &self,
         tenant_id: TenantId,

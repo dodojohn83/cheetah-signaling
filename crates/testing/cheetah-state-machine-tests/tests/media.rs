@@ -238,6 +238,12 @@ fn binding_in(
         MediaBindingState::Active => {
             binding.activate(clock).unwrap();
         }
+        MediaBindingState::NeedsVerification => {
+            binding.activate(clock).unwrap();
+            binding
+                .needs_verification(MediaBindingError::media_node_unavailable(), clock)
+                .unwrap();
+        }
         MediaBindingState::Releasing => {
             binding.activate(clock).unwrap();
             binding.release(clock).unwrap();
@@ -264,12 +270,14 @@ fn media_binding_transition_matrix() {
     let states = [
         MediaBindingState::Reserved,
         MediaBindingState::Active,
+        MediaBindingState::NeedsVerification,
         MediaBindingState::Releasing,
         MediaBindingState::Released,
         MediaBindingState::Failed,
     ];
     let targets = [
         MediaBindingState::Active,
+        MediaBindingState::NeedsVerification,
         MediaBindingState::Releasing,
         MediaBindingState::Released,
         MediaBindingState::Failed,
@@ -278,11 +286,21 @@ fn media_binding_transition_matrix() {
     let allowed = |from: MediaBindingState, to: MediaBindingState| match from {
         MediaBindingState::Reserved => matches!(
             to,
+            MediaBindingState::Active
+                | MediaBindingState::NeedsVerification
+                | MediaBindingState::Releasing
+                | MediaBindingState::Failed
+        ),
+        MediaBindingState::Active => matches!(
+            to,
+            MediaBindingState::NeedsVerification
+                | MediaBindingState::Releasing
+                | MediaBindingState::Failed
+        ),
+        MediaBindingState::NeedsVerification => matches!(
+            to,
             MediaBindingState::Active | MediaBindingState::Releasing | MediaBindingState::Failed
         ),
-        MediaBindingState::Active => {
-            matches!(to, MediaBindingState::Releasing | MediaBindingState::Failed)
-        }
         MediaBindingState::Releasing => {
             matches!(to, MediaBindingState::Released | MediaBindingState::Failed)
         }
@@ -297,6 +315,9 @@ fn media_binding_transition_matrix() {
             let revision_before = binding.revision().0;
             let result = match to {
                 MediaBindingState::Active => binding.activate(&clock),
+                MediaBindingState::NeedsVerification => {
+                    binding.needs_verification(MediaBindingError::media_node_unavailable(), &clock)
+                }
                 MediaBindingState::Releasing => binding.release(&clock),
                 MediaBindingState::Released => binding.released(&clock),
                 MediaBindingState::Failed => {

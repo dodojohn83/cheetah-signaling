@@ -6,6 +6,7 @@
 use crate::gb_event_sink;
 use crate::onvif_discovery;
 use crate::operation_dispatch_worker;
+use crate::periodic_reconcile_worker;
 #[cfg(feature = "cluster")]
 use crate::workers::spawn_node_lease_worker;
 use crate::workers::{
@@ -835,6 +836,20 @@ pub async fn start(
     .with_runtime_health(gb_metrics.clone())
     .with_audit(audit.clone());
     state.cancel = cancel.clone();
+
+    // Periodic media reconciliation: recover missed media state changes when
+    // event-driven gap reconciliation drops or is delayed.
+    let reconcile_interval = Duration::from_millis(
+        u64::try_from(config.media.periodic_reconcile_interval_ms.as_millis()).unwrap_or(30_000),
+    );
+    workers.push(periodic_reconcile_worker::spawn(
+        state.media_service.clone(),
+        storage.clone(),
+        node_id,
+        cancel.child_token(),
+        reconcile_interval,
+    ));
+    info!("periodic media reconciliation worker started");
 
     // Media event consumer: subscribe to active media nodes and apply
     // session-level callbacks through the application media service.

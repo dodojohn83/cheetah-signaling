@@ -3,11 +3,13 @@
 use crate::dto::ReconciliationReport;
 use crate::media_service::*;
 use cheetah_domain::{
-    DomainError, MediaBinding, MediaBindingError, MediaBindingState, MediaNodeSessionRef,
-    MediaPurpose, MediaReservation, MediaSession, MediaSessionDesiredState, MediaSessionError,
-    MediaSessionState, NodeStatus, UnitOfWork,
+    DomainError, MediaBinding, MediaBindingError, MediaBindingState, MediaNode, MediaNodeHealth,
+    MediaNodeSessionRef, MediaPurpose, MediaReservation, MediaSession, MediaSessionDesiredState,
+    MediaSessionError, MediaSessionState, NodeStatus, UnitOfWork,
 };
-use cheetah_signal_types::{MediaBindingId, MediaSessionId, NodeId, PageRequest, RequestContext};
+use cheetah_signal_types::{
+    MediaBindingId, MediaSessionId, NodeId, PageRequest, RequestContext, UtcTimestamp,
+};
 use std::collections::{BTreeMap, BTreeSet};
 
 impl MediaService {
@@ -270,18 +272,48 @@ impl MediaService {
 
         // Any sessions still in active_by_node are bound to media nodes that are
         // no longer active in the cluster (crashed, deregistered, or expired).
-        for (_node_id, sessions) in active_by_node {
-            for (mut session, mut binding) in sessions {
-                self.migrate_or_fail(
-                    context,
-                    uow,
-                    &mut session,
-                    &mut binding,
-                    "node_unavailable",
-                    "media node no longer active",
-                    &mut report,
-                )
+        for (node_id, sessions) in active_by_node {
+            let node = self
+                .media_port
+                .get_node(node_id, self.clock.as_ref())
                 .await?;
+            let now = self.clock.now_wall();
+            let (gone, needs_verification) = classify_inactive_node(node.as_ref(), now);
+
+            if needs_verification {
+                for (mut session, mut binding) in sessions {
+                    self.mark_binding_needs_verification(
+                        context,
+                        uow,
+                        &mut session,
+                        &mut binding,
+                        "node_lease_expired",
+                        "media node lease expired or is unhealthy; binding needs verification",
+                        &mut report,
+                    )
+                    .await?;
+                }
+            } else if gone {
+                for (mut session, mut binding) in sessions {
+                    self.migrate_or_fail(
+                        context,
+                        uow,
+                        &mut session,
+                        &mut binding,
+                        "node_unavailable",
+                        "media node no longer active",
+                        &mut report,
+                    )
+                    .await?;
+                }
+            } else {
+                // The node is still in a protection window (Left but lease valid).
+                // Leave the binding/session alone until the window expires.
+                tracing::info!(
+                    tenant_id = %tenant_id,
+                    node_id = %node_id,
+                    "skipping reconciliation for protected media node"
+                );
             }
         }
         // Persist migrations/failures before releasing scheduler reservations.
@@ -307,7 +339,8 @@ impl MediaService {
             report.nodes_scanned,
             report
                 .missing_released
-                .saturating_add(report.migrations_succeeded),
+                .saturating_add(report.migrations_succeeded)
+                .saturating_add(report.needs_verification),
             report
                 .missing_failed
                 .saturating_add(report.migrations_failed),
@@ -574,6 +607,39 @@ impl MediaService {
         Ok(())
     }
 
+    /// Marks a binding as needing verification instead of failing the session.
+    ///
+    /// Used when the media node's lease has expired or the node is unhealthy but
+    /// has not been explicitly removed from the cluster, giving the node a
+    /// chance to recover before the session is declared failed.
+    #[allow(clippy::too_many_arguments)]
+    async fn mark_binding_needs_verification(
+        &self,
+        context: &RequestContext,
+        uow: &mut dyn UnitOfWork,
+        session: &mut MediaSession,
+        binding: &mut MediaBinding,
+        code: &str,
+        message: &str,
+        report: &mut ReconciliationReport,
+    ) -> crate::Result<()> {
+        if !session.is_terminal() && session.state() != MediaSessionState::Active {
+            let ev = session.active(self.clock.as_ref())?;
+            append_session_event(self, context, uow, session, ev).await?;
+            uow.media_session_repository().save(session).await?;
+        }
+
+        if binding.state() == MediaBindingState::Active {
+            let ev = binding
+                .needs_verification(MediaBindingError::new(code, message), self.clock.as_ref())?;
+            append_binding_event(self, context, uow, binding, ev).await?;
+            uow.media_binding_repository().save(binding).await?;
+        }
+
+        report.needs_verification += 1;
+        Ok(())
+    }
+
     pub(crate) async fn converge_active(
         &self,
         context: &RequestContext,
@@ -620,9 +686,39 @@ impl MediaService {
             let ev = binding.activate(self.clock.as_ref())?;
             append_binding_event(self, context, uow, binding, ev).await?;
             uow.media_binding_repository().save(binding).await?;
+        } else if binding.state() == MediaBindingState::NeedsVerification {
+            let ev = binding.verified(self.clock.as_ref())?;
+            append_binding_event(self, context, uow, binding, ev).await?;
+            uow.media_binding_repository().save(binding).await?;
         }
 
         Ok(())
+    }
+}
+
+/// Classifies a media node that is missing from the active list.
+///
+/// Returns `(gone, needs_verification)`:
+/// - `gone` means the node has been explicitly removed (Left with expired lease
+///   or not found) and its sessions should be migrated/failed.
+/// - `needs_verification` means the node is still registered but its lease has
+///   expired or it is unhealthy; the binding should be marked
+///   `NeedsVerification` without immediately failing the session.
+fn classify_inactive_node(node: Option<&MediaNode>, now: UtcTimestamp) -> (bool, bool) {
+    let Some(node) = node else {
+        return (true, false);
+    };
+
+    let lease_expired = match node.lease_until {
+        None => true,
+        Some(lease) => now >= lease,
+    };
+
+    match node.status {
+        NodeStatus::Left if lease_expired => (true, false),
+        NodeStatus::Left => (false, false), // still in protection window
+        _ if lease_expired || node.health == MediaNodeHealth::Unhealthy => (false, true),
+        _ => (false, false),
     }
 }
 

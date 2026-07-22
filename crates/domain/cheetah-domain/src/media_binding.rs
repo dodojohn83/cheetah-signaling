@@ -18,6 +18,8 @@ pub enum MediaBindingState {
     Reserved,
     /// Binding is active.
     Active,
+    /// Binding is active but its media-node association needs verification.
+    NeedsVerification,
     /// Releasing resources.
     Releasing,
     /// Resources released.
@@ -189,6 +191,20 @@ impl MediaBinding {
         self.failed(MediaBindingError::timeout(), clock)
     }
 
+    /// Marks the binding as needing verification.
+    pub fn needs_verification(
+        &mut self,
+        error: MediaBindingError,
+        clock: &dyn Clock,
+    ) -> crate::Result<DomainEvent> {
+        self.transition_to(clock, MediaBindingState::NeedsVerification, Some(error))
+    }
+
+    /// Confirms a binding that was awaiting verification is active again.
+    pub fn verified(&mut self, clock: &dyn Clock) -> crate::Result<DomainEvent> {
+        self.transition_to(clock, MediaBindingState::Active, None)
+    }
+
     fn transition_to(
         &mut self,
         clock: &dyn Clock,
@@ -224,12 +240,22 @@ impl MediaBinding {
             MediaBindingState::Reserved => matches!(
                 to,
                 MediaBindingState::Active
+                    | MediaBindingState::NeedsVerification
                     | MediaBindingState::Releasing
                     | MediaBindingState::Failed
             ),
-            MediaBindingState::Active => {
-                matches!(to, MediaBindingState::Releasing | MediaBindingState::Failed)
-            }
+            MediaBindingState::Active => matches!(
+                to,
+                MediaBindingState::NeedsVerification
+                    | MediaBindingState::Releasing
+                    | MediaBindingState::Failed
+            ),
+            MediaBindingState::NeedsVerification => matches!(
+                to,
+                MediaBindingState::Active
+                    | MediaBindingState::Releasing
+                    | MediaBindingState::Failed
+            ),
             MediaBindingState::Releasing => {
                 matches!(to, MediaBindingState::Released | MediaBindingState::Failed)
             }
