@@ -86,14 +86,12 @@
 
 ## 4. CI 运行结果
 
-当前 `devin/gb4-base-all-v2` 基线（含 `GB4-SEC-002`、`GB4-OPS-003/004`、`GB4-SEC-004`、`GB4-COMP-001`、`GB4-ACC-004`、`GB4-CMD-001`、`GB4-SIP-006`）的 CI 全部通过：
+报告所引用的安全、过载与脱敏实现随仓库 CI 常态化运行，本 PR 修改仅涉及报告本身；报告提交前的本地验证结果：
 
-- `fmt-check`：通过；
-- `clippy`：通过；
-- `deny`：通过；
-- `nextest`：通过；
-- `proto`：通过；
-- `contract-baseline`：通过。
+- `cargo fmt --all -- --check`：通过；
+- `cargo clippy --workspace --all-targets -- -D warnings`：通过；
+- `cargo test --workspace`：通过；
+- `python3 scripts/audit_architecture.py`：无新增违规。
 
 ## 5. 结论与后续工作
 
