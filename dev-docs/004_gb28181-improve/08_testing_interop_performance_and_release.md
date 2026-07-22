@@ -194,7 +194,7 @@ python3 scripts/audit_architecture.py
 - [x] `GB4-SYS-001`：完成 edge SQLite + fake media 全 GB vertical system test。见 [reports/gb4-sys-001.md](reports/gb4-sys-001.md)。
 - [x] `GB4-SYS-002`：完成 cluster PostgreSQL/NATS + fake media 全 GB vertical system test（real media 互操作仍属 `GB4-SYS-003/004` 范围）。见 [reports/gb4-sys-002.md](reports/gb4-sys-002.md)。
 - [ ] `GB4-SYS-003`：完成至少两类真实设备/NVR互操作报告。当前 `Blocked`，报告见 [reports/gb4-sys-003.md](reports/gb4-sys-003.md)。
-- [ ] `GB4-SYS-004`：完成上级/下级平台级联互操作报告。
+- [ ] `GB4-SYS-004`：完成上级/下级平台级联互操作报告。当前 `Blocked`，报告见 [reports/gb4-sys-004.md](reports/gb4-sys-004.md)。
 - [x] `GB4-SYS-005`：完成安全、过载和敏感信息泄漏测试报告。见 [reports/gb4-sys-005.md](reports/gb4-sys-005.md)。
 - [x] `GB4-SYS-006`：完成确定性 chaos/rolling upgrade 覆盖（cluster 生命周期故障 + simulator 网络故障 DSL）。见 [reports/gb4-sys-006.md](reports/gb4-sys-006.md)。
 - [x] `GB4-SYS-007`：完成有界合成容量/扩展 harness 与 10万/30万/100万目标画像报告（开发规模等价证据）。见 [reports/gb4-sys-007.md](reports/gb4-sys-007.md)。
