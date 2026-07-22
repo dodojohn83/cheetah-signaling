@@ -134,6 +134,20 @@ def write_outputs(registry):
             f"{c['checked_count']} | {c['unchecked_count']} | {primary} |\n"
         )
 
+    lines.append("\n## Checkbox Registry\n\n")
+    lines.append(
+        "| ID | Chapter | Line | Status | 003 Primary | 003 Note | Text |\n"
+    )
+    lines.append("| --- | --- | ---: | --- | --- | --- | --- |\n")
+    for ch in sorted(registry["chapters"].keys()):
+        for box in registry["chapters"][ch]["checkboxes"]:
+            status = "Checked" if box["checked"] else "Unchecked"
+            text = box["text"].replace("|", "\\|")
+            lines.append(
+                f"| {box['id']} | {ch} | {box['line']} | {status} | "
+                f"{box['phase_003_primary']} | {box['phase_003_note']} | {text} |\n"
+            )
+
     lines.append("\n## Registry Verification\n\n")
     lines.append("Run `scripts/audit_002_registry.py` to verify:\n\n")
     lines.append("1. The number of checkboxes in this registry matches the source files.\n")

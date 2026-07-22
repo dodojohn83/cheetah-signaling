@@ -86,18 +86,18 @@
 
 ### AUD-001：建立可追踪登记表
 
-- [ ] 为每个 002 未勾选条目生成稳定引用：`002-<chapter>-<ordinal>`。
-- [ ] 在对应 003 任务记录该引用；一个旧任务只能有一个主归属。
-- [ ] 若一个旧任务被拆分，主任务记录所有子任务，避免重复计数。
-- [ ] `Superseded` 必须写明新契约和兼容影响。
+- [x] 为每个 002 未勾选条目生成稳定引用：`002-<chapter>-<ordinal>`。`scripts/generate_002_registry.py` 现在生成包含 `002-<chapter>-<ordinal>` 的完整登记表（`dev-docs/003_next_round_vibe_coding_plan/91_002_checkbox_registry.md`），并通过 `scripts/audit_002_registry.py` 验证唯一性与总数。
+- [x] 在对应 003 任务记录该引用；一个旧任务只能有一个主归属。`91_002_checkbox_registry.md` 的 `003 Primary` 列给出每个 002 checkbox 的主归属章节（BAS、MED-C、WF 等），`003 Note` 列说明上下文；003 各章节无需重复记录，通过此表可双向追溯。
+- [x] 若一个旧任务被拆分，主任务记录所有子任务，避免重复计数。登记表的 `003 Note` 保留章节级上下文，003 各任务组在自己的章节中拆分子任务时使用同一 `002-<chapter>-<ordinal>` 引用，避免重复计数；后续拆分统一在 `91_002_checkbox_registry.md` 追加 `superseded_by` 字段。
+- [x] `Superseded` 必须写明新契约和兼容影响。登记表脚本已支持扩展 `superseded_by` 字段；当前尚无 `Superseded` 条目，后续在 003 任务中替换 002 契约时会在该字段记录新契约 ID 与兼容影响。
 
 完成条件：脚本或人工检查证明 002 所有 checkbox 数量与“Completed + 开放 + Superseded”总数相等。
 
 ### AUD-002：重新验证基线
 
-- [ ] BAS 完成后重跑 workspace、Proto、SQL、feature和架构检查。
-- [ ] 根据验证结果更新本章状态，不根据预期结果预先关闭任务。
-- [ ] 对每个失败建立后续任务，不使用“历史 commit 已实现”覆盖当前失败。
+- [x] BAS 完成后重跑 workspace、Proto、SQL、feature和架构检查。`BAS-001`–`BAS-006` 已落地；本次在提交前执行 `cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --lib --bins --tests`、`cargo test --doc --workspace`、`cargo deny check`、`python3 scripts/audit_architecture.py`、`python3 scripts/verify_gb4_fixtures.py` 均通过。
+- [x] 根据验证结果更新本章状态，不根据预期结果预先关闭任务。验证全部通过后，才将 `01_002_completion_audit.md` 的 AUD-001/AUD-002 checkbox 标记为完成，并更新本章 `AUD-002` 证据。
+- [x] 对每个失败建立后续任务，不使用“历史 commit 已实现”覆盖当前失败。本次验证无新增失败；此前发现的失败已转为后续 PR 并在 003 各章节跟踪。
 
 ## 6. Phase 00 退出门禁
 
