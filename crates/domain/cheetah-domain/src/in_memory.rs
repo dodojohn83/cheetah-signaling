@@ -1418,10 +1418,11 @@ impl crate::MediaPort for InMemoryMediaPort {
     ) -> crate::Result<Vec<crate::MediaNode>> {
         let node_sessions = lock_mutex(&self.node_sessions);
         Ok(node_sessions
-            .keys()
-            .filter(|(t, _)| *t == tenant_id)
-            .map(|(_, node_id)| crate::MediaNode {
+            .iter()
+            .filter(|((t, _), _)| *t == tenant_id)
+            .map(|((_, node_id), refs)| crate::MediaNode {
                 node_id: *node_id,
+                session_count: refs.len() as u64,
                 ..crate::MediaNode::default()
             })
             .collect())
@@ -1469,7 +1470,7 @@ impl crate::MediaPort for InMemoryMediaPort {
         Ok(Page {
             items,
             next_cursor,
-            total: None,
+            total: Some(all_items.len() as u64),
         })
     }
 }

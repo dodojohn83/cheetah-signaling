@@ -169,9 +169,9 @@ impl MediaService {
 
         // Only query media nodes that actually host this tenant's active bindings.
         // This avoids O(media_nodes) RPC fan-out per tenant on every reconcile tick
-        // while still checking every binding that matters. Orphan detection for nodes
-        // without local bindings is left to targeted reconciles.
-        let node_ids: Vec<NodeId> = active_by_node.keys().copied().collect();
+        // while still checking every binding that matters.
+        let local_node_ids: BTreeSet<NodeId> = active_by_node.keys().copied().collect();
+        let node_ids: Vec<NodeId> = local_node_ids.iter().copied().collect();
         for node_id in node_ids {
             let Some(node) = nodes.get(&node_id) else {
                 // Node is no longer reported as active; the second pass below
@@ -280,6 +280,48 @@ impl MediaService {
             }
             // Persist per-node state before the next media-node query.
             uow.commit().await?;
+        }
+
+        // Scan active media nodes that have no local binding for orphan sessions.
+        // We only query nodes whose reported session count is non-zero, so idle
+        // nodes do not cause fan-out.
+        for (node_id, node) in &nodes {
+            if local_node_ids.contains(node_id) || node.session_count == 0 {
+                continue;
+            }
+            // Commit any pending writes before the next media-node RPC.
+            uow.commit().await?;
+
+            let mut orphan_cursor: Option<String> = None;
+            let mut orphan_total: u64 = 0;
+            loop {
+                let request = match orphan_cursor {
+                    None => PageRequest::new(1000)?,
+                    Some(c) => PageRequest::new(1000)?.with_cursor(c),
+                };
+                let page = self
+                    .media_port
+                    .list_sessions(tenant_id, *node_id, request, self.clock.as_ref())
+                    .await?;
+                orphan_cursor = page.next_cursor;
+                if let Some(total) = page.total {
+                    orphan_total = total;
+                    break;
+                }
+                orphan_total += page.items.len() as u64;
+                if orphan_cursor.is_none() {
+                    break;
+                }
+            }
+            if orphan_total > 0 {
+                report.orphans_detected += orphan_total;
+                tracing::warn!(
+                    tenant_id = %tenant_id,
+                    node_id = %node_id,
+                    orphan_count = orphan_total,
+                    "orphan media sessions reported by node with no local binding"
+                );
+            }
         }
 
         // Any sessions still in active_by_node are bound to media nodes that are
