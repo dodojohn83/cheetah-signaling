@@ -90,8 +90,8 @@
 
 ## 7. 参考分析任务
 
-- [ ] `GB4-REF-001`：为每个参考项目保存 commit、许可证、文件路径和所提取行为的清单。
-- [ ] `GB4-REF-002`：把每项参考行为映射到标准条款、compatibility profile 或明确的 out-of-scope。
-- [ ] `GB4-REF-003`：所有新增 fixture 通过 provenance schema 检查，许可证不明来源只允许 clean-room synthetic fixture。
-- [ ] `GB4-REF-004`：互操作报告说明哪些行为来自真实设备、参考 peer 或 simulator，不把 peer 间一致误称为标准一致。
+- [x] `GB4-REF-001`：为每个参考项目保存 commit、许可证、文件路径和所提取行为的清单（见 [reports/gb4-ref-001.md](reports/gb4-ref-001.md)）。
+- [x] `GB4-REF-002`：把每项参考行为映射到标准条款、compatibility profile 或明确的 out-of-scope（见 [reports/gb4-ref-001.md](reports/gb4-ref-001.md) 第 2 节）。
+- [x] `GB4-REF-003`：新增 `scripts/verify_gb4_fixtures.py` 校验所有 fixture metadata；当前 7 组 fixture 全部通过。
+- [ ] `GB4-REF-004`：互操作报告说明哪些行为来自真实设备、参考 peer 或 simulator，不把 peer 间一致误称为标准一致；当前处于 `Blocked`，报告见 [reports/gb4-ref-004.md](reports/gb4-ref-004.md)，待 `GB4-SYS-003/004` 真实联调后补充。
 
