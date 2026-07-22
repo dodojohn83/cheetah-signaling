@@ -1259,6 +1259,10 @@ pub struct OnvifConfig {
     pub max_concurrent_probes: u32,
     /// Optional default tenant UUID for discovered ONVIF devices.
     pub default_tenant_id: Option<String>,
+    /// Optional default username for ONVIF device authentication.
+    pub default_username: Option<String>,
+    /// Optional SecretProvider reference for the default ONVIF device password.
+    pub default_credentials_ref: Option<String>,
 }
 
 impl Default for OnvifConfig {
@@ -1291,6 +1295,8 @@ impl Default for OnvifConfig {
             discovery_interval_ms: DurationMs::from_millis(0),
             max_concurrent_probes: 8,
             default_tenant_id: None,
+            default_username: None,
+            default_credentials_ref: None,
         }
     }
 }
