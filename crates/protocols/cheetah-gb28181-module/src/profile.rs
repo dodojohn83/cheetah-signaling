@@ -39,29 +39,32 @@ impl ProfileResolver {
     /// Resolves the best matching profile for `selector`.
     ///
     /// Priority follows exact firmware → model → manufacturer → standard
-    /// version → default. If two profiles tie at the same priority, the call
-    /// returns [`ProfileResolveError::Ambiguous`].
+    /// version → default. If two profiles tie at the same highest priority, the
+    /// call returns [`ProfileResolveError::Ambiguous`].
     pub fn resolve(
         &self,
         selector: &ProfileSelector,
     ) -> Result<CompatibilityProfile, ProfileResolveError> {
-        let mut best: Option<(&CompatibilityProfile, u32)> = None;
-        for profile in &self.profiles {
-            let score = profile.score(selector);
-            if score == 0 {
+        let scores: Vec<u32> = self.profiles.iter().map(|p| p.score(selector)).collect();
+        let best_score = scores.iter().copied().filter(|s| *s > 0).max().unwrap_or(0);
+        if best_score == 0 {
+            return Ok(CompatibilityProfile::default());
+        }
+
+        let mut best: Option<&CompatibilityProfile> = None;
+        for (profile, score) in self.profiles.iter().zip(scores) {
+            if score != best_score {
                 continue;
             }
-            match best {
-                Some((_, best_score)) if score == best_score => {
-                    return Err(ProfileResolveError::Ambiguous {
-                        selector: selector.clone(),
-                    });
-                }
-                Some((_, best_score)) if score < best_score => {}
-                _ => best = Some((profile, score)),
+            if best.is_some() {
+                return Err(ProfileResolveError::Ambiguous {
+                    selector: selector.clone(),
+                });
             }
+            best = Some(profile);
         }
-        Ok(best.map(|(p, _)| p.clone()).unwrap_or_default())
+
+        Ok(best.cloned().unwrap_or_default())
     }
 }
 
@@ -174,6 +177,63 @@ mod tests {
             .resolve(&selector(Some("2016"), Some("Vendor"), None, None))
             .unwrap();
         assert_eq!(selected.profile_id.as_deref(), Some("vendor"));
+    }
+
+    #[test]
+    fn broad_standard_fallback_matches_devices_with_extra_details() {
+        let resolver = ProfileResolver::new(vec![profile(
+            "generic-2016",
+            Some("2016"),
+            None,
+            None,
+            None,
+            &[CompatibilityCapability::Gb2016],
+        )]);
+
+        // A device that reports manufacturer, model and firmware but has no
+        // more specific profile must fall back to the standard-only profile,
+        // not the default empty profile.
+        let selected = resolver
+            .resolve(&selector(
+                Some("2016"),
+                Some("Vendor"),
+                Some("Model-X"),
+                Some("1.2.3"),
+            ))
+            .unwrap();
+        assert_eq!(selected.profile_id.as_deref(), Some("generic-2016"));
+    }
+
+    #[test]
+    fn model_only_outranks_manufacturer_plus_standard() {
+        let resolver = ProfileResolver::new(vec![
+            profile(
+                "model-specific",
+                Some("2016"),
+                Some("Vendor"),
+                Some("Model-X"),
+                None,
+                &[CompatibilityCapability::PresetQuery],
+            ),
+            profile(
+                "vendor-all",
+                Some("2016"),
+                Some("Vendor"),
+                None,
+                None,
+                &[CompatibilityCapability::CatalogNotify],
+            ),
+        ]);
+
+        let selected = resolver
+            .resolve(&selector(
+                Some("2016"),
+                Some("Vendor"),
+                Some("Model-X"),
+                None,
+            ))
+            .unwrap();
+        assert_eq!(selected.profile_id.as_deref(), Some("model-specific"));
     }
 
     #[test]
