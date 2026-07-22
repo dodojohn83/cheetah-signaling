@@ -874,6 +874,9 @@ async fn replace_catalog(
             &item.device_id,
         );
         let mut metadata = BTreeMap::new();
+        // Persist the GB28181 channel external ID so channel-scoped commands
+        // (PTZ, preset, device control, record info) can address the SIP target.
+        metadata.insert("external_id".to_string(), item.device_id.clone());
         if let Some(v) = &item.manufacturer {
             metadata.insert("manufacturer".to_string(), v.clone());
         }
