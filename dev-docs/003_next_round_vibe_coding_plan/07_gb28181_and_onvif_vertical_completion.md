@@ -63,14 +63,14 @@
 - [x] 多interface WS-Discovery进入bounded worker，按XAddr/device identity去重：`apps/cheetah-signaling/src/onvif_discovery.rs` 使用 `Semaphore` 限制 `max_concurrent_probes`，按 `endpoint_reference` 去重并在同一设备多个 XAddr 顺序尝试。
 - [x] probe响应执行大小、XML、scope和endpoint URL校验：`crates/protocols/cheetah-onvif-driver-tokio/src/discovery.rs` 通过 `check_datagram_size` 校验大小、`parse_probe_matches` 解析并校验 ProbeMatch、`XAddrPolicy` 校验 endpoint URL scheme/网段/私有地址；`cheetah-onvif-core/src/discovery/parser.rs` 的 `LimitTracker` 限制 XML 深度/节点数。
 - [x] 发现只生成候选；纳管必须经授权流程和tenant绑定：`onvif_discovery.rs` 对发现的 endpoint 调用 `DeviceService::register_or_update_device`，生成候选后由 application 层执行 tenant 绑定与授权持久化。
-- [ ] endpoint、凭据引用、clock offset、capability revision持久化：endpoint 已作为设备 metadata 持久化；`OnvifConfig` 目前尚无 `credentials_ref` 字段，凭据引用、clock offset 和 capability revision 的持久化需 ONVIF-002/003 接入 `GetSystemDateAndTime`/`GetCapabilities` 后补充。
+- [ ] endpoint、凭据引用、clock offset、capability revision持久化：endpoint 已作为设备 metadata 持久化；`OnvifConfig` 已新增 `default_credentials_ref`/`default_username` 字段并在 `protocol_driver.rs` 通过 `SecretProvider` 解析；per-device 凭据引用、clock offset 和 capability revision 的持久化需 ONVIF-003 接入 `GetSystemDateAndTime`/`GetCapabilities` 后补充。
 
 ## 10. ONVIF-002：安全HTTP/SOAP
 
 - [x] TLS验证、connect/request deadline、cancel、connection pool和body上限：`crates/protocols/cheetah-onvif-driver-tokio/src/soap_client.rs` 的 `SoapClient` 使用 `reqwest` 默认 TLS 证书校验，设置 `connect_timeout`/`request_timeout`，通过 `Semaphore` 限制 `max_concurrent_requests`，并在 `max_response_bytes` 处拒绝 oversized body；`timeout()` 覆盖单个请求取消。
 - [x] 禁用DTD/XXE，限制XML深度、节点和文本：`quick-xml` 默认不解析外部实体、不展开自定义实体，无 DTD 外部解析；`cheetah-onvif-module/src/config.rs` 的 `ParserLimits` 与所有服务解析器限制 `max_depth`/`max_nodes`/`max_text_bytes`/`max_input_bytes`。
 - [x] redirect、DNS rebinding、scheme/port/网段和IPv4/IPv6 SSRF防护：`cheetah-onvif-core/src/discovery/xaddr.rs` 的 `XAddrPolicy` 校验 URL scheme、端口、IPv4/IPv6 分类（loopback/private/link-local/unspecified）、域名；`SoapClient` 对每个 redirect hop 调用 `validate_redirect`，拒绝 https→http 与跨 authority 跳转；默认禁止域名以规避 DNS rebinding。
-- [ ] WS-Security UsernameToken使用SecretProvider和设备clock offset，不记录header：`crates/protocols/cheetah-onvif-driver-tokio/src/auth.rs` 已实现 `DeviceCredentials`（密码用 `SecretString`，不记录 nonce/raw header，支持 clock offset）；但 `OnvifConfig` 尚无 `credentials_ref` 字段，`onvif_discovery.rs` 仍传递 `None`，需后续接入 `SecretProvider`。
+- [x] WS-Security UsernameToken使用SecretProvider和设备clock offset，不记录header：`OnvifConfig` 新增 `default_username` 与 `default_credentials_ref`；`protocol_driver.rs` 中 `EndpointCommand`/`MediaCommand`/`StreamUriCommand`/`SnapshotUriCommand` 新增 `credentials_ref`，`resolve_credentials` 优先通过 `DriverContext::secret` 解析 `SecretString` 密码，与命令/默认用户名组合为 `DeviceCredentials`；`auth.rs` 的 `inject_username_token` 使用 `SecretString` 并仅输出 token XML，不记录明文密码或 nonce。
 
 ## 11. ONVIF-003：Provision 与能力
 

@@ -153,6 +153,11 @@ env_prefix = "CHEETAH_SECRET_"
 discovery_timeout_ms = 10000
 # ONVIF probe timeout in milliseconds. Default: 0.
 probe_timeout_ms = 5000
+# Optional default username for discovered ONVIF devices.
+# default_username = "admin"
+# Optional SecretProvider reference for the default ONVIF device password.
+# With the default env prefix this is looked up as CHEETAH_SECRET_ONVIF_DEFAULT_PASSWORD.
+# default_credentials_ref = "onvif.default.password"
 
 [security]
 # Reference to the JWT public key secret. Leave empty to disable JWT auth.
