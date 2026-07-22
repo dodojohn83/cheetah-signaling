@@ -11,7 +11,7 @@
 - [x] 返回lease ID、TTL、heartbeat interval、cluster time和accepted contract version：`proto/cheetah/media/v1/media.proto` `MediaNodeInfo` 新增 `lease_id`、`lease_ttl_ms`、`heartbeat_interval_ms`、`cluster_time`、`accepted_contract_version`；`to_media_node_info` 在 register/heartbeat/drain/deregister 响应中填充这些字段。
 - [x] Heartbeat带lease、instance epoch、load：`proto/cheetah/media/v1/media.proto` `MediaNodeHeartbeat` 新增 `lease_id` 与 `instance_epoch`；`MediaNodeRegistry::heartbeat` 扩展为接收 lease_id 与 instance_epoch 并在 `InMemory`/`Persistent` 实现中做 fencing；`load` 与 `session_count` 已存在。capacity 与 capability generation 的心跳携带将在后续调度任务中补充。
 - [x] Drain禁止新reservation但允许query/stop；Deregister保留保护窗口用于对账：`MediaNodeRegistry::reserve` 在 in-memory 与 persistent 实现中均拒绝 `draining`/`NodeStatus::Draining` 节点并返回 `SchedulerError::NodeDraining`；`deregister` 设置 `lease_until = now + deregister_protection_ttl_ms`，`is_active` 让 Left 节点在保护期内仍被 `list_nodes` 看到但不可被调度；`MediaEventConsumer` 不订阅 Left 节点；`MediaService::reconcile` 跳过保护期内 Left 节点，不立即迁移其 binding。
-- [ ] lease过期立即移出候选，已有binding标记`NeedsVerification`。
+- [x] lease过期立即移出候选，已有binding标记`NeedsVerification`：`reconcile` 主循环对 lease 过期/unhealthy 节点调用 `mark_binding_needs_verification`，binding 进入 `NeedsVerification`，session 保持 Active；下一周期若节点仍未恢复且 grace window 已过期则升级为 `migrate_or_fail`（PR #236）。
 
 ## 3. MED-R-002：MediaNode repository
 
