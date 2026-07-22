@@ -280,8 +280,22 @@ impl MediaService {
             let now = self.clock.now_wall();
             let (gone, needs_verification) = classify_inactive_node(node.as_ref(), now);
 
-            if needs_verification {
-                for (mut session, mut binding) in sessions {
+            if !gone && !needs_verification {
+                // The node is still in a protection window (Left but lease valid).
+                // Leave the binding/session alone until the window expires.
+                tracing::info!(
+                    tenant_id = %tenant_id,
+                    node_id = %node_id,
+                    "skipping reconciliation for protected media node"
+                );
+                continue;
+            }
+
+            for (mut session, mut binding) in sessions {
+                let session_active = session.state() == MediaSessionState::Active;
+                let binding_active = binding.state() == MediaBindingState::Active;
+
+                if session_active && binding_active && needs_verification {
                     self.mark_binding_needs_verification(
                         context,
                         uow,
@@ -292,9 +306,9 @@ impl MediaService {
                         &mut report,
                     )
                     .await?;
-                }
-            } else if gone {
-                for (mut session, mut binding) in sessions {
+                } else {
+                    // Setup-phase sessions or nodes that are gone cannot be left in
+                    // NeedsVerification; attempt to migrate to a healthy node or fail.
                     self.migrate_or_fail(
                         context,
                         uow,
@@ -306,14 +320,6 @@ impl MediaService {
                     )
                     .await?;
                 }
-            } else {
-                // The node is still in a protection window (Left but lease valid).
-                // Leave the binding/session alone until the window expires.
-                tracing::info!(
-                    tenant_id = %tenant_id,
-                    node_id = %node_id,
-                    "skipping reconciliation for protected media node"
-                );
             }
         }
         // Persist migrations/failures before releasing scheduler reservations.
@@ -607,11 +613,13 @@ impl MediaService {
         Ok(())
     }
 
-    /// Marks a binding as needing verification instead of failing the session.
+    /// Marks an already-active binding as needing verification instead of failing
+    /// the session.
     ///
     /// Used when the media node's lease has expired or the node is unhealthy but
     /// has not been explicitly removed from the cluster, giving the node a
-    /// chance to recover before the session is declared failed.
+    /// chance to recover before the session is declared failed. Callers must
+    /// only invoke this for sessions/bindings that are already `Active`.
     #[allow(clippy::too_many_arguments)]
     async fn mark_binding_needs_verification(
         &self,
@@ -623,18 +631,16 @@ impl MediaService {
         message: &str,
         report: &mut ReconciliationReport,
     ) -> crate::Result<()> {
-        if !session.is_terminal() && session.state() != MediaSessionState::Active {
-            let ev = session.active(self.clock.as_ref())?;
-            append_session_event(self, context, uow, session, ev).await?;
-            uow.media_session_repository().save(session).await?;
+        if session.state() != MediaSessionState::Active
+            || binding.state() != MediaBindingState::Active
+        {
+            return Ok(());
         }
 
-        if binding.state() == MediaBindingState::Active {
-            let ev = binding
-                .needs_verification(MediaBindingError::new(code, message), self.clock.as_ref())?;
-            append_binding_event(self, context, uow, binding, ev).await?;
-            uow.media_binding_repository().save(binding).await?;
-        }
+        let ev = binding
+            .needs_verification(MediaBindingError::new(code, message), self.clock.as_ref())?;
+        append_binding_event(self, context, uow, binding, ev).await?;
+        uow.media_binding_repository().save(binding).await?;
 
         report.needs_verification += 1;
         Ok(())
