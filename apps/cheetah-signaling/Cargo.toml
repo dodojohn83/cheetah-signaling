@@ -49,5 +49,8 @@ tokio-util = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
 
+[dev-dependencies]
+cheetah-domain = { path = "../../crates/domain/cheetah-domain", features = ["test-util"] }
+
 [lints]
 workspace = true

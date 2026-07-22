@@ -912,7 +912,10 @@ pub async fn start(
         );
     }
     let mut gb28181_addr = None;
-    let mut gb_command_tx: Option<tokio::sync::mpsc::Sender<_>> = None;
+    // One command bus per listener: each driver holds an independent
+    // registration table, so a device is reachable only through the bus of the
+    // driver that terminated its REGISTER.
+    let mut gb_command_buses: Vec<Arc<dyn crate::workers::Gb28181CommandBus>> = Vec::new();
     if gb_listeners.is_empty() {
         warn!("no gb28181 listeners configured; protocol listener not started");
     }
@@ -1008,9 +1011,8 @@ pub async fn start(
         if gb28181_addr.is_none() {
             gb28181_addr = Some(local);
         }
-        if gb_command_tx.is_none() {
-            gb_command_tx = Some(driver.command_bus());
-        }
+        gb_command_buses.push(Arc::new(DriverCommandBus::new(driver.command_bus()))
+            as Arc<dyn crate::workers::Gb28181CommandBus>);
         let worker_cancel = cancel.child_token();
         let listener_id = listener.id.clone();
         workers.push(tokio::spawn(async move {
@@ -1025,13 +1027,10 @@ pub async fn start(
         info!(listener_id = %listener.id, %local, realm = %listener.realm, domain = %listener.domain, "gb28181 SIP listening");
     }
 
-    // Inbox consumer after GB28181 driver bind so the command bus is wired.
+    // Inbox consumer after GB28181 driver bind so the command buses are wired.
     {
-        let gb_bus = gb_command_tx.map(|tx| {
-            Arc::new(DriverCommandBus::new(tx)) as Arc<dyn crate::workers::Gb28181CommandBus>
-        });
         let handler: Arc<dyn cheetah_signal_application::CommandHandler> = Arc::new(
-            OwnerCommandHandler::new(plugin_host.clone(), clock.clone(), gb_bus),
+            OwnerCommandHandler::new(plugin_host.clone(), clock.clone(), gb_command_buses),
         );
         workers.push(spawn_inbox_worker(
             storage.clone(),

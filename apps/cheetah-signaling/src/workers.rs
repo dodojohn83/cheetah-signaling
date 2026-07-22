@@ -101,27 +101,36 @@ impl Gb28181CommandBus for DriverCommandBus {
     }
 }
 
-/// Inbox command handler that routes GB28181 commands through the dedicated
-/// driver bus and falls back to activated protocol plugins for other command
-/// kinds, recording an `UNKNOWN_OUTCOME` without forging success when the
-/// outcome cannot be determined.
+/// Inbox command handler that routes GB28181 commands to the configured driver
+/// buses and falls back to activated protocol plugins for other command kinds,
+/// recording an `UNKNOWN_OUTCOME` without forging success when the outcome
+/// cannot be determined.
+///
+/// Each GB28181 listener runs its own driver with an independent in-memory
+/// registration table, so a device is reachable only through the driver that
+/// terminated its REGISTER. The handler therefore holds every listener's bus
+/// and fans a resolved command out to all of them (see
+/// [`Self::handle_gb28181_command`]).
 pub struct OwnerCommandHandler {
     plugin_host: Arc<Mutex<PluginHost>>,
     clock: Arc<dyn Clock>,
-    gb_bus: Option<Arc<dyn Gb28181CommandBus>>,
+    gb_buses: Vec<Arc<dyn Gb28181CommandBus>>,
 }
 
 impl OwnerCommandHandler {
     /// Creates a new handler.
+    ///
+    /// `gb_buses` holds one command bus per configured GB28181 listener; an
+    /// empty vector disables GB28181 command dispatch.
     pub fn new(
         plugin_host: Arc<Mutex<PluginHost>>,
         clock: Arc<dyn Clock>,
-        gb_bus: Option<Arc<dyn Gb28181CommandBus>>,
+        gb_buses: Vec<Arc<dyn Gb28181CommandBus>>,
     ) -> Self {
         Self {
             plugin_host,
             clock,
-            gb_bus,
+            gb_buses,
         }
     }
 
@@ -187,11 +196,11 @@ impl OwnerCommandHandler {
         command: &Command,
         kind: &str,
     ) -> cheetah_signal_types::Result<CommandHandlerResult> {
-        let Some(bus) = self.gb_bus.as_ref() else {
+        if self.gb_buses.is_empty() {
             return Ok(CommandHandlerResult::rejected(
                 "gb28181 command bus not available",
             ));
-        };
+        }
 
         let Some(gb_command) = self.resolve_gb_command(uow, command).await else {
             return Ok(CommandHandlerResult::rejected(
@@ -199,20 +208,40 @@ impl OwnerCommandHandler {
             ));
         };
 
-        match bus.send(gb_command).await {
-            Ok(()) => Ok(CommandHandlerResult::accepted(
-                CommandDispatch::Sent,
-                OperationStepOutcome::Unknown,
+        // Each listener runs an independent driver holding its own in-memory
+        // registration table, so only the driver that terminated the device's
+        // REGISTER can resolve a send target. Fan the command out to every
+        // listener bus: the owning driver emits the SIP MESSAGE while the
+        // others reject it as `NotRegistered` without any side effect. This
+        // keeps a device registered on a non-first listener reachable, which a
+        // single captured bus does not.
+        let mut enqueued = false;
+        let mut last_error: Option<String> = None;
+        for bus in &self.gb_buses {
+            match bus.send(gb_command.clone()).await {
+                Ok(()) => enqueued = true,
+                Err(e) => last_error = Some(e.to_string()),
+            }
+        }
+
+        if enqueued {
+            Ok(
+                CommandHandlerResult::accepted(
+                    CommandDispatch::Sent,
+                    OperationStepOutcome::Unknown,
+                )
+                .with_payload(format!(
+                    r#"{{"command_kind":"{kind}","protocol":"gb28181"}}"#
+                )),
             )
-            .with_payload(format!(
-                r#"{{"command_kind":"{kind}","protocol":"gb28181"}}"#
-            ))),
-            Err(e) => Ok(CommandHandlerResult::accepted(
+        } else {
+            Ok(CommandHandlerResult::accepted(
                 CommandDispatch::TransportFailed {
-                    reason: e.to_string(),
+                    reason: last_error
+                        .unwrap_or_else(|| "all gb28181 command buses closed".to_string()),
                 },
                 OperationStepOutcome::Unknown,
-            )),
+            ))
         }
     }
 
@@ -726,4 +755,213 @@ pub fn builtin_plugin_ids(id_generator: &dyn IdGenerator) -> (PluginId, PluginId
 #[allow(dead_code)]
 fn _now(clock: &dyn Clock) -> UtcTimestamp {
     clock.now_wall()
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+    use cheetah_domain::in_memory::{InMemoryClock, InMemoryIdGenerator, InMemoryUnitOfWork};
+    use cheetah_domain::{Device, DeviceKind, Operation, PtzDirection};
+    use cheetah_signal_application::InboxReceipt;
+    use cheetah_signal_types::{
+        OwnerEpoch, Principal, PrincipalKind, ProtocolIdentity, RequestContext, ResourceId,
+        ResourceKind, ResourceRef,
+    };
+    use std::collections::BTreeMap;
+
+    /// Records every command it receives so tests can assert per-listener
+    /// delivery.
+    struct RecordingBus {
+        sent: Arc<Mutex<Vec<Gb28181Command>>>,
+    }
+
+    impl RecordingBus {
+        fn new() -> (Arc<Self>, Arc<Mutex<Vec<Gb28181Command>>>) {
+            let sent = Arc::new(Mutex::new(Vec::new()));
+            (
+                Arc::new(Self {
+                    sent: Arc::clone(&sent),
+                }),
+                sent,
+            )
+        }
+    }
+
+    #[async_trait]
+    impl Gb28181CommandBus for RecordingBus {
+        async fn send(&self, command: Gb28181Command) -> cheetah_signal_types::Result<()> {
+            self.sent.lock().await.push(command);
+            Ok(())
+        }
+    }
+
+    const DEVICE_GB_ID: &str = "34020000001320000001";
+
+    async fn seed_gb_device(
+        uow: &mut dyn UnitOfWork,
+        clock: &dyn Clock,
+        tenant_id: TenantId,
+        device_id: DeviceId,
+    ) {
+        let external_id = ProtocolIdentity::new(DEVICE_GB_ID).expect("valid gb id");
+        let (device, _event) = Device::new(
+            clock,
+            tenant_id,
+            device_id,
+            Protocol::Gb28181,
+            external_id,
+            "factory",
+            "test camera",
+            DeviceKind::Camera,
+            vec![],
+            BTreeMap::new(),
+        )
+        .expect("device");
+        uow.device_repository().save(&device).await.expect("save");
+    }
+
+    fn ptz_command(
+        ids: &InMemoryIdGenerator,
+        clock: &dyn Clock,
+        tenant_id: TenantId,
+        device_id: DeviceId,
+        channel_id: ChannelId,
+    ) -> Command {
+        let context = RequestContext {
+            tenant_id,
+            principal: Principal {
+                id: "tester".to_string(),
+                kind: PrincipalKind::Service,
+                scopes: vec!["write".to_string()],
+            },
+            message_id: ids.generate_message_id(),
+            correlation_id: ids.generate_correlation_id(),
+            traceparent: None,
+            tracestate: None,
+            deadline: None,
+            node_id: Some(ids.generate_node_id()),
+            source_ip: None,
+        };
+        let target = ResourceRef {
+            tenant_id,
+            kind: ResourceKind::Device,
+            id: ResourceId::Device(device_id),
+        };
+        let payload = CommandPayload::Ptz {
+            channel_id,
+            direction: PtzDirection::Up,
+            speed: 1.0,
+        };
+        let (operation, _event) = Operation::new(
+            ids,
+            clock,
+            &context,
+            "idem-ptz",
+            device_id,
+            target,
+            payload,
+            None,
+            OwnerEpoch(1),
+        )
+        .expect("operation");
+        operation.command().clone()
+    }
+
+    /// A command for a device registered on a non-first listener must reach
+    /// every configured listener bus, not only the first one. With a single
+    /// captured bus (the previous behaviour) the second listener's driver never
+    /// received the command and the device was unreachable.
+    #[tokio::test]
+    async fn gb28181_command_fans_out_to_all_listener_buses() {
+        let clock = Arc::new(InMemoryClock::new());
+        let ids = InMemoryIdGenerator::new();
+        let tenant_id = ids.generate_tenant_id();
+        let device_id = ids.generate_device_id();
+        let channel_id = ids.generate_channel_id();
+
+        let mut uow = InMemoryUnitOfWork::new();
+        seed_gb_device(&mut uow, clock.as_ref(), tenant_id, device_id).await;
+
+        let (bus_a, recorded_a) = RecordingBus::new();
+        let (bus_b, recorded_b) = RecordingBus::new();
+        let handler = OwnerCommandHandler::new(
+            Arc::new(Mutex::new(PluginHost::new(
+                semver::Version::new(0, 1, 0),
+                DurationMs::from_millis(1_000),
+            ))),
+            clock.clone(),
+            vec![
+                bus_a as Arc<dyn Gb28181CommandBus>,
+                bus_b as Arc<dyn Gb28181CommandBus>,
+            ],
+        );
+
+        let command = ptz_command(&ids, clock.as_ref(), tenant_id, device_id, channel_id);
+        let result = handler.handle(&mut uow, &command).await.expect("handle");
+        assert_eq!(result.dispatch, Some(CommandDispatch::Sent));
+
+        let a = recorded_a.lock().await;
+        let b = recorded_b.lock().await;
+        assert_eq!(a.len(), 1, "first listener bus must receive the command");
+        assert_eq!(b.len(), 1, "second listener bus must receive the command");
+        assert_eq!(a[0].device_external_id.as_ref(), DEVICE_GB_ID);
+        assert_eq!(b[0].device_external_id.as_ref(), DEVICE_GB_ID);
+    }
+
+    /// A single configured listener still receives the command.
+    #[tokio::test]
+    async fn gb28181_command_reaches_single_listener_bus() {
+        let clock = Arc::new(InMemoryClock::new());
+        let ids = InMemoryIdGenerator::new();
+        let tenant_id = ids.generate_tenant_id();
+        let device_id = ids.generate_device_id();
+        let channel_id = ids.generate_channel_id();
+
+        let mut uow = InMemoryUnitOfWork::new();
+        seed_gb_device(&mut uow, clock.as_ref(), tenant_id, device_id).await;
+
+        let (bus, recorded) = RecordingBus::new();
+        let handler = OwnerCommandHandler::new(
+            Arc::new(Mutex::new(PluginHost::new(
+                semver::Version::new(0, 1, 0),
+                DurationMs::from_millis(1_000),
+            ))),
+            clock.clone(),
+            vec![bus as Arc<dyn Gb28181CommandBus>],
+        );
+
+        let command = ptz_command(&ids, clock.as_ref(), tenant_id, device_id, channel_id);
+        let result = handler.handle(&mut uow, &command).await.expect("handle");
+        assert_eq!(result.dispatch, Some(CommandDispatch::Sent));
+        assert_eq!(recorded.lock().await.len(), 1);
+    }
+
+    /// With no listener bus configured the command is rejected rather than
+    /// silently dropped.
+    #[tokio::test]
+    async fn gb28181_command_rejected_without_any_bus() {
+        let clock = Arc::new(InMemoryClock::new());
+        let ids = InMemoryIdGenerator::new();
+        let tenant_id = ids.generate_tenant_id();
+        let device_id = ids.generate_device_id();
+        let channel_id = ids.generate_channel_id();
+
+        let mut uow = InMemoryUnitOfWork::new();
+        seed_gb_device(&mut uow, clock.as_ref(), tenant_id, device_id).await;
+
+        let handler = OwnerCommandHandler::new(
+            Arc::new(Mutex::new(PluginHost::new(
+                semver::Version::new(0, 1, 0),
+                DurationMs::from_millis(1_000),
+            ))),
+            clock.clone(),
+            Vec::new(),
+        );
+
+        let command = ptz_command(&ids, clock.as_ref(), tenant_id, device_id, channel_id);
+        let result = handler.handle(&mut uow, &command).await.expect("handle");
+        assert!(matches!(result.receipt, InboxReceipt::Rejected { .. }));
+    }
 }
