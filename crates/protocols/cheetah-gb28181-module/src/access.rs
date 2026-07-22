@@ -446,6 +446,11 @@ impl<P: CredentialProvider> Gb28181Access<P> {
         }
         let device_id = DeviceId::new(&xml_device_id).ok_or(AccessError::InvalidDeviceId)?;
 
+        // Business events must report the authoritative registered route, not the
+        // raw packet source, so a spoofed or NAT-shifted message cannot publish an
+        // untrusted address into the application layer.
+        let route = self.registrations.send_target(&device_id).unwrap_or(source);
+
         let domain_id = self.config.domain_id().clone();
 
         // Parse the command payload before touching the registration table.
@@ -458,7 +463,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                 Gb28181Event::Keepalive {
                     domain_id: domain_id.clone(),
                     device_id: device_id.clone(),
-                    source,
+                    source: route,
                     status: keepalive.status,
                 }
             }
@@ -467,7 +472,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                 Gb28181Event::CatalogReceived {
                     domain_id: domain_id.clone(),
                     device_id: device_id.clone(),
-                    source,
+                    source: route,
                     sn: catalog.sn,
                     sum_num: catalog.sum_num,
                     num: catalog.num,
@@ -479,7 +484,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                 Gb28181Event::DeviceInfoReceived {
                     domain_id: domain_id.clone(),
                     device_id: device_id.clone(),
-                    source,
+                    source: route,
                     sn: info.sn,
                     result: info.result,
                     manufacturer: info.manufacturer,
@@ -492,7 +497,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                 Gb28181Event::DeviceStatusReceived {
                     domain_id: domain_id.clone(),
                     device_id: device_id.clone(),
-                    source,
+                    source: route,
                     sn: status.sn,
                     result: status.result,
                     online: status.online,
@@ -506,7 +511,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                 Gb28181Event::AlarmReceived {
                     domain_id: domain_id.clone(),
                     device_id: device_id.clone(),
-                    source,
+                    source: route,
                     sn: alarm.sn,
                     priority: alarm.priority,
                     method: alarm.method,
@@ -520,7 +525,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                 Gb28181Event::MobilePositionReceived {
                     domain_id: domain_id.clone(),
                     device_id: device_id.clone(),
-                    source,
+                    source: route,
                     sn: pos.sn,
                     time: pos.time,
                     longitude: pos.longitude,
@@ -535,7 +540,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                 Gb28181Event::RecordInfoReceived {
                     domain_id: domain_id.clone(),
                     device_id: device_id.clone(),
-                    source,
+                    source: route,
                     sn: info.sn,
                     name: info.name,
                     sum_num: info.sum_num,
@@ -548,7 +553,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                 Gb28181Event::DeviceControlResponseReceived {
                     domain_id: domain_id.clone(),
                     device_id: device_id.clone(),
-                    source,
+                    source: route,
                     sn: resp.sn,
                     result: resp.result,
                 }

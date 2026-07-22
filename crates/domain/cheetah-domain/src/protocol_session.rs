@@ -325,39 +325,52 @@ impl CompatibilityProfile {
 
     /// Returns the matching score against `selector`.
     ///
-    /// A profile only scores if all non-empty selector fields it claims to
-    /// match are equal. The score is the number of selector fields that match,
-    /// which produces the priority order `firmware > model > manufacturer >
-    /// standard_version > default`.
+    /// A profile only scores if every field it sets matches the selector. Fields
+    /// the profile leaves blank are ignored, so a broad `standard_version` profile
+    /// still applies to a device that also reports manufacturer, model or firmware.
+    ///
+    /// The score is the weighted sum of matched set fields, with weights chosen so
+    /// the priority order is `firmware > model > manufacturer > standard_version >
+    /// default`: a profile matching a more specific field always outranks a profile
+    /// that only matches less specific fields.
     pub fn score(&self, selector: &ProfileSelector) -> u32 {
+        const FIRMWARE_WEIGHT: u32 = 8;
+        const MODEL_WEIGHT: u32 = 4;
+        const MANUFACTURER_WEIGHT: u32 = 2;
+        const STANDARD_WEIGHT: u32 = 1;
+
         let mut score = 0u32;
-        if let Some(selector_value) = &selector.standard_version {
-            if match_field(self.standard_version.as_ref(), selector_value) {
-                score += 1;
-            } else {
-                return 0;
-            }
+        if !add_field_score(
+            &mut score,
+            self.firmware.as_deref(),
+            selector.firmware.as_deref(),
+            FIRMWARE_WEIGHT,
+        ) {
+            return 0;
         }
-        if let Some(selector_value) = &selector.manufacturer {
-            if match_field(self.manufacturer.as_ref(), selector_value) {
-                score += 1;
-            } else {
-                return 0;
-            }
+        if !add_field_score(
+            &mut score,
+            self.model.as_deref(),
+            selector.model.as_deref(),
+            MODEL_WEIGHT,
+        ) {
+            return 0;
         }
-        if let Some(selector_value) = &selector.model {
-            if match_field(self.model.as_ref(), selector_value) {
-                score += 1;
-            } else {
-                return 0;
-            }
+        if !add_field_score(
+            &mut score,
+            self.manufacturer.as_deref(),
+            selector.manufacturer.as_deref(),
+            MANUFACTURER_WEIGHT,
+        ) {
+            return 0;
         }
-        if let Some(selector_value) = &selector.firmware {
-            if match_field(self.firmware.as_ref(), selector_value) {
-                score += 1;
-            } else {
-                return 0;
-            }
+        if !add_field_score(
+            &mut score,
+            self.standard_version.as_deref(),
+            selector.standard_version.as_deref(),
+            STANDARD_WEIGHT,
+        ) {
+            return 0;
         }
         score
     }
@@ -368,10 +381,24 @@ impl CompatibilityProfile {
     }
 }
 
-fn match_field(profile_value: Option<&String>, selector_value: &str) -> bool {
-    profile_value
-        .map(|v| v.eq_ignore_ascii_case(selector_value.trim()))
-        .unwrap_or(false)
+fn add_field_score(
+    score: &mut u32,
+    profile_value: Option<&str>,
+    selector_value: Option<&str>,
+    weight: u32,
+) -> bool {
+    match (profile_value, selector_value) {
+        (Some(p), Some(s)) => {
+            if p.eq_ignore_ascii_case(s.trim()) {
+                *score += weight;
+                true
+            } else {
+                false
+            }
+        }
+        (Some(_), None) => false,
+        (None, _) => true,
+    }
 }
 
 /// Fields required to create a [`ProtocolSession`].
