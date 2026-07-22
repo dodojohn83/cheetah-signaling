@@ -6,7 +6,7 @@
 use crate::gb_event_admission;
 use crate::onvif_discovery;
 use crate::workers::{
-    DriverCommandBus, OwnerCommandHandler, SingleNodeOwnerResolver, StorageDeviceProtocolLookup,
+    OwnerCommandHandler, SingleNodeOwnerResolver, StorageDeviceProtocolLookup,
     build_assignment_service, build_drain_service, build_takeover_service, builtin_plugin_ids,
     spawn_drain_migration_worker, spawn_inbox_worker, spawn_node_lease_worker,
     spawn_owner_lease_renew_worker, spawn_protocol_session_reaper_worker,
@@ -22,7 +22,7 @@ use cheetah_gb28181_core::{
 };
 use cheetah_gb28181_driver_tokio::Gb28181UdpDriver;
 use cheetah_gb28181_driver_tokio::config::DriverConfig as GbDriverConfig;
-use cheetah_gb28181_module::{GbAccessSettings, build_access};
+use cheetah_gb28181_module::{Gb28181Command, GbAccessSettings, build_access};
 use cheetah_http_api::audit::TracingAuditLog;
 use cheetah_http_api::state::{ApiConfig, ApiServer, ApiState};
 use cheetah_media_client::{MediaClientConfig, MediaControlClient};
@@ -912,7 +912,8 @@ pub async fn start(
         );
     }
     let mut gb28181_addr = None;
-    let mut gb_command_tx: Option<tokio::sync::mpsc::Sender<_>> = None;
+    let mut gb_command_buses: HashMap<String, tokio::sync::mpsc::Sender<Gb28181Command>> =
+        HashMap::new();
     if gb_listeners.is_empty() {
         warn!("no gb28181 listeners configured; protocol listener not started");
     }
@@ -1008,9 +1009,7 @@ pub async fn start(
         if gb28181_addr.is_none() {
             gb28181_addr = Some(local);
         }
-        if gb_command_tx.is_none() {
-            gb_command_tx = Some(driver.command_bus());
-        }
+        gb_command_buses.insert(listener.id.clone(), driver.command_bus());
         let worker_cancel = cancel.child_token();
         let listener_id = listener.id.clone();
         workers.push(tokio::spawn(async move {
@@ -1027,11 +1026,16 @@ pub async fn start(
 
     // Inbox consumer after GB28181 driver bind so the command bus is wired.
     {
-        let gb_bus = gb_command_tx.map(|tx| {
-            Arc::new(DriverCommandBus::new(tx)) as Arc<dyn crate::workers::Gb28181CommandBus>
-        });
+        let gb_bus: Option<Arc<dyn crate::workers::Gb28181CommandBus>> =
+            if gb_command_buses.is_empty() {
+                None
+            } else {
+                Some(Arc::new(crate::workers::MultiListenerCommandBus::new(
+                    gb_command_buses,
+                )))
+            };
         let handler: Arc<dyn cheetah_signal_application::CommandHandler> = Arc::new(
-            OwnerCommandHandler::new(plugin_host.clone(), clock.clone(), gb_bus),
+            OwnerCommandHandler::new(plugin_host.clone(), clock.clone(), storage.clone(), gb_bus),
         );
         workers.push(spawn_inbox_worker(
             storage.clone(),
