@@ -32,6 +32,7 @@ pub struct MediaMetrics {
     reconcile_repaired: AtomicU64,
     reconcile_failed: AtomicU64,
     reconcile_orphans: AtomicU64,
+    reconcile_dropped: AtomicU64,
     node_load_sum: AtomicU64,
     node_load_count: AtomicU64,
     register_total: AtomicU64,
@@ -70,6 +71,7 @@ impl MediaMetrics {
             reconcile_repaired: AtomicU64::new(0),
             reconcile_failed: AtomicU64::new(0),
             reconcile_orphans: AtomicU64::new(0),
+            reconcile_dropped: AtomicU64::new(0),
             node_load_sum: AtomicU64::new(0),
             node_load_count: AtomicU64::new(0),
             register_total: AtomicU64::new(0),
@@ -198,6 +200,12 @@ impl MediaMetrics {
         self.reconcile_failed.fetch_add(failed, Ordering::Relaxed);
         self.reconcile_orphans.fetch_add(orphans, Ordering::Relaxed);
     }
+
+    /// Records a gap reconciliation request dropped because the worker queue
+    /// was full.
+    pub fn record_reconcile_dropped(&self) {
+        self.reconcile_dropped.fetch_add(1, Ordering::Relaxed);
+    }
 }
 
 impl MetricsExporter for MediaMetrics {
@@ -226,6 +234,7 @@ impl MetricsExporter for MediaMetrics {
         let reconcile_repaired = self.reconcile_repaired.load(Ordering::Relaxed);
         let reconcile_failed = self.reconcile_failed.load(Ordering::Relaxed);
         let reconcile_orphans = self.reconcile_orphans.load(Ordering::Relaxed);
+        let reconcile_dropped = self.reconcile_dropped.load(Ordering::Relaxed);
         let node_load_sum = self.node_load_sum.load(Ordering::Relaxed);
         let node_load_count = self.node_load_count.load(Ordering::Relaxed);
         let register_total = self.register_total.load(Ordering::Relaxed);
@@ -264,6 +273,8 @@ impl MetricsExporter for MediaMetrics {
              cheetah_media_reconcile_failed_total {reconcile_failed}\n\
              # TYPE cheetah_media_reconcile_orphans_total counter\n\
              cheetah_media_reconcile_orphans_total {reconcile_orphans}\n\
+             # TYPE cheetah_media_reconcile_dropped_total counter\n\
+             cheetah_media_reconcile_dropped_total {reconcile_dropped}\n\
              # TYPE cheetah_media_node_load_sum gauge\n\
              cheetah_media_node_load_sum {node_load_sum}\n\
              # TYPE cheetah_media_node_load_count gauge\n\

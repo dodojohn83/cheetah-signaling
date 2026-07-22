@@ -557,16 +557,22 @@ struct ReconcileWorker {
     /// Tenants currently being reconciled; guards prevent duplicate work and are
     /// panic-safe.
     in_flight: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<TenantId>>>,
+    /// Cancellation token propagated to every tenant reconciliation task.
+    cancel: tokio_util::sync::CancellationToken,
 }
 
 impl ReconcileWorker {
-    /// Reconciles one tenant. This is spawned inside `run` with a concurrency
-    /// semaphore and an in-flight guard.
-    async fn reconcile_tenant(&self, tenant_id: TenantId, req: ReconcileRequest) {
-        let _permit = match self.concurrency.clone().acquire_owned().await {
-            Ok(p) => p,
-            Err(_) => return,
-        };
+    /// Reconciles one tenant. The concurrency permit is held for the whole call,
+    /// and the reconciliation cancels if the worker is shut down.
+    async fn reconcile_tenant(
+        &self,
+        tenant_id: TenantId,
+        req: ReconcileRequest,
+        cancel: tokio_util::sync::CancellationToken,
+    ) {
+        if cancel.is_cancelled() {
+            return;
+        }
 
         let mut uow = match self.storage.begin().await {
             Ok(uow) => uow,
@@ -600,24 +606,43 @@ impl ReconcileWorker {
             source_ip: None,
         };
 
-        if let Err(e) = self.media_service.reconcile(&context, uow.as_mut()).await {
-            tracing::warn!(
-                node_id = %req.node_id,
-                tenant_id = %tenant_id,
-                trigger_tenant = %req.tenant_id,
-                expected_sequence = req.expected_sequence,
-                actual_sequence = req.actual_sequence,
-                error = %e,
-                "media gap reconciliation failed"
-            );
+        let reconcile = self.media_service.reconcile(&context, uow.as_mut());
+        tokio::select! {
+            result = reconcile => {
+                if let Err(e) = result {
+                    tracing::warn!(
+                        node_id = %req.node_id,
+                        tenant_id = %tenant_id,
+                        trigger_tenant = %req.tenant_id,
+                        expected_sequence = req.expected_sequence,
+                        actual_sequence = req.actual_sequence,
+                        error = %e,
+                        "media gap reconciliation failed"
+                    );
+                }
+            }
+            _ = cancel.cancelled() => {
+                tracing::info!(
+                    node_id = %req.node_id,
+                    tenant_id = %tenant_id,
+                    "media gap reconciliation cancelled"
+                );
+            }
         }
     }
 
     /// A sequence gap on a media node may affect every tenant with sessions on
     /// that node, so reconcile all tenants rather than only the triggering one.
+    ///
+    /// The number of live reconciliation tasks is bounded by acquiring a
+    /// semaphore permit *before* spawning each task.
     async fn run(&self, req: ReconcileRequest) {
         let mut cursor: Option<String> = None;
         loop {
+            if self.cancel.is_cancelled() {
+                return;
+            }
+
             let page_request = match cursor {
                 None => match PageRequest::new(1000) {
                     Ok(p) => p,
@@ -645,6 +670,10 @@ impl ReconcileWorker {
             };
 
             for tenant in page.items {
+                if self.cancel.is_cancelled() {
+                    return;
+                }
+
                 let guard = {
                     let mut set = self.in_flight.lock().unwrap_or_else(|e| e.into_inner());
                     if !set.insert(tenant.tenant_id) {
@@ -656,11 +685,21 @@ impl ReconcileWorker {
                     })
                 };
 
+                let permit = tokio::select! {
+                    p = self.concurrency.clone().acquire_owned() => match p {
+                        Ok(p) => p,
+                        Err(_) => return,
+                    },
+                    _ = self.cancel.cancelled() => return,
+                };
+
                 let worker = self.clone();
                 let tenant_id = tenant.tenant_id;
+                let cancel = self.cancel.clone();
                 tokio::spawn(async move {
+                    let _permit = permit;
                     let _guard = guard;
-                    worker.reconcile_tenant(tenant_id, req).await;
+                    worker.reconcile_tenant(tenant_id, req, cancel).await;
                 });
             }
 
@@ -675,7 +714,7 @@ impl ReconcileWorker {
 async fn reconcile_worker(
     mut rx: tokio::sync::mpsc::Receiver<ReconcileRequest>,
     state: ReconcileWorker,
-    cancel: CancellationToken,
+    cancel: tokio_util::sync::CancellationToken,
 ) {
     loop {
         tokio::select! {
@@ -690,6 +729,7 @@ async fn reconcile_worker(
 #[derive(Clone)]
 struct AppReconciliationHandler {
     tx: tokio::sync::mpsc::Sender<ReconcileRequest>,
+    metrics: std::sync::Arc<cheetah_media_scheduler::MediaMetrics>,
 }
 
 #[async_trait::async_trait]
@@ -707,9 +747,10 @@ impl ReconciliationHandler for AppReconciliationHandler {
             expected_sequence,
             actual_sequence,
         };
-        // Drop the request if the bounded queue is full; the periodic
-        // reconciler will eventually catch up.
-        let _ = self.tx.try_send(req);
+        if let Err(_e) = self.tx.try_send(req) {
+            self.metrics.record_reconcile_dropped();
+            tracing::warn!(node_id = %node_id, "reconciliation queue full; gap recovery dropped");
+        }
     }
 }
 
@@ -717,7 +758,8 @@ fn spawn_reconcile_worker(
     media_service: cheetah_signal_application::MediaService,
     storage: std::sync::Arc<dyn cheetah_storage_api::Storage>,
     node_id: NodeId,
-    cancel: CancellationToken,
+    metrics: std::sync::Arc<cheetah_media_scheduler::MediaMetrics>,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> AppReconciliationHandler {
     let (tx, rx) = tokio::sync::mpsc::channel(64);
     let worker = ReconcileWorker {
@@ -726,9 +768,10 @@ fn spawn_reconcile_worker(
         node_id,
         concurrency: std::sync::Arc::new(tokio::sync::Semaphore::new(4)),
         in_flight: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
+        cancel: cancel.clone(),
     };
     tokio::spawn(reconcile_worker(rx, worker, cancel));
-    AppReconciliationHandler { tx }
+    AppReconciliationHandler { tx, metrics }
 }
 
 /// Assembles storage, local bus, application services, protocol drivers and the HTTP API.
@@ -1034,6 +1077,7 @@ pub async fn start(
             state.media_service.clone(),
             storage.clone(),
             node_id,
+            media_metrics.clone(),
             cancel.child_token(),
         )),
         media_metrics.clone(),
