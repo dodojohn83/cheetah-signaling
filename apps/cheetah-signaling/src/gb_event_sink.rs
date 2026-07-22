@@ -981,10 +981,10 @@ async fn save_and_append_media_session_transition(
     Ok(())
 }
 
-/// Drives a [`MediaSession`] through the requested transition, saving and
-/// appending each resulting `MediaSessionStateChanged` event one step at a time
-/// so the repository's optimistic-concurrency check succeeds. The
-/// `Gb28181EventReceived` envelope is always appended in the same UnitOfWork.
+/// Drives a [`MediaSession`] through the requested transition and appends each
+/// resulting `MediaSessionStateChanged` event with the revision captured at the
+/// moment the transition occurred. The `Gb28181EventReceived` envelope is appended
+/// in the same UnitOfWork.
 #[allow(clippy::too_many_arguments)]
 async fn handle_media_session_event(
     state: &ApiState,
@@ -1154,7 +1154,7 @@ async fn handle_media_session_event(
                     .await?;
                 }
             }
-        };
+        }
     }
 
     // Always append the GB28181 envelope so the driver event is recorded even
