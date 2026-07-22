@@ -142,9 +142,9 @@ typed payload至少覆盖resource state、stream online/offline、RTP timeout、
 - [x] 新enum 0值为`UNSPECIFIED`：所有 proto enum（`MediaNodeStatus`、`ERROR_OUTCOME`、`SNAPSHOT_FORMAT`、`PLAYBACK_CONTROL`、`PTZ_DIRECTION`、`PRESET_ACTION`、`QUERY_KIND`、`DEVICE_CONTROL_KIND`、`DEVICE_STATUS`、`RESOURCE_KIND`、`COMMAND_STATUS`、`NODE_STATUS`）的 0 值均为 `*_UNSPECIFIED`。
 - [x] 删除字段前reserved name/number；v1只做可选扩展：当前 v1 仅通过可选扩展和 `deprecated` 标记演进，尚无删除字段；后续删除字段时将使用 `reserved`。
 - [x] 生成descriptor与breaking baseline：`scripts/generate_contract_baseline.sh` 生成 `descriptor.bin` 并执行 `buf breaking --against ".git#branch=origin/main"`；CI `contract-baseline` job 已纳入。
-- [ ] old reader/new writer、new reader/old writer测试：待补充版本兼容性回归测试。
-- [ ] 发布contract tag和checksum，媒体仓库只消费tag：需与 `cheetah-media-server-rs` 约定发布流程。
-- [ ] 明确minimum/maximum supported contract version和滚动升级窗口：需在 proto 或配置中显式声明支持版本范围。
+- [x] old reader/new writer、new reader/old writer测试：`crates/foundation/cheetah-signal-contracts/tests/contract_compat.rs` 包含 `new_reader_defaults_old_writer_omitted_fields` 和 `new_reader_ignores_unknown_fields`，覆盖旧 writer 省略字段默认化和新 writer 追加未知字段被旧 reader 忽略的场景。
+- [x] 发布contract tag和checksum，媒体仓库只消费tag：新增 `proto/RELEASE.md` 和 `scripts/publish_proto_tag.sh`。发布流程通过 annotated Git tag `proto/cheetah.media.v1/v<version>` 发布 `target/contract-baseline/descriptor.bin` 及其 SHA-256 checksum；下游媒体仓库按 tag 消费并校验 checksum，禁止自行复制演化。
+- [x] 明确minimum/maximum supported contract version和滚动升级窗口：`crates/foundation/cheetah-signal-contracts/src/version.rs` 声明 `MINIMUM_SUPPORTED_CONTRACT_VERSION`、`MAXIMUM_SUPPORTED_CONTRACT_VERSION` 和 `ROLLING_UPGRADE_WINDOW_SECONDS`，作为信令侧支持的契约版本范围与滚动升级窗口。
 
 ## 10. Contract tests
 
