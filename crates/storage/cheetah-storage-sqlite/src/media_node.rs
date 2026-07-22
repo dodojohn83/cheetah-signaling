@@ -282,7 +282,7 @@ impl MediaNodeRepository for SqliteMediaNodeRepository {
         page: PageRequest,
     ) -> Result<Page<MediaNode>, StorageError> {
         let mut qb: sqlx::QueryBuilder<'_, sqlx::Sqlite> = sqlx::QueryBuilder::new(&format!(
-            "SELECT {} FROM media_nodes WHERE status != 'left' AND lease_until > ",
+            "SELECT {} FROM media_nodes WHERE lease_until IS NOT NULL AND lease_until > ",
             media_node_columns()
         ));
         qb.push_bind(to_millis(now));

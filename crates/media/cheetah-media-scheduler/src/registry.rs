@@ -379,7 +379,8 @@ pub(crate) fn is_active(
 
 pub(crate) fn is_lease_expired(entry: &NodeEntry, now: UtcTimestamp) -> bool {
     match entry.node.lease_until {
-        None => false,
+        // No lease means the node is not valid for scheduling or protection.
+        None => true,
         Some(lease) => now >= lease,
     }
 }

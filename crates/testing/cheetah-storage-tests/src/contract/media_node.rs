@@ -156,12 +156,23 @@ async fn drain_and_deregister(storage: &dyn Storage, fixtures: &Fixtures) -> Tes
         .ok_or("deregister failed")?;
     assert!(matches!(deregistered.status, NodeStatus::Left));
 
+    // A deregistered node remains visible while its protection lease is valid.
+    let alive = repo
+        .list_alive(fixtures.clock().now_wall(), PageRequest::default())
+        .await?;
+    assert!(
+        alive.items.iter().any(|n| n.node_id == node_id),
+        "left node must remain in alive list during protection window"
+    );
+
+    // After the protection lease expires it is no longer returned.
+    fixtures.advance(DurationMs::from_millis(60_001));
     let alive = repo
         .list_alive(fixtures.clock().now_wall(), PageRequest::default())
         .await?;
     assert!(
         !alive.items.iter().any(|n| n.node_id == node_id),
-        "left node must not be alive"
+        "left node must not be alive after protection lease expires"
     );
     Ok(())
 }
