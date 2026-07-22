@@ -75,16 +75,16 @@
 
 ## 9. MED-R-008：观测和管理
 
-低基数metrics：
+低基数metrics（`crates/media/cheetah-media-scheduler/src/metrics.rs`）：
 
-- active/expired/draining media nodes；
-- reservation success/reject/reason；
-- RPC latency/error/outcome；
-- event lag/gap/reconnect；
-- reconciliation scanned/repaired/failed；
-- per-node normalized load（node ID不作为无限动态label时需限制）。
+- [x] active/expired/draining media nodes：`MediaMetrics::record_node_snapshot` 在 `list_active`/`list_nodes` 时按 `lease_until`/`status`/`draining` 统计 active/expired/draining 数量；node ID 不作为 Prometheus label，仅通过 `node_load_sum`/`node_load_count` 聚合归一化负载（PR #230）。
+- [x] reservation success/reject/reason：`record_reservation` 区分 success/rejected，rejected 时记录低基数 reason（如 `no_node`、`capacity_exhausted`、`unsupported_talk`）（PR #230）。
+- [x] RPC latency/error/outcome：`record_rpc` 记录总次数、错误次数和各 bucket 持续时间（PR #230）。
+- [x] event lag/gap/reconnect：`record_event_lag_ms`、`record_event_gap`、`record_event_reconnect` 已提供（PR #230）。
+- [x] reconciliation scanned/repaired/failed：`record_reconcile` 记录 nodes scanned/repaired/failed/orphans（PR #230）。
+- [x] per-node normalized load：`record_node_snapshot` 计算 `node_load_sum`/`node_load_count` 以限制高基数 label，不直接暴露 node ID（PR #230）。
 
-审计记录register、drain、forced cleanup和manual reconciliation，不记录secret或source URL userinfo。
+- [x] 审计记录register、drain、forced cleanup和manual reconciliation，不记录secret或source URL userinfo：`MediaClusterRegistryService` 在 `register`/`drain`/`deregister` 及 `force_cleanup_node` 时调用 `record_audit`，`AuditLog` 实现脱敏；`MediaEventConsumer` 不记录事件 payload 中的 secret 或 URL userinfo（PR #230）。
 
 ## 10. 测试与退出门禁
 
