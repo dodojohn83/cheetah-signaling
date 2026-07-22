@@ -37,7 +37,7 @@ buf lint
 cargo deny check
 ```
 
-- [ ] 增加 `cargo test --doc --workspace`。
+- [x] 增加 `cargo test --doc --workspace`：修复 `cheetah-message-nats` README 中的未完成示例（标记为 `rust,ignore`），并在 `.github/workflows/ci.yml` 新增 `doctest` job。
 - [ ] edge feature关闭时检查不链接PostgreSQL、NATS和cluster依赖。
 - [ ] cluster feature检查PostgreSQL/NATS/TLS组合。
 - [ ] 对所有公共feature执行feature matrix，防止feature改变领域语义。
