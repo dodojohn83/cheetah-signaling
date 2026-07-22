@@ -324,8 +324,8 @@ impl BackoffPolicy {
     /// random source; keeping the base deterministic makes tests reproducible.
     pub fn backoff_ms(&self, attempt: u32) -> u64 {
         let shift = attempt.min(63);
-        let scaled = self.base_ms.checked_shl(shift).unwrap_or(self.max_ms);
-        scaled.min(self.max_ms)
+        let multiplier = 1u64 << shift;
+        self.base_ms.saturating_mul(multiplier).min(self.max_ms)
     }
 }
 
@@ -901,5 +901,10 @@ mod tests {
         assert_eq!(policy.backoff_ms(1), 2_000);
         assert_eq!(policy.backoff_ms(3), 8_000);
         assert_eq!(policy.backoff_ms(30), 8_000);
+        // Large attempts whose shifted base would overflow u64 must still
+        // clamp to max_ms rather than wrapping to a small value.
+        assert_eq!(policy.backoff_ms(55), 8_000);
+        assert_eq!(policy.backoff_ms(63), 8_000);
+        assert_eq!(policy.backoff_ms(u32::MAX), 8_000);
     }
 }
