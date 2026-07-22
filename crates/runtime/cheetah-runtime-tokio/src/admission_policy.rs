@@ -177,6 +177,9 @@ impl AdmissionPolicy {
     }
 
     /// Records a dead-lettered message for later redrive.
+    ///
+    /// If the ticket was already observed by the coalescer, release the pending
+    /// key so a later equivalent event is not permanently coalesced away.
     pub(crate) fn dead_letter(
         &self,
         ticket: AdmissionTicket,
@@ -184,9 +187,15 @@ impl AdmissionPolicy {
         reason: DeadLetterReason,
         now_ms: i64,
     ) {
-        self.lock()
+        let device_key = ticket.device_key;
+        let class = ticket.class;
+        let mut state = self.lock();
+        state
             .dead_letter
             .push(PendingAdmission { ticket, message }, reason, now_ms);
+        if class.is_coalescible() {
+            state.coalescer.release(&(device_key, class));
+        }
     }
 
     /// Releases a coalescible pending event once it has been processed, so a
@@ -327,5 +336,29 @@ mod tests {
         );
         let batch = policy.take_redrive_batch(10);
         assert_eq!(batch.map(|b| b.len()), Some(1));
+    }
+
+    #[test]
+    fn dead_letter_releases_coalescer_key() {
+        let policy = AdmissionPolicy::new(&AdmissionPolicyConfig {
+            rate_capacity_tokens: 100,
+            rate_refill_tokens_per_sec: 100,
+            ..config()
+        });
+        let t = ticket(TrafficClass::Keepalive);
+        // Admit path observes the coalescer before the message is enqueued.
+        assert_eq!(policy.pre_admit(0, 0, t).action, PreAdmitAction::Admit);
+        // If the message is dead-lettered (e.g. mailbox full), the pending key
+        // must be released so the next event is admitted, not coalesced away.
+        policy.dead_letter(
+            t,
+            RuntimeMessage::ProtocolEvent {
+                device_key: t.device_key,
+                payload: vec![1],
+            },
+            DeadLetterReason::Overloaded,
+            0,
+        );
+        assert_eq!(policy.pre_admit(0, 0, t).action, PreAdmitAction::Admit);
     }
 }
