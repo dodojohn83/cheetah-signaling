@@ -50,7 +50,8 @@
 - 当高/普通优先级事件因 bounded channel 满而无法 `try_send` 时，写入 `DeadLetterQueue`。
 - `DeadLetterQueue` 容量为 `max(queue_depth * 2, 256)`，有界。
 - Worker 每 100ms 触发一次 redrive，每次最多尝试 `REDRIVE_BATCH_SIZE`（64）条。
-- 每条事件最多重投 5 次；超过后记录 `gb28181_events_redrive_exhausted_total` + `gb28181_events_dropped_total` 并释放合并键。
+- Worker 每次 redrive 只从 `DeadLetterQueue` 中取出与当前 bounded channel 空闲槽位相同数量的事件，避免在 channel 仍满时无意义地消耗重投预算。
+- 当 send 尝试失败且事件在死信队列中等待超过 `MAX_REDRIVE_AGE_MS`（30 秒）时，才视为预算耗尽，记录 `gb28181_events_redrive_exhausted_total` + `gb28181_events_dropped_total` 并释放合并键；只要有空闲槽位，即使等待较久的事件也会先尝试发送。
 - Worker 每次成功处理一个事件后也会立即 redrive，以便在 channel 空闲时尽快补回死信。
 
 ## 指标记录

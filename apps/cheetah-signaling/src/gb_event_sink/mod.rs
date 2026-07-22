@@ -46,13 +46,11 @@ const REDRIVE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(1
 /// Maximum number of events to redrive in a single batch.
 const REDRIVE_BATCH_SIZE: usize = 64;
 
-/// Maximum redrive attempts for a dead-lettered event before it is dropped.
-const MAX_REDRIVE_ATTEMPTS: u32 = 5;
-
-/// Maximum age (milliseconds) a dead-lettered event may wait before its
-/// redrive budget is considered exhausted.
-const MAX_REDRIVE_AGE_MS: i64 =
-    (MAX_REDRIVE_ATTEMPTS as i64) * (REDRIVE_INTERVAL.as_millis() as i64);
+/// Maximum age (milliseconds) a dead-lettered high/normal-priority event may
+/// wait before it is considered stale and dropped. This is a generous safety
+/// bound rather than an attempt-based budget, because transient channel-full
+/// backpressure must not consume redrive attempts.
+const MAX_REDRIVE_AGE_MS: i64 = 30_000;
 
 /// Internal wrapper that carries an event together with its admission
 /// classification so the worker does not need to re-classify.
@@ -286,6 +284,9 @@ impl AdmissionState {
     /// Attempts to redrive up to `batch_size` dead-lettered events into the
     /// bounded channel. Only as many entries as there are free channel slots are
     /// drained, so transient backpressure does not consume the redrive budget.
+    /// A stale entry is only discarded after a send attempt fails, ensuring an
+    /// available slot is not wasted on an expired event but a recently deliverable
+    /// event is always given a chance.
     fn redrive(&mut self, now_ms: i64, batch_size: usize) {
         if self.tx.is_closed() {
             return;
@@ -298,11 +299,6 @@ impl AdmissionState {
 
         let entries = self.dlq.drain(batch_size.min(capacity));
         for mut entry in entries {
-            if now_ms.saturating_sub(entry.enqueued_at_ms) > MAX_REDRIVE_AGE_MS {
-                self.drop_dead_letter_entry(entry);
-                continue;
-            }
-
             let (_, key) = classify_event(&entry.payload, self.tenant_id);
             let tagged = TaggedGb28181Event {
                 event: entry.payload,
@@ -316,21 +312,30 @@ impl AdmissionState {
                     self.metrics.record_gb28181_event_redriven();
                 }
                 Err(e) => {
-                    // Put the entry back without consuming its redrive budget;
-                    // a full channel is transient and will be retried later.
                     let TaggedGb28181Event { event, .. } = e.into_inner();
                     entry.payload = event;
-                    let dropped_before = self.dlq.dropped_total();
-                    self.dlq.push_entry(entry);
-                    if self.dlq.dropped_total() > dropped_before {
-                        self.metrics.record_gb28181_event_dropped();
+
+                    if self.tx.is_closed() {
+                        self.drop_dead_letter_entry(entry);
+                    } else if now_ms.saturating_sub(entry.enqueued_at_ms) > MAX_REDRIVE_AGE_MS {
+                        // The entry has exceeded the redrive age budget and a
+                        // slot was not available in time; drop it.
+                        self.drop_dead_letter_entry(entry);
+                    } else {
+                        // Put the entry back without consuming its redrive budget;
+                        // a full channel is transient and will be retried later.
+                        let dropped_before = self.dlq.dropped_total();
+                        self.dlq.push_entry(entry);
+                        if self.dlq.dropped_total() > dropped_before {
+                            self.metrics.record_gb28181_event_dropped();
+                        }
                     }
                 }
             }
         }
     }
 
-    /// Drops a dead-letter entry that has exhausted its redrive budget.
+    /// Drops a dead-letter entry that has exhausted its redrive budget or is stale.
     fn drop_dead_letter_entry(&mut self, entry: DeadLetterEntry<Gb28181Event>) {
         let (class, key) = classify_event(&entry.payload, self.tenant_id);
         self.drop_dead_letter_inner(class, key);
