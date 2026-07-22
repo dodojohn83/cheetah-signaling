@@ -9,6 +9,7 @@ repository.workspace = true
 
 [dependencies]
 cheetah-gb28181-core = { path = "../cheetah-gb28181-core" }
+cheetah-domain = { path = "../../domain/cheetah-domain" }
 cheetah-signal-types = { path = "../../foundation/cheetah-signal-types" }
 quick-xml = { workspace = true }
 encoding_rs = { workspace = true }
@@ -24,6 +25,9 @@ hex = { workspace = true }
 hex = { workspace = true }
 sha2 = { workspace = true }
 proptest = { workspace = true }
+cheetah-domain = { path = "../../domain/cheetah-domain", features = ["test-util"] }
+futures = { workspace = true }
+uuid = { workspace = true }
 
 [lints]
 workspace = true

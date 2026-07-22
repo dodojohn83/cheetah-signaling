@@ -42,6 +42,9 @@ pub struct Gb28181DomainConfig {
     catalog_page_limit: usize,
     max_registrations: usize,
     auth_policy: AuthPolicy,
+    auth_max_failures_per_source: u32,
+    auth_rate_window_seconds: u64,
+    auth_rate_max_sources: usize,
 }
 
 impl Gb28181DomainConfig {
@@ -60,6 +63,9 @@ impl Gb28181DomainConfig {
     ) -> Result<Self, AccessError> {
         const MIN_SECRET_LEN: usize = 32;
         const DEFAULT_MAX_REGISTRATIONS: usize = 100_000;
+        const DEFAULT_MAX_AUTH_FAILURES: u32 = 10;
+        const DEFAULT_AUTH_RATE_WINDOW_SECONDS: u64 = 60;
+        const DEFAULT_AUTH_RATE_MAX_SOURCES: usize = 65_536;
         // Consumes the secret into a zeroizing SecretSlice immediately.
         let digest_secret = digest_secret.into();
         let domain_id = DomainId::new(domain_id).ok_or(AccessError::InvalidDomainId)?;
@@ -79,6 +85,9 @@ impl Gb28181DomainConfig {
             catalog_page_limit: 128,
             max_registrations: DEFAULT_MAX_REGISTRATIONS,
             auth_policy: AuthPolicy::Required,
+            auth_max_failures_per_source: DEFAULT_MAX_AUTH_FAILURES,
+            auth_rate_window_seconds: DEFAULT_AUTH_RATE_WINDOW_SECONDS,
+            auth_rate_max_sources: DEFAULT_AUTH_RATE_MAX_SOURCES,
         })
     }
 
@@ -138,6 +147,25 @@ impl Gb28181DomainConfig {
         self.max_registrations
     }
 
+    /// Maximum failed authentication attempts tolerated per source IP within
+    /// [`auth_rate_window_seconds`](Self::auth_rate_window_seconds) before the
+    /// source is temporarily rate-limited. Zero disables brute-force limiting.
+    pub fn auth_max_failures_per_source(&self) -> u32 {
+        self.auth_max_failures_per_source
+    }
+
+    /// Sliding window, in seconds, over which authentication failures are
+    /// counted for brute-force rate limiting.
+    pub fn auth_rate_window_seconds(&self) -> u64 {
+        self.auth_rate_window_seconds
+    }
+
+    /// Maximum number of distinct source IPs tracked by the brute-force rate
+    /// limiter. Bounds the limiter's memory use.
+    pub fn auth_rate_max_sources(&self) -> usize {
+        self.auth_rate_max_sources
+    }
+
     /// Returns the digest secret without exposing the underlying bytes.
     ///
     /// Callers must use `secrecy::ExposeSecret` to access the bytes.
@@ -185,6 +213,23 @@ impl Gb28181DomainConfig {
         self.max_registrations = max_registrations;
         self
     }
+
+    /// Returns a new config with the supplied per-source authentication rate
+    /// limit parameters.
+    ///
+    /// Setting `max_failures` or `max_sources` to zero disables brute-force
+    /// rate limiting.
+    pub fn with_auth_rate_limit(
+        mut self,
+        max_failures: u32,
+        window_seconds: u64,
+        max_sources: usize,
+    ) -> Self {
+        self.auth_max_failures_per_source = max_failures;
+        self.auth_rate_window_seconds = window_seconds;
+        self.auth_rate_max_sources = max_sources;
+        self
+    }
 }
 
 impl Clone for Gb28181DomainConfig {
@@ -202,6 +247,9 @@ impl Clone for Gb28181DomainConfig {
             catalog_page_limit: self.catalog_page_limit,
             max_registrations: self.max_registrations,
             auth_policy: self.auth_policy,
+            auth_max_failures_per_source: self.auth_max_failures_per_source,
+            auth_rate_window_seconds: self.auth_rate_window_seconds,
+            auth_rate_max_sources: self.auth_rate_max_sources,
         }
     }
 }
@@ -221,6 +269,12 @@ impl fmt::Debug for Gb28181DomainConfig {
             .field("catalog_page_limit", &self.catalog_page_limit)
             .field("max_registrations", &self.max_registrations)
             .field("auth_policy", &self.auth_policy)
+            .field(
+                "auth_max_failures_per_source",
+                &self.auth_max_failures_per_source,
+            )
+            .field("auth_rate_window_seconds", &self.auth_rate_window_seconds)
+            .field("auth_rate_max_sources", &self.auth_rate_max_sources)
             .finish()
     }
 }

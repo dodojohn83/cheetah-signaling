@@ -97,6 +97,28 @@ impl SignalConfig {
                 "gb28181.catalog_fragment_max_items must be greater than zero",
             ));
         }
+        if self.gb28181.session_reaper_batch_size == 0
+            || self.gb28181.session_reaper_batch_size > crate::MAX_PAGE_SIZE
+        {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                format!(
+                    "gb28181.session_reaper_batch_size must be between 1 and {}",
+                    crate::MAX_PAGE_SIZE
+                ),
+            ));
+        }
+        if self.gb28181.session_reaper_max_per_tick == 0
+            || self.gb28181.session_reaper_max_per_tick > SESSION_REAPER_MAX_PER_TICK_LIMIT
+        {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                format!(
+                    "gb28181.session_reaper_max_per_tick must be between 1 and {SESSION_REAPER_MAX_PER_TICK_LIMIT}"
+                ),
+            ));
+        }
+        self.gb28181.validate()?;
         if self.onvif.enabled {
             if self.onvif.connect_timeout_ms.as_millis() <= 0 {
                 return Err(SignalError::new(
@@ -595,6 +617,11 @@ pub struct PluginsConfig {
     pub max_plugin_instances: u32,
 }
 
+/// Upper bound for [`Gb28181Config::session_reaper_max_per_tick`]. Caps how
+/// many expired sessions a single sweep buffers in memory before marking them
+/// offline, so a misconfigured value cannot read an unbounded number of rows.
+pub const SESSION_REAPER_MAX_PER_TICK_LIMIT: u32 = 1_000_000;
+
 /// GB28181 protocol configuration.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
@@ -626,6 +653,24 @@ pub struct Gb28181Config {
     /// after issuing a challenge. Production deployments must leave this
     /// `false` (the default). Development profiles may enable it explicitly.
     pub challenge_optional: bool,
+    /// Interval between protocol-session expiry reaper sweeps. Each sweep marks
+    /// registrations whose `expiry_at` has passed offline. `0` disables the
+    /// reaper.
+    pub session_reaper_interval_ms: DurationMs,
+    /// Page size used when the reaper scans expired sessions. Bounds the number
+    /// of rows read per repository query.
+    pub session_reaper_batch_size: u32,
+    /// Maximum number of sessions the reaper marks offline in a single sweep.
+    /// Bounds the work performed per tick so one node cannot monopolise the
+    /// database. Must be in `1..=SESSION_REAPER_MAX_PER_TICK_LIMIT`.
+    pub session_reaper_max_per_tick: u32,
+    /// Explicit GB28181 listeners, each binding one or more sockets with its
+    /// own realm/domain/tenant mapping.
+    ///
+    /// When non-empty this replaces the legacy single-listener fields
+    /// (`sip_port`/`sip_domain`/`default_tenant_id`/...). Mixing legacy fields
+    /// with `listeners` is rejected at validation time.
+    pub listeners: Vec<Gb28181ListenerConfig>,
 }
 
 impl Default for Gb28181Config {
@@ -640,7 +685,271 @@ impl Default for Gb28181Config {
             catalog_fragment_max_entries: 1024,
             catalog_fragment_max_items: 8192,
             challenge_optional: false,
+            session_reaper_interval_ms: DurationMs::from_millis(30_000),
+            session_reaper_batch_size: 256,
+            session_reaper_max_per_tick: 4_096,
+            listeners: Vec::new(),
         }
+    }
+}
+
+/// Default GB28181 logical domain id used when the legacy `sip_domain` is unset.
+///
+/// Mirrors the historical single-listener default so devices provisioned against
+/// the built-in domain keep the same digest realm after the migration to
+/// explicit listeners.
+pub const DEFAULT_GB28181_DOMAIN_ID: &str = "34020000002000000001";
+
+/// A single GB28181 SIP listener with an explicit realm/domain/tenant mapping.
+///
+/// Each listener may bind a UDP and/or a TCP socket. The Request-URI/To domain
+/// and the digest realm must uniquely resolve to a listener (and therefore a
+/// tenant); ambiguous mappings are rejected so that a device can never be
+/// silently attributed to the wrong tenant.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+#[serde(deny_unknown_fields)]
+pub struct Gb28181ListenerConfig {
+    /// Stable listener identifier, unique within the process. Used in logs and
+    /// to disambiguate listeners that would otherwise share transport metadata.
+    pub id: String,
+    /// Tenant UUID that devices accepted by this listener are attributed to.
+    pub tenant_id: String,
+    /// The server's own GB28181 device/domain identifier for this listener.
+    pub local_device_id: String,
+    /// SIP realm advertised in digest challenges for this listener.
+    pub realm: String,
+    /// SIP domain (Request-URI/To host) that selects this listener.
+    pub domain: String,
+    /// UDP bind address, if this listener serves UDP.
+    pub udp_bind: Option<SocketAddr>,
+    /// TCP bind address, if this listener serves TCP.
+    pub tcp_bind: Option<SocketAddr>,
+    /// Secret reference for this listener's hex-encoded digest secret.
+    pub digest_secret_ref: String,
+    /// Optional secret reference template for per-device SIP passwords.
+    /// `{device_id}` is replaced with the GB device ID.
+    pub device_password_ref: Option<String>,
+    /// When true, accept REGISTER without successful digest authentication
+    /// after issuing a challenge. Production listeners must leave this `false`.
+    pub challenge_optional: bool,
+}
+
+impl Gb28181Config {
+    /// Returns true when any legacy single-listener field is set to a
+    /// non-default value.
+    fn has_legacy_listener(&self) -> bool {
+        self.sip_port != 0
+            || !self.sip_domain.is_empty()
+            || self.digest_secret_ref.is_some()
+            || self.device_password_ref.is_some()
+            || self.default_tenant_id.is_some()
+            || self.challenge_optional
+    }
+
+    /// Validates GB28181 listener configuration.
+    ///
+    /// Enforces that legacy and explicit listener configuration are not mixed,
+    /// that every explicit listener is complete, and that listener ids, domains,
+    /// realms and bind addresses are unambiguous.
+    pub fn validate(&self) -> Result<()> {
+        if self.catalog_fragment_max_entries == 0 {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                "gb28181.catalog_fragment_max_entries must be greater than zero",
+            ));
+        }
+        if self.catalog_fragment_max_items == 0 {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                "gb28181.catalog_fragment_max_items must be greater than zero",
+            ));
+        }
+        if self.session_reaper_batch_size == 0
+            || self.session_reaper_batch_size > crate::MAX_PAGE_SIZE
+        {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                format!(
+                    "gb28181.session_reaper_batch_size must be between 1 and {}",
+                    crate::MAX_PAGE_SIZE
+                ),
+            ));
+        }
+        if self.session_reaper_max_per_tick == 0
+            || self.session_reaper_max_per_tick > SESSION_REAPER_MAX_PER_TICK_LIMIT
+        {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                format!(
+                    "gb28181.session_reaper_max_per_tick must be between 1 and {SESSION_REAPER_MAX_PER_TICK_LIMIT}"
+                ),
+            ));
+        }
+
+        if self.listeners.is_empty() {
+            return Ok(());
+        }
+
+        if self.has_legacy_listener() {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                "gb28181.listeners cannot be combined with the legacy \
+                 sip_port/sip_domain/default_tenant_id/digest_secret_ref/\
+                 device_password_ref/challenge_optional settings; migrate the \
+                 legacy fields into a listener entry",
+            ));
+        }
+
+        let mut ids = std::collections::HashSet::new();
+        let mut domains = std::collections::HashSet::new();
+        let mut realms = std::collections::HashSet::new();
+        let mut udp_binds = std::collections::HashSet::new();
+        let mut tcp_binds = std::collections::HashSet::new();
+
+        for listener in &self.listeners {
+            if listener.id.trim().is_empty() {
+                return Err(SignalError::new(
+                    SignalErrorKind::InvalidArgument,
+                    "gb28181.listeners[].id must not be empty",
+                ));
+            }
+            if listener.domain.trim().is_empty() {
+                return Err(SignalError::new(
+                    SignalErrorKind::InvalidArgument,
+                    format!("gb28181 listener '{}' requires a domain", listener.id),
+                ));
+            }
+            if listener.realm.trim().is_empty() {
+                return Err(SignalError::new(
+                    SignalErrorKind::InvalidArgument,
+                    format!("gb28181 listener '{}' requires a realm", listener.id),
+                ));
+            }
+            if listener.local_device_id.trim().is_empty() {
+                return Err(SignalError::new(
+                    SignalErrorKind::InvalidArgument,
+                    format!(
+                        "gb28181 listener '{}' requires a local_device_id",
+                        listener.id
+                    ),
+                ));
+            }
+            if listener.tenant_id.trim().is_empty() {
+                return Err(SignalError::new(
+                    SignalErrorKind::InvalidArgument,
+                    format!(
+                        "gb28181 listener '{}' requires a tenant_id; cluster \
+                         listeners must not rely on an implicit default tenant",
+                        listener.id
+                    ),
+                ));
+            }
+            if listener.digest_secret_ref.trim().is_empty() {
+                return Err(SignalError::new(
+                    SignalErrorKind::InvalidArgument,
+                    format!(
+                        "gb28181 listener '{}' requires a digest_secret_ref",
+                        listener.id
+                    ),
+                ));
+            }
+            if listener.udp_bind.is_none() && listener.tcp_bind.is_none() {
+                return Err(SignalError::new(
+                    SignalErrorKind::InvalidArgument,
+                    format!(
+                        "gb28181 listener '{}' must bind at least one of udp_bind or tcp_bind",
+                        listener.id
+                    ),
+                ));
+            }
+            if !ids.insert(listener.id.as_str()) {
+                return Err(SignalError::new(
+                    SignalErrorKind::InvalidArgument,
+                    format!("gb28181 listener id '{}' is duplicated", listener.id),
+                ));
+            }
+            if !domains.insert(listener.domain.as_str()) {
+                return Err(SignalError::new(
+                    SignalErrorKind::InvalidArgument,
+                    format!(
+                        "gb28181 domain '{}' maps to more than one listener; a \
+                         domain must resolve to exactly one tenant",
+                        listener.domain
+                    ),
+                ));
+            }
+            if !realms.insert(listener.realm.as_str()) {
+                return Err(SignalError::new(
+                    SignalErrorKind::InvalidArgument,
+                    format!(
+                        "gb28181 realm '{}' maps to more than one listener; a \
+                         realm must resolve to exactly one tenant",
+                        listener.realm
+                    ),
+                ));
+            }
+            if let Some(addr) = listener.udp_bind
+                && !udp_binds.insert(addr)
+            {
+                return Err(SignalError::new(
+                    SignalErrorKind::InvalidArgument,
+                    format!("gb28181 udp bind address {addr} is used by more than one listener"),
+                ));
+            }
+            if let Some(addr) = listener.tcp_bind
+                && !tcp_binds.insert(addr)
+            {
+                return Err(SignalError::new(
+                    SignalErrorKind::InvalidArgument,
+                    format!("gb28181 tcp bind address {addr} is used by more than one listener"),
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Resolves the effective set of listeners.
+    ///
+    /// When explicit [`listeners`](Self::listeners) are configured they are
+    /// returned as-is and the `bool` is `false`. Otherwise, if the legacy
+    /// single-listener fields request a listener (`sip_port > 0`) they are
+    /// converted into a single synthetic listener and the `bool` is `true` to
+    /// let callers emit a deprecation log. When neither is configured the list
+    /// is empty.
+    ///
+    /// This never validates; call [`validate`](Self::validate) first.
+    pub fn resolve_listeners(&self) -> (Vec<Gb28181ListenerConfig>, bool) {
+        if !self.listeners.is_empty() {
+            return (self.listeners.clone(), false);
+        }
+        if self.sip_port == 0 {
+            return (Vec::new(), false);
+        }
+        let udp_bind = SocketAddr::from(([0, 0, 0, 0], self.sip_port));
+        // Preserve the historical single-listener default: an unset SIP domain
+        // resolved to DEFAULT_GB28181_DOMAIN_ID for both the domain id and the
+        // digest realm, so devices provisioned against the built-in default can
+        // still authenticate after the migration to explicit listeners.
+        let domain = if self.sip_domain.is_empty() {
+            DEFAULT_GB28181_DOMAIN_ID.to_string()
+        } else {
+            self.sip_domain.clone()
+        };
+        let listener = Gb28181ListenerConfig {
+            id: "legacy".to_string(),
+            tenant_id: self.default_tenant_id.clone().unwrap_or_default(),
+            local_device_id: domain.clone(),
+            realm: domain.clone(),
+            domain,
+            udp_bind: Some(udp_bind),
+            tcp_bind: None,
+            digest_secret_ref: self.digest_secret_ref.clone().unwrap_or_default(),
+            device_password_ref: self.device_password_ref.clone(),
+            challenge_optional: self.challenge_optional,
+        };
+        (vec![listener], true)
     }
 }
 
@@ -874,4 +1183,140 @@ impl<'de> Deserialize<'de> for LogFormat {
 pub trait ConfigSource: Send + Sync {
     /// Returns a fully resolved, validated configuration snapshot.
     fn snapshot(&self) -> Result<SignalConfig>;
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod gb28181_listener_tests {
+    use super::*;
+
+    fn listener(id: &str, domain: &str, realm: &str, udp_port: u16) -> Gb28181ListenerConfig {
+        Gb28181ListenerConfig {
+            id: id.to_string(),
+            tenant_id: "00000000-0000-0000-0000-000000000001".to_string(),
+            local_device_id: "34020000002000000001".to_string(),
+            realm: realm.to_string(),
+            domain: domain.to_string(),
+            udp_bind: Some(SocketAddr::from(([0, 0, 0, 0], udp_port))),
+            tcp_bind: None,
+            digest_secret_ref: "secret://digest".to_string(),
+            device_password_ref: None,
+            challenge_optional: false,
+        }
+    }
+
+    #[test]
+    fn empty_gb28181_config_is_valid() {
+        let cfg = Gb28181Config::default();
+        assert!(cfg.validate().is_ok());
+        let (listeners, legacy) = cfg.resolve_listeners();
+        assert!(listeners.is_empty());
+        assert!(!legacy);
+    }
+
+    #[test]
+    fn legacy_fields_resolve_to_single_listener_with_deprecation_flag() {
+        let mut cfg = Gb28181Config {
+            sip_domain: "3402000000".to_string(),
+            sip_port: 5060,
+            digest_secret_ref: Some("secret://digest".to_string()),
+            default_tenant_id: Some("00000000-0000-0000-0000-000000000001".to_string()),
+            ..Gb28181Config::default()
+        };
+        cfg.challenge_optional = false;
+        assert!(cfg.validate().is_ok());
+        let (listeners, legacy) = cfg.resolve_listeners();
+        assert!(legacy);
+        assert_eq!(listeners.len(), 1);
+        assert_eq!(listeners[0].domain, "3402000000");
+        assert_eq!(listeners[0].udp_bind.unwrap().port(), 5060);
+    }
+
+    #[test]
+    fn legacy_empty_sip_domain_defaults_realm_and_domain() {
+        let cfg = Gb28181Config {
+            sip_domain: String::new(),
+            sip_port: 5060,
+            digest_secret_ref: Some("secret://digest".to_string()),
+            ..Gb28181Config::default()
+        };
+        assert!(cfg.validate().is_ok());
+        let (listeners, legacy) = cfg.resolve_listeners();
+        assert!(legacy);
+        assert_eq!(listeners.len(), 1);
+        assert_eq!(listeners[0].domain, DEFAULT_GB28181_DOMAIN_ID);
+        assert_eq!(listeners[0].realm, DEFAULT_GB28181_DOMAIN_ID);
+        assert_eq!(listeners[0].local_device_id, DEFAULT_GB28181_DOMAIN_ID);
+    }
+
+    #[test]
+    fn mixing_legacy_and_listeners_is_rejected() {
+        let mut cfg = Gb28181Config {
+            sip_port: 5060,
+            ..Gb28181Config::default()
+        };
+        cfg.listeners
+            .push(listener("a", "3402000000", "realm-a", 5060));
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn duplicate_domain_is_ambiguous() {
+        let mut cfg = Gb28181Config::default();
+        cfg.listeners
+            .push(listener("a", "3402000000", "realm-a", 5060));
+        cfg.listeners
+            .push(listener("b", "3402000000", "realm-b", 5061));
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn duplicate_realm_is_ambiguous() {
+        let mut cfg = Gb28181Config::default();
+        cfg.listeners.push(listener("a", "domain-a", "realm", 5060));
+        cfg.listeners.push(listener("b", "domain-b", "realm", 5061));
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn duplicate_udp_bind_is_rejected() {
+        let mut cfg = Gb28181Config::default();
+        cfg.listeners
+            .push(listener("a", "domain-a", "realm-a", 5060));
+        cfg.listeners
+            .push(listener("b", "domain-b", "realm-b", 5060));
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn listener_without_any_bind_is_rejected() {
+        let mut cfg = Gb28181Config::default();
+        let mut l = listener("a", "domain-a", "realm-a", 5060);
+        l.udp_bind = None;
+        l.tcp_bind = None;
+        cfg.listeners.push(l);
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn listener_without_tenant_is_rejected() {
+        let mut cfg = Gb28181Config::default();
+        let mut l = listener("a", "domain-a", "realm-a", 5060);
+        l.tenant_id = String::new();
+        cfg.listeners.push(l);
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn distinct_listeners_are_valid_and_returned_as_is() {
+        let mut cfg = Gb28181Config::default();
+        cfg.listeners
+            .push(listener("a", "domain-a", "realm-a", 5060));
+        cfg.listeners
+            .push(listener("b", "domain-b", "realm-b", 5061));
+        assert!(cfg.validate().is_ok());
+        let (listeners, legacy) = cfg.resolve_listeners();
+        assert!(!legacy);
+        assert_eq!(listeners.len(), 2);
+    }
 }

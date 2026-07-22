@@ -1,8 +1,9 @@
 //! Integration tests for cheetah-signal-types.
 
 use cheetah_signal_types::{
-    Deadline, DeviceId, DurationMs, MediaSessionId, MessageId, OwnerEpoch, Page, PageRequest,
-    ProtocolIdentity, Revision, SignalConfig, SignalError, SignalErrorKind, TenantId, UtcTimestamp,
+    Deadline, DeviceId, DurationMs, MAX_PAGE_SIZE, MediaSessionId, MessageId, OwnerEpoch, Page,
+    PageRequest, ProtocolIdentity, Revision, SignalConfig, SignalError, SignalErrorKind, TenantId,
+    UtcTimestamp,
 };
 use std::str::FromStr;
 
@@ -131,6 +132,26 @@ fn default_config_is_valid() -> Result<(), SignalError> {
     let example = SignalConfig::example_toml()?;
     assert!(example.contains("http"));
     Ok(())
+}
+
+#[test]
+fn session_reaper_knobs_are_bounded() {
+    let mut config = SignalConfig::default();
+    assert!(config.validate().is_ok());
+
+    config.gb28181.session_reaper_max_per_tick = 0;
+    assert!(config.validate().is_err());
+
+    config.gb28181.session_reaper_max_per_tick =
+        cheetah_signal_types::config::SESSION_REAPER_MAX_PER_TICK_LIMIT + 1;
+    assert!(config.validate().is_err());
+
+    config.gb28181.session_reaper_max_per_tick = 4_096;
+    config.gb28181.session_reaper_batch_size = 0;
+    assert!(config.validate().is_err());
+
+    config.gb28181.session_reaper_batch_size = MAX_PAGE_SIZE + 1;
+    assert!(config.validate().is_err());
 }
 
 #[test]

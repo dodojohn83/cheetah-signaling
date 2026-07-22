@@ -194,10 +194,10 @@ device_credential_namespace = "gb28181/tenant-a/devices"
   - 已拆分 GB 相关 `cascade/machine.rs`（原 824 行）：命令驱动的注册流程与共享 helper 留在 `machine.rs`（483 行），SIP 响应分发与 REGISTER/deregister/keepalive 响应处理（含 digest challenge/resend）移入新 `machine_response.rs`（361 行）。
   - 其余 >800 行文件均不属于 GB28181 改造范围，按 AGENTS 规范以理由保留、由各自模块的独立工单跟踪拆分，不在本 GB4 变更内做无关重构：`crates/domain/cheetah-domain/src/in_memory.rs`、`crates/domain/cheetah-domain/src/operation.rs`（领域测试替身与聚合逻辑）、`apps/cheetah-signaling/src/assembly.rs`（装配/生命周期，属 `GB4-ARC-004` 范围）、`crates/storage/cheetah-storage-sqlite/src/repository.rs`、`crates/storage/cheetah-storage-postgres/src/repository.rs`（共享 repository contract 实现）、`crates/cluster/cheetah-cluster-ownership/src/assignment.rs`、`crates/cluster/cheetah-cluster-ownership/src/rolling_upgrade.rs`、`crates/foundation/cheetah-signal-types/src/config.rs`、`crates/media/cheetah-media-scheduler/src/grpc.rs`、`tools/onvif-simulator/src/main.rs`。
 - [x] `GB4-SIP-001`：完成 UDP/TCP/IPv4/IPv6 driver contract，含 framing、连接上限、cancel 和 shutdown。
-- [ ] `GB4-SIP-002`：接入 transaction/dialog，覆盖 retransmission、duplicate、late/out-of-order 和 deadline。
-- [ ] `GB4-SIP-003`：完成 REGISTER/MESSAGE/INVITE/ACK/CANCEL/BYE/INFO/SUBSCRIBE/NOTIFY/OPTIONS method 路由。
-- [ ] `GB4-SIP-004`：实现 credential resolution output/input、Digest replay/stale/algorithm/rate-limit 生产链路。
-- [ ] `GB4-SIP-005`：实现 multi-listener/domain/realm/tenant 路由与旧配置兼容窗口。
+- [x] `GB4-SIP-002`：接入 transaction/dialog，覆盖 retransmission、duplicate、late/out-of-order 和 deadline。详见 [`reports/gb4-sip-002.md`](reports/gb4-sip-002.md)。
+- [x] `GB4-SIP-003`：完成 REGISTER/MESSAGE/INVITE/ACK/CANCEL/BYE/INFO/SUBSCRIBE/NOTIFY/OPTIONS method 路由。详见 [`reports/gb4-sip-002.md`](reports/gb4-sip-002.md)。
+- [x] `GB4-SIP-004`：实现 credential resolution output/input、Digest replay/stale/algorithm/rate-limit 生产链路（`SecretStoreCredentialProvider` 解析 per-device password 与 node digest secret，`AuthRateLimiter` 在 digest 计算前按 source IP 有界限流，MD5/SHA-256/replay/stale/downgrade/brute-force 均有测试）。详见 [`reports/gb4-sip-004.md`](reports/gb4-sip-004.md)。
+- [x] `GB4-SIP-005`：实现 multi-listener/domain/realm/tenant 路由与旧配置兼容窗口（`Gb28181ListenerConfig` 显式映射 realm/domain/tenant，拒绝重复 id/domain/realm/bind 及新旧混用；legacy `sip_port/sip_domain/default_tenant_id` 转换为单 listener 并输出弃用日志）。详见 [`reports/gb4-sip-004.md`](reports/gb4-sip-004.md)。
 - [ ] `GB4-SIP-006`：实现 endpoint route 模型、NAT/rport 策略和 source hijack regression。
 
 ## 11. 测试与退出门禁

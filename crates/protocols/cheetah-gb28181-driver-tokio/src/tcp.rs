@@ -1,7 +1,7 @@
 //! TCP listener and per-connection framing loop.
 
-use crate::shared::{Shared, SourceSlot};
-use cheetah_gb28181_core::{AccessOutput, GbAccessMachine, SipParser, encode_message};
+use crate::shared::{DriverAction, Shared, SourceSlot};
+use cheetah_gb28181_core::{GbAccessMachine, SipParser, encode_message};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -140,24 +140,26 @@ where
             }
             Some(Ok(message)) => {
                 trace!(%peer, "received TCP SIP message");
-                let outputs = match shared.process_message(peer, message) {
-                    Ok(outputs) => outputs,
+                let actions = match shared.handle_incoming(peer, message, true) {
+                    Ok(actions) => actions,
                     Err(e) => {
                         warn!(error = %e, %peer, "access machine rejected TCP message");
                         return false;
                     }
                 };
-                for output in outputs {
-                    match output {
-                        AccessOutput::SendResponse(response) => {
-                            let bytes = encode_message(&response);
+                for action in actions {
+                    match action {
+                        DriverAction::Send { message, .. } => {
+                            // Reliable transport: the response is written back on
+                            // the same connection to the peer.
+                            let bytes = encode_message(&message);
                             if let Err(e) = stream.write_all(&bytes).await {
-                                warn!(error = %e, %peer, "failed to write TCP SIP response");
+                                warn!(error = %e, %peer, "failed to write TCP SIP message");
                                 return false;
                             }
-                            debug!(%peer, "sent TCP SIP response");
+                            debug!(%peer, "sent TCP SIP message");
                         }
-                        AccessOutput::EmitEvent(event) => shared.emit(event),
+                        DriverAction::Emit(event) => shared.emit(event),
                     }
                 }
             }

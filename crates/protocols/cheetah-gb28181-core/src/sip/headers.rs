@@ -372,6 +372,36 @@ mod tests {
     }
 
     #[test]
+    fn compact_header_forms_map_to_canonical_names() {
+        let cases = [
+            ("v", HeaderName::Via),
+            ("f", HeaderName::From),
+            ("t", HeaderName::To),
+            ("i", HeaderName::CallId),
+            ("m", HeaderName::Contact),
+            ("c", HeaderName::ContentType),
+            ("l", HeaderName::ContentLength),
+            ("s", HeaderName::Subject),
+        ];
+        for (compact, expected) in cases {
+            assert_eq!(HeaderName::parse(compact), expected);
+            // Compact forms are case-insensitive like all header names.
+            assert_eq!(HeaderName::parse(&compact.to_ascii_uppercase()), expected);
+        }
+    }
+
+    #[test]
+    fn unknown_header_is_preserved_case_insensitively() {
+        let a = HeaderName::parse("X-Vendor-Tag");
+        let b = HeaderName::parse("x-vendor-tag");
+        assert!(matches!(a, HeaderName::Other(ref s) if s == "X-Vendor-Tag"));
+        // Original casing is preserved for serialization ...
+        assert_eq!(a.as_str(), "X-Vendor-Tag");
+        // ... but equality is case-insensitive per RFC 3261.
+        assert_eq!(a, b);
+    }
+
+    #[test]
     fn structured_headers_encode_correctly() {
         let uri = SipUri::parse("sip:alice@example.com:5060").unwrap();
         let via = HeaderValue::via("UDP", "example.com", 5060, "z9hG4bKabc").unwrap();

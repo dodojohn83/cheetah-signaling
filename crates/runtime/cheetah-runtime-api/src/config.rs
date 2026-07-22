@@ -37,6 +37,90 @@ pub struct RuntimeConfig {
     /// state is held by repositories/Operations, so an unloaded actor is
     /// transparently recreated on the next message.
     pub actor_idle_timeout_ms: u64,
+
+    /// Admission-control policy (rate limiting, coalescing, dead-letter and
+    /// backlog recovery) applied by the admission controller.
+    pub admission: AdmissionPolicyConfig,
+}
+
+/// Configuration for the runtime admission policy.
+///
+/// All limits are bounded so admission state (rate-limit buckets, coalescer
+/// keys and the dead-letter queue) can never grow without limit.
+#[derive(Clone, Copy, Debug)]
+pub struct AdmissionPolicyConfig {
+    /// Burst capacity, in messages, of each per-(source, class) rate bucket.
+    pub rate_capacity_tokens: u64,
+    /// Sustained per-(source, class) rate in messages per second.
+    pub rate_refill_tokens_per_sec: u64,
+    /// Maximum number of distinct (source, class) rate buckets retained.
+    pub rate_max_keys: usize,
+    /// Maximum number of (device, class) keys tracked for coalescing.
+    pub coalesce_max_tracked: usize,
+    /// Maximum number of dead-lettered messages retained for redrive.
+    pub dead_letter_capacity: usize,
+    /// Aggregate shard-mailbox depth at or above which the runtime enters the
+    /// overload state and sheds low-priority work.
+    pub backlog_high_watermark: u64,
+    /// Aggregate shard-mailbox depth at or below which the runtime recovers
+    /// from overload.
+    pub backlog_low_watermark: u64,
+}
+
+impl Default for AdmissionPolicyConfig {
+    fn default() -> Self {
+        Self {
+            rate_capacity_tokens: 256,
+            rate_refill_tokens_per_sec: 128,
+            rate_max_keys: 65_536,
+            coalesce_max_tracked: 65_536,
+            dead_letter_capacity: 8_192,
+            backlog_high_watermark: 4_096,
+            backlog_low_watermark: 1_024,
+        }
+    }
+}
+
+impl AdmissionPolicyConfig {
+    /// Validates that all configured bounds are greater than zero and coherent.
+    pub fn validate(&self) -> Result<(), RuntimeError> {
+        if self.rate_capacity_tokens == 0 {
+            return Err(RuntimeError::InvalidArgument(
+                "admission.rate_capacity_tokens must be greater than 0".into(),
+            ));
+        }
+        if self.rate_refill_tokens_per_sec == 0 {
+            return Err(RuntimeError::InvalidArgument(
+                "admission.rate_refill_tokens_per_sec must be greater than 0".into(),
+            ));
+        }
+        if self.rate_max_keys == 0 {
+            return Err(RuntimeError::InvalidArgument(
+                "admission.rate_max_keys must be greater than 0".into(),
+            ));
+        }
+        if self.coalesce_max_tracked == 0 {
+            return Err(RuntimeError::InvalidArgument(
+                "admission.coalesce_max_tracked must be greater than 0".into(),
+            ));
+        }
+        if self.dead_letter_capacity == 0 {
+            return Err(RuntimeError::InvalidArgument(
+                "admission.dead_letter_capacity must be greater than 0".into(),
+            ));
+        }
+        if self.backlog_high_watermark == 0 {
+            return Err(RuntimeError::InvalidArgument(
+                "admission.backlog_high_watermark must be greater than 0".into(),
+            ));
+        }
+        if self.backlog_low_watermark > self.backlog_high_watermark {
+            return Err(RuntimeError::InvalidArgument(
+                "admission.backlog_low_watermark must not exceed backlog_high_watermark".into(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 impl Default for RuntimeConfig {
@@ -52,6 +136,7 @@ impl Default for RuntimeConfig {
             max_pending_dispatch: 65536,
             max_sessions: 1_000_000,
             actor_idle_timeout_ms: 300_000,
+            admission: AdmissionPolicyConfig::default(),
         }
     }
 }
@@ -104,6 +189,7 @@ impl RuntimeConfig {
                 "max_sessions must be greater than 0".into(),
             ));
         }
+        self.admission.validate()?;
         Ok(())
     }
 }

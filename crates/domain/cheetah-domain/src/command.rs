@@ -1,6 +1,6 @@
 //! Immutable command value object and typed payloads.
 
-use crate::{DomainError, media_session::MediaPurpose};
+use crate::{DomainError, channel::PresetAction, media_session::MediaPurpose};
 use cheetah_signal_types::{
     ChannelId, CorrelationId, Deadline, DeviceId, IdGenerator, MediaSessionId, MessageId, NodeId,
     OperationId, OwnerEpoch, Principal, ResourceRef, TenantId, UtcTimestamp,
@@ -261,6 +261,21 @@ pub enum CommandPayload {
         /// Speed factor.
         speed: f64,
     },
+    /// Query a device or channel for state/catalog/records.
+    Query {
+        /// Query to perform.
+        query: QueryCommand,
+    },
+    /// PTZ preset action on a channel.
+    Preset {
+        /// Preset action to perform.
+        preset: PresetCommand,
+    },
+    /// Device control action such as guard, reboot, or I-frame request.
+    DeviceControl {
+        /// Control action to perform.
+        control: DeviceControlCommand,
+    },
 }
 
 impl CommandPayload {
@@ -273,6 +288,9 @@ impl CommandPayload {
             Self::StopMediaSession { .. } => "StopMediaSession",
             Self::ControlPlayback { .. } => "ControlPlayback",
             Self::Ptz { .. } => "Ptz",
+            Self::Query { .. } => "Query",
+            Self::Preset { .. } => "Preset",
+            Self::DeviceControl { .. } => "DeviceControl",
         }
     }
 }
@@ -326,4 +344,96 @@ pub enum PtzDirection {
     ZoomIn,
     /// Zoom out.
     ZoomOut,
+}
+
+/// A query command sent to a GB28181 device or channel.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct QueryCommand {
+    /// Kind of query to perform.
+    pub kind: QueryKind,
+    /// Optional target channel for channel-scoped queries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel_id: Option<ChannelId>,
+    /// Optional start of a playback/record window.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_time: Option<UtcTimestamp>,
+    /// Optional end of a playback/record window.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_time: Option<UtcTimestamp>,
+    /// Optional configuration type for `ConfigDownload` queries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_type: Option<String>,
+    /// Optional playback speed scale for `RecordInfo` queries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scale: Option<f64>,
+}
+
+/// Kinds of query commands.
+#[derive(
+    Clone, Copy, Debug, Default, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum QueryKind {
+    /// Query device catalog.
+    #[default]
+    Catalog,
+    /// Query device info.
+    DeviceInfo,
+    /// Query device status.
+    DeviceStatus,
+    /// Query record info.
+    RecordInfo,
+    /// Query PTZ presets.
+    PresetQuery,
+    /// Download device configuration.
+    ConfigDownload,
+}
+
+/// A PTZ preset command.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct PresetCommand {
+    /// Target channel.
+    pub channel_id: ChannelId,
+    /// Preset action to perform.
+    pub action: PresetAction,
+    /// Preset identifier.
+    pub preset_id: u32,
+}
+
+/// A device control command.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct DeviceControlCommand {
+    /// Kind of device control action.
+    pub kind: DeviceControlKind,
+    /// Optional target channel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel_id: Option<ChannelId>,
+    /// Boolean parameter for toggle actions such as guard or record.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    /// Opaque string parameter for actions that need a value such as a
+    /// configuration section.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub param: Option<String>,
+}
+
+/// Kinds of device control actions.
+#[derive(
+    Clone, Copy, Debug, Default, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum DeviceControlKind {
+    /// Armed/guard status toggle.
+    #[default]
+    Guard,
+    /// Reset an active alarm.
+    AlarmReset,
+    /// Manual record toggle.
+    Record,
+    /// Remote reboot.
+    TeleBoot,
+    /// Request an I-frame.
+    IFrame,
+    /// Update a device configuration section.
+    DeviceConfig,
 }

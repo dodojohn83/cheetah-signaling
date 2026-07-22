@@ -1,6 +1,7 @@
 //! HTTP resource handlers.
 
 pub mod channels;
+pub mod commands;
 pub mod devices;
 pub mod events;
 pub mod health;

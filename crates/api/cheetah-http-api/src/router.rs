@@ -2,7 +2,7 @@
 
 use crate::ApiState;
 use crate::handlers::{
-    channels, devices, events, health, media, nodes, operations, ops, tenants, webhooks,
+    channels, commands, devices, events, health, media, nodes, operations, ops, tenants, webhooks,
 };
 use crate::rate_limit::rate_limit_middleware;
 use axum::{
@@ -109,6 +109,16 @@ pub fn build_router(state: ApiState) -> Router {
         .route(
             "/api/v1/devices/{id}/channels/catalog",
             post(channels::replace_catalog),
+        )
+        .route("/api/v1/devices/{id}/commands/ptz", post(commands::ptz))
+        .route(
+            "/api/v1/devices/{id}/commands/preset",
+            post(commands::preset),
+        )
+        .route("/api/v1/devices/{id}/commands/query", post(commands::query))
+        .route(
+            "/api/v1/devices/{id}/commands/device-control",
+            post(commands::device_control),
         )
         .route("/api/v1/operations", get(operations::list_operations))
         .route("/api/v1/operations", post(operations::create_operation))

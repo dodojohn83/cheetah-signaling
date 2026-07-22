@@ -1,7 +1,7 @@
 //! UDP receive loop.
 
-use crate::shared::Shared;
-use cheetah_gb28181_core::{AccessOutput, GbAccessMachine, SipParser, encode_message};
+use crate::shared::{DriverAction, Shared};
+use cheetah_gb28181_core::{GbAccessMachine, SipParser, encode_message};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
@@ -65,25 +65,25 @@ async fn handle_datagram<M>(
     };
     trace!(%source, "received UDP SIP datagram");
 
-    let outputs = match shared.process_message(source, message) {
-        Ok(outputs) => outputs,
+    let actions = match shared.handle_incoming(source, message, false) {
+        Ok(actions) => actions,
         Err(e) => {
             warn!(error = %e, %source, "access machine rejected UDP datagram");
             return;
         }
     };
 
-    for output in outputs {
-        match output {
-            AccessOutput::SendResponse(response) => {
-                let bytes = encode_message(&response);
-                if let Err(e) = socket.send_to(&bytes, source).await {
-                    warn!(error = %e, %source, "failed to send UDP SIP response");
+    for action in actions {
+        match action {
+            DriverAction::Send { message, target } => {
+                let bytes = encode_message(&message);
+                if let Err(e) = socket.send_to(&bytes, target).await {
+                    warn!(error = %e, target = %target, "failed to send UDP SIP message");
                 } else {
-                    debug!(%source, "sent UDP SIP response");
+                    debug!(target = %target, "sent UDP SIP message");
                 }
             }
-            AccessOutput::EmitEvent(event) => shared.emit(event),
+            DriverAction::Emit(event) => shared.emit(event),
         }
     }
 }

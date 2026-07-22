@@ -20,6 +20,7 @@ pub mod media_session;
 pub mod node;
 pub mod operation;
 pub mod ports;
+pub mod protocol_session;
 pub mod tenant;
 pub mod webhook;
 
@@ -29,7 +30,10 @@ pub mod in_memory;
 pub use channel::{
     Channel, ChannelKind, ChannelStatus, PresetAction, PtzCapabilities, StreamProfile,
 };
-pub use command::{Command, CommandPayload, IdempotencyScope, MediaControl, PtzDirection};
+pub use command::{
+    Command, CommandPayload, DeviceControlCommand, DeviceControlKind, IdempotencyScope,
+    MediaControl, PresetCommand, PtzDirection, QueryCommand, QueryKind,
+};
 pub use device::{
     Capability, CapabilityValue, Connectivity, Device, DeviceKind, DeviceLifecycle, Protocol,
 };
@@ -49,5 +53,9 @@ pub use operation::{
     OperationStatus, OperationStep, OperationStepStatus,
 };
 pub use ports::*;
+pub use protocol_session::{
+    CompatibilityProfile, LocalIdentity, NewProtocolSession, PresenceState, ProtocolSession,
+    RegistrationInfo, SessionEndpoint, SipTransport,
+};
 pub use tenant::{MAX_TENANT_NAME_LEN, Tenant};
 pub use webhook::{DeliveryStatus, WebhookConfig, WebhookDelivery, sign_webhook_payload};

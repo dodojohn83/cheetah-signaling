@@ -91,6 +91,7 @@ pub fn encode_command(command: &Command) -> Result<proto::CommandEnvelope, super
         channel_id: channel_id(command),
         command_type: command.kind().to_string(),
         payload,
+        detail: None,
     };
 
     let control_command = control::ControlCommand {

@@ -331,7 +331,7 @@ fn cseq_number(msg: &SipMessage) -> Result<u32, SipError> {
     msg.cseq().map(|(n, _)| n)
 }
 
-fn extract_tag(value: &str) -> Option<&str> {
+pub(crate) fn extract_tag(value: &str) -> Option<&str> {
     let value = value.trim();
     let lower = value.to_ascii_lowercase();
     let start = lower.find(";tag=")? + 5;

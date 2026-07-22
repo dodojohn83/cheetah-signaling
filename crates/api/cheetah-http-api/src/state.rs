@@ -87,6 +87,8 @@ pub struct ApiState {
     pub operation_service: OperationService,
     /// Media application service.
     pub media_service: MediaService,
+    /// Device owner resolver used to fence commands against the current owner.
+    pub owner_resolver: Arc<dyn DeviceOwnerResolver>,
     /// Webhook application service.
     pub webhook_service: Option<WebhookService>,
     /// Event bus for SSE subscriptions.
@@ -144,7 +146,7 @@ impl ApiState {
         let media_service = MediaService::new(
             clock.clone(),
             id_generator.clone(),
-            owner_resolver,
+            owner_resolver.clone(),
             media_port,
             source_node_id,
         );
@@ -153,6 +155,7 @@ impl ApiState {
             device_service,
             operation_service,
             media_service,
+            owner_resolver,
             webhook_service: None,
             event_bus,
             event_cache: EventCache::new(1024),

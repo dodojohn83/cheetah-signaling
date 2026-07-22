@@ -18,18 +18,23 @@ pub use sdp::{
 };
 
 pub use sip::dialog::{Dialog, DialogEvent, DialogId, DialogOutput, DialogRole, DialogState};
+pub use sip::dialog_manager::{
+    DEFAULT_DIALOG_TTL, DEFAULT_MAX_DIALOGS, DialogManager, DialogManagerConfig, DialogRouting,
+};
 pub use sip::digest::{
-    DigestAlgorithm, DigestChallenge, DigestClient, DigestContext, DigestError, DigestQop,
-    DigestReplayCache, DigestResponse,
+    AuthRateLimiter, DigestAlgorithm, DigestChallenge, DigestClient, DigestContext, DigestError,
+    DigestQop, DigestReplayCache, DigestResponse,
 };
 pub use sip::encoder::encode_message;
 pub use sip::error::{SipError, SipErrorKind};
 pub use sip::headers::{HeaderName, HeaderValue, SipHeaders};
 pub use sip::message::{Body, Method, RequestLine, ResponseClass, SipMessage, StatusLine};
 pub use sip::parser::{SipParser, SipParserConfig};
+pub use sip::routing::{RequestRoute, route_request};
 pub use sip::transaction::{
-    BranchPolicy, TimerKind, TimerSet, Transaction, TransactionConfig, TransactionEvent,
-    TransactionHalf, TransactionKey, TransactionKind, TransactionOutput, TransactionRole,
-    TransportKind,
+    BranchPolicy, DEFAULT_MAX_TRANSACTIONS, DEFAULT_TRANSACTION_TTL, ManagerConfig, ManagerOutput,
+    RequestOutcome, TimerKind, TimerSet, Transaction, TransactionConfig, TransactionEvent,
+    TransactionHalf, TransactionKey, TransactionKind, TransactionManager, TransactionOutput,
+    TransactionRole, TransportKind,
 };
 pub use sip::uri::{Scheme, SipUri};

@@ -109,6 +109,7 @@ impl<M: GbAccessMachine + Send + 'static> Gb28181UdpDriver<M> {
             config.tcp_idle_timeout,
             config.max_tcp_connections,
             config.max_tcp_connections_per_source,
+            config.manager_config,
         ));
 
         Ok((
@@ -165,6 +166,10 @@ impl<M: GbAccessMachine + Send + 'static> Gb28181UdpDriver<M> {
 
         let mut set: JoinSet<()> = JoinSet::new();
 
+        // The ticker reuses the bound UDP sockets to emit transaction
+        // retransmissions produced on timer expiry.
+        let ticker_sockets = udp_sockets.clone();
+
         for socket in udp_sockets {
             let shared = shared.clone();
             let cancel = cancel.clone();
@@ -180,7 +185,9 @@ impl<M: GbAccessMachine + Send + 'static> Gb28181UdpDriver<M> {
         {
             let shared = shared.clone();
             let cancel = cancel.clone();
-            set.spawn(async move { run_ticker(shared, tick_interval, cancel).await });
+            set.spawn(
+                async move { run_ticker(shared, ticker_sockets, tick_interval, cancel).await },
+            );
         }
 
         cancel.cancelled().await;
@@ -205,9 +212,11 @@ impl<M: GbAccessMachine + Send + 'static> Gb28181UdpDriver<M> {
     }
 }
 
-/// Periodic tick loop that advances the access machine's timers.
+/// Periodic tick loop that advances the access machine's timers and the SIP
+/// transaction tables, emitting events and any transaction retransmissions.
 async fn run_ticker<M>(
     shared: Arc<Shared<M>>,
+    udp_sockets: Vec<Arc<UdpSocket>>,
     interval: std::time::Duration,
     cancel: CancellationToken,
 ) where
@@ -221,18 +230,31 @@ async fn run_ticker<M>(
             _ = cancel.cancelled() => break,
             _ = ticker.tick() => {
                 let now = shared.now_seconds();
-                match shared.tick(now) {
-                    Ok(outputs) => {
-                        for output in outputs {
-                            if let cheetah_gb28181_core::AccessOutput::EmitEvent(event) = output {
+                match shared.tick_access(now) {
+                    Ok(actions) => {
+                        for action in actions {
+                            if let shared::DriverAction::Emit(event) = action {
                                 shared.emit(event);
                             }
-                            // Tick-produced SIP responses have no transaction
-                            // route; they are dropped until transaction/dialog
-                            // integration (GB4-SIP-002) supplies a target.
                         }
                     }
                     Err(e) => warn!(error = %e, "failed to process access tick"),
+                }
+
+                for action in shared.tick_transactions(shared.now_monotonic()) {
+                    match action {
+                        shared::DriverAction::Send { message, target } => {
+                            let bytes = cheetah_gb28181_core::encode_message(&message);
+                            // Send the retransmission from the first bound UDP
+                            // socket; TCP transactions never retransmit.
+                            if let Some(socket) = udp_sockets.first()
+                                && let Err(e) = socket.send_to(&bytes, target).await
+                            {
+                                warn!(error = %e, target = %target, "failed to send transaction retransmission");
+                            }
+                        }
+                        shared::DriverAction::Emit(event) => shared.emit(event),
+                    }
                 }
             }
         }
