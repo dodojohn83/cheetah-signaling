@@ -340,7 +340,9 @@ async fn process_event(
             device_id,
             channel_id,
             source,
-            remote_sdp,
+            // Raw negotiated SDP body is intentionally not persisted; only
+            // bounded, desensitized control fields are recorded (AGENTS.md §8).
+            remote_sdp: _,
             remote_ssrc,
             remote_port,
             remote_proto,
@@ -352,7 +354,6 @@ async fn process_event(
             payload.insert("channel_id".to_string(), channel_id.to_string());
             payload.insert("device_id".to_string(), device_id.to_string());
             payload.insert("remote_address".to_string(), source.to_string());
-            payload.insert("remote_sdp".to_string(), remote_sdp);
             if let Some(v) = remote_ssrc {
                 payload.insert("remote_ssrc".to_string(), v);
             }
@@ -516,7 +517,9 @@ async fn process_event(
             upstream_from,
             upstream_to,
             target_user,
-            remote_sdp,
+            // Raw negotiated SDP body is intentionally not persisted; only
+            // bounded, desensitized control fields are recorded (AGENTS.md §8).
+            remote_sdp: _,
         } => {
             let mut payload = BTreeMap::new();
             payload.insert("domain_id".to_string(), domain_id.to_string());
@@ -526,7 +529,6 @@ async fn process_event(
             payload.insert("upstream_from".to_string(), upstream_from);
             payload.insert("upstream_to".to_string(), upstream_to);
             payload.insert("target_user".to_string(), target_user);
-            payload.insert("remote_sdp".to_string(), remote_sdp);
             append_gb_event(
                 state,
                 &context,
