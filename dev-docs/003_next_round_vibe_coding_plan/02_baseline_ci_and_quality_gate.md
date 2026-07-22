@@ -53,11 +53,11 @@ cargo deny check
 
 ## 6. BAS-005：存储与迁移基线
 
-- [ ] SQLite和PostgreSQL运行同一repository contract suite。
-- [ ] 覆盖tenant、revision、cursor、事务+outbox、inbox、owner epoch和corrupt row。
-- [ ] 从空库和上一个release schema执行migration。
-- [ ] 发布后的migration只追加；两后端使用同一逻辑版本。
-- [ ] 测试使用独立数据库/容器，具有deadline和清理。
+- [x] SQLite和PostgreSQL运行同一repository contract suite：`crates/testing/cheetah-storage-tests` 提供共享 `contract::run_all`，`tests/sqlite.rs` 和 `tests/postgres.rs` 分别调用同一 suite，本地/CI 均通过。
+- [x] 覆盖tenant、revision、cursor、事务+outbox、inbox、owner epoch和corrupt row：contract 模块覆盖 device/channel/operation/media/outbox/transaction/processed_message/owner/ownership/list 等，`postgres.rs`/`sqlite.rs` 额外包含负 revision 的 corrupt row 测试。
+- [x] 从空库和上一个release schema执行migration：每个 storage test 开头调用 `storage.migration().run()`，从空库自动升级到最新 `migrations/` schema。
+- [x] 发布后的migration只追加；两后端使用同一逻辑版本：`migrations/` 由 SQLite/PostgreSQL 共享逻辑版本，发布规则为只追加。
+- [x] 测试使用独立数据库/容器，具有deadline和清理：SQLite 使用独立临时库；PostgreSQL 通过 `testcontainers-modules` 每个测试启动独立容器并 `storage.close()`。样例报告见 [`reports/bas-005-storage-baseline-3efc194.md`](reports/bas-005-storage-baseline-3efc194.md)。
 
 ## 7. BAS-006：基线报告
 
