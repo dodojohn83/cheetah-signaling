@@ -174,6 +174,26 @@ pub enum DeviceControlKind {
     Ptz(PtzCommand),
     /// Preset set/call/delete command.
     Preset(PresetCommand),
+    /// Guard/armed status toggle (`SetGuard`/`ResetGuard`).
+    Guard(bool),
+    /// Alarm reset with optional `AlarmMethod` value.
+    AlarmReset {
+        /// Optional alarm method identifier passed in the `AlarmMethod` element.
+        alarm_method: Option<String>,
+    },
+    /// Manual recording toggle (`Record`/`StopRecord`).
+    Record(bool),
+    /// Remote reboot (`Boot`).
+    TeleBoot,
+    /// Request an I-frame.
+    IFrame,
+    /// Update a device configuration section. The optional `config_type`
+    /// names the child element (default `BasicParam`); this is a placeholder
+    /// for the full configuration payload.
+    DeviceConfig {
+        /// Configuration section name, used as the child element tag.
+        config_type: Option<String>,
+    },
 }
 
 /// A GB28181 `DeviceControl` request.
@@ -190,18 +210,65 @@ pub struct DeviceControlRequest {
 impl DeviceControlRequest {
     /// Encodes the request as a `DeviceControl` XML body.
     pub fn encode_xml(&self) -> Result<String, AccessError> {
-        let ptz_cmd = match &self.kind {
-            DeviceControlKind::Ptz(cmd) => cmd.encode(),
-            DeviceControlKind::Preset(cmd) => cmd.encode(),
+        let (cmd_type, payload_child) = match &self.kind {
+            DeviceControlKind::Ptz(cmd) => ("DeviceControl", text_child("PTZCmd", &cmd.encode())),
+            DeviceControlKind::Preset(cmd) => {
+                ("DeviceControl", text_child("PTZCmd", &cmd.encode()))
+            }
+            DeviceControlKind::Guard(true) => ("DeviceControl", text_child("GuardCmd", "SetGuard")),
+            DeviceControlKind::Guard(false) => {
+                ("DeviceControl", text_child("GuardCmd", "ResetGuard"))
+            }
+            DeviceControlKind::Record(true) => ("DeviceControl", text_child("RecordCmd", "Record")),
+            DeviceControlKind::Record(false) => {
+                ("DeviceControl", text_child("RecordCmd", "StopRecord"))
+            }
+            DeviceControlKind::TeleBoot => ("DeviceControl", text_child("TeleBoot", "Boot")),
+            DeviceControlKind::IFrame => ("DeviceControl", text_child("IFrameCmd", "Send")),
+            DeviceControlKind::AlarmReset { alarm_method } => {
+                let mut children = vec![
+                    text_child("CmdType", "DeviceControl"),
+                    text_child("SN", &self.sn),
+                    text_child("DeviceID", &self.device_id),
+                    text_child("AlarmCmd", "ResetAlarm"),
+                ];
+                if let Some(method) = alarm_method {
+                    children.push(text_child("AlarmMethod", method));
+                }
+                let control = XmlElement {
+                    name: "Control".to_string(),
+                    children,
+                    ..Default::default()
+                };
+                return encode_xml(&control, true);
+            }
+            DeviceControlKind::DeviceConfig { config_type } => {
+                let mut children = vec![
+                    text_child("CmdType", "DeviceConfig"),
+                    text_child("SN", &self.sn),
+                    text_child("DeviceID", &self.device_id),
+                ];
+                let tag = config_type.as_deref().unwrap_or("BasicParam");
+                children.push(XmlElement {
+                    name: tag.to_string(),
+                    ..Default::default()
+                });
+                let control = XmlElement {
+                    name: "Control".to_string(),
+                    children,
+                    ..Default::default()
+                };
+                return encode_xml(&control, true);
+            }
         };
 
         let control = XmlElement {
             name: "Control".to_string(),
             children: vec![
-                text_child("CmdType", "DeviceControl"),
+                text_child("CmdType", cmd_type),
                 text_child("SN", &self.sn),
                 text_child("DeviceID", &self.device_id),
-                text_child("PTZCmd", &ptz_cmd),
+                payload_child,
             ],
             ..Default::default()
         };
@@ -312,6 +379,77 @@ mod tests {
         let encoded = cmd.encode();
         // zoom byte = 0xF0, zoom direction bit set, checksum = 0xB5.
         assert_eq!(encoded, "A50F01100000F0B5");
+    }
+
+    #[test]
+    fn guard_command_xml() {
+        let req = DeviceControlRequest {
+            sn: "1".to_string(),
+            device_id: "34020000001320000001".to_string(),
+            kind: DeviceControlKind::Guard(true),
+        };
+        let xml = req.encode_xml().unwrap();
+        assert!(xml.contains("<GuardCmd>SetGuard</GuardCmd>"));
+    }
+
+    #[test]
+    fn alarm_reset_command_xml() {
+        let req = DeviceControlRequest {
+            sn: "2".to_string(),
+            device_id: "34020000001320000001".to_string(),
+            kind: DeviceControlKind::AlarmReset {
+                alarm_method: Some("1".to_string()),
+            },
+        };
+        let xml = req.encode_xml().unwrap();
+        assert!(xml.contains("<AlarmCmd>ResetAlarm</AlarmCmd>"));
+        assert!(xml.contains("<AlarmMethod>1</AlarmMethod>"));
+    }
+
+    #[test]
+    fn record_command_xml() {
+        let req = DeviceControlRequest {
+            sn: "3".to_string(),
+            device_id: "34020000001320000001".to_string(),
+            kind: DeviceControlKind::Record(false),
+        };
+        let xml = req.encode_xml().unwrap();
+        assert!(xml.contains("<RecordCmd>StopRecord</RecordCmd>"));
+    }
+
+    #[test]
+    fn tele_boot_command_xml() {
+        let req = DeviceControlRequest {
+            sn: "4".to_string(),
+            device_id: "34020000001320000001".to_string(),
+            kind: DeviceControlKind::TeleBoot,
+        };
+        let xml = req.encode_xml().unwrap();
+        assert!(xml.contains("<TeleBoot>Boot</TeleBoot>"));
+    }
+
+    #[test]
+    fn iframe_command_xml() {
+        let req = DeviceControlRequest {
+            sn: "5".to_string(),
+            device_id: "34020000001320000001".to_string(),
+            kind: DeviceControlKind::IFrame,
+        };
+        let xml = req.encode_xml().unwrap();
+        assert!(xml.contains("<IFrameCmd>Send</IFrameCmd>"));
+    }
+
+    #[test]
+    fn device_config_command_xml() {
+        let req = DeviceControlRequest {
+            sn: "6".to_string(),
+            device_id: "34020000001320000001".to_string(),
+            kind: DeviceControlKind::DeviceConfig {
+                config_type: Some("BasicParam".to_string()),
+            },
+        };
+        let xml = req.encode_xml().unwrap();
+        assert!(xml.contains("<BasicParam/>"));
     }
 
     #[test]

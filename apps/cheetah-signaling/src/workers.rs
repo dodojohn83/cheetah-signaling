@@ -7,22 +7,25 @@ use cheetah_cluster_ownership::{
 };
 use cheetah_cluster_registry::NodeLeaseService;
 use cheetah_domain::{
-    Clock, Command, DeviceOwnerResolver, NodeLoad, OwnerInfo, ProcessedMessageStatus, Protocol,
+    Clock, Command, CommandPayload, DeviceOwnerResolver, NodeLoad, OwnerInfo, Protocol, UnitOfWork,
 };
-use cheetah_gb28181_module::ProtocolSessionLink;
+use cheetah_gb28181_module::{Gb28181Command, ProtocolSessionLink};
 use cheetah_message_api::RawCommandBus;
 use cheetah_plugin_host::PluginHost;
 use cheetah_plugin_sdk::{DriverCommand, PluginName};
 use cheetah_signal_application::{
-    CommandHandler, CommandHandlerResult, InboxService, TakeoverService,
+    CommandDispatch, CommandHandler, CommandHandlerResult, InboxService, OperationStepOutcome,
+    TakeoverService,
 };
 use cheetah_signal_types::{
-    DeviceId, DurationMs, IdGenerator, NodeId, PageRequest, PluginId, TenantId, UtcTimestamp,
+    ChannelId, DeviceId, DurationMs, IdGenerator, NodeId, PageRequest, PluginId, SignalError,
+    SignalErrorKind, TenantId, UtcTimestamp,
 };
 use cheetah_storage_api::{NodeRepository, OwnerRepository, Storage};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, mpsc};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
@@ -69,35 +72,188 @@ impl DeviceProtocolLookup for StorageDeviceProtocolLookup {
     }
 }
 
-/// Inbox command handler that dispatches to activated protocol plugins when
-/// possible, otherwise records an `UNKNOWN_OUTCOME` without forging success.
-pub struct OwnerCommandHandler {
-    plugin_host: Arc<Mutex<PluginHost>>,
-    clock: Arc<dyn Clock>,
+/// Sends a domain command to the GB28181 driver for outbound SIP `MESSAGE`
+/// transmission.
+#[async_trait]
+pub trait Gb28181CommandBus: Send + Sync {
+    /// Enqueues `command` on the bounded driver command channel.
+    async fn send(&self, command: Gb28181Command) -> cheetah_signal_types::Result<()>;
 }
 
-impl OwnerCommandHandler {
-    /// Creates a new handler.
-    pub fn new(plugin_host: Arc<Mutex<PluginHost>>, clock: Arc<dyn Clock>) -> Self {
-        Self { plugin_host, clock }
+/// Command bus that routes outbound GB28181 commands to the driver bound to
+/// the target device's listener.
+pub struct MultiListenerCommandBus {
+    buses: HashMap<String, mpsc::Sender<Gb28181Command>>,
+}
+
+impl MultiListenerCommandBus {
+    /// Creates a bus from a map of listener id to driver command sender.
+    pub fn new(buses: HashMap<String, mpsc::Sender<Gb28181Command>>) -> Self {
+        Self { buses }
     }
 }
 
 #[async_trait]
-impl CommandHandler for OwnerCommandHandler {
-    async fn handle(
-        &self,
-        _uow: &mut dyn cheetah_domain::UnitOfWork,
-        command: &Command,
-    ) -> cheetah_signal_types::Result<CommandHandlerResult> {
-        let kind = command.kind();
-        info!(
-            operation_id = %command.operation_id(),
-            device_id = %command.device_id(),
-            command_kind = kind,
-            "owner processing command"
-        );
+impl Gb28181CommandBus for MultiListenerCommandBus {
+    async fn send(&self, command: Gb28181Command) -> cheetah_signal_types::Result<()> {
+        let tx = self.buses.get(&command.listener_id).ok_or_else(|| {
+            SignalError::new(
+                SignalErrorKind::Internal,
+                format!(
+                    "no gb28181 command bus for listener {}",
+                    command.listener_id
+                ),
+            )
+        })?;
+        // Use a bounded channel but do not await capacity while the inbox's
+        // database transaction is held open.
+        tx.try_send(command).map_err(|e| match e {
+            mpsc::error::TrySendError::Full(_) => {
+                SignalError::new(SignalErrorKind::Busy, "gb28181 command bus full")
+            }
+            mpsc::error::TrySendError::Closed(_) => {
+                SignalError::new(SignalErrorKind::Internal, "gb28181 command bus closed")
+            }
+        })
+    }
+}
 
+/// Inbox command handler that routes GB28181 commands through the dedicated
+/// driver bus and falls back to activated protocol plugins for other command
+/// kinds, recording an `UNKNOWN_OUTCOME` without forging success when the
+/// outcome cannot be determined.
+pub struct OwnerCommandHandler {
+    plugin_host: Arc<Mutex<PluginHost>>,
+    clock: Arc<dyn Clock>,
+    storage: Arc<dyn Storage>,
+    gb_bus: Option<Arc<dyn Gb28181CommandBus>>,
+}
+
+impl OwnerCommandHandler {
+    /// Creates a new handler.
+    pub fn new(
+        plugin_host: Arc<Mutex<PluginHost>>,
+        clock: Arc<dyn Clock>,
+        storage: Arc<dyn Storage>,
+        gb_bus: Option<Arc<dyn Gb28181CommandBus>>,
+    ) -> Self {
+        Self {
+            plugin_host,
+            clock,
+            storage,
+            gb_bus,
+        }
+    }
+
+    async fn resolve_gb_command(
+        &self,
+        uow: &mut dyn UnitOfWork,
+        command: &Command,
+    ) -> cheetah_signal_types::Result<Option<Gb28181Command>> {
+        let tenant_id = command.tenant_id();
+        let device_id = command.device_id();
+
+        let device = match uow.device_repository().get(tenant_id, device_id).await? {
+            Some(d) => d,
+            None => {
+                warn!(tenant_id = %tenant_id, device_id = %device_id, "device not found for gb28181 command");
+                return Ok(None);
+            }
+        };
+
+        if device.protocol() != Protocol::Gb28181 {
+            return Ok(None);
+        }
+
+        let Some(device_external_id) =
+            cheetah_gb28181_module::types::DeviceId::new(device.external_id().as_ref())
+        else {
+            return Ok(None);
+        };
+
+        let channel_external_id = match channel_id_from_payload(command.payload()) {
+            Some(channel_id) => match uow
+                .channel_repository()
+                .get(tenant_id, device_id, channel_id)
+                .await?
+            {
+                Some(channel) => channel
+                    .metadata()
+                    .get("external_id")
+                    .and_then(cheetah_gb28181_module::types::DeviceId::new),
+                None => {
+                    warn!(tenant_id = %tenant_id, device_id = %device_id, channel_id = %channel_id, "channel not found for gb28181 command");
+                    return Ok(None);
+                }
+            },
+            None => None,
+        };
+
+        let listener_id = match self
+            .storage
+            .protocol_session_repository()
+            .get_by_device(tenant_id, Protocol::Gb28181, device_id)
+            .await?
+        {
+            Some(session) => session.local_identity().listener_id.clone(),
+            None => {
+                warn!(tenant_id = %tenant_id, device_id = %device_id, "no active gb28181 protocol session for command");
+                return Ok(None);
+            }
+        };
+
+        Ok(Some(Gb28181Command::new(
+            command.clone(),
+            device_external_id,
+            channel_external_id,
+            listener_id,
+        )))
+    }
+
+    async fn handle_gb28181_command(
+        &self,
+        uow: &mut dyn UnitOfWork,
+        command: &Command,
+        kind: &str,
+    ) -> cheetah_signal_types::Result<CommandHandlerResult> {
+        let Some(bus) = self.gb_bus.as_ref() else {
+            return Ok(CommandHandlerResult::rejected(
+                "gb28181 command bus not available",
+            ));
+        };
+
+        let gb_command = match self.resolve_gb_command(uow, command).await? {
+            Some(cmd) => cmd,
+            None => {
+                return Ok(CommandHandlerResult::rejected(
+                    "unable to resolve gb28181 command target",
+                ));
+            }
+        };
+
+        match bus.send(gb_command).await {
+            Ok(()) => Ok(CommandHandlerResult::accepted(
+                CommandDispatch::Sent,
+                OperationStepOutcome::Unknown,
+            )
+            .with_payload(format!(
+                r#"{{"command_kind":"{kind}","protocol":"gb28181"}}"#
+            ))),
+            Err(e) if e.is_retryable() => Err(e),
+            Err(e) => Ok(CommandHandlerResult::accepted(
+                CommandDispatch::TransportFailed {
+                    reason: e.to_string(),
+                },
+                OperationStepOutcome::Unknown,
+            )),
+        }
+    }
+
+    async fn handle_plugin_command(
+        &self,
+        command: &Command,
+        kind: &str,
+    ) -> cheetah_signal_types::Result<CommandHandlerResult> {
         let payload = serde_json::to_value(command.payload()).unwrap_or(serde_json::Value::Null);
         let deadline = command
             .deadline()
@@ -111,50 +267,96 @@ impl CommandHandler for OwnerCommandHandler {
         };
 
         let plugin_name = match kind {
-            "Ptz" | "StartLive" | "StopMediaSession" | "StartPlayback" | "StartTalk"
+            "StartLive" | "StopMediaSession" | "StartPlayback" | "StartTalk"
             | "ControlPlayback" | "process_sip" => "cheetah/gb28181",
             other if other.starts_with("Onvif") || other.starts_with("onvif") => "cheetah/onvif",
             _ => {
-                return Ok(unknown_outcome(kind));
+                return Ok(CommandHandlerResult::rejected(format!(
+                    "unsupported command kind: {kind}"
+                )));
             }
         };
 
         let result = {
             let host = self.plugin_host.lock().await;
             let Ok(name) = PluginName::new(plugin_name) else {
-                return Ok(unknown_outcome(kind));
+                return Ok(CommandHandlerResult::rejected(format!(
+                    "invalid plugin name: {plugin_name}"
+                )));
             };
             let Some(instance_id) = host.instance_id_for_name(&name) else {
-                return Ok(unknown_outcome(kind));
+                return Ok(CommandHandlerResult::rejected(format!(
+                    "plugin not found: {plugin_name}"
+                )));
             };
             host.handle_command(instance_id, driver_command).await
         };
 
         match result {
-            Ok(()) => Ok(CommandHandlerResult {
-                status: ProcessedMessageStatus::Completed,
-                result_payload: Some(format!(
-                    r#"{{"status":"dispatched","command_kind":"{kind}","plugin":"{plugin_name}"}}"#
-                )),
-            }),
+            Ok(()) => Ok(CommandHandlerResult::accepted(
+                CommandDispatch::Sent,
+                OperationStepOutcome::Unknown,
+            )
+            .with_payload(format!(
+                r#"{{"command_kind":"{kind}","plugin":"{plugin_name}"}}"#
+            ))),
             Err(e) => {
                 warn!(
                     operation_id = %command.operation_id(),
                     error = %e,
                     "plugin handle_command failed; recording unknown outcome"
                 );
-                Ok(unknown_outcome(kind))
+                Ok(CommandHandlerResult::accepted(
+                    CommandDispatch::TransportFailed {
+                        reason: e.to_string(),
+                    },
+                    OperationStepOutcome::Unknown,
+                ))
             }
         }
     }
 }
 
-fn unknown_outcome(kind: &str) -> CommandHandlerResult {
-    CommandHandlerResult {
-        status: ProcessedMessageStatus::Completed,
-        result_payload: Some(format!(
-            r#"{{"status":"accepted","command_kind":"{kind}","outcome":"unknown"}}"#
-        )),
+#[async_trait]
+impl CommandHandler for OwnerCommandHandler {
+    async fn handle(
+        &self,
+        uow: &mut dyn UnitOfWork,
+        command: &Command,
+    ) -> cheetah_signal_types::Result<CommandHandlerResult> {
+        let kind = command.kind();
+        info!(
+            operation_id = %command.operation_id(),
+            device_id = %command.device_id(),
+            command_kind = kind,
+            "owner processing command"
+        );
+
+        if is_gb28181_command(command.payload()) {
+            return self.handle_gb28181_command(uow, command, kind).await;
+        }
+
+        self.handle_plugin_command(command, kind).await
+    }
+}
+
+fn is_gb28181_command(payload: &CommandPayload) -> bool {
+    matches!(
+        payload,
+        CommandPayload::Query { .. }
+            | CommandPayload::Ptz { .. }
+            | CommandPayload::Preset { .. }
+            | CommandPayload::DeviceControl { .. }
+    )
+}
+
+fn channel_id_from_payload(payload: &CommandPayload) -> Option<ChannelId> {
+    match payload {
+        CommandPayload::Ptz { channel_id, .. } => Some(*channel_id),
+        CommandPayload::Preset { preset } => Some(preset.channel_id),
+        CommandPayload::DeviceControl { control } => control.channel_id,
+        CommandPayload::Query { query } => query.channel_id,
+        _ => None,
     }
 }
 
