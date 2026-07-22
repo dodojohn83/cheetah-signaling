@@ -1,0 +1,82 @@
+# Fault soak over TCP: latency, loss, reorder, duplication, half-packet
+# framing, malformed frames and injected SIP errors, all deterministic.
+#
+# TCP exercises the streaming parser's reassembly contract, including
+# half-packet (split) and coalesced framing.
+
+name = "faults-tcp"
+seed = 1337
+shards = 8
+device_count = 200
+transport = "tcp"
+duration_ms = 300000
+register_stagger_ms = 60000
+udp_sockets = 8
+tcp_pool = 128
+base_device_id = "34020000001320000000"
+
+[profile]
+id = "vendor-a"
+standard = "GB/T 28181-2016"
+keepalive_ms = 30000
+catalog_items = 4
+synthetic_vendor = true
+
+[[steps]]
+kind = "catalog_query"
+at_ms = 120000
+
+[[steps]]
+kind = "invite"
+at_ms = 180000
+
+[[steps]]
+kind = "bye"
+at_ms = 240000
+
+# ~2% loss of device->platform traffic.
+[[faults]]
+kind = "drop"
+rate = 0.02
+direction = "device_to_platform"
+target = "any"
+
+# Extra 40ms +/- 20ms jitter on keepalives.
+[[faults]]
+kind = "delay"
+extra_ms = 40
+jitter_ms = 20
+rate = 0.5
+target = "keepalive"
+
+# Occasionally reorder platform->device commands.
+[[faults]]
+kind = "reorder"
+window = 3
+rate = 0.1
+direction = "platform_to_device"
+
+# Duplicate a fraction of catalog responses.
+[[faults]]
+kind = "duplicate"
+rate = 0.05
+target = "catalog"
+
+# Half-packet framing on 30% of frames (both directions).
+[[faults]]
+kind = "half_packet"
+rate = 0.3
+direction = "both"
+
+# Corrupt a small fraction of frames (parse errors, no panic).
+[[faults]]
+kind = "malformed"
+rate = 0.01
+target = "any"
+
+# Platform rejects 5% of REGISTERs with 503 to exercise retry.
+[[faults]]
+kind = "sip_error"
+rate = 0.05
+code = 503
+target = "register"

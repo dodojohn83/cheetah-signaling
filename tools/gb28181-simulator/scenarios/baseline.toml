@@ -1,0 +1,33 @@
+# Clean baseline: fixed shards, no injected faults.
+#
+# Runs a fleet of devices through REGISTER -> 401 -> REGISTER(auth) -> 200,
+# periodic keepalives, a scripted catalog query, and a media-control
+# INVITE/BYE.  No RTP/RTCP/PS/TS/ES payload is ever produced.
+
+name = "baseline"
+seed = 42
+shards = 4
+device_count = 50
+transport = "udp"
+duration_ms = 180000
+register_stagger_ms = 30000
+udp_sockets = 8
+tcp_pool = 64
+base_device_id = "34020000001320000000"
+
+[profile]
+id = "generic"
+keepalive_ms = 60000
+catalog_items = 2
+
+[[steps]]
+kind = "catalog_query"
+at_ms = 90000
+
+[[steps]]
+kind = "invite"
+at_ms = 120000
+
+[[steps]]
+kind = "bye"
+at_ms = 150000
