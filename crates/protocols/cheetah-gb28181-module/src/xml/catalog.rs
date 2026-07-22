@@ -7,6 +7,7 @@ use super::limits::XmlLimits;
 use super::reader::parse_xml;
 use super::writer::encode_xml;
 use crate::error::AccessError;
+use cheetah_domain::{CompatibilityCapability, CompatibilityProfile};
 
 /// Parsed content of a GB28181 `Catalog` response.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -78,15 +79,26 @@ pub struct CatalogItem {
 /// Parses a `Catalog` response body.
 pub fn parse_catalog(body: &[u8]) -> Result<CatalogResponse, AccessError> {
     let root = parse_xml(body, &XmlLimits::default())?;
-    extract_catalog(&root)
+    extract_catalog_with_profile(&root, &CompatibilityProfile::default())
 }
 
-pub(crate) fn extract_catalog(root: &XmlElement) -> Result<CatalogResponse, AccessError> {
+pub(crate) fn extract_catalog_with_profile(
+    root: &XmlElement,
+    profile: &CompatibilityProfile,
+) -> Result<CatalogResponse, AccessError> {
     let cmd_type = root
         .child_text("CmdType")
         .ok_or_else(|| AccessError::InvalidXml("missing CmdType".to_string()))?;
     if cmd_type != "Catalog" {
         return Err(AccessError::UnsupportedCmdType(cmd_type));
+    }
+
+    let allow_notify = profile.has(CompatibilityCapability::CatalogNotify);
+    if root.name != "Response" && !(allow_notify && root.name == "Notify") {
+        return Err(AccessError::InvalidXml(format!(
+            "unexpected Catalog root element: {}",
+            root.name
+        )));
     }
 
     let device_list = root
@@ -125,11 +137,40 @@ pub(crate) fn extract_catalog(root: &XmlElement) -> Result<CatalogResponse, Acce
     // `Item` elements are malformed and dropped. Fall back to the number of
     // well-formed items we actually parsed when the attribute is missing or
     // invalid.
-    let declared_num = device_list
+    let (declared_num, declared_num_from_wire) = device_list
         .attributes
         .get("Num")
         .and_then(|v| parse_u32(v).ok())
-        .unwrap_or(items.len() as u32);
+        .map(|n| (n, true))
+        .unwrap_or((items.len() as u32, false));
+
+    if declared_num_from_wire {
+        // Count all <Item> elements present on the wire, including the malformed
+        // ones intentionally dropped, so a single bad entry does not reject the
+        // whole catalog. GB28181 devices frequently declare inaccurate counts or
+        // split a directory across multiple fragments, so mismatches are accepted
+        // by default and logged as a diagnostic; callers that need strict
+        // validation can post-process `num`/`sum_num` against `items.len()`.
+        let present = items.len() as u32 + dropped;
+        if declared_num != present {
+            tracing::warn!(
+                sn = %sn,
+                device_id = %device_id,
+                declared_num,
+                present,
+                "catalog Num does not match parsed item count; accepting anyway"
+            );
+        }
+        if sum_num > 0 && declared_num > sum_num {
+            tracing::warn!(
+                sn = %sn,
+                device_id = %device_id,
+                declared_num,
+                sum_num,
+                "catalog Num exceeds SumNum; accepting anyway"
+            );
+        }
+    }
 
     Ok(CatalogResponse {
         sn,
@@ -358,5 +399,52 @@ mod tests {
         assert_eq!(parsed.sum_num, 0);
         assert_eq!(parsed.num, 0);
         assert!(parsed.items.is_empty());
+    }
+
+    #[test]
+    fn malformed_item_does_not_reject_whole_catalog() {
+        let body = br#"<?xml version="1.0"?>
+<Response>
+    <CmdType>Catalog</CmdType>
+    <SN>2</SN>
+    <DeviceID>34020000001320000001</DeviceID>
+    <SumNum>2</SumNum>
+    <DeviceList Num="2">
+        <Item>
+            <DeviceID>34020000001320000001</DeviceID>
+            <Name>Camera 1</Name>
+            <Status>ON</Status>
+        </Item>
+        <Item>
+            <Name>Camera 2</Name>
+            <Status>OFF</Status>
+        </Item>
+    </DeviceList>
+</Response>"#;
+        let catalog = parse_catalog(body).unwrap();
+        assert_eq!(catalog.num, 2);
+        assert_eq!(catalog.sum_num, 2);
+        assert_eq!(catalog.items.len(), 1);
+        assert_eq!(catalog.items[0].device_id, "34020000001320000001");
+    }
+
+    #[test]
+    fn inconsistent_counts_are_accepted_by_default() {
+        let body = br#"<?xml version="1.0"?>
+<Response>
+    <CmdType>Catalog</CmdType>
+    <SN>3</SN>
+    <DeviceID>34020000001320000001</DeviceID>
+    <SumNum>3</SumNum>
+    <DeviceList Num="5">
+        <Item><DeviceID>34020000001320000001</DeviceID><Name>Cam1</Name><Status>ON</Status></Item>
+        <Item><DeviceID>34020000001320000002</DeviceID><Name>Cam2</Name><Status>ON</Status></Item>
+        <Item><DeviceID>34020000001320000003</DeviceID><Name>Cam3</Name><Status>ON</Status></Item>
+    </DeviceList>
+</Response>"#;
+        let catalog = parse_catalog(body).unwrap();
+        assert_eq!(catalog.items.len(), 3);
+        assert_eq!(catalog.num, 5);
+        assert_eq!(catalog.sum_num, 3);
     }
 }

@@ -1,0 +1,6 @@
+source = "synthetic"
+standard = "GB/T 28181-2016"
+profile = "gb4-comp-002-charset-fallback"
+expected = "XML declared as UTF-8 but encoded as GBK is accepted when CharsetFallback is enabled"
+desensitization = "Device IDs replaced with synthetic dummy values; payload contains public sample Chinese text"
+license = "CC0-1.0"

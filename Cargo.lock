@@ -592,6 +592,7 @@ name = "cheetah-gb28181-core"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "cheetah-domain",
  "hex",
  "hmac",
  "md5",
@@ -1075,6 +1076,7 @@ dependencies = [
  "cheetah-cluster-registry",
  "cheetah-config",
  "cheetah-domain",
+ "cheetah-gb28181-core",
  "cheetah-gb28181-driver-tokio",
  "cheetah-gb28181-module",
  "cheetah-http-api",
