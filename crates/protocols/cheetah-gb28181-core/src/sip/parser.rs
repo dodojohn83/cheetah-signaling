@@ -305,15 +305,10 @@ impl SipParser {
                 if profile_has(
                     self.profile.as_ref(),
                     CompatibilityCapability::HeaderNormalization,
-                ) {
-                    match self.looks_like_header_after_blank(consumed) {
-                        Some(true) => {
-                            consumed += 2;
-                            continue;
-                        }
-                        None => return None,
-                        Some(false) => {}
-                    }
+                ) && self.looks_like_header_after_blank(consumed)
+                {
+                    consumed += 2;
+                    continue;
                 }
                 // End of headers
                 consumed += 2;
@@ -435,47 +430,35 @@ impl SipParser {
     /// looks like a SIP header (non-empty token, a colon, and no leading
     /// whitespace). Used by `HeaderNormalization` to skip intra-header blank
     /// lines without treating them as the body separator.
-    fn looks_like_header_after_blank(&self, consumed: usize) -> Option<bool> {
+    ///
+    /// Only applies the intra-header blank heuristic when there is a complete
+    /// next line already buffered. If there are no bytes after the blank line, or
+    /// the next line is incomplete, the blank line is treated as the header
+    /// terminator. This avoids deadlocking stream parsers on body-less messages
+    /// (e.g. `REGISTER`) or bodies that do not end with a CRLF.
+    fn looks_like_header_after_blank(&self, consumed: usize) -> bool {
         let start = consumed + 2; // skip the leading CRLF
         if start >= self.buffer.len() {
-            // In datagram mode the whole message is present, so a blank line
-            // followed by nothing is the header terminator. In stream mode we
-            // need more bytes to decide.
-            return if self.config.datagram_mode {
-                Some(false)
-            } else {
-                None
-            };
+            return false;
         }
-        let end = match self.find_crlf(start) {
-            Some(end) => end,
-            // Same logic: only treat an unterminated trailing line as the body
-            // when we already have the complete datagram; otherwise wait.
-            None => {
-                return if self.config.datagram_mode {
-                    Some(false)
-                } else {
-                    None
-                };
-            }
+        let Some(end) = self.find_crlf(start) else {
+            return false;
         };
         let line = &self.buffer[start..end];
         // Must not be empty or continuation.
         if line.is_empty() || line[0].is_ascii_whitespace() {
-            return Some(false);
+            return false;
         }
         let Some(colon) = line.iter().position(|&b| b == b':') else {
-            return Some(false);
+            return false;
         };
         let name = &line[..colon];
         if name.is_empty() {
-            return Some(false);
+            return false;
         }
         // Header name must be a single token (no spaces or non-printable chars).
-        Some(
-            name.iter()
-                .all(|&b| b.is_ascii_alphanumeric() || b"-._!%$*&+^`{|}~".contains(&b)),
-        )
+        name.iter()
+            .all(|&b| b.is_ascii_alphanumeric() || b"-._!%$*&+^`{|}~".contains(&b))
     }
 }
 
@@ -700,6 +683,61 @@ Content-Length: {}\r\n\r\n",
             headers.get(&HeaderName::ContentType).unwrap().as_str(),
             "application/manscdp+xml"
         );
+        assert_eq!(body, body_bytes);
+    }
+
+    #[test]
+    fn header_normalization_bodyless_register_in_stream_mode() {
+        let profile = CompatibilityProfile {
+            capabilities: vec![CompatibilityCapability::HeaderNormalization],
+            ..Default::default()
+        };
+        let raw = "register sip:registrar SIP/2.0\r\n\
+                   Via: SIP/2.0/UDP 192.0.2.1:5060;branch=z9hG4bKabc\r\n\
+                   CSeq: 1 register\r\n\
+                   Content-Length: 0\r\n\r\n";
+        let mut parser = SipParser::new_with_profile(SipParserConfig::default(), Some(profile));
+        parser.feed(raw.as_bytes()).unwrap();
+        let msg = parser
+            .pop_message()
+            .expect("stream parser should parse a body-less REGISTER without trailing bytes")
+            .expect("valid request");
+        let SipMessage::Request { line, body, .. } = msg else {
+            panic!("expected request");
+        };
+        assert_eq!(line.method, Method::Register);
+        assert!(body.is_empty());
+    }
+
+    #[test]
+    fn header_normalization_body_without_trailing_crlf_in_stream_mode() {
+        let profile = CompatibilityProfile {
+            capabilities: vec![CompatibilityCapability::HeaderNormalization],
+            ..Default::default()
+        };
+        let body_bytes = br#"<?xml version="1.0"?><Notify><CmdType>Keepalive</CmdType></Notify>"#;
+        let raw = format!(
+            "MESSAGE sip:target@example.com SIP/2.0\r\n\
+             Via: SIP/2.0/UDP 192.0.2.1:5060;branch=z9hG4bKabc\r\n\
+             From: <sip:a@example.com>;tag=1\r\n\
+             To: <sip:a@example.com>\r\n\
+             Call-ID: call-1@example.com\r\n\
+             CSeq: 1 message\r\n\
+             Content-Type: application/manscdp+xml\r\n\
+             Content-Length: {}\r\n\r\n",
+            body_bytes.len()
+        );
+        let mut raw = raw.into_bytes();
+        raw.extend_from_slice(body_bytes);
+        let mut parser = SipParser::new_with_profile(SipParserConfig::default(), Some(profile));
+        parser.feed(&raw).unwrap();
+        let msg = parser
+            .pop_message()
+            .expect("stream parser should parse a body that does not end with CRLF")
+            .expect("valid request");
+        let SipMessage::Request { body, .. } = msg else {
+            panic!("expected request");
+        };
         assert_eq!(body, body_bytes);
     }
 }
