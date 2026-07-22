@@ -348,7 +348,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                 .map(|v| v.as_str());
             let route =
                 EndpointRoute::from_registration(source, top_via, Some(contact_uri.clone()));
-            if let Err(e) = self.registrations.upsert(
+            let registration = match self.registrations.upsert(
                 device_id.clone(),
                 route,
                 contact.clone(),
@@ -356,17 +356,17 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                 now,
                 user_agent.clone(),
             ) {
-                return if matches!(e, AccessError::RegistrationTableFull) {
-                    Ok(vec![AccessOutput::SendResponse(build_error_response(
+                Ok(registration) => registration,
+                Err(AccessError::RegistrationTableFull) => {
+                    return Ok(vec![AccessOutput::SendResponse(build_error_response(
                         message,
                         503,
                         "Service Unavailable",
                         self.next_tag(),
-                    ))])
-                } else {
-                    Err(e)
-                };
-            }
+                    ))]);
+                }
+                Err(e) => return Err(e),
+            };
             let response = build_success_response(message, contact_uri, expires, self.next_tag());
             Ok(vec![
                 AccessOutput::SendResponse(response),
@@ -377,6 +377,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                     contact,
                     expires,
                     user_agent,
+                    registration_sequence: registration.registration_sequence,
                 }),
             ])
         }

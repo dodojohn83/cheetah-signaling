@@ -389,6 +389,20 @@ pub enum QueryKind {
     ConfigDownload,
 }
 
+impl QueryKind {
+    /// Stable snake_case name used for logging and idempotency keys.
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Catalog => "catalog",
+            Self::DeviceInfo => "device_info",
+            Self::DeviceStatus => "device_status",
+            Self::RecordInfo => "record_info",
+            Self::PresetQuery => "preset_query",
+            Self::ConfigDownload => "config_download",
+        }
+    }
+}
+
 /// A PTZ preset command.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct PresetCommand {

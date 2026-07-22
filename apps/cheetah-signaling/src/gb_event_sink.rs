@@ -9,17 +9,18 @@ use cheetah_domain::{Connectivity, Device, Protocol};
 use cheetah_gb28181_driver_tokio::sink::EventSink;
 use cheetah_gb28181_module::DeviceId as GbDeviceId;
 use cheetah_gb28181_module::Gb28181Event;
+use cheetah_gb28181_module::bootstrap;
 use cheetah_gb28181_module::xml::CatalogItem as GbCatalogItem;
 use cheetah_http_api::metrics::RequestMetrics;
 use cheetah_http_api::state::ApiState;
 use cheetah_signal_application::{
     ChannelDescriptor, MarkDeviceOfflineRequest, MarkDeviceOnlineRequest, RegisterDeviceRequest,
-    ReplaceChannelCatalogRequest, UpdateDeviceCapabilitiesRequest,
+    ReplaceChannelCatalogRequest, SubmitOperationRequest, UpdateDeviceCapabilitiesRequest,
 };
 use cheetah_signal_types::{
-    ChannelId, CorrelationId, DeviceId, GbCommandMethod, GbCommandOutcome, GbMetricsRecorder,
-    MessageId, NodeId, Principal, PrincipalKind, ProtocolIdentity, RequestContext, SignalError,
-    SignalErrorKind, TenantId,
+    ChannelId, CorrelationId, Deadline, DeviceId, DurationMs, GbCommandMethod, GbCommandOutcome,
+    GbMetricsRecorder, MessageId, NodeId, OwnerEpoch, Principal, PrincipalKind, ProtocolIdentity,
+    RequestContext, ResourceId, ResourceKind, ResourceRef, SignalError, SignalErrorKind, TenantId,
 };
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -109,9 +110,24 @@ async fn process_event(
     let context = build_context(state, node_id, tenant_id, &event);
 
     let result = match event {
-        Gb28181Event::DeviceRegistered { device_id, .. } => {
-            ensure_online(state, &context, tenant_id, &device_id, true).await
-        }
+        Gb28181Event::DeviceRegistered {
+            device_id,
+            registration_sequence,
+            ..
+        } => match ensure_online(state, &context, tenant_id, &device_id, true).await {
+            Ok(Some(internal_id)) => {
+                submit_bootstrap_queries(
+                    state,
+                    &context,
+                    tenant_id,
+                    internal_id,
+                    registration_sequence,
+                )
+                .await
+            }
+            Ok(None) => Ok(()),
+            Err(e) => Err(e),
+        },
         Gb28181Event::DeviceUnregistered { device_id, .. } => {
             mark_offline(state, &context, tenant_id, &device_id).await
         }
@@ -121,14 +137,18 @@ async fn process_event(
             ..
         } => match presence {
             cheetah_gb28181_module::DevicePresence::Online => {
-                ensure_online(state, &context, tenant_id, &device_id, true).await
+                ensure_online(state, &context, tenant_id, &device_id, true)
+                    .await
+                    .map(|_| ())
             }
             cheetah_gb28181_module::DevicePresence::Offline => {
                 mark_offline(state, &context, tenant_id, &device_id).await
             }
         },
         Gb28181Event::Keepalive { device_id, .. } => {
-            ensure_online(state, &context, tenant_id, &device_id, false).await
+            ensure_online(state, &context, tenant_id, &device_id, false)
+                .await
+                .map(|_| ())
         }
         Gb28181Event::CatalogReceived {
             device_id,
@@ -610,28 +630,29 @@ async fn ensure_online(
     tenant_id: TenantId,
     device_id: &GbDeviceId,
     force: bool,
-) -> Result<(), SignalError> {
+) -> Result<Option<DeviceId>, SignalError> {
     let external_id = device_id.as_ref();
     if let Some(device) = resolve_device(state, tenant_id, external_id).await {
-        if force || !matches!(device.connectivity(), Connectivity::Online) {
+        let internal_id = device.device_id();
+        if !matches!(device.connectivity(), Connectivity::Online) {
             let mut uow = state.storage.begin().await.map_err(storage_error)?;
             let _ = state
                 .device_service
                 .mark_device_online(
                     context,
                     &mut *uow,
-                    device.device_id(),
+                    internal_id,
                     MarkDeviceOnlineRequest {
                         reason: Some("gb28181 online".to_string()),
                     },
                 )
                 .await?;
         }
-        return Ok(());
+        return Ok(Some(internal_id));
     }
 
     if !force {
-        return Ok(());
+        return Ok(None);
     }
 
     let mut uow = state.storage.begin().await.map_err(storage_error)?;
@@ -652,19 +673,20 @@ async fn ensure_online(
         )
         .await?;
 
+    let internal_id = result.device.device_id;
     let mut uow = state.storage.begin().await.map_err(storage_error)?;
     let _ = state
         .device_service
         .mark_device_online(
             context,
             &mut *uow,
-            result.device.device_id,
+            internal_id,
             MarkDeviceOnlineRequest {
                 reason: Some("gb28181 registered".to_string()),
             },
         )
         .await?;
-    Ok(())
+    Ok(Some(internal_id))
 }
 
 async fn mark_offline(
@@ -684,6 +706,67 @@ async fn mark_offline(
                 internal_id,
                 MarkDeviceOfflineRequest {
                     reason: "gb28181 offline".to_string(),
+                },
+            )
+            .await?;
+    }
+    Ok(())
+}
+
+/// Submits Catalog / DeviceInfo / DeviceStatus bootstrap query Operations for a
+/// freshly registered/online GB28181 device.
+///
+/// Each query uses a tenant-scoped, owner-epoch-qualified and
+/// registration-sequence-qualified idempotency key so that the same
+/// registration does not create duplicate operations while a new owner or a new
+/// registration still spawns fresh queries.
+async fn submit_bootstrap_queries(
+    state: &ApiState,
+    context: &RequestContext,
+    tenant_id: TenantId,
+    device_id: DeviceId,
+    registration_sequence: u64,
+) -> Result<(), SignalError> {
+    let owner = state
+        .owner_resolver
+        .resolve(tenant_id, device_id)
+        .await
+        .map_err(SignalError::from)?;
+    let owner_epoch = owner.map(|o| o.owner_epoch).unwrap_or(OwnerEpoch(0));
+
+    let deadline = Deadline::from_now(state.clock.now_wall(), DurationMs::from_seconds(30))
+        .or_else(|| {
+            warn!("bootstrap query deadline overflowed; proceeding without deadline");
+            None
+        });
+    let target = ResourceRef {
+        tenant_id,
+        kind: ResourceKind::Device,
+        id: ResourceId::Device(device_id),
+    };
+
+    for kind in bootstrap::bootstrap_query_kinds() {
+        let payload = bootstrap::bootstrap_query_payload(*kind);
+        let idempotency_key = bootstrap::bootstrap_idempotency_key(
+            tenant_id,
+            device_id,
+            owner_epoch,
+            registration_sequence,
+            *kind,
+        );
+        let mut uow = state.storage.begin().await.map_err(storage_error)?;
+        let _ = state
+            .operation_service
+            .submit_operation(
+                context,
+                &mut *uow,
+                SubmitOperationRequest {
+                    device_id,
+                    target: target.clone(),
+                    payload,
+                    idempotency_key,
+                    deadline,
+                    expected_owner_epoch: owner_epoch,
                 },
             )
             .await?;

@@ -16,6 +16,7 @@
 
 pub mod access;
 pub mod assembly;
+pub mod bootstrap;
 pub mod cascade;
 pub mod config;
 pub mod error;
