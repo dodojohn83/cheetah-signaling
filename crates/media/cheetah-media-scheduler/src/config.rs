@@ -36,6 +36,9 @@ pub struct MediaRegistryConfig {
     pub max_reported_session_count: u64,
     /// Duration a reservation remains valid without being activated.
     pub reservation_ttl_ms: u64,
+    /// Duration a deregistered node remains visible to the reconciler before
+    /// its active sessions are migrated or failed.
+    pub deregister_protection_ttl_ms: u64,
 }
 
 impl Default for MediaRegistryConfig {
@@ -63,6 +66,7 @@ impl MediaRegistryConfig {
             max_reported_load_percent: 100,
             max_reported_session_count: 100_000,
             reservation_ttl_ms: 10_000,
+            deregister_protection_ttl_ms: 60_000,
         }
     }
 

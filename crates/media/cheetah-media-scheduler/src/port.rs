@@ -449,9 +449,8 @@ fn map_scheduler_error(e: crate::error::SchedulerError) -> DomainError {
             DomainError::unavailable(e.to_string())
         }
         crate::error::SchedulerError::NoNode(_)
-        | crate::error::SchedulerError::CapacityExhausted(_) => {
-            DomainError::unavailable(e.to_string())
-        }
+        | crate::error::SchedulerError::CapacityExhausted(_)
+        | crate::error::SchedulerError::NodeDraining(_) => DomainError::unavailable(e.to_string()),
         crate::error::SchedulerError::NodeNotFound(_)
         | crate::error::SchedulerError::ReservationNotFound { .. } => {
             DomainError::not_found("media_node", e.to_string())

@@ -259,7 +259,7 @@ impl MediaNodeRegistry for InMemoryMediaNodeRegistry {
             .get_mut(&node_id)
             .ok_or_else(|| SchedulerError::NodeNotFound(node_id.to_string()))?;
         entry.node.status = NodeStatus::Left;
-        entry.node.lease_until = None;
+        entry.node.lease_until = lease_until(clock, self.config.deregister_protection_ttl_ms);
         let now = clock.now_wall();
         Ok(to_media_node(entry, now, &self.config))
     }
@@ -299,6 +299,12 @@ impl MediaNodeRegistry for InMemoryMediaNodeRegistry {
         let entry = nodes
             .get_mut(&node_id)
             .ok_or_else(|| SchedulerError::NodeNotFound(node_id.to_string()))?;
+        if entry.node.draining || entry.node.status == NodeStatus::Draining {
+            return Err(SchedulerError::NodeDraining(node_id.to_string()));
+        }
+        if entry.node.status == NodeStatus::Left {
+            return Err(SchedulerError::NodeNotFound(node_id.to_string()));
+        }
         let now = clock.now_wall();
         let ttl = i64::try_from(self.config.reservation_ttl_ms).unwrap_or(i64::MAX);
         let deadline = now
@@ -362,9 +368,10 @@ pub(crate) fn is_active(
     now: UtcTimestamp,
     config: &MediaRegistryConfig,
 ) -> bool {
-    entry.node.status != NodeStatus::Left
-        && !is_lease_expired(entry, now)
-        && !is_stale(entry, now, config)
+    match entry.node.status {
+        NodeStatus::Left => !is_lease_expired(entry, now),
+        _ => !is_lease_expired(entry, now) && !is_stale(entry, now, config),
+    }
 }
 
 pub(crate) fn is_lease_expired(entry: &NodeEntry, now: UtcTimestamp) -> bool {

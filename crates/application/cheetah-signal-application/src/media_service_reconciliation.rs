@@ -5,7 +5,7 @@ use crate::media_service::*;
 use cheetah_domain::{
     DomainError, MediaBinding, MediaBindingError, MediaBindingState, MediaNodeSessionRef,
     MediaPurpose, MediaReservation, MediaSession, MediaSessionDesiredState, MediaSessionError,
-    MediaSessionState, UnitOfWork,
+    MediaSessionState, NodeStatus, UnitOfWork,
 };
 use cheetah_signal_types::{MediaBindingId, MediaSessionId, NodeId, PageRequest, RequestContext};
 use std::collections::{BTreeMap, BTreeSet};
@@ -160,9 +160,22 @@ impl MediaService {
             .list_nodes(tenant_id, self.clock.as_ref())
             .await?;
         report.nodes_scanned = nodes.len() as u64;
+        let now = self.clock.now_wall();
 
         for node in nodes {
             let node_id = node.node_id;
+
+            // A deregistered node still within its protection lease is kept in
+            // the active list so the reconciler sees its bindings, but we must
+            // not query or migrate those sessions until the window expires.
+            if node.status == NodeStatus::Left
+                && let Some(lease) = node.lease_until
+                && now < lease
+            {
+                let _ = active_by_node.remove(&node_id);
+                continue;
+            }
+
             let local_list = active_by_node.remove(&node_id).unwrap_or_default();
             let local_ids: BTreeSet<MediaSessionId> = local_list
                 .iter()
