@@ -290,6 +290,10 @@ impl<M: GbAccessMachine> Shared<M> {
                         // A 2xx final response to an INVITE confirms a UAS
                         // dialog; register it so later in-dialog requests use
                         // dialog routing.
+                        if target != source || !matches!(message, SipMessage::Response { .. }) {
+                            actions.push(DriverAction::Send { message, target });
+                            continue;
+                        }
                         if let Some(invite) = establish_invite.as_ref()
                             && is_success_response(&message)
                             && let Some(local_tag) = response_to_tag(&message)
@@ -303,10 +307,7 @@ impl<M: GbAccessMachine> Shared<M> {
 
                         // Route TU responses through the server transaction so
                         // they are cached and (on UDP) retransmitted.
-                        if target == source
-                            && matches!(message, SipMessage::Response { .. })
-                            && let Some(key) = &key
-                        {
+                        if let Some(key) = &key {
                             let sends = {
                                 let mut txns = self
                                     .txns(reliable)
@@ -354,9 +355,50 @@ impl<M: GbAccessMachine> Shared<M> {
                     message,
                     target: source,
                 },
+                AccessOutput::SendMessage { target, message } => {
+                    DriverAction::Send { message, target }
+                }
                 AccessOutput::EmitEvent(event) => DriverAction::Emit(event),
             })
             .collect())
+    }
+
+    /// Dispatches a domain command through the access machine and starts a
+    /// client transaction for each produced outbound SIP request.
+    pub(crate) fn handle_command(
+        &self,
+        input: M::CommandInput,
+    ) -> Result<Vec<DriverAction<M::Event>>, DriverError> {
+        let outputs = {
+            let mut access = self.access.lock().map_err(|_| DriverError::AccessLock)?;
+            access
+                .process_command(input)
+                .map_err(|e| DriverError::Access(Box::new(e)))?
+        };
+
+        let mut actions = Vec::new();
+        for output in outputs {
+            match output {
+                AccessOutput::SendMessage { target, message } => {
+                    let now = self.now_monotonic();
+                    let sends = {
+                        let mut txns = self.udp_txns.lock().map_err(|_| DriverError::AccessLock)?;
+                        txns.start_client_transaction(message, target, now)
+                    };
+                    for send in sends {
+                        if let ManagerOutput::Send { message, target } = send {
+                            actions.push(DriverAction::Send { message, target });
+                        }
+                    }
+                }
+                AccessOutput::SendResponse(_) => {
+                    // Commands cannot produce responses without a source
+                    // transaction; drop stray outputs.
+                }
+                AccessOutput::EmitEvent(event) => actions.push(DriverAction::Emit(event)),
+            }
+        }
+        Ok(actions)
     }
 
     /// Advances the access machine's timers, mapping outputs to actions.
@@ -367,13 +409,13 @@ impl<M: GbAccessMachine> Shared<M> {
                 .tick(now)
                 .map_err(|e| DriverError::Access(Box::new(e)))?
         };
-        // Tick-produced SIP responses have no transaction route; only events are
-        // actionable here.
+        // Tick-produced SIP responses/messages have no transaction route here;
+        // only events are actionable.
         Ok(outputs
             .into_iter()
             .filter_map(|output| match output {
                 AccessOutput::EmitEvent(event) => Some(DriverAction::Emit(event)),
-                AccessOutput::SendResponse(_) => None,
+                AccessOutput::SendResponse(_) | AccessOutput::SendMessage { .. } => None,
             })
             .collect())
     }

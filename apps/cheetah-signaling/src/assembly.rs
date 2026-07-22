@@ -6,7 +6,7 @@
 use crate::gb_event_sink;
 use crate::onvif_discovery;
 use crate::workers::{
-    OwnerCommandHandler, SingleNodeOwnerResolver, StorageDeviceProtocolLookup,
+    DriverCommandBus, OwnerCommandHandler, SingleNodeOwnerResolver, StorageDeviceProtocolLookup,
     build_assignment_service, build_drain_service, build_takeover_service, builtin_plugin_ids,
     spawn_drain_migration_worker, spawn_inbox_worker, spawn_node_lease_worker,
     spawn_owner_lease_renew_worker, spawn_protocol_session_reaper_worker,
@@ -841,21 +841,8 @@ pub async fn start(
 
     let plugin_host = Arc::new(tokio::sync::Mutex::new(plugin_host));
 
-    // Inbox consumer after plugins so handle_command can reach real adapters.
-    {
-        let handler: Arc<dyn cheetah_signal_application::CommandHandler> =
-            Arc::new(OwnerCommandHandler::new(plugin_host.clone(), clock.clone()));
-        workers.push(spawn_inbox_worker(
-            storage.clone(),
-            command_bus.clone(),
-            owner_resolver.clone(),
-            handler,
-            clock.clone(),
-            node_id,
-            cancel.child_token(),
-        ));
-        info!("inbox consumer worker started");
-    }
+    // Inbox consumer is spawned after GB28181 driver bind so the owner's command
+    // handler can inject outbound commands into the driver.
 
     // Cluster drain/migration + takeover service (armed for reconnect paths).
     if config.cluster.enabled {
@@ -925,6 +912,7 @@ pub async fn start(
         );
     }
     let mut gb28181_addr = None;
+    let mut gb_command_tx: Option<tokio::sync::mpsc::Sender<_>> = None;
     if gb_listeners.is_empty() {
         warn!("no gb28181 listeners configured; protocol listener not started");
     }
@@ -1020,6 +1008,9 @@ pub async fn start(
         if gb28181_addr.is_none() {
             gb28181_addr = Some(local);
         }
+        if gb_command_tx.is_none() {
+            gb_command_tx = Some(driver.command_bus());
+        }
         let worker_cancel = cancel.child_token();
         let listener_id = listener.id.clone();
         workers.push(tokio::spawn(async move {
@@ -1032,6 +1023,26 @@ pub async fn start(
             }
         }));
         info!(listener_id = %listener.id, %local, realm = %listener.realm, domain = %listener.domain, "gb28181 SIP listening");
+    }
+
+    // Inbox consumer after GB28181 driver bind so the command bus is wired.
+    {
+        let gb_bus = gb_command_tx.map(|tx| {
+            Arc::new(DriverCommandBus::new(tx)) as Arc<dyn crate::workers::Gb28181CommandBus>
+        });
+        let handler: Arc<dyn cheetah_signal_application::CommandHandler> = Arc::new(
+            OwnerCommandHandler::new(plugin_host.clone(), clock.clone(), gb_bus),
+        );
+        workers.push(spawn_inbox_worker(
+            storage.clone(),
+            command_bus.clone(),
+            owner_resolver.clone(),
+            handler,
+            clock.clone(),
+            node_id,
+            cancel.child_token(),
+        ));
+        info!("inbox consumer worker started");
     }
 
     // Protocol session expiry reaper is a single global, cross-tenant worker.

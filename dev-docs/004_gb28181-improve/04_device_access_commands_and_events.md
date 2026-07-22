@@ -153,7 +153,7 @@ OperationStep outcome: succeeded / failed / unknown-outcome / cancelled
 - [x] `GB4-ACC-004`：完成 Catalog/DeviceInfo/DeviceStatus bootstrap/query Operation。见 [`reports/gb4-acc-004.md`](reports/gb4-acc-004.md)。
 - [x] `GB4-ACC-005`：完成 bounded Catalog/RecordInfo aggregation 和 channel mapping。见 [`reports/gb4-acc-005.md`](reports/gb4-acc-005.md)。
 - [x] `GB4-CMD-001`：为 query、PTZ、preset、DeviceControl 新增 typed domain/REST/Proto payload 和 capability。详见 `dev-docs/004_gb28181-improve/reports/gb4-cmd-001.md`。
-- [ ] `GB4-CMD-002`：将 application Command 直接路由到 GB shard/client transaction，移除 plugin placeholder。
+- [x] `GB4-CMD-002`：将 application Command 直接路由到 GB shard/client transaction，移除 plugin placeholder。详见 `dev-docs/004_gb28181-improve/reports/gb4-cmd-002.md`。
 - [ ] `GB4-CMD-003`：分离 inbox receipt、dispatch attempt 和 OperationStep outcome，正确实现 UnknownOutcome。
 - [ ] `GB4-EVT-001`：将全部 GB event 接入 application handler、repository/inbox/outbox；删除 logging-only 分支。
 - [ ] `GB4-EVT-002`：实现事件优先级、coalescing、queue full 和 dead-letter 运维策略。

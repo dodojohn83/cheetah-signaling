@@ -18,6 +18,7 @@ pub mod access;
 pub mod assembly;
 pub mod bootstrap;
 pub mod cascade;
+pub mod command;
 pub mod config;
 pub mod error;
 pub mod events;
@@ -41,6 +42,7 @@ pub use cascade::{
     CascadeOutput, Gb28181Cascade,
 };
 pub use cheetah_gb28181_core::{AccessInput, AccessOutput, GbAccessMachine};
+pub use command::Gb28181Command;
 pub use config::{AuthPolicy, CharsetPolicy, Gb28181DomainConfig};
 pub use error::AccessError;
 pub use events::{DevicePresence, Gb28181Event};
