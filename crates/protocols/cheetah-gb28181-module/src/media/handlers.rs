@@ -4,7 +4,10 @@ use super::invite::{build_ack, build_bye, build_ok_response, first_contact_uri, 
 use super::session::{SessionState, failed_event, socket_addr, stopped_event};
 use super::{Gb28181Media, MediaError, MediaOutput};
 use crate::events::Gb28181Event;
-use cheetah_gb28181_core::{HeaderName, Method, SdpParserConfig, SipMessage};
+use cheetah_gb28181_core::sdp::{SdpAttribute, SdpSession};
+use cheetah_gb28181_core::{
+    CompatibilityProfile, HeaderName, Method, SdpParserConfig, SipMessage, SipUri,
+};
 
 /// Conservative SDP parser limits for bodies received from remote devices.
 const REMOTE_SDP_CONFIG: SdpParserConfig = SdpParserConfig {
@@ -221,6 +224,15 @@ fn on_invite_success(
 
     let parsed_remote_sdp = cheetah_gb28181_core::parse_sdp(msg.body(), &REMOTE_SDP_CONFIG)
         .map_err(|e| MediaError::MalformedSdp(e.to_string()))?;
+
+    // Enforce the compatibility profile's SDP payload/attribute allow-list before
+    // committing to the dialog. Non-baseline payload types and vendor attributes
+    // are rejected unless the matched profile enables the SDP override capability
+    // and lists them. The 200 OK is still acknowledged and the dialog torn down.
+    if let Some(reason) = validate_remote_sdp(&parsed_remote_sdp, &media.config.compatibility) {
+        return reject_and_teardown(media, sid, &remote_tag, &contact, &reason);
+    }
+
     let remote_sdp_text = String::from_utf8_lossy(msg.body()).to_string();
 
     let remote_ssrc = parsed_remote_sdp
@@ -252,48 +264,13 @@ fn on_invite_success(
     let source = match socket_addr(&remote_address, remote_port) {
         Ok(s) => s,
         Err(e) => {
-            let session = media
-                .sessions
-                .get(&sid)
-                .ok_or(MediaError::SessionNotFound)?;
-            let ack_branch = format!("{}-ack", session.branch);
-            let ack = build_ack(
-                &media.config.local_sip_uri,
-                session,
-                Some(&remote_tag),
+            return reject_and_teardown(
+                media,
+                sid,
+                &remote_tag,
                 &contact,
-                &ack_branch,
-            )
-            .map_err(|e| MediaError::MalformedSip(e.to_string()))?;
-
-            let mut bye_session = session.clone();
-            bye_session.remote_tag = Some(remote_tag.clone());
-            bye_session.cseq = bye_session
-                .cseq
-                .checked_add(1)
-                .ok_or_else(|| MediaError::InvalidState("CSeq overflow".to_string()))?;
-            let bye_branch = format!("{}-bye", session.branch);
-            let bye = build_bye(
-                &media.config.local_sip_uri,
-                &bye_session,
-                bye_session.cseq,
-                &bye_branch,
-                &contact,
-            )
-            .map_err(|e| MediaError::MalformedSip(e.to_string()))?;
-
-            let session = media
-                .remove_session(sid)
-                .ok_or(MediaError::SessionNotFound)?;
-            return Ok(vec![
-                MediaOutput::SendMessage(ack),
-                MediaOutput::SendMessage(bye),
-                MediaOutput::EmitEvent(failed_event(
-                    &session,
-                    &media.config.domain_id,
-                    &format!("invalid SDP media address: {e}"),
-                )),
-            ]);
+                &format!("invalid SDP media address: {e}"),
+            );
         }
     };
 
@@ -335,4 +312,80 @@ fn on_invite_success(
         MediaOutput::SendMessage(ack),
         MediaOutput::EmitEvent(event),
     ])
+}
+
+/// Acknowledges the 200 OK, tears the accidental dialog down with a BYE and
+/// reports the failure. Used when the device answer is unacceptable (bad media
+/// address or a payload/attribute the compatibility profile does not allow).
+fn reject_and_teardown(
+    media: &mut Gb28181Media,
+    sid: super::MediaSessionId,
+    remote_tag: &str,
+    contact: &SipUri,
+    reason: &str,
+) -> Result<Vec<MediaOutput>, MediaError> {
+    let session = media
+        .sessions
+        .get(&sid)
+        .ok_or(MediaError::SessionNotFound)?;
+    let ack_branch = format!("{}-ack", session.branch);
+    let ack = build_ack(
+        &media.config.local_sip_uri,
+        session,
+        Some(remote_tag),
+        contact,
+        &ack_branch,
+    )
+    .map_err(|e| MediaError::MalformedSip(e.to_string()))?;
+
+    let mut bye_session = session.clone();
+    bye_session.remote_tag = Some(remote_tag.to_string());
+    bye_session.cseq = bye_session
+        .cseq
+        .checked_add(1)
+        .ok_or_else(|| MediaError::InvalidState("CSeq overflow".to_string()))?;
+    let bye_branch = format!("{}-bye", session.branch);
+    let bye = build_bye(
+        &media.config.local_sip_uri,
+        &bye_session,
+        bye_session.cseq,
+        &bye_branch,
+        contact,
+    )
+    .map_err(|e| MediaError::MalformedSip(e.to_string()))?;
+
+    let session = media
+        .remove_session(sid)
+        .ok_or(MediaError::SessionNotFound)?;
+    Ok(vec![
+        MediaOutput::SendMessage(ack),
+        MediaOutput::SendMessage(bye),
+        MediaOutput::EmitEvent(failed_event(&session, &media.config.domain_id, reason)),
+    ])
+}
+
+/// Validates a parsed device SDP answer against the compatibility profile.
+///
+/// Returns `Some(reason)` for the first payload type or vendor attribute that is
+/// not permitted, or `None` when every media description is acceptable. Only
+/// vendor (`Unknown`) attributes are gated; typed attributes recognised by the
+/// SDP parser are inherently standard and always accepted.
+fn validate_remote_sdp(sdp: &SdpSession, profile: &CompatibilityProfile) -> Option<String> {
+    for media in &sdp.media {
+        for format in &media.formats {
+            if !profile.sdp_payload_allowed(format) {
+                return Some(format!(
+                    "SDP payload type not permitted by profile: {format}"
+                ));
+            }
+        }
+        for attribute in &media.attributes {
+            if let SdpAttribute::Unknown { name, .. } = attribute
+                && !profile.sdp_attribute_allowed(name)
+            {
+                return Some(format!("SDP attribute not permitted by profile: {name}"));
+            }
+        }
+    }
+    None
 }

@@ -333,6 +333,29 @@ async fn process_event(
             )
             .await
         }
+        Gb28181Event::MediaStatusReceived {
+            device_id,
+            sn,
+            notify_type,
+            outcome,
+            ..
+        } => {
+            let internal_id = resolve_device_id(state, tenant_id, device_id.as_ref()).await;
+            let mut payload = BTreeMap::new();
+            payload.insert("sn".to_string(), sn);
+            payload.insert("notify_type".to_string(), notify_type);
+            payload.insert("outcome".to_string(), format!("{outcome:?}"));
+            append_gb_event(
+                state,
+                &context,
+                tenant_id,
+                internal_id,
+                Some(device_id.as_ref()),
+                "MediaStatus",
+                payload,
+            )
+            .await
+        }
         Gb28181Event::MediaSessionStarted {
             media_session_id,
             domain_id,
@@ -598,6 +621,7 @@ fn event_source(event: &Gb28181Event) -> Option<&std::net::SocketAddr> {
         Gb28181Event::AlarmReceived { source, .. } => Some(source),
         Gb28181Event::MobilePositionReceived { source, .. } => Some(source),
         Gb28181Event::DeviceControlResponseReceived { source, .. } => Some(source),
+        Gb28181Event::MediaStatusReceived { source, .. } => Some(source),
         Gb28181Event::MediaSessionStarted { source, .. } => Some(source),
         Gb28181Event::MediaSessionStopped { source, .. } => source.as_ref(),
         Gb28181Event::MediaSessionFailed { source, .. } => source.as_ref(),

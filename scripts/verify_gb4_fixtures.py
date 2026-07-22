@@ -29,7 +29,20 @@ OPTIONAL_FIELDS = {
     "manufacturer",
     "model",
     "firmware",
+    "risk",
+    "regression_test",
+    "removal_criteria",
 }
+
+# Compatibility-override fixtures (GB4-COMP-003/004) must additionally document
+# the workaround provenance: risk, a regression test reference and removal
+# criteria. The sample input is the fixture data file itself.
+OVERRIDE_PROVENANCE_FIELDS = {
+    "risk",
+    "regression_test",
+    "removal_criteria",
+}
+OVERRIDE_PROFILE_PREFIXES = ("gb4-comp-003", "gb4-comp-004")
 
 ALLOWED_SOURCES = {"synthetic", "real-device", "reference-peer"}
 ALLOWED_STANDARDS = {"GB/T 28181-2022", "GB/T 28181-2016"}
@@ -59,6 +72,16 @@ def validate_fixture(meta_path: Path) -> list[str]:
     unknown = set(data.keys()) - REQUIRED_FIELDS - OPTIONAL_FIELDS
     if unknown:
         errors.append(f"{meta_path}: unknown fields {sorted(unknown)}")
+
+    profile = data.get("profile", "")
+    if isinstance(profile, str) and profile.startswith(OVERRIDE_PROFILE_PREFIXES):
+        for field in OVERRIDE_PROVENANCE_FIELDS:
+            value = data.get(field)
+            if not isinstance(value, str) or not value.strip():
+                errors.append(
+                    f"{meta_path}: compatibility-override fixture '{profile}' "
+                    f"must document non-empty provenance field '{field}'"
+                )
 
     return errors
 

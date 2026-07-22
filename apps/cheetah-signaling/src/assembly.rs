@@ -18,7 +18,9 @@ use cheetah_cluster_registry::NodeLeaseService;
 use cheetah_domain::ports::{DeviceOwnerResolver, MediaPort};
 use cheetah_domain::{DomainEvent, EventPublisher, MediaEventHandler};
 use cheetah_gb28181_core::{
-    BranchPolicy, CompatibilityCapability, CompatibilityProfile, ManagerConfig,
+    BranchPolicy, BroadcastAddressSource, BroadcastOverride, CompatibilityCapability,
+    CompatibilityOverrides, CompatibilityProfile, ManagerConfig, MediaStatusOverride,
+    SdpMediaOverride,
 };
 use cheetah_gb28181_driver_tokio::Gb28181UdpDriver;
 use cheetah_gb28181_driver_tokio::config::DriverConfig as GbDriverConfig;
@@ -41,7 +43,9 @@ use cheetah_plugin_sdk::{PluginManifest, ProtocolDriverFactory};
 use cheetah_secret::{CompositeSecretStore, EnvSecretStore, FileSecretStore};
 use cheetah_signal_application::OutboxRelay;
 use cheetah_signal_contracts::cheetah::common::v1::media_cluster_registry_server::MediaClusterRegistryServer;
-use cheetah_signal_types::config::Gb28181CompatibilityProfileConfig;
+use cheetah_signal_types::config::{
+    Gb28181CompatibilityOverridesConfig, Gb28181CompatibilityProfileConfig,
+};
 use cheetah_signal_types::config::{MessagingBackend, SignalConfig, StorageBackend};
 use cheetah_signal_types::{
     ChannelId, Clock, DeviceId, DurationMs, Event, IdGenerator, MediaBindingId, MediaSessionId,
@@ -1314,6 +1318,12 @@ fn build_compatibility_profile(
                 .map_err(|_| format!("profile '{}' has unknown capability '{c}'", profile.id))
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let overrides = build_compatibility_overrides(&profile.overrides).map_err(|e| {
+        format!(
+            "profile '{}' has invalid compatibility override: {e}",
+            profile.id
+        )
+    })?;
     Ok(CompatibilityProfile {
         profile_id: Some(profile.id.clone()),
         standard_version: profile.standard_version.clone(),
@@ -1323,5 +1333,46 @@ fn build_compatibility_profile(
         capabilities,
         evidence_ref: profile.evidence_ref.clone(),
         revision: profile.revision,
+        overrides,
+    })
+}
+
+/// Maps a config-level compatibility override into the typed domain override.
+///
+/// Empty override sections map to `None` so the strict default behaviour is
+/// preserved unless the profile explicitly declares a widening.
+fn build_compatibility_overrides(
+    config: &Gb28181CompatibilityOverridesConfig,
+) -> Result<CompatibilityOverrides, String> {
+    let sdp = if config.sdp_allowed_payload_types.is_empty()
+        && config.sdp_allowed_attribute_names.is_empty()
+    {
+        None
+    } else {
+        Some(SdpMediaOverride {
+            allowed_payload_types: config.sdp_allowed_payload_types.clone(),
+            allowed_attribute_names: config.sdp_allowed_attribute_names.clone(),
+        })
+    };
+    let broadcast = config
+        .broadcast_address_source
+        .as_deref()
+        .map(|s| {
+            s.parse::<BroadcastAddressSource>()
+                .map(|address_source| BroadcastOverride { address_source })
+                .map_err(|e| e.to_string())
+        })
+        .transpose()?;
+    let media_status = if config.media_status_stopped_codes.is_empty() {
+        None
+    } else {
+        Some(MediaStatusOverride {
+            stopped_status_codes: config.media_status_stopped_codes.clone(),
+        })
+    };
+    Ok(CompatibilityOverrides {
+        sdp,
+        broadcast,
+        media_status,
     })
 }

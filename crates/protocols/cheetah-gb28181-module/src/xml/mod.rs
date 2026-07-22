@@ -8,6 +8,7 @@ pub mod device_status;
 pub mod element;
 pub mod keepalive;
 pub mod limits;
+pub mod media_status;
 pub mod mobile_position;
 pub mod query;
 pub mod reader;
@@ -31,6 +32,7 @@ pub use keepalive::{
     KeepaliveInfo, KeepaliveResponse, build_keepalive, parse_keepalive, parse_keepalive_response,
 };
 pub use limits::XmlLimits;
+pub use media_status::{MediaStatusInfo, parse_media_status};
 pub use mobile_position::{
     MobilePositionInfo, build_mobile_position_notify, parse_mobile_position,
 };
@@ -46,6 +48,7 @@ pub(crate) use device_control::extract_device_control_response;
 pub(crate) use device_info::extract_device_info;
 pub(crate) use device_status::extract_device_status;
 pub(crate) use keepalive::extract_keepalive;
+pub(crate) use media_status::extract_media_status;
 pub(crate) use mobile_position::extract_mobile_position;
 pub(crate) use record_info::extract_record_info;
 

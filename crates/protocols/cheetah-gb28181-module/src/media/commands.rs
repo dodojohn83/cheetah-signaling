@@ -4,6 +4,7 @@ use super::control::{PlaybackAction, build_info_mansrtsp};
 use super::invite::{SdpParams, build_bye, build_cancel, build_invite};
 use super::session::{Session, SessionState};
 use super::{Gb28181Media, MediaCommand, MediaError, MediaOutput};
+use cheetah_gb28181_core::BroadcastAddressSource;
 use cheetah_gb28181_core::sdp::{SdpAttribute, SdpDirection, SdpTime};
 
 /// Shared fields for every start-media command.
@@ -206,6 +207,16 @@ pub(super) fn on_command(
                 media_address,
                 media_port,
             };
+            // Broadcast/voice-talk address handling is profile gated: some
+            // intercom devices require the audio connection to be anchored at
+            // the signaling host rather than the media node. The default keeps
+            // the media-node address negotiated through the MediaPort.
+            let talk_address = match media.config.compatibility.broadcast_address_source() {
+                BroadcastAddressSource::SignalingHost => {
+                    media.config.local_sip_uri.host().to_string()
+                }
+                _ => p.media_address.clone(),
+            };
             let sdp = SdpParams {
                 session_name: "Talk".to_string(),
                 media_type: "audio".to_string(),
@@ -217,7 +228,7 @@ pub(super) fn on_command(
                     stop: "0".to_string(),
                 },
                 ssrc: None,
-                media_address: p.media_address.clone(),
+                media_address: talk_address,
                 rtpmap: Some(rtpmap),
                 extra_attrs: Vec::new(),
             };

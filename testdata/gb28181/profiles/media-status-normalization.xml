@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<Notify>
+    <CmdType>MediaStatus</CmdType>
+    <SN>3</SN>
+    <DeviceID>34020000001320000001</DeviceID>
+    <NotifyType>99</NotifyType>
+</Notify>
