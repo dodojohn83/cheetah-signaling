@@ -963,95 +963,94 @@ async fn handle_media_session_event(
     payload: BTreeMap<String, String>,
 ) -> Result<(), SignalError> {
     let mut uow = state.storage.begin().await.map_err(storage_error)?;
-    let mut session = match uow
+    let session = uow
         .media_session_repository()
         .get(tenant_id, media_session_id)
-        .await?
-    {
-        Some(s) => s,
-        None => return Ok(()),
-    };
-    let clock = state.clock.as_ref();
-    let aggregate_ref = ResourceRef {
-        tenant_id,
-        kind: ResourceKind::MediaSession,
-        id: ResourceId::MediaSession(media_session_id),
-    };
+        .await?;
     let mut state_events: Vec<Event<DomainEvent>> = Vec::new();
 
-    let push_transition =
-        |events: &mut Vec<Event<DomainEvent>>, event: DomainEvent, revision: u64| {
-            events.push(Event::new(
-                state.id_generator.as_ref(),
-                clock,
-                context,
-                tenant_id,
-                aggregate_ref.clone(),
-                revision,
-                event,
-            ));
+    if let Some(mut session) = session {
+        let clock = state.clock.as_ref();
+        let aggregate_ref = ResourceRef {
+            tenant_id,
+            kind: ResourceKind::MediaSession,
+            id: ResourceId::MediaSession(media_session_id),
         };
 
-    match transition {
-        MediaSessionTransition::Start => match session.state() {
-            MediaSessionState::Requested => {
-                let event = session.allocating(clock)?;
-                push_transition(&mut state_events, event, session.revision().0);
-                let event = session.inviting(clock)?;
-                push_transition(&mut state_events, event, session.revision().0);
-                let event = session.active(clock)?;
-                push_transition(&mut state_events, event, session.revision().0);
-            }
-            MediaSessionState::Allocating => {
-                let event = session.inviting(clock)?;
-                push_transition(&mut state_events, event, session.revision().0);
-                let event = session.active(clock)?;
-                push_transition(&mut state_events, event, session.revision().0);
-            }
-            MediaSessionState::Inviting => {
-                let event = session.active(clock)?;
-                push_transition(&mut state_events, event, session.revision().0);
-            }
-            _ => {}
-        },
-        MediaSessionTransition::Stop => match session.state() {
-            MediaSessionState::Active => {
-                let event = session.stop(clock)?;
-                push_transition(&mut state_events, event, session.revision().0);
-                if session.state() == MediaSessionState::Stopping {
+        let push_transition =
+            |events: &mut Vec<Event<DomainEvent>>, event: DomainEvent, revision: u64| {
+                events.push(Event::new(
+                    state.id_generator.as_ref(),
+                    clock,
+                    context,
+                    tenant_id,
+                    aggregate_ref.clone(),
+                    revision,
+                    event,
+                ));
+            };
+
+        match transition {
+            MediaSessionTransition::Start => match session.state() {
+                MediaSessionState::Requested => {
+                    let event = session.allocating(clock)?;
+                    push_transition(&mut state_events, event, session.revision().0);
+                    let event = session.inviting(clock)?;
+                    push_transition(&mut state_events, event, session.revision().0);
+                    let event = session.active(clock)?;
+                    push_transition(&mut state_events, event, session.revision().0);
+                }
+                MediaSessionState::Allocating => {
+                    let event = session.inviting(clock)?;
+                    push_transition(&mut state_events, event, session.revision().0);
+                    let event = session.active(clock)?;
+                    push_transition(&mut state_events, event, session.revision().0);
+                }
+                MediaSessionState::Inviting => {
+                    let event = session.active(clock)?;
+                    push_transition(&mut state_events, event, session.revision().0);
+                }
+                _ => {}
+            },
+            MediaSessionTransition::Stop => match session.state() {
+                MediaSessionState::Active => {
+                    let event = session.stop(clock)?;
+                    push_transition(&mut state_events, event, session.revision().0);
+                    if session.state() == MediaSessionState::Stopping {
+                        let event = session.stopped(clock)?;
+                        push_transition(&mut state_events, event, session.revision().0);
+                    }
+                }
+                MediaSessionState::Stopping => {
                     let event = session.stopped(clock)?;
                     push_transition(&mut state_events, event, session.revision().0);
                 }
+                MediaSessionState::Requested
+                | MediaSessionState::Allocating
+                | MediaSessionState::Inviting => {
+                    let event = session.stop(clock)?;
+                    push_transition(&mut state_events, event, session.revision().0);
+                }
+                _ => {}
+            },
+            MediaSessionTransition::Fail(reason) => {
+                if !session.state().is_terminal() {
+                    let event = session.failed(MediaSessionError::new("gb28181", reason), clock)?;
+                    push_transition(&mut state_events, event, session.revision().0);
+                }
             }
-            MediaSessionState::Stopping => {
-                let event = session.stopped(clock)?;
-                push_transition(&mut state_events, event, session.revision().0);
-            }
-            MediaSessionState::Requested
-            | MediaSessionState::Allocating
-            | MediaSessionState::Inviting => {
-                let event = session.stop(clock)?;
-                push_transition(&mut state_events, event, session.revision().0);
-            }
-            _ => {}
-        },
-        MediaSessionTransition::Fail(reason) => {
-            if !session.state().is_terminal() {
-                let event = session.failed(MediaSessionError::new("gb28181", reason), clock)?;
-                push_transition(&mut state_events, event, session.revision().0);
-            }
-        }
-    };
+        };
 
-    if !state_events.is_empty() {
-        uow.media_session_repository().save(&session).await?;
-        for event in state_events {
-            uow.outbox().append(event).await?;
+        if !state_events.is_empty() {
+            uow.media_session_repository().save(&session).await?;
+            for event in state_events {
+                uow.outbox().append(event).await?;
+            }
         }
     }
 
     // Always append the GB28181 envelope so the driver event is recorded even
-    // when the session is already in a terminal state.
+    // when the session is unknown or already in a terminal state.
     let envelope = build_gb_event(
         state,
         context,
