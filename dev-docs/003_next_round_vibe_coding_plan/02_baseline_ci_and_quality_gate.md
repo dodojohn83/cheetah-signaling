@@ -41,7 +41,7 @@ cargo deny check
 - [ ] edge feature关闭时检查不链接PostgreSQL、NATS和cluster依赖。
 - [ ] cluster feature检查PostgreSQL/NATS/TLS组合。
 - [ ] 对所有公共feature执行feature matrix，防止feature改变领域语义。
-- [ ] 每条CI job有超时、缓存key包含toolchain/Cargo.lock且失败不被吞掉。
+- [x] 每条CI job有超时、缓存key包含toolchain/Cargo.lock且失败不被吞掉：`.github/workflows/ci.yml` 所有 `Swatinem/rust-cache@v2` 步骤已显式设置 `key: v1-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}` 和 `cache-on-failure: false`；各 job 均含 `timeout-minutes`。
 
 ## 5. BAS-004：架构与占位检查
 
