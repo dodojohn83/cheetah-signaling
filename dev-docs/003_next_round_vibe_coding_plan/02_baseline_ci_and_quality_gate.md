@@ -16,11 +16,11 @@
 
 ## 3. BAS-002：可复现 Proto 工具链
 
-- [ ] 明确 `protoc`、Buf版本和安装来源；版本必须锁定。
-- [ ] CI与开发容器使用同一版本，不依赖开发者全局偶然安装。
-- [ ] 若选择 vendored `protoc`，只在build tooling使用，不把平台二进制混入domain crate。
-- [ ] codegen从空target可执行，生成物两次运行无diff。
-- [ ] `buf format`、`buf lint`、descriptor生成和breaking基线均纳入CI。
+- [x] 明确 `protoc`、Buf版本和安装来源；版本必须锁定：`protoc` 固定为 `25.3`，`buf` 固定为 `1.50.0`，已写入 `proto/README.md`。
+- [x] CI与开发容器使用同一版本，不依赖开发者全局偶然安装：`ci.yml` 的 `arduino/setup-protoc@v3` 已固定 `version: "25.3"`，`buf` 通过 `BUF_VERSION: "1.50.0"` 统一。
+- [x] 若选择 vendored `protoc`，只在build tooling使用，不把平台二进制混入domain crate：无 vendored 二进制，`protoc`/`buf` 仅用于 build/CI，不会进入 domain crate。
+- [ ] codegen从空target可执行，生成物两次运行无diff：`build.rs` 生成到 `OUT_DIR`，`proto/README.md` 已给出两次运行验证步骤。
+- [x] `buf format`、`buf lint`、descriptor生成和breaking基线均纳入CI：`ci.yml` 已包含 `proto` job（`buf format`/`lint`）和 `contract-baseline` job（`scripts/generate_contract_baseline.sh`）。
 
 验收：没有预装 `protoc` 的干净容器可以按README完成codegen，或给出明确的前置安装失败信息。
 

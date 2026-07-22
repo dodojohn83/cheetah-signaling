@@ -35,7 +35,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: arduino/setup-protoc@v3
         with:
-          version: "25.x"
+          version: "25.3"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
@@ -51,7 +51,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: arduino/setup-protoc@v3
         with:
-          version: "25.x"
+          version: "25.3"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - run: cargo nextest run --workspace
 
