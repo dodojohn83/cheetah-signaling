@@ -244,6 +244,50 @@ async fn draining_node_not_chosen_for_new_sessions() {
 }
 
 #[tokio::test]
+async fn reserve_rejected_on_draining_node() {
+    let clock = Arc::new(ManualClock::new(OffsetDateTime::UNIX_EPOCH));
+    let registry = Arc::new(InMemoryMediaNodeRegistry::new(
+        MediaRegistryConfig::default(),
+    ));
+    registry
+        .register(default_node(), 60_000, clock.as_ref())
+        .await
+        .unwrap();
+    registry
+        .drain(node_id(), true, clock.as_ref())
+        .await
+        .unwrap();
+
+    let err = registry
+        .reserve(node_id(), tenant_id(), binding_id(), clock.as_ref())
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("is draining"));
+}
+
+#[tokio::test]
+async fn reserve_rejected_on_deregistered_node() {
+    let clock = Arc::new(ManualClock::new(OffsetDateTime::UNIX_EPOCH));
+    let registry = Arc::new(InMemoryMediaNodeRegistry::new(
+        MediaRegistryConfig::default(),
+    ));
+    registry
+        .register(default_node(), 60_000, clock.as_ref())
+        .await
+        .unwrap();
+    registry
+        .deregister(node_id(), clock.as_ref())
+        .await
+        .unwrap();
+
+    let err = registry
+        .reserve(node_id(), tenant_id(), binding_id(), clock.as_ref())
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("not found"));
+}
+
+#[tokio::test]
 async fn lease_expired_node_is_not_scheduled() {
     let clock = Arc::new(ManualClock::new(OffsetDateTime::UNIX_EPOCH));
     let config = MediaRegistryConfig {

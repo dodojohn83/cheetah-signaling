@@ -18,6 +18,7 @@ pub struct MediaMetrics {
     media_nodes_active: AtomicU64,
     media_nodes_expired: AtomicU64,
     media_nodes_draining: AtomicU64,
+    media_nodes_deregistered: AtomicU64,
     reservations_total: AtomicU64,
     reservations_success: AtomicU64,
     reservations_rejected: AtomicU64,
@@ -55,6 +56,7 @@ impl MediaMetrics {
             media_nodes_active: AtomicU64::new(0),
             media_nodes_expired: AtomicU64::new(0),
             media_nodes_draining: AtomicU64::new(0),
+            media_nodes_deregistered: AtomicU64::new(0),
             reservations_total: AtomicU64::new(0),
             reservations_success: AtomicU64::new(0),
             reservations_rejected: AtomicU64::new(0),
@@ -82,34 +84,43 @@ impl MediaMetrics {
         }
     }
 
-    /// Records a node snapshot, updating active/expired/draining counts.
+    /// Records a node snapshot, updating active/expired/draining/deregistered
+    /// counts. Deregistered nodes within their protection window are tracked
+    /// separately so the active gauge reflects only schedulable capacity.
     pub fn record_node_snapshot(&self, nodes: &[cheetah_domain::MediaNode], clock: &dyn Clock) {
         let now = clock.now_wall();
         let mut active = 0;
         let mut expired = 0;
         let mut draining = 0;
+        let mut deregistered = 0;
         let mut load_sum: u64 = 0;
         let mut load_count: u64 = 0;
 
         for node in nodes {
             let lease_expired = node.lease_until.map(|until| until <= now).unwrap_or(false);
-            if lease_expired {
-                expired += 1;
-            } else {
-                active += 1;
-            }
-            if node.draining {
-                draining += 1;
-            }
-            if node.status != cheetah_domain::NodeStatus::Left {
-                load_sum = load_sum.saturating_add(node.load);
-                load_count = load_count.saturating_add(1);
+            match node.status {
+                cheetah_domain::NodeStatus::Left => {
+                    deregistered += 1;
+                }
+                _ if lease_expired => {
+                    expired += 1;
+                }
+                _ => {
+                    active += 1;
+                    if node.draining {
+                        draining += 1;
+                    }
+                    load_sum = load_sum.saturating_add(node.load);
+                    load_count = load_count.saturating_add(1);
+                }
             }
         }
 
         self.media_nodes_active.store(active, Ordering::Relaxed);
         self.media_nodes_expired.store(expired, Ordering::Relaxed);
         self.media_nodes_draining.store(draining, Ordering::Relaxed);
+        self.media_nodes_deregistered
+            .store(deregistered, Ordering::Relaxed);
         self.node_load_sum.store(load_sum, Ordering::Relaxed);
         self.node_load_count.store(load_count, Ordering::Relaxed);
     }
@@ -213,6 +224,7 @@ impl MetricsExporter for MediaMetrics {
         let active = self.media_nodes_active.load(Ordering::Relaxed);
         let expired = self.media_nodes_expired.load(Ordering::Relaxed);
         let draining = self.media_nodes_draining.load(Ordering::Relaxed);
+        let deregistered = self.media_nodes_deregistered.load(Ordering::Relaxed);
         let reservations_total = self.reservations_total.load(Ordering::Relaxed);
         let reservations_success = self.reservations_success.load(Ordering::Relaxed);
         let reservations_rejected = self.reservations_rejected.load(Ordering::Relaxed);
@@ -249,6 +261,8 @@ impl MetricsExporter for MediaMetrics {
              cheetah_media_nodes_expired {expired}\n\
              # TYPE cheetah_media_nodes_draining gauge\n\
              cheetah_media_nodes_draining {draining}\n\
+             # TYPE cheetah_media_nodes_deregistered gauge\n\
+             cheetah_media_nodes_deregistered {deregistered}\n\
              # TYPE cheetah_media_reservations_total counter\n\
              cheetah_media_reservations_total {reservations_total}\n\
              # TYPE cheetah_media_reservations_success_total counter\n\

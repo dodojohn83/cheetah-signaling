@@ -10,7 +10,7 @@
 - [x] Register验证证书identity与node ID，原子生成/推进instance epoch：`grpc.rs` `check_identity` 比对 mTLS identity 与 `node_id`；`InMemoryMediaNodeRegistry`/`PersistentMediaNodeRegistry` 在 `register` 中按 instance_id 是否相同递增 `instance_epoch` 和 `generation`。
 - [x] 返回lease ID、TTL、heartbeat interval、cluster time和accepted contract version：`proto/cheetah/media/v1/media.proto` `MediaNodeInfo` 新增 `lease_id`、`lease_ttl_ms`、`heartbeat_interval_ms`、`cluster_time`、`accepted_contract_version`；`to_media_node_info` 在 register/heartbeat/drain/deregister 响应中填充这些字段。
 - [x] Heartbeat带lease、instance epoch、load：`proto/cheetah/media/v1/media.proto` `MediaNodeHeartbeat` 新增 `lease_id` 与 `instance_epoch`；`MediaNodeRegistry::heartbeat` 扩展为接收 lease_id 与 instance_epoch 并在 `InMemory`/`Persistent` 实现中做 fencing；`load` 与 `session_count` 已存在。capacity 与 capability generation 的心跳携带将在后续调度任务中补充。
-- [ ] Drain禁止新reservation但允许query/stop；Deregister保留保护窗口用于对账。
+- [x] Drain禁止新reservation但允许query/stop；Deregister保留保护窗口用于对账：`MediaNodeRegistry::reserve` 在 in-memory 与 persistent 实现中均拒绝 `draining`/`NodeStatus::Draining` 节点并返回 `SchedulerError::NodeDraining`；`deregister` 设置 `lease_until = now + deregister_protection_ttl_ms`，`is_active` 让 Left 节点在保护期内仍被 `list_nodes` 看到但不可被调度；`MediaEventConsumer` 不订阅 Left 节点；`MediaService::reconcile` 跳过保护期内 Left 节点，不立即迁移其 binding。
 - [ ] lease过期立即移出候选，已有binding标记`NeedsVerification`。
 
 ## 3. MED-R-002：MediaNode repository
@@ -33,10 +33,10 @@
 7. affinity和归一化负载评分。
 
 - [x] 调度输入为不可变`MediaRequirements`：`MediaRequirements` 已新增 `contract_version` 字段，`matches_capability` 按 `cap.version >= requirements.contract_version` 过滤并在 `format_no_candidate_reason` 中输出 `contract_version` 与 `contract_version_mismatch`，评分通过 `contract_version_score` 优先精确版本（PR #227）。
-- [ ] 同MediaSession generation重试优先原有效节点。
-- [ ] 创建有TTL的reservation并持久化Reserved MediaBinding后才调用媒体。
-- [ ] media RPC内再次原子检查容量，防止最终一致load超卖。
-- [ ] 无候选返回逐规则reason summary，不泄漏其他tenant详情。
+- [x] 同MediaSession generation重试优先原有效节点：`LeastLoadedScheduler::schedule` 在 `requirements.media_session_id` 命中 `affinity` 映射且节点仍满足 `is_eligible_for_affinity` 时直接返回原节点，跨重试保持同 generation 绑定（PR #231）。
+- [x] 创建有TTL的reservation并持久化Reserved MediaBinding后才调用媒体：`registry.reserve` 创建带 `reservation_ttl_ms` deadline 的内存 reservation；`media_service_start.rs` 的 `persist_start_resources` 在同一事务中持久化 `Operation`、`MediaSession` 与 `MediaBinding`（Reserved）并提交 outbox，之后才调用 `SchedulerMediaPort::execute`（PR #231）。
+- [x] media RPC内再次原子检查容量，防止最终一致load超卖：`PersistentMediaNodeRegistry::reserve` 与 `InMemoryMediaNodeRegistry::reserve` 在写入 reservation 前按 `reported_session_count + active reservations` 重新检查 `capacity.max_sessions`；迁移路径 `migrate_or_fail` 也先 `reserve_*` 再 `execute`（PR #231）。
+- [x] 无候选返回逐规则reason summary，不泄漏其他tenant详情：`format_no_candidate_reason` 输出 `excluded`/`wrong_status`/`unhealthy`/`no_capability`/`contract_version_mismatch`/`no_zone`/`no_network_zone`/`no_capacity`/`bad_score` 各规则计数，以及 `protocol`/`operation`/`contract_version`/`zone`/`network_zone`/`transport`/`encapsulation`/`codecs` 等需求字段；不暴露其他 tenant 的节点 ID 或内部负载（PR #231）。
 
 ## 5. MED-R-004：Typed client
 

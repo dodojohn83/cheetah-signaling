@@ -2,8 +2,8 @@
 
 use crate::dto::OperationDto;
 use cheetah_domain::{
-    CommandBus, DeviceOwnerResolver, DispatchAttempt, DomainError, DomainEvent, OperationResult,
-    UnitOfWork,
+    CommandBus, DeviceOwnerResolver, DispatchAttempt, DispatchAttemptStatus, DomainError,
+    DomainEvent, OperationResult, OperationStatus, UnitOfWork,
 };
 use cheetah_signal_types::{
     Clock, Event, IdGenerator, OperationId, RequestContext, ResourceId, ResourceKind, ResourceRef,
@@ -35,7 +35,13 @@ impl CommandDispatcher {
         }
     }
 
-    /// Dispatches the command for a pending operation.
+    /// Dispatches the command for a pending or running operation.
+    ///
+    /// The dispatcher is idempotent: a terminal or already-sent operation is
+    /// returned without re-dispatching. If the process crashed after the
+    /// operation transitioned to `Running` but before `command_bus.send`
+    /// succeeded, the next invocation will re-use the pending dispatch attempt
+    /// and try to send again.
     pub async fn dispatch(
         &self,
         context: &RequestContext,
@@ -54,41 +60,56 @@ impl CommandDispatcher {
                 ))
             })?;
 
-        if operation.is_terminal() || operation.status() == cheetah_domain::OperationStatus::Running
-        {
+        if operation.is_terminal() {
             return Ok(OperationDto::from(&operation));
         }
-
-        // Transition to Running and commit before external I/O.
-        let event = operation
-            .start(self.clock.as_ref())
-            .map_err(crate::SignalError::from)?;
-        uow.operation_repository().save(&operation).await?;
-        let event = wrap_event(
-            self.id_generator.as_ref(),
-            self.clock.as_ref(),
-            context,
-            tenant_id,
-            operation_resource_ref(tenant_id, operation.operation_id()),
-            operation.revision().0,
-            event,
-        );
-        uow.outbox().append(event).await?;
-        uow.commit().await?;
 
         let step_id = operation
             .command()
             .step_id()
             .unwrap_or_else(|| operation.command().command_id());
-        let attempt_id = self.id_generator.generate_message_id();
-        let attempt = DispatchAttempt::new(attempt_id);
-        operation
-            .record_dispatch_attempt(step_id, attempt, self.clock.as_ref())
-            .map_err(crate::SignalError::from)?;
-        self.save_operation(uow, &operation).await?;
-        operation
-            .mark_dispatch_attempt_sent(step_id, attempt_id, self.clock.as_ref())
-            .map_err(crate::SignalError::from)?;
+
+        // A running operation whose command has already been sent should not be
+        // re-dispatched. If it is running but has no sent/acked attempt, a
+        // previous dispatch crashed before the command reached the bus.
+        if operation.status() == OperationStatus::Running
+            && has_sent_or_acked_attempt(&operation, step_id)
+        {
+            return Ok(OperationDto::from(&operation));
+        }
+
+        // Transition from Pending to Running and commit before external I/O.
+        if operation.status() == OperationStatus::Pending {
+            let event = operation
+                .start(self.clock.as_ref())
+                .map_err(crate::SignalError::from)?;
+            uow.operation_repository().save(&operation).await?;
+            let event = wrap_event(
+                self.id_generator.as_ref(),
+                self.clock.as_ref(),
+                context,
+                tenant_id,
+                operation_resource_ref(tenant_id, operation.operation_id()),
+                operation.revision().0,
+                event,
+            );
+            uow.outbox().append(event).await?;
+            uow.commit().await?;
+        }
+
+        // Re-use an existing pending attempt from a previous crash window, or
+        // record a new one. Do not mark it sent until command_bus.send succeeds.
+        let attempt_id = match find_pending_attempt_id(&operation, step_id) {
+            Some(id) => id,
+            None => {
+                let id = self.id_generator.generate_message_id();
+                let attempt = DispatchAttempt::new(id);
+                operation
+                    .record_dispatch_attempt(step_id, attempt, self.clock.as_ref())
+                    .map_err(crate::SignalError::from)?;
+                id
+            }
+        };
         self.save_operation(uow, &operation).await?;
 
         // Resolve owner and dispatch outside the unit of work transaction.
@@ -234,6 +255,42 @@ impl std::fmt::Debug for CommandDispatcher {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CommandDispatcher").finish_non_exhaustive()
     }
+}
+
+fn has_sent_or_acked_attempt(
+    operation: &cheetah_domain::Operation,
+    step_id: cheetah_signal_types::MessageId,
+) -> bool {
+    operation
+        .steps()
+        .iter()
+        .find(|s| s.step_id() == step_id)
+        .map(|s| {
+            s.attempts().iter().any(|a| {
+                matches!(
+                    a.status(),
+                    DispatchAttemptStatus::Sent | DispatchAttemptStatus::Acked
+                )
+            })
+        })
+        .unwrap_or(false)
+}
+
+fn find_pending_attempt_id(
+    operation: &cheetah_domain::Operation,
+    step_id: cheetah_signal_types::MessageId,
+) -> Option<cheetah_signal_types::MessageId> {
+    operation
+        .steps()
+        .iter()
+        .find(|s| s.step_id() == step_id)
+        .and_then(|s| {
+            s.attempts()
+                .iter()
+                .rev()
+                .find(|a| a.status() == DispatchAttemptStatus::Pending)
+                .map(|a| a.attempt_id())
+        })
 }
 
 fn wrap_event(
