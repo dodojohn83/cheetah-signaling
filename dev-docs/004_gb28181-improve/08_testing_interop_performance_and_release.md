@@ -209,4 +209,3 @@ python3 scripts/audit_architecture.py
 - 公开 REST/Proto、配置和 migration 具有兼容策略。
 - 完整质量门禁、互操作、chaos、100 万在线和 72 小时 soak 报告可复现。
 - signaling Control Plane 边界通过依赖、端口和抓包三类审计。
-
