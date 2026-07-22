@@ -10,6 +10,9 @@ use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::net::SocketAddr;
 
+/// Maximum byte length of free-form compatibility profile string fields.
+pub const MAX_COMPATIBILITY_FIELD_BYTES: usize = 512;
+
 /// Serializes a `SecretString` as a redacted placeholder, preserving empty defaults.
 ///
 /// Empty secrets are written as `""` so the default configuration round-trips
@@ -698,6 +701,12 @@ pub struct Gb28181Config {
     /// Bounds the work performed per tick so one node cannot monopolise the
     /// database. Must be in `1..=SESSION_REAPER_MAX_PER_TICK_LIMIT`.
     pub session_reaper_max_per_tick: u32,
+    /// Compatibility profiles available to listeners and device bindings.
+    ///
+    /// Profiles are resolved at device binding time and the selected revision is
+    /// pinned to the [`ProtocolSession`](cheetah_domain::ProtocolSession) so
+    /// runtime changes do not alter in-flight dialogs.
+    pub compatibility_profiles: Vec<Gb28181CompatibilityProfileConfig>,
     /// Explicit GB28181 listeners, each binding one or more sockets with its
     /// own realm/domain/tenant mapping.
     ///
@@ -722,6 +731,7 @@ impl Default for Gb28181Config {
             session_reaper_interval_ms: DurationMs::from_millis(30_000),
             session_reaper_batch_size: 256,
             session_reaper_max_per_tick: 4_096,
+            compatibility_profiles: Vec::new(),
             listeners: Vec::new(),
         }
     }
@@ -767,6 +777,33 @@ pub struct Gb28181ListenerConfig {
     /// When true, accept REGISTER without successful digest authentication
     /// after issuing a challenge. Production listeners must leave this `false`.
     pub challenge_optional: bool,
+    /// Optional compatibility profile id applied to devices accepted by this
+    /// listener. The id must match one of the profiles declared in
+    /// [`Gb28181Config::compatibility_profiles`].
+    pub compatibility_profile: Option<String>,
+}
+
+/// GB28181 compatibility profile configuration.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+#[serde(deny_unknown_fields)]
+pub struct Gb28181CompatibilityProfileConfig {
+    /// Stable profile identifier, unique within the GB28181 configuration.
+    pub id: String,
+    /// GB/T 28181 standard version, e.g. `2011` or `2016`.
+    pub standard_version: Option<String>,
+    /// Device manufacturer name.
+    pub manufacturer: Option<String>,
+    /// Device model name.
+    pub model: Option<String>,
+    /// Device firmware version.
+    pub firmware: Option<String>,
+    /// Controlled capability names (snake_case) enabled by this profile.
+    pub capabilities: Vec<String>,
+    /// Path or URL to the provenance fixture that justifies this profile.
+    pub evidence_ref: Option<String>,
+    /// Profile revision, used to detect profile changes and pin sessions.
+    pub revision: u32,
 }
 
 impl Gb28181Config {
@@ -828,6 +865,48 @@ impl Gb28181Config {
                     "gb28181.session_reaper_max_per_tick must be between 1 and {SESSION_REAPER_MAX_PER_TICK_LIMIT}"
                 ),
             ));
+        }
+
+        let mut profile_ids = std::collections::HashSet::new();
+        for profile in &self.compatibility_profiles {
+            if profile.id.trim().is_empty() {
+                return Err(SignalError::new(
+                    SignalErrorKind::InvalidArgument,
+                    "gb28181.compatibility_profiles[].id must not be empty",
+                ));
+            }
+            for (name, value) in [
+                ("id", Some(profile.id.as_str())),
+                ("standard_version", profile.standard_version.as_deref()),
+                ("manufacturer", profile.manufacturer.as_deref()),
+                ("model", profile.model.as_deref()),
+                ("firmware", profile.firmware.as_deref()),
+                ("evidence_ref", profile.evidence_ref.as_deref()),
+            ] {
+                if let Some(v) = value
+                    && v.len() > MAX_COMPATIBILITY_FIELD_BYTES
+                {
+                    return Err(SignalError::new(
+                        SignalErrorKind::InvalidArgument,
+                        format!("gb28181.compatibility_profiles[].{name} exceeds maximum length"),
+                    ));
+                }
+            }
+            if profile.capabilities.len() > 64 {
+                return Err(SignalError::new(
+                    SignalErrorKind::InvalidArgument,
+                    "gb28181.compatibility_profiles[].capabilities must not exceed 64 entries",
+                ));
+            }
+            if !profile_ids.insert(profile.id.as_str()) {
+                return Err(SignalError::new(
+                    SignalErrorKind::InvalidArgument,
+                    format!(
+                        "gb28181 compatibility profile id '{}' is duplicated",
+                        profile.id
+                    ),
+                ));
+            }
         }
 
         if self.listeners.is_empty() {
@@ -903,6 +982,17 @@ impl Gb28181Config {
                     format!(
                         "gb28181 listener '{}' must bind at least one of udp_bind or tcp_bind",
                         listener.id
+                    ),
+                ));
+            }
+            if let Some(profile_id) = &listener.compatibility_profile
+                && !profile_ids.contains(profile_id.as_str())
+            {
+                return Err(SignalError::new(
+                    SignalErrorKind::InvalidArgument,
+                    format!(
+                        "gb28181 listener '{}' references unknown compatibility profile '{}'",
+                        listener.id, profile_id
                     ),
                 ));
             }
@@ -991,6 +1081,7 @@ impl Gb28181Config {
             digest_secret_ref: self.digest_secret_ref.clone().unwrap_or_default(),
             device_password_ref: self.device_password_ref.clone(),
             challenge_optional: self.challenge_optional,
+            compatibility_profile: None,
         };
         (vec![listener], true)
     }
@@ -1245,6 +1336,7 @@ mod gb28181_listener_tests {
             digest_secret_ref: "secret://digest".to_string(),
             device_password_ref: None,
             challenge_optional: false,
+            compatibility_profile: None,
         }
     }
 

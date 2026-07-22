@@ -23,6 +23,7 @@ pub mod events;
 pub mod ingress;
 pub mod media;
 pub mod ports;
+pub mod profile;
 mod registration;
 pub mod session;
 pub mod types;
@@ -50,6 +51,7 @@ pub use media::{
     PlaybackAction,
 };
 pub use ports::{CredentialError, CredentialProvider};
+pub use profile::{ProfileResolveError, ProfileResolver};
 pub use session::{
     ProtocolSessionLink, RegisterOutcome, RegisterParams, SessionContext, SessionLinkError,
 };

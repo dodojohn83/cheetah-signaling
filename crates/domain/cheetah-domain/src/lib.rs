@@ -54,8 +54,9 @@ pub use operation::{
 };
 pub use ports::*;
 pub use protocol_session::{
-    CompatibilityProfile, LocalIdentity, NewProtocolSession, PresenceState, ProtocolSession,
-    RegistrationInfo, SessionEndpoint, SipTransport,
+    CompatibilityCapability, CompatibilityProfile, LocalIdentity, NewProtocolSession,
+    PresenceState, ProfileSelector, ProtocolSession, RegistrationInfo, SessionEndpoint,
+    SipTransport,
 };
 pub use tenant::{MAX_TENANT_NAME_LEN, Tenant};
 pub use webhook::{DeliveryStatus, WebhookConfig, WebhookDelivery, sign_webhook_payload};
