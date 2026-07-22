@@ -5,15 +5,17 @@
 
 use crate::gb_event_sink;
 use crate::onvif_discovery;
+#[cfg(feature = "cluster")]
+use crate::workers::spawn_node_lease_worker;
 use crate::workers::{
     OwnerCommandHandler, SingleNodeOwnerResolver, StorageDeviceProtocolLookup,
     build_assignment_service, build_drain_service, build_takeover_service, builtin_plugin_ids,
-    spawn_drain_migration_worker, spawn_inbox_worker, spawn_node_lease_worker,
-    spawn_owner_lease_renew_worker, spawn_protocol_session_reaper_worker,
-    spawn_takeover_health_worker,
+    spawn_drain_migration_worker, spawn_inbox_worker, spawn_owner_lease_renew_worker,
+    spawn_protocol_session_reaper_worker, spawn_takeover_health_worker,
 };
 use ::time::{OffsetDateTime, UtcOffset};
 use cheetah_cluster_ownership::{CachingDeviceOwnerResolver, OwnerLeaseService};
+#[cfg(feature = "cluster")]
 use cheetah_cluster_registry::NodeLeaseService;
 use cheetah_domain::ports::{DeviceOwnerResolver, MediaPort};
 use cheetah_domain::{DomainEvent, EventPublisher, MediaEventHandler};
@@ -36,6 +38,7 @@ use cheetah_media_scheduler::{
 use cheetah_message_api::publisher::publish_domain_event;
 use cheetah_message_api::{RawCommandBus, RawEventBus};
 use cheetah_message_local::InProcessMessageBus;
+#[cfg(feature = "cluster")]
 use cheetah_message_nats::NatsBus;
 use cheetah_onvif_driver_tokio::OnvifTokioDriverFactory;
 use cheetah_plugin_host::PluginHost;
@@ -52,6 +55,8 @@ use cheetah_signal_types::{
     NodeId, SecretStore, TenantId, UtcTimestamp,
 };
 use cheetah_storage_api::Storage;
+#[cfg(feature = "cluster")]
+use cheetah_storage_postgres::PostgresStorage;
 use cheetah_storage_sqlite::SqliteStorage;
 use futures::future::select_all;
 use secrecy::{ExposeSecret, SecretString};
@@ -545,6 +550,7 @@ pub async fn start(
             info!(path = %path.display(), "sqlite storage ready");
             Arc::new(sqlite)
         }
+        #[cfg(feature = "cluster")]
         StorageBackend::Postgres => {
             let url = if let Some(ref_key) = config.storage.postgres_url_ref.as_deref() {
                 secret_store
@@ -562,10 +568,14 @@ pub async fn start(
                     "storage.postgres_url or storage.postgres_url_ref is required when backend=postgres".into(),
                 );
             }
-            let pg = cheetah_storage_postgres::PostgresStorage::new(&url).await?;
+            let pg = PostgresStorage::new(&url).await?;
             pg.migration().run().await?;
             info!("postgres storage ready");
             Arc::new(pg)
+        }
+        #[cfg(not(feature = "cluster"))]
+        StorageBackend::Postgres => {
+            return Err("postgres backend requires the 'cluster' feature".into());
         }
         _ => {
             return Err("unsupported storage.backend; use sqlite or postgres".into());
@@ -619,6 +629,7 @@ pub async fn start(
                 ));
                 (local.clone(), local)
             }
+            #[cfg(feature = "cluster")]
             MessagingBackend::Nats => {
                 let url = if let Some(ref_key) = config.messaging.nats_url_ref.as_deref() {
                     secret_store
@@ -657,6 +668,10 @@ pub async fn start(
                     .await?,
                 );
                 (nats.clone(), nats)
+            }
+            #[cfg(not(feature = "cluster"))]
+            MessagingBackend::Nats => {
+                return Err("nats messaging requires the 'cluster' feature".into());
             }
             _ => {
                 return Err("unsupported messaging.backend; use local or nats".into());
@@ -731,7 +746,8 @@ pub async fn start(
         info!(?renew_interval, "owner lease renew worker started");
     }
 
-    // Cluster/edge node registration + heartbeat against cluster_nodes table.
+    // Cluster node registration + heartbeat against cluster_nodes table.
+    #[cfg(feature = "cluster")]
     {
         let node_repo: Arc<tokio::sync::Mutex<dyn cheetah_storage_api::NodeRepository>> =
             Arc::new(tokio::sync::Mutex::new(StorageBackedNodeRepo {
