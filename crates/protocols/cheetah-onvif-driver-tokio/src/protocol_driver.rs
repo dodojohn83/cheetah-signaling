@@ -124,7 +124,7 @@ impl ProtocolDriver for OnvifTokioProtocolDriver {
         match resolve_credentials(ctx, &config, None, None, None, false, 0).await {
             Ok(Some(credentials)) => {
                 match driver
-                    .get_services(target, false, Some(&credentials), timeout)
+                    .get_services(target, None, false, Some(&credentials), timeout)
                     .await
                 {
                     Ok(services) => {
@@ -135,7 +135,7 @@ impl ProtocolDriver for OnvifTokioProtocolDriver {
                     }
                 }
                 match driver
-                    .get_capabilities(target, Some(&credentials), timeout)
+                    .get_capabilities(target, None, Some(&credentials), timeout)
                     .await
                 {
                     Ok(caps) => {
@@ -352,6 +352,7 @@ async fn dispatch_command(
             driver
                 .get_services(
                     &cmd.endpoint,
+                    cmd.tenant_id.as_deref(),
                     cmd.include_capabilities,
                     credentials.as_ref(),
                     timeout,
@@ -364,7 +365,12 @@ async fn dispatch_command(
             let timeout = cmd.command_timeout(timeout);
             let credentials = cmd.resolve_credentials(ctx, config).await?;
             driver
-                .get_capabilities(&cmd.endpoint, credentials.as_ref(), timeout)
+                .get_capabilities(
+                    &cmd.endpoint,
+                    cmd.tenant_id.as_deref(),
+                    credentials.as_ref(),
+                    timeout,
+                )
                 .await
                 .map_err(plugin_error_from_driver_error)?;
         }
@@ -405,6 +411,8 @@ fn plugin_error_from_driver_error(e: DriverError) -> PluginError {
 #[derive(Deserialize)]
 struct EndpointCommand {
     endpoint: String,
+    #[serde(default)]
+    tenant_id: Option<String>,
     #[serde(default)]
     timeout_ms: Option<u64>,
     #[serde(default)]

@@ -77,7 +77,7 @@
 - [x] GetServices/GetCapabilities/GetDeviceInformation/GetSystemDateAndTime可部分成功：`OnvifHttpDriver` 新增 `get_services` 与 `get_capabilities`；`probe` 在 `get_system_date_and_time` 成功后尝试 `get_services`/`get_capabilities`（使用配置默认凭据），失败仅写入 `metadata` 不导致 probe 失败，实现部分成功语义；`get_device_information`、`get_system_date_and_time` 保持原有实现。
 - [x] Media2优先、Media1 fallback；每项记录Supported/Unsupported/Failed：`OnvifHttpDriver::get_profiles` 按 `prefer` 顺序尝试 Media2→Media1（或 Media1→Media2）并返回实际使用的 dialect；`get_stream_uri`/`get_snapshot_uri` 支持按 dialect 构造请求；解析失败返回明确错误。
 - [ ] workflow可重入、可取消、设备级并发受限：尚未以 `Operation`/`Saga` 形式封装 ONVIF 探测/取流/截图 workflow，设备级并发由 `OnvifHttpDriver` 内部 `Semaphore` 限制。
-- [ ] capability TTL/ETag或revision过期后刷新，失败不删除上次可用能力：尚未实现 capability cache/TTL 刷新。
+- [x] capability TTL/ETag或revision过期后刷新，失败不删除上次可用能力：`OnvifHttpDriver` 新增 `CapabilityCache`，按 endpoint 缓存 `get_services`/`get_capabilities` 结果；`OnvifConfig`/`DriverConfig` 新增 `capability_ttl_ms`/`capability_ttl`（默认 5 分钟）；TTL 内命中缓存直接返回，刷新失败时返回上次可用结果（stale fallback），不删除已缓存能力。
 
 ## 12. ONVIF-004：Plugin command/probe adapter
 

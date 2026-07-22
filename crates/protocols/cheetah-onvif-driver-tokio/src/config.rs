@@ -29,6 +29,11 @@ pub struct DriverConfig {
     pub discovery_timeout: DurationMs,
     /// Whether to follow HTTP redirects (each hop re-checked against policy).
     pub follow_redirects: bool,
+    /// How long to cache `GetCapabilities`/`GetServices` results per endpoint.
+    /// Zero disables caching.
+    pub capability_ttl: Duration,
+    /// Maximum number of endpoints kept in the capability cache.
+    pub capability_cache_capacity: usize,
 }
 
 impl Default for DriverConfig {
@@ -45,6 +50,8 @@ impl Default for DriverConfig {
             discovery_bind: SocketAddr::from(([0, 0, 0, 0], 0)),
             discovery_timeout: DurationMs::from_millis(3_000),
             follow_redirects: false,
+            capability_ttl: Duration::from_secs(300),
+            capability_cache_capacity: 1_024,
         }
     }
 }
@@ -84,6 +91,10 @@ impl From<&OnvifConfig> for DriverConfig {
             discovery_bind: config.discovery_bind,
             discovery_timeout: config.discovery_timeout_ms,
             follow_redirects: config.follow_redirects,
+            capability_ttl: Duration::from_millis(
+                config.capability_ttl_ms.as_millis().max(0) as u64
+            ),
+            capability_cache_capacity: config.capability_cache_capacity.max(1),
         }
     }
 }

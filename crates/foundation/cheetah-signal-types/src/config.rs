@@ -1276,6 +1276,11 @@ pub struct OnvifConfig {
     pub discovery_interval_ms: DurationMs,
     /// Maximum concurrent device detail probes during a discovery sweep.
     pub max_concurrent_probes: u32,
+    /// How long to cache ONVIF `GetCapabilities`/`GetServices` results per
+    /// endpoint, in milliseconds. Zero disables caching.
+    pub capability_ttl_ms: DurationMs,
+    /// Maximum number of endpoints kept in the ONVIF capability cache.
+    pub capability_cache_capacity: usize,
     /// Optional default tenant UUID for discovered ONVIF devices.
     pub default_tenant_id: Option<String>,
     /// Optional default username for ONVIF device authentication.
@@ -1313,6 +1318,8 @@ impl Default for OnvifConfig {
             discovery_rate_max_sources: 1_024,
             discovery_interval_ms: DurationMs::from_millis(0),
             max_concurrent_probes: 8,
+            capability_ttl_ms: DurationMs::from_millis(300_000),
+            capability_cache_capacity: 1_024,
             default_tenant_id: None,
             default_username: None,
             default_credentials_ref: None,

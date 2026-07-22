@@ -158,6 +158,11 @@ probe_timeout_ms = 5000
 # Optional SecretProvider reference for the default ONVIF device password.
 # With the default env prefix this is looked up as CHEETAH_SECRET_ONVIF_DEFAULT_PASSWORD.
 # default_credentials_ref = "onvif.default.password"
+# How long to cache ONVIF GetCapabilities/GetServices results per endpoint, in milliseconds.
+# Zero disables caching. Default: 300000 (5 minutes).
+capability_ttl_ms = 300000
+# Maximum number of device endpoints to keep in the capability cache. Default: 1024.
+capability_cache_capacity = 1024
 
 [security]
 # Reference to the JWT public key secret. Leave empty to disable JWT auth.
