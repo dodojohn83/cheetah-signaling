@@ -1232,10 +1232,11 @@ impl InMemoryMediaPort {
         lock_mutex(&self.scripted_reserve_errors).push_back(error);
     }
 
-    /// Configures the media node metadata returned by `get_node` and included in
-    /// `list_nodes` for the given tenant. This lets tests drive reconcile paths
-    /// that depend on node status, health and lease state without a real
-    /// scheduler registry.
+    /// Configures the media node metadata returned by `get_node` for the given
+    /// tenant. This lets tests drive reconcile paths that depend on node status,
+    /// health and lease state without a real scheduler registry. Note that these
+    /// scripted nodes are not returned by `list_nodes`, which is driven by
+    /// `set_node_sessions`.
     pub fn set_node(&self, tenant_id: TenantId, node: MediaNode) {
         lock_mutex(&self.scripted_nodes).insert((tenant_id, node.node_id), node);
     }
