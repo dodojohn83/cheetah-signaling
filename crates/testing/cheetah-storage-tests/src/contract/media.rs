@@ -10,6 +10,7 @@ pub async fn run(storage: &dyn Storage, fixtures: &Fixtures) -> TestResult<()> {
     idempotency(storage, fixtures).await?;
     get_by_media_session(storage, fixtures).await?;
     revision_concurrency(storage, fixtures).await?;
+    multi_bump_save_is_rejected(storage, fixtures).await?;
     Ok(())
 }
 
@@ -136,6 +137,35 @@ async fn revision_concurrency(storage: &dyn Storage, fixtures: &Fixtures) -> Tes
     assert!(
         matches!(result, Err(DomainError::ConcurrentModification { .. })),
         "saving a stale media session must fail, got {:?}",
+        result
+    );
+    uow.rollback().await?;
+
+    Ok(())
+}
+
+async fn multi_bump_save_is_rejected(storage: &dyn Storage, fixtures: &Fixtures) -> TestResult<()> {
+    let tenant_id = fixtures.tenant_id();
+    let device_id = fixtures.device_id();
+    let device = fixtures.device(tenant_id, device_id)?;
+    let mut session = fixtures.media_session(tenant_id, device_id)?;
+
+    let mut uow = storage.begin().await?;
+    uow.device_repository().save(&device).await?;
+    uow.media_session_repository().save(&session).await?;
+    uow.commit().await?;
+
+    // Advance the session through two in-memory transitions without persisting
+    // the first one. A single save at the end must fail because the stored
+    // revision is two steps behind.
+    session.allocating(fixtures.clock())?;
+    session.inviting(fixtures.clock())?;
+
+    let mut uow = storage.begin().await?;
+    let result = uow.media_session_repository().save(&session).await;
+    assert!(
+        matches!(result, Err(DomainError::ConcurrentModification { .. })),
+        "saving a session after multiple in-memory transitions without intermediate persist must fail, got {:?}",
         result
     );
     uow.rollback().await?;
