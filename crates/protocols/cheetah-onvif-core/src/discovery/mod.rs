@@ -253,6 +253,38 @@ mod tests {
     }
 
     #[test]
+    fn skips_probe_match_with_malformed_metadata_version() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope" xmlns:a="http://schemas.xmlsoap.org/ws/2004/08/addressing" xmlns:d="http://schemas.xmlsoap.org/ws/2005/04/discovery">
+  <s:Header>
+    <a:RelatesTo>urn:uuid:probe</a:RelatesTo>
+  </s:Header>
+  <s:Body>
+    <d:ProbeMatches>
+      <d:ProbeMatch>
+        <a:EndpointReference>urn:uuid:valid-device</a:EndpointReference>
+        <d:Types>dp0:NetworkVideoTransmitter</d:Types>
+        <d:XAddrs>http://192.168.1.10/onvif/device_service</d:XAddrs>
+        <d:MetadataVersion>1</d:MetadataVersion>
+      </d:ProbeMatch>
+      <d:ProbeMatch>
+        <a:EndpointReference>urn:uuid:bad-device</a:EndpointReference>
+        <d:Types>dp0:NetworkVideoTransmitter</d:Types>
+        <d:XAddrs>http://192.168.1.11/onvif/device_service</d:XAddrs>
+        <d:MetadataVersion>not-a-number</d:MetadataVersion>
+      </d:ProbeMatch>
+    </d:ProbeMatches>
+  </s:Body>
+</s:Envelope>"#;
+        let matches = parse_probe_matches(xml, 42).unwrap();
+        assert_eq!(matches.matches.len(), 1);
+        assert_eq!(
+            matches.matches[0].endpoint_reference.0,
+            "urn:uuid:valid-device"
+        );
+    }
+
+    #[test]
     fn probe_matches_parses_nested_endpoint_reference() {
         let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
 <s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope" xmlns:a="http://schemas.xmlsoap.org/ws/2004/08/addressing" xmlns:d="http://schemas.xmlsoap.org/ws/2005/04/discovery">
