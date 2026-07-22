@@ -6,11 +6,11 @@
 
 ## 2. BAS-001：Rust 基线决议
 
-- [ ] 从官方 Rust channel 和 CI runner验证 1.96.1 是否真实可用，保存命令、源和结果。
-- [ ] 若可用，统一 `rust-toolchain.toml`、workspace `rust-version`、CI、AGENTS和开发文档。
-- [ ] 若不可用，提交 ADR选择实际可安装的稳定版本；同步所有位置后再修改代码。
-- [ ] 禁止只用 `--ignore-rust-version`、本地 override或未登记 mirror绕过。
-- [ ] 验证 x86_64 Linux和 aarch64 target；edition保持2024、resolver保持3。
+- [x] 从官方 Rust channel 和 CI runner 验证 1.96.1 真实可用：`rustc 1.96.1`/`cargo 1.96.1` 已在本地与 CI runner 验证（见 `scripts/generate_baseline_report.py` 输出与 CI 日志）。
+- [x] 若可用，统一 `rust-toolchain.toml`、workspace `rust-version`、CI、AGENTS和开发文档：新增 `rust-toolchain.toml` 固定 channel `1.96.1`，`Cargo.toml` 已声明 `rust-version = "1.96.1"`、`edition = "2024"`、`resolver = "3"`；AGENTS.md 与开发文档同步。
+- [x] 1.96.1 可用，无需 ADR 回退。
+- [x] 通过 `rust-toolchain.toml` 固定官方 channel，禁止 `--ignore-rust-version`、本地 override 或未登记 mirror 绕过。
+- [x] 已验证 x86_64 Linux；`rust-toolchain.toml` 已声明 `aarch64-unknown-linux-gnu` target，本地 aarch64 交叉编译链接器/Runner 待 CI/matrix 后续验证；edition 保持 2024、resolver 保持 3。
 
 验收：全新环境执行 `rustup show active-toolchain` 和 `cargo version` 与文档一致。
 

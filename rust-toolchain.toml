@@ -1,5 +1,5 @@
 [toolchain]
 channel = "1.96.1"
-components = ["rustfmt", "clippy", "rust-src"]
+components = ["rustfmt", "clippy"]
 targets = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"]
-profile = "minimal"
+profile = "default"
