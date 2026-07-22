@@ -10,6 +10,10 @@
 //! REGISTER / keepalive transaction chain that drives its transitions lives in
 //! the application layer (see `GB4-ACC-002`).
 
+use crate::compatibility::{
+    BroadcastAddressSource, CompatibilityOverrides, MEDIA_STATUS_STOPPED_NOTIFY_TYPE,
+    MediaStatusOutcome,
+};
 use crate::{DomainError, Protocol};
 use cheetah_signal_types::{
     Clock, DeviceId, NodeId, OwnerEpoch, ProtocolIdentity, ProtocolSessionId, Revision, TenantId,
@@ -219,6 +223,8 @@ pub enum CompatibilityCapability {
     Broadcast,
     /// Support media status reporting and parsing.
     MediaStatus,
+    /// Enable SDP media negotiation overrides (extra payload types/attributes).
+    SdpMediaOverride,
     /// Allow duplicate REGISTER transactions for the same device identity.
     DuplicateRegisterAllowed,
     /// Enforce strict realm/domain alignment for digest challenges.
@@ -251,6 +257,7 @@ impl std::str::FromStr for CompatibilityCapability {
             "preset_query" => Ok(Self::PresetQuery),
             "broadcast" => Ok(Self::Broadcast),
             "media_status" => Ok(Self::MediaStatus),
+            "sdp_media_override" => Ok(Self::SdpMediaOverride),
             "duplicate_register_allowed" => Ok(Self::DuplicateRegisterAllowed),
             "strict_realm" => Ok(Self::StrictRealm),
             "minimum_expiry" => Ok(Self::MinimumExpiry),
@@ -284,6 +291,11 @@ pub struct CompatibilityProfile {
     pub evidence_ref: Option<String>,
     /// Profile revision, used to detect profile changes and pin sessions.
     pub revision: u32,
+    /// Controlled media-negotiation overrides (SDP/broadcast/MediaStatus).
+    ///
+    /// Each override is only applied when both this profile matches the device
+    /// and the gating capability is enabled; see the accessor methods below.
+    pub overrides: CompatibilityOverrides,
 }
 
 /// Profile selection criteria used when resolving the best matching profile.
@@ -320,6 +332,7 @@ impl CompatibilityProfile {
                 "compatibility capabilities must not exceed 64",
             ));
         }
+        self.overrides.validate()?;
         Ok(())
     }
 
@@ -379,6 +392,107 @@ impl CompatibilityProfile {
     pub fn has(&self, capability: CompatibilityCapability) -> bool {
         self.capabilities.contains(&capability)
     }
+
+    /// Returns `true` if `payload_type` may appear in a device SDP answer.
+    ///
+    /// The GB28181 baseline (static `0`/`8` and the dynamic `96..=127` range) is
+    /// always accepted. Any other payload type is rejected unless the
+    /// [`SdpMediaOverride`](CompatibilityCapability::SdpMediaOverride) capability
+    /// is enabled and lists it in [`SdpMediaOverride`](crate::SdpMediaOverride).
+    pub fn sdp_payload_allowed(&self, payload_type: &str) -> bool {
+        if is_baseline_payload_type(payload_type) {
+            return true;
+        }
+        if !self.has(CompatibilityCapability::SdpMediaOverride) {
+            return false;
+        }
+        self.overrides
+            .sdp
+            .as_ref()
+            .is_some_and(|o| o.allows_payload(payload_type))
+    }
+
+    /// Returns `true` if a vendor `a=` attribute `name` may appear in a device
+    /// SDP answer.
+    ///
+    /// Baseline vendor attribute names are always accepted. Any other name is
+    /// rejected unless the
+    /// [`SdpMediaOverride`](CompatibilityCapability::SdpMediaOverride) capability
+    /// is enabled and lists it.
+    pub fn sdp_attribute_allowed(&self, name: &str) -> bool {
+        if is_baseline_attribute(name) {
+            return true;
+        }
+        if !self.has(CompatibilityCapability::SdpMediaOverride) {
+            return false;
+        }
+        self.overrides
+            .sdp
+            .as_ref()
+            .is_some_and(|o| o.allows_attribute(name))
+    }
+
+    /// Returns the address source used to build a broadcast/talk SDP offer.
+    ///
+    /// Defaults to [`BroadcastAddressSource::MediaNode`]; the override is only
+    /// honoured when the [`Broadcast`](CompatibilityCapability::Broadcast)
+    /// capability is enabled.
+    pub fn broadcast_address_source(&self) -> BroadcastAddressSource {
+        if !self.has(CompatibilityCapability::Broadcast) {
+            return BroadcastAddressSource::MediaNode;
+        }
+        self.overrides
+            .broadcast
+            .as_ref()
+            .map(|o| o.address_source)
+            .unwrap_or_default()
+    }
+
+    /// Normalises a GB28181 `MediaStatus` `NotifyType` value into an outcome.
+    ///
+    /// Returns [`MediaStatusOutcome::Unknown`] unless the
+    /// [`MediaStatus`](CompatibilityCapability::MediaStatus) capability is
+    /// enabled. With the capability the canonical `121` value and any configured
+    /// vendor code normalise to [`MediaStatusOutcome::Stopped`].
+    pub fn media_status_outcome(&self, notify_type: &str) -> MediaStatusOutcome {
+        if !self.has(CompatibilityCapability::MediaStatus) {
+            return MediaStatusOutcome::Unknown;
+        }
+        let notify_type = notify_type.trim();
+        if notify_type == MEDIA_STATUS_STOPPED_NOTIFY_TYPE {
+            return MediaStatusOutcome::Stopped;
+        }
+        let vendor_stopped = self
+            .overrides
+            .media_status
+            .as_ref()
+            .is_some_and(|o| o.is_stopped(notify_type));
+        if vendor_stopped {
+            MediaStatusOutcome::Stopped
+        } else {
+            MediaStatusOutcome::Unknown
+        }
+    }
+}
+
+/// Returns `true` for RTP payload types in the GB28181 baseline set: the static
+/// `0` (PCMU) and `8` (PCMA) plus the dynamic `96..=127` range.
+fn is_baseline_payload_type(payload_type: &str) -> bool {
+    match payload_type.parse::<u16>() {
+        Ok(0) | Ok(8) => true,
+        Ok(pt) => (96..=127).contains(&pt),
+        Err(_) => false,
+    }
+}
+
+/// Baseline vendor `a=` attribute names accepted without an override.
+const BASELINE_SDP_ATTRIBUTES: &[&str] = &["downloadspeed", "filesize", "username", "password"];
+
+/// Returns `true` for vendor attribute names accepted without an override.
+fn is_baseline_attribute(name: &str) -> bool {
+    BASELINE_SDP_ATTRIBUTES
+        .iter()
+        .any(|b| b.eq_ignore_ascii_case(name))
 }
 
 fn add_field_score(

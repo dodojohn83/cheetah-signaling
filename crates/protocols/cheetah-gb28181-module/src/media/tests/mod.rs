@@ -7,10 +7,15 @@ use super::*;
 use cheetah_gb28181_core::{HeaderName, HeaderValue, Method, RequestLine, SipHeaders, StatusLine};
 
 fn config() -> MediaConfig {
+    config_with_profile(cheetah_gb28181_core::CompatibilityProfile::default())
+}
+
+fn config_with_profile(compatibility: cheetah_gb28181_core::CompatibilityProfile) -> MediaConfig {
     MediaConfig {
         local_sip_uri: SipUri::parse("sip:server@192.168.1.10:5060").unwrap(),
         max_sessions: 8,
         domain_id: DomainId::new("3402000000").unwrap(),
+        compatibility,
     }
 }
 
@@ -208,5 +213,6 @@ fn start_talk(media_session_id: MediaSessionId, codec: &str) -> MediaCommand {
 
 mod bye_tests;
 mod invite_tests;
+mod override_tests;
 mod playback_tests;
 mod sdp_tests;

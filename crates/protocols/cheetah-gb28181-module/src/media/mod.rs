@@ -18,7 +18,7 @@ pub use control::PlaybackAction;
 
 use crate::events::Gb28181Event;
 use crate::types::{DeviceId, DomainId};
-use cheetah_gb28181_core::{SipMessage, SipUri};
+use cheetah_gb28181_core::{CompatibilityProfile, SipMessage, SipUri};
 use cheetah_signal_types::{ChannelId, MediaSessionId};
 use std::collections::BTreeMap;
 
@@ -57,6 +57,12 @@ pub struct MediaConfig {
     pub max_sessions: usize,
     /// Local domain emitted in events.
     pub domain_id: DomainId,
+    /// Compatibility profile gating controlled media-negotiation overrides.
+    ///
+    /// Defaults to the strict profile; SDP payload/attribute widening and
+    /// broadcast address handling only apply when the matched profile enables
+    /// the corresponding capability.
+    pub compatibility: CompatibilityProfile,
 }
 
 /// Command that drives a GB28181 media session.

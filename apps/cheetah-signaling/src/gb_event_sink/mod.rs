@@ -1,9 +1,24 @@
-//! GB28181 event admission control.
+//! GB28181 application event sink.
 //!
-//! Classifies inbound `Gb28181Event`s by traffic class and priority, coalesces
-//! redundant keepalive / position events, sheds low-priority work when the
-//! application sink is overloaded, and dead-letters high/normal-priority events
-//! that cannot be immediately admitted so they can be redriven later.
+//! Routes incoming GB28181 driver events into the application service layer
+//! instead of only logging them. The sink is non-blocking: it classifies every
+//! event by priority, coalesces redundant keepalive/position events, sheds
+//! low-priority work under overload, and dead-letters high/normal-priority
+//! events for periodic redrive so alarms, command responses and terminal media
+//! events are never silently lost.
+//!
+//! The implementation is split into cohesive submodules:
+//! - [`dispatch`]: the `Gb28181Event` match/dispatch and request-context helpers;
+//! - [`device`]: device registration/presence and bootstrap query helpers;
+//! - [`catalog`]: channel-catalog replacement and channel metadata construction;
+//! - [`media_session`]: media-session lifecycle transitions;
+//! - [`outbox`]: `Gb28181EventReceived` outbox envelope helpers.
+
+mod catalog;
+mod device;
+mod dispatch;
+mod media_session;
+mod outbox;
 
 use cheetah_gb28181_driver_tokio::sink::EventSink;
 use cheetah_gb28181_module::Gb28181Event;
@@ -13,7 +28,9 @@ use cheetah_signal_types::admission::{
     BacklogController, CoalesceDecision, Coalescer, DeadLetterEntry, DeadLetterQueue,
     DeadLetterReason, Priority, TrafficClass,
 };
-use cheetah_signal_types::{Clock, GbMetricsRecorder, NodeId, TenantId};
+use cheetah_signal_types::{
+    Clock, GbMetricsRecorder, NodeId, SignalError, SignalErrorKind, TenantId,
+};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use tokio::time::{MissedTickBehavior, interval};
@@ -21,7 +38,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::gb_catalog_buffer::{CATALOG_CLEANUP_INTERVAL, CatalogBuffer, RecordInfoBuffer};
-use crate::gb_event_processing::process_event;
+use dispatch::process_event;
 
 /// Interval between periodic dead-letter redrive attempts.
 const REDRIVE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
@@ -376,4 +393,12 @@ fn coalescing_key(event: &Gb28181Event, tenant_id: Option<TenantId>) -> Option<S
         _ => return None,
     };
     Some(format!("{}:{}:{}", tenant, device_id, class_label))
+}
+
+/// Maps a storage-layer transaction error to a generic internal `SignalError`.
+pub(super) fn storage_error(e: cheetah_storage_api::StorageError) -> SignalError {
+    SignalError::new(
+        SignalErrorKind::Internal,
+        format!("failed to begin storage transaction: {e}"),
+    )
 }

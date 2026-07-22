@@ -2,6 +2,7 @@
 
 use crate::types::{DeviceId, DomainId};
 use crate::xml::{CatalogItem, RecordItem};
+use cheetah_domain::MediaStatusOutcome;
 use cheetah_signal_types::{ChannelId, MediaSessionId};
 use std::net::SocketAddr;
 
@@ -200,6 +201,22 @@ pub enum Gb28181Event {
         sn: String,
         /// Result reported by the device, if any.
         result: Option<String>,
+    },
+    /// A `MediaStatus` notification was received and normalised through the
+    /// device's compatibility profile.
+    MediaStatusReceived {
+        /// Logical domain the device belongs to.
+        domain_id: DomainId,
+        /// Device identifier.
+        device_id: DeviceId,
+        /// Source address.
+        source: SocketAddr,
+        /// Sequence number.
+        sn: String,
+        /// Raw `NotifyType` reported by the device.
+        notify_type: String,
+        /// Profile-normalised outcome for the reported `NotifyType`.
+        outcome: MediaStatusOutcome,
     },
     /// A live or playback media session was successfully established.
     MediaSessionStarted {

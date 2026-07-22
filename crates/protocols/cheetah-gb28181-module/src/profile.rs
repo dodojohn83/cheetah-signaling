@@ -91,6 +91,7 @@ mod tests {
             capabilities: capabilities.to_vec(),
             evidence_ref: Some(format!("testdata/gb28181/profiles/{id}.meta.toml")),
             revision: 1,
+            overrides: Default::default(),
         }
     }
 

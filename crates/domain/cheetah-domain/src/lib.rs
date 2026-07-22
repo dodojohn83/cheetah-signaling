@@ -8,6 +8,7 @@
 
 pub mod channel;
 pub mod command;
+pub mod compatibility;
 pub mod device;
 pub mod error;
 pub mod event;
@@ -33,6 +34,10 @@ pub use channel::{
 pub use command::{
     Command, CommandPayload, DeviceControlCommand, DeviceControlKind, IdempotencyScope,
     MediaControl, PresetCommand, PtzDirection, QueryCommand, QueryKind,
+};
+pub use compatibility::{
+    BroadcastAddressSource, BroadcastOverride, CompatibilityOverrides,
+    MEDIA_STATUS_STOPPED_NOTIFY_TYPE, MediaStatusOutcome, MediaStatusOverride, SdpMediaOverride,
 };
 pub use device::{
     Capability, CapabilityValue, Connectivity, Device, DeviceKind, DeviceLifecycle, Protocol,

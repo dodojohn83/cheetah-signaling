@@ -1,33 +1,23 @@
-//! GB28181 event processing helpers.
-//!
-//! Device presence, catalog replacement and outbox helpers used by the event
-//! processing pipeline.
+//! Device resolution, presence and bootstrap-query helpers.
 
-use cheetah_domain::{Connectivity, Device, DomainEvent, Protocol};
+use cheetah_domain::{Connectivity, Device, Protocol};
 use cheetah_gb28181_module::DeviceId as GbDeviceId;
 use cheetah_gb28181_module::bootstrap;
-use cheetah_gb28181_module::xml::CatalogItem as GbCatalogItem;
 use cheetah_http_api::state::ApiState;
 use cheetah_signal_application::{
-    ChannelDescriptor, MarkDeviceOfflineRequest, MarkDeviceOnlineRequest, RegisterDeviceRequest,
-    ReplaceChannelCatalogRequest, SubmitOperationRequest, UpdateDeviceCapabilitiesRequest,
+    MarkDeviceOfflineRequest, MarkDeviceOnlineRequest, RegisterDeviceRequest,
+    SubmitOperationRequest, UpdateDeviceCapabilitiesRequest,
 };
 use cheetah_signal_types::{
-    Deadline, DeviceId, DurationMs, Event, OwnerEpoch, ProtocolIdentity, RequestContext,
-    ResourceId, ResourceKind, ResourceRef, SignalError, SignalErrorKind, TenantId,
+    Deadline, DeviceId, DurationMs, OwnerEpoch, ProtocolIdentity, RequestContext, ResourceId,
+    ResourceKind, ResourceRef, SignalError, TenantId,
 };
-use cheetah_storage_api::StorageError;
 use std::collections::BTreeMap;
 use tracing::warn;
 
-pub(crate) fn storage_error(e: StorageError) -> SignalError {
-    SignalError::new(
-        SignalErrorKind::Internal,
-        format!("failed to begin storage transaction: {e}"),
-    )
-}
+use super::storage_error;
 
-async fn resolve_device(
+pub(super) async fn resolve_device(
     state: &ApiState,
     tenant_id: TenantId,
     external_id: &str,
@@ -59,7 +49,7 @@ async fn resolve_device(
     }
 }
 
-pub(crate) async fn resolve_device_id(
+pub(super) async fn resolve_device_id(
     state: &ApiState,
     tenant_id: TenantId,
     external_id: &str,
@@ -69,7 +59,7 @@ pub(crate) async fn resolve_device_id(
         .map(|d| d.device_id())
 }
 
-pub(crate) async fn ensure_online(
+pub(super) async fn ensure_online(
     state: &ApiState,
     context: &RequestContext,
     tenant_id: TenantId,
@@ -79,7 +69,7 @@ pub(crate) async fn ensure_online(
     let external_id = device_id.as_ref();
     if let Some(device) = resolve_device(state, tenant_id, external_id).await {
         let internal_id = device.device_id();
-        if !matches!(device.connectivity(), Connectivity::Online) {
+        if force || !matches!(device.connectivity(), Connectivity::Online) {
             let mut uow = state.storage.begin().await.map_err(storage_error)?;
             let _ = state
                 .device_service
@@ -134,7 +124,7 @@ pub(crate) async fn ensure_online(
     Ok(Some(internal_id))
 }
 
-pub(crate) async fn mark_offline(
+pub(super) async fn mark_offline(
     state: &ApiState,
     context: &RequestContext,
     tenant_id: TenantId,
@@ -165,7 +155,7 @@ pub(crate) async fn mark_offline(
 /// registration-sequence-qualified idempotency key so that the same
 /// registration does not create duplicate operations while a new owner or a new
 /// registration still spawns fresh queries.
-pub(crate) async fn submit_bootstrap_queries(
+pub(super) async fn submit_bootstrap_queries(
     state: &ApiState,
     context: &RequestContext,
     tenant_id: TenantId,
@@ -221,7 +211,7 @@ pub(crate) async fn submit_bootstrap_queries(
     Ok(())
 }
 
-pub(crate) async fn update_device_info(
+pub(super) async fn update_device_info(
     state: &ApiState,
     context: &RequestContext,
     tenant_id: TenantId,
@@ -253,161 +243,5 @@ pub(crate) async fn update_device_info(
             },
         )
         .await?;
-    Ok(())
-}
-
-pub(crate) async fn replace_catalog(
-    state: &ApiState,
-    context: &RequestContext,
-    tenant_id: TenantId,
-    device_id: &GbDeviceId,
-    items: &[GbCatalogItem],
-) -> Result<(), SignalError> {
-    let external_id = device_id.as_ref();
-    let internal_id = match resolve_device_id(state, tenant_id, external_id).await {
-        Some(id) => id,
-        None => return Ok(()),
-    };
-
-    let mut channels = Vec::with_capacity(items.len());
-    for item in items {
-        let channel_id = cheetah_domain::channel::map_gb28181_channel_id(
-            tenant_id,
-            external_id,
-            &item.device_id,
-        );
-        let mut metadata = BTreeMap::new();
-        if let Some(v) = &item.manufacturer {
-            metadata.insert("manufacturer".to_string(), v.clone());
-        }
-        if let Some(v) = &item.model {
-            metadata.insert("model".to_string(), v.clone());
-        }
-        if let Some(v) = &item.owner {
-            metadata.insert("owner".to_string(), v.clone());
-        }
-        if let Some(v) = &item.civil_code {
-            metadata.insert("civil_code".to_string(), v.clone());
-        }
-        if let Some(v) = &item.block {
-            metadata.insert("block".to_string(), v.clone());
-        }
-        if let Some(v) = &item.address {
-            metadata.insert("address".to_string(), v.clone());
-        }
-        if let Some(v) = &item.parent_id {
-            metadata.insert("parent_id".to_string(), v.clone());
-        }
-        if let Some(v) = &item.ip_address {
-            metadata.insert("ip_address".to_string(), v.clone());
-        }
-        if let Some(v) = &item.port {
-            metadata.insert("port".to_string(), v.clone());
-        }
-        if let Some(v) = &item.status {
-            metadata.insert("status".to_string(), v.clone());
-        }
-        if let Some(v) = &item.longitude {
-            metadata.insert("longitude".to_string(), v.clone());
-        }
-        if let Some(v) = &item.latitude {
-            metadata.insert("latitude".to_string(), v.clone());
-        }
-
-        channels.push(ChannelDescriptor {
-            id: Some(channel_id.to_string()),
-            name: item.name.clone().unwrap_or_else(|| item.device_id.clone()),
-            kind: "video".to_string(),
-            enabled: true,
-            status: None,
-            stream_profiles: vec![],
-            ptz_capabilities: None,
-            metadata: Some(metadata),
-        });
-    }
-
-    let mut uow = state.storage.begin().await.map_err(storage_error)?;
-    let _ = state
-        .device_service
-        .replace_channel_catalog(
-            context,
-            &mut *uow,
-            internal_id,
-            ReplaceChannelCatalogRequest { channels },
-        )
-        .await?;
-    Ok(())
-}
-
-/// Builds a [`DomainEvent::Gb28181EventReceived`] outbox event.
-///
-/// When an internal device identifier is known the event is attached to the
-/// device aggregate; otherwise it is attached to a synthetic event aggregate.
-pub(crate) fn build_gb_event(
-    state: &ApiState,
-    context: &RequestContext,
-    tenant_id: TenantId,
-    device_id: Option<DeviceId>,
-    external_id: Option<&str>,
-    event_type: &str,
-    payload: BTreeMap<String, String>,
-) -> Event<DomainEvent> {
-    let event_id = state.id_generator.generate_event_id();
-    let aggregate_ref = match device_id {
-        Some(id) => ResourceRef {
-            tenant_id,
-            kind: ResourceKind::Device,
-            id: ResourceId::Device(id),
-        },
-        None => ResourceRef {
-            tenant_id,
-            kind: ResourceKind::Event,
-            id: ResourceId::Event(event_id),
-        },
-    };
-    Event {
-        event_id,
-        tenant_id,
-        aggregate_ref,
-        aggregate_sequence: 0,
-        occurred_at: state.clock.now_wall(),
-        correlation_id: context.correlation_id,
-        causation_id: context.message_id,
-        traceparent: context.traceparent.clone(),
-        tracestate: context.tracestate.clone(),
-        source: context.node_id.unwrap_or_default(),
-        payload: DomainEvent::Gb28181EventReceived {
-            tenant_id,
-            device_id,
-            event_type: event_type.to_string(),
-            protocol: Protocol::Gb28181,
-            external_id: external_id.map(String::from),
-            payload,
-        },
-    }
-}
-
-/// Appends a [`DomainEvent::Gb28181EventReceived`] to the outbox.
-pub(crate) async fn append_gb_event(
-    state: &ApiState,
-    context: &RequestContext,
-    tenant_id: TenantId,
-    device_id: Option<DeviceId>,
-    external_id: Option<&str>,
-    event_type: &str,
-    payload: BTreeMap<String, String>,
-) -> Result<(), SignalError> {
-    let mut uow = state.storage.begin().await.map_err(storage_error)?;
-    let event = build_gb_event(
-        state,
-        context,
-        tenant_id,
-        device_id,
-        external_id,
-        event_type,
-        payload,
-    );
-    uow.outbox().append(event).await?;
-    uow.commit().await?;
     Ok(())
 }
