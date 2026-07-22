@@ -5,12 +5,14 @@
 //! when the bounded channel is full and processes them asynchronously in a
 //! background worker.
 
-use cheetah_domain::{Connectivity, Device, Protocol};
+use cheetah_domain::{
+    Connectivity, Device, DomainEvent, MediaSessionError, MediaSessionState, Protocol,
+};
 use cheetah_gb28181_driver_tokio::sink::EventSink;
 use cheetah_gb28181_module::DeviceId as GbDeviceId;
 use cheetah_gb28181_module::Gb28181Event;
 use cheetah_gb28181_module::bootstrap;
-use cheetah_gb28181_module::xml::CatalogItem as GbCatalogItem;
+use cheetah_gb28181_module::xml::{CatalogItem as GbCatalogItem, RecordItem as GbRecordItem};
 use cheetah_http_api::metrics::RequestMetrics;
 use cheetah_http_api::state::ApiState;
 use cheetah_signal_application::{
@@ -18,9 +20,10 @@ use cheetah_signal_application::{
     ReplaceChannelCatalogRequest, SubmitOperationRequest, UpdateDeviceCapabilitiesRequest,
 };
 use cheetah_signal_types::{
-    CorrelationId, Deadline, DeviceId, DurationMs, GbCommandMethod, GbCommandOutcome,
-    GbMetricsRecorder, MessageId, NodeId, OwnerEpoch, Principal, PrincipalKind, ProtocolIdentity,
-    RequestContext, ResourceId, ResourceKind, ResourceRef, SignalError, SignalErrorKind, TenantId,
+    CorrelationId, Deadline, DeviceId, DurationMs, Event, GbCommandMethod, GbCommandOutcome,
+    GbMetricsRecorder, MediaSessionId, MessageId, NodeId, OwnerEpoch, Principal, PrincipalKind,
+    ProtocolIdentity, RequestContext, ResourceId, ResourceKind, ResourceRef, SignalError,
+    SignalErrorKind, TenantId,
 };
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -83,7 +86,11 @@ pub fn spawn(
                 }
                 maybe_event = rx.recv() => {
                     match maybe_event {
-                        Some(event) => process_event(&state, node_id, tenant_id, event, &mut catalog_buffer, &mut record_buffer, gb_metrics.as_ref()).await,
+                        Some(event) => {
+                            if let Err(e) = process_event(&state, node_id, tenant_id, event, &mut catalog_buffer, &mut record_buffer, gb_metrics.as_ref()).await {
+                                warn!(error = %e, "failed to process gb28181 event");
+                            }
+                        }
                         None => break,
                     }
                 }
@@ -102,18 +109,18 @@ async fn process_event(
     catalog_buffer: &mut CatalogBuffer,
     record_buffer: &mut RecordInfoBuffer,
     gb_metrics: &dyn GbMetricsRecorder,
-) {
+) -> Result<(), SignalError> {
     let tenant_id = match tenant_id {
         Some(id) => id,
         None => {
             warn!("dropping gb28181 event; no default_tenant_id configured");
-            return;
+            return Ok(());
         }
     };
 
     let context = build_context(state, node_id, tenant_id, &event);
 
-    let result = match event {
+    match event {
         Gb28181Event::DeviceRegistered {
             device_id,
             registration_sequence,
@@ -220,13 +227,87 @@ async fn process_event(
             }
             update_device_info(state, &context, tenant_id, &device_id, metadata).await
         }
-        Gb28181Event::AlarmReceived { device_id, .. } => {
-            info!(%device_id, "gb28181 alarm received; no application handler wired yet");
-            Ok(())
+        Gb28181Event::AlarmReceived {
+            device_id,
+            sn,
+            priority,
+            method,
+            alarm_type,
+            time,
+            info,
+            ..
+        } => {
+            let internal_id = resolve_device_id(state, tenant_id, device_id.as_ref()).await;
+            let mut payload = BTreeMap::new();
+            payload.insert("sn".to_string(), sn);
+            if let Some(v) = priority {
+                payload.insert("priority".to_string(), v);
+            }
+            if let Some(v) = method {
+                payload.insert("method".to_string(), v);
+            }
+            if let Some(v) = alarm_type {
+                payload.insert("alarm_type".to_string(), v);
+            }
+            if let Some(v) = time {
+                payload.insert("time".to_string(), v);
+            }
+            if let Some(v) = info {
+                payload.insert("info".to_string(), v);
+            }
+            append_gb_event(
+                state,
+                &context,
+                tenant_id,
+                internal_id,
+                Some(device_id.as_ref()),
+                "Alarm",
+                payload,
+            )
+            .await
         }
-        Gb28181Event::MobilePositionReceived { device_id, .. } => {
-            info!(%device_id, "gb28181 mobile position received; no application handler wired yet");
-            Ok(())
+        Gb28181Event::MobilePositionReceived {
+            device_id,
+            sn,
+            time,
+            longitude,
+            latitude,
+            speed,
+            direction,
+            altitude,
+            ..
+        } => {
+            let internal_id = resolve_device_id(state, tenant_id, device_id.as_ref()).await;
+            let mut payload = BTreeMap::new();
+            payload.insert("sn".to_string(), sn);
+            if let Some(v) = time {
+                payload.insert("time".to_string(), v);
+            }
+            if let Some(v) = longitude {
+                payload.insert("longitude".to_string(), v);
+            }
+            if let Some(v) = latitude {
+                payload.insert("latitude".to_string(), v);
+            }
+            if let Some(v) = speed {
+                payload.insert("speed".to_string(), v);
+            }
+            if let Some(v) = direction {
+                payload.insert("direction".to_string(), v);
+            }
+            if let Some(v) = altitude {
+                payload.insert("altitude".to_string(), v);
+            }
+            append_gb_event(
+                state,
+                &context,
+                tenant_id,
+                internal_id,
+                Some(device_id.as_ref()),
+                "MobilePosition",
+                payload,
+            )
+            .await
         }
         Gb28181Event::DeviceControlResponseReceived {
             device_id,
@@ -235,36 +316,137 @@ async fn process_event(
             ..
         } => {
             gb_metrics.record_command(GbCommandMethod::DeviceControl, control_outcome(&result));
-            info!(%device_id, %sn, ?result, "gb28181 control response received; no application handler wired yet");
-            Ok(())
+            let internal_id = resolve_device_id(state, tenant_id, device_id.as_ref()).await;
+            let mut payload = BTreeMap::new();
+            payload.insert("sn".to_string(), sn);
+            if let Some(v) = result {
+                payload.insert("result".to_string(), v);
+            }
+            append_gb_event(
+                state,
+                &context,
+                tenant_id,
+                internal_id,
+                Some(device_id.as_ref()),
+                "DeviceControl",
+                payload,
+            )
+            .await
         }
         Gb28181Event::MediaSessionStarted {
             media_session_id,
+            domain_id,
             device_id,
             channel_id,
-            ..
+            source,
+            remote_sdp,
+            remote_ssrc,
+            remote_port,
+            remote_proto,
         } => {
-            info!(%media_session_id, %device_id, %channel_id, "gb28181 media session started; no application handler wired yet");
-            Ok(())
+            update_media_session(
+                state,
+                &context,
+                tenant_id,
+                media_session_id,
+                MediaSessionTransition::Start,
+            )
+            .await?;
+            let internal_id = resolve_device_id(state, tenant_id, device_id.as_ref()).await;
+            let mut payload = BTreeMap::new();
+            payload.insert("domain_id".to_string(), domain_id.to_string());
+            payload.insert("media_session_id".to_string(), media_session_id.to_string());
+            payload.insert("channel_id".to_string(), channel_id.to_string());
+            payload.insert("device_id".to_string(), device_id.to_string());
+            payload.insert("remote_address".to_string(), source.to_string());
+            payload.insert("remote_sdp".to_string(), remote_sdp);
+            if let Some(v) = remote_ssrc {
+                payload.insert("remote_ssrc".to_string(), v);
+            }
+            payload.insert("remote_port".to_string(), remote_port.to_string());
+            payload.insert("remote_proto".to_string(), remote_proto);
+            append_gb_event(
+                state,
+                &context,
+                tenant_id,
+                internal_id,
+                None,
+                "MediaSessionStarted",
+                payload,
+            )
+            .await
         }
         Gb28181Event::MediaSessionStopped {
             media_session_id,
+            domain_id,
             device_id,
             channel_id,
-            ..
+            source,
         } => {
-            info!(%media_session_id, %device_id, %channel_id, "gb28181 media session stopped; no application handler wired yet");
-            Ok(())
+            update_media_session(
+                state,
+                &context,
+                tenant_id,
+                media_session_id,
+                MediaSessionTransition::Stop,
+            )
+            .await?;
+            let internal_id = resolve_device_id(state, tenant_id, device_id.as_ref()).await;
+            let mut payload = BTreeMap::new();
+            payload.insert("domain_id".to_string(), domain_id.to_string());
+            payload.insert("media_session_id".to_string(), media_session_id.to_string());
+            payload.insert("channel_id".to_string(), channel_id.to_string());
+            payload.insert("device_id".to_string(), device_id.to_string());
+            if let Some(s) = source {
+                payload.insert("remote_address".to_string(), s.to_string());
+            }
+            append_gb_event(
+                state,
+                &context,
+                tenant_id,
+                internal_id,
+                None,
+                "MediaSessionStopped",
+                payload,
+            )
+            .await
         }
         Gb28181Event::MediaSessionFailed {
             media_session_id,
+            domain_id,
             device_id,
             channel_id,
+            source,
             reason,
-            ..
         } => {
-            info!(%media_session_id, %device_id, %channel_id, %reason, "gb28181 media session failed; no application handler wired yet");
-            Ok(())
+            update_media_session(
+                state,
+                &context,
+                tenant_id,
+                media_session_id,
+                MediaSessionTransition::Fail(reason.clone()),
+            )
+            .await?;
+            let internal_id = resolve_device_id(state, tenant_id, device_id.as_ref()).await;
+            let mut payload = BTreeMap::new();
+            payload.insert("domain_id".to_string(), domain_id.to_string());
+            payload.insert("media_session_id".to_string(), media_session_id.to_string());
+            payload.insert("channel_id".to_string(), channel_id.to_string());
+            payload.insert("device_id".to_string(), device_id.to_string());
+            if let Some(s) = source {
+                payload.insert("remote_address".to_string(), s.to_string());
+            }
+            payload.insert("reason".to_string(), reason);
+            append_gb_event(
+                state,
+                &context,
+                tenant_id,
+                internal_id,
+                None,
+                "MediaSessionFailed",
+                payload,
+            )
+            .await
         }
         Gb28181Event::RecordInfoReceived {
             device_id,
@@ -277,31 +459,124 @@ async fn process_event(
             if let Some(records) =
                 record_buffer.accumulate(tenant_id, &device_id, &sn, sum_num, num, items)
             {
-                info!(%device_id, %sn, record_count = records.len(), "gb28181 record info aggregation complete");
-                // TODO(GB4-ACC-005): persist records through a RecordInfoService once available.
+                let internal_id = resolve_device_id(state, tenant_id, device_id.as_ref()).await;
+                let mut payload = BTreeMap::new();
+                payload.insert("sn".to_string(), sn);
+                payload.insert("sum_num".to_string(), sum_num.to_string());
+                payload.insert("num".to_string(), num.to_string());
+                payload.insert("record_count".to_string(), records.len().to_string());
+                if !records.is_empty()
+                    && let Some(json) = serialize_record_items(&records)
+                {
+                    payload.insert("records".to_string(), json);
+                }
+                append_gb_event(
+                    state,
+                    &context,
+                    tenant_id,
+                    internal_id,
+                    Some(device_id.as_ref()),
+                    "RecordInfo",
+                    payload,
+                )
+                .await?;
             }
             Ok(())
         }
-        Gb28181Event::CascadePlatformConnected { platform_id, .. } => {
-            info!(%platform_id, "gb28181 cascade platform connected; no application handler wired yet");
-            Ok(())
+        Gb28181Event::CascadePlatformConnected {
+            domain_id,
+            platform_id,
+            upstream,
+            expires,
+        } => {
+            let mut payload = BTreeMap::new();
+            payload.insert("domain_id".to_string(), domain_id.to_string());
+            payload.insert("platform_id".to_string(), platform_id.clone());
+            payload.insert("upstream".to_string(), upstream);
+            payload.insert("expires".to_string(), expires.to_string());
+            append_gb_event(
+                state,
+                &context,
+                tenant_id,
+                None,
+                Some(&platform_id),
+                "CascadePlatformConnected",
+                payload,
+            )
+            .await
         }
-        Gb28181Event::CascadePlatformDisconnected { platform_id, .. } => {
-            info!(%platform_id, "gb28181 cascade platform disconnected; no application handler wired yet");
-            Ok(())
+        Gb28181Event::CascadePlatformDisconnected {
+            domain_id,
+            platform_id,
+            reason,
+        } => {
+            let mut payload = BTreeMap::new();
+            payload.insert("domain_id".to_string(), domain_id.to_string());
+            payload.insert("platform_id".to_string(), platform_id.clone());
+            payload.insert("reason".to_string(), reason);
+            append_gb_event(
+                state,
+                &context,
+                tenant_id,
+                None,
+                Some(&platform_id),
+                "CascadePlatformDisconnected",
+                payload,
+            )
+            .await
         }
-        Gb28181Event::CascadePlayRequested { bridge_id, .. } => {
-            info!(%bridge_id, "gb28181 cascade play requested; no application handler wired yet");
-            Ok(())
+        Gb28181Event::CascadePlayRequested {
+            domain_id,
+            platform_id,
+            bridge_id,
+            upstream_call_id,
+            upstream_from,
+            upstream_to,
+            target_user,
+            remote_sdp,
+        } => {
+            let mut payload = BTreeMap::new();
+            payload.insert("domain_id".to_string(), domain_id.to_string());
+            payload.insert("platform_id".to_string(), platform_id.clone());
+            payload.insert("bridge_id".to_string(), bridge_id.clone());
+            payload.insert("upstream_call_id".to_string(), upstream_call_id);
+            payload.insert("upstream_from".to_string(), upstream_from);
+            payload.insert("upstream_to".to_string(), upstream_to);
+            payload.insert("target_user".to_string(), target_user);
+            payload.insert("remote_sdp".to_string(), remote_sdp);
+            append_gb_event(
+                state,
+                &context,
+                tenant_id,
+                None,
+                Some(&platform_id),
+                "CascadePlayRequested",
+                payload,
+            )
+            .await
         }
-        Gb28181Event::CascadePlayStopped { bridge_id, .. } => {
-            info!(%bridge_id, "gb28181 cascade play stopped; no application handler wired yet");
-            Ok(())
+        Gb28181Event::CascadePlayStopped {
+            domain_id,
+            platform_id,
+            bridge_id,
+            reason,
+        } => {
+            let mut payload = BTreeMap::new();
+            payload.insert("domain_id".to_string(), domain_id.to_string());
+            payload.insert("platform_id".to_string(), platform_id.clone());
+            payload.insert("bridge_id".to_string(), bridge_id.clone());
+            payload.insert("reason".to_string(), reason);
+            append_gb_event(
+                state,
+                &context,
+                tenant_id,
+                None,
+                Some(&platform_id),
+                "CascadePlayStopped",
+                payload,
+            )
+            .await
         }
-    };
-
-    if let Err(e) = result {
-        warn!(error = %e, "failed to process gb28181 event");
     }
 }
 
@@ -677,4 +952,184 @@ async fn replace_catalog(
         )
         .await?;
     Ok(())
+}
+
+/// Desired media session transition requested by a GB28181 driver event.
+enum MediaSessionTransition {
+    /// Progress the session to Active.
+    Start,
+    /// Tear the session down.
+    Stop,
+    /// Fail the session with the given reason.
+    Fail(String),
+}
+
+/// Updates a [`MediaSession`] state in response to a GB28181 media lifecycle
+/// event and persists the resulting [`DomainEvent`]s to the outbox.
+async fn update_media_session(
+    state: &ApiState,
+    context: &RequestContext,
+    tenant_id: TenantId,
+    media_session_id: MediaSessionId,
+    transition: MediaSessionTransition,
+) -> Result<(), SignalError> {
+    let mut uow = state.storage.begin().await.map_err(storage_error)?;
+    let mut session = match uow
+        .media_session_repository()
+        .get(tenant_id, media_session_id)
+        .await?
+    {
+        Some(s) => s,
+        None => return Ok(()),
+    };
+    let clock = state.clock.as_ref();
+
+    let events: Vec<DomainEvent> = match transition {
+        MediaSessionTransition::Start => match session.state() {
+            MediaSessionState::Requested => vec![
+                session.allocating(clock)?,
+                session.inviting(clock)?,
+                session.active(clock)?,
+            ],
+            MediaSessionState::Allocating => {
+                vec![session.inviting(clock)?, session.active(clock)?]
+            }
+            MediaSessionState::Inviting => vec![session.active(clock)?],
+            _ => Vec::new(),
+        },
+        MediaSessionTransition::Stop => match session.state() {
+            MediaSessionState::Active => {
+                let mut events = vec![session.stop(clock)?];
+                if session.state() == MediaSessionState::Stopping {
+                    events.push(session.stopped(clock)?);
+                }
+                events
+            }
+            MediaSessionState::Stopping => vec![session.stopped(clock)?],
+            MediaSessionState::Requested
+            | MediaSessionState::Allocating
+            | MediaSessionState::Inviting => vec![session.stop(clock)?],
+            _ => Vec::new(),
+        },
+        MediaSessionTransition::Fail(reason) => {
+            if session.state().is_terminal() {
+                Vec::new()
+            } else {
+                vec![session.failed(MediaSessionError::new("gb28181", reason), clock)?]
+            }
+        }
+    };
+
+    if !events.is_empty() {
+        uow.media_session_repository().save(&session).await?;
+        let aggregate_ref = ResourceRef {
+            tenant_id,
+            kind: ResourceKind::MediaSession,
+            id: ResourceId::MediaSession(media_session_id),
+        };
+        for event in events {
+            let wrapped = Event::new(
+                state.id_generator.as_ref(),
+                clock,
+                context,
+                tenant_id,
+                aggregate_ref.clone(),
+                session.revision().0,
+                event,
+            );
+            uow.outbox().append(wrapped).await?;
+        }
+        uow.commit().await?;
+    }
+    Ok(())
+}
+
+/// Appends a [`DomainEvent::Gb28181EventReceived`] to the outbox.
+///
+/// When an internal device identifier is known the event is attached to the
+/// device aggregate; otherwise it is attached to a synthetic event aggregate so
+/// the outbox still captures the occurrence.
+async fn append_gb_event(
+    state: &ApiState,
+    context: &RequestContext,
+    tenant_id: TenantId,
+    device_id: Option<DeviceId>,
+    external_id: Option<&str>,
+    event_type: &str,
+    payload: BTreeMap<String, String>,
+) -> Result<(), SignalError> {
+    let mut uow = state.storage.begin().await.map_err(storage_error)?;
+    let event_id = state.id_generator.generate_event_id();
+    let aggregate_ref = match device_id {
+        Some(id) => ResourceRef {
+            tenant_id,
+            kind: ResourceKind::Device,
+            id: ResourceId::Device(id),
+        },
+        None => ResourceRef {
+            tenant_id,
+            kind: ResourceKind::Event,
+            id: ResourceId::Event(event_id),
+        },
+    };
+    let event = Event {
+        event_id,
+        tenant_id,
+        aggregate_ref,
+        aggregate_sequence: 0,
+        occurred_at: state.clock.now_wall(),
+        correlation_id: context.correlation_id,
+        causation_id: context.message_id,
+        traceparent: context.traceparent.clone(),
+        tracestate: context.tracestate.clone(),
+        source: context.node_id.unwrap_or_default(),
+        payload: DomainEvent::Gb28181EventReceived {
+            tenant_id,
+            device_id,
+            event_type: event_type.to_string(),
+            protocol: Protocol::Gb28181,
+            external_id: external_id.map(String::from),
+            payload,
+        },
+    };
+    uow.outbox().append(event).await?;
+    uow.commit().await?;
+    Ok(())
+}
+
+/// Serializes a slice of GB28181 record items to a JSON array.
+fn serialize_record_items(records: &[GbRecordItem]) -> Option<String> {
+    let maps: Vec<BTreeMap<String, String>> = records
+        .iter()
+        .map(|r| {
+            let mut m = BTreeMap::new();
+            m.insert("device_id".to_string(), r.device_id.clone());
+            if let Some(v) = &r.name {
+                m.insert("name".to_string(), v.clone());
+            }
+            if let Some(v) = &r.file_path {
+                m.insert("file_path".to_string(), v.clone());
+            }
+            if let Some(v) = &r.start_time {
+                m.insert("start_time".to_string(), v.clone());
+            }
+            if let Some(v) = &r.end_time {
+                m.insert("end_time".to_string(), v.clone());
+            }
+            if let Some(v) = &r.secrecy {
+                m.insert("secrecy".to_string(), v.clone());
+            }
+            if let Some(v) = &r.record_type {
+                m.insert("record_type".to_string(), v.clone());
+            }
+            if let Some(v) = &r.recorder_id {
+                m.insert("recorder_id".to_string(), v.clone());
+            }
+            if let Some(v) = &r.file_size {
+                m.insert("file_size".to_string(), v.clone());
+            }
+            m
+        })
+        .collect();
+    serde_json::to_string(&maps).ok()
 }
