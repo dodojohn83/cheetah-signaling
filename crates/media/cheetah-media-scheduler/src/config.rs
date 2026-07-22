@@ -89,6 +89,8 @@ pub struct SchedulerConfig {
     pub zone_affinity_weight: f64,
     /// Score weight for a stable random factor.
     pub stable_random_weight: f64,
+    /// Score weight for matching the requested contract version exactly.
+    pub contract_version_weight: f64,
     /// Maximum attempts to reserve capacity on a selected node.
     pub max_reserve_attempts: usize,
     /// Maximum number of nodes to score per scheduling request.
@@ -105,6 +107,7 @@ impl Default for SchedulerConfig {
             cpu_weight: 0.8,
             zone_affinity_weight: 2.0,
             stable_random_weight: 0.3,
+            contract_version_weight: 1.0,
             max_reserve_attempts: 3,
             max_candidates: 256,
             max_reservations: 100_000,

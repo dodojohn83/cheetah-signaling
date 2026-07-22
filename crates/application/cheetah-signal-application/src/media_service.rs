@@ -407,6 +407,9 @@ pub(crate) fn build_media_requirements(
         required_constraints: extra_constraints,
         media_session_id: Some(media_session_id.to_string()),
         require_media_sender: purpose.requires_media_sender(),
+        // No contract-version pin yet; the device/channel negotiation does not
+        // yet supply a target version. The scheduler treats 0 as "no requirement".
+        contract_version: 0,
     }
 }
 

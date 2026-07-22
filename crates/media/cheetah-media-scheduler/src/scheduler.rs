@@ -150,6 +150,10 @@ impl MediaScheduler for LeastLoadedScheduler {
                 counts.unhealthy += 1;
                 continue;
             }
+            if !version_compatible(&node, requirements) {
+                counts.contract_version_mismatch += 1;
+                continue;
+            }
             if !matches_capability(&node, requirements) {
                 counts.no_capability += 1;
                 continue;
@@ -309,6 +313,29 @@ fn is_node_eligible(node: &MediaNode, requirements: &MediaRequirements) -> bool 
         && has_capacity(node)
 }
 
+fn version_compatible(node: &MediaNode, requirements: &MediaRequirements) -> bool {
+    if requirements.contract_version == 0 {
+        return true;
+    }
+    let matching: Vec<_> = node
+        .capabilities
+        .iter()
+        .filter(|cap| {
+            cap.protocol == requirements.protocol
+                && (requirements.operation.is_empty()
+                    || cap.operations.contains(&requirements.operation))
+        })
+        .collect();
+    // If the node does not advertise the requested protocol/operation at all,
+    // this is a capability mismatch, not a version mismatch.
+    if matching.is_empty() {
+        return true;
+    }
+    matching
+        .iter()
+        .any(|cap| cap.version >= requirements.contract_version)
+}
+
 fn matches_capability(node: &MediaNode, requirements: &MediaRequirements) -> bool {
     let mut required = requirements.required_constraints.clone();
     if let Some(transport) = requirements.transport.as_ref() {
@@ -321,6 +348,7 @@ fn matches_capability(node: &MediaNode, requirements: &MediaRequirements) -> boo
         cap.protocol == requirements.protocol
             && (requirements.operation.is_empty()
                 || cap.operations.contains(&requirements.operation))
+            && (requirements.contract_version == 0 || cap.version >= requirements.contract_version)
             && constraints_satisfy(&cap.constraints, &required)
             && constraints_satisfy(&cap.constraints, &requirements.tenant_constraints)
             && codec_compatible(cap, requirements)
@@ -397,11 +425,27 @@ fn score_node(node: &MediaNode, requirements: &MediaRequirements, config: &Sched
         &node.node_id.to_string(),
     );
 
+    let contract_version_score = contract_version_score(node, requirements);
+
     session_score * config.available_sessions_weight
         + bandwidth_score * config.bandwidth_weight
         + cpu_score * config.cpu_weight
         + zone_score * config.zone_affinity_weight
         + random_score * config.stable_random_weight
+        + contract_version_score * config.contract_version_weight
+}
+
+fn contract_version_score(node: &MediaNode, requirements: &MediaRequirements) -> f64 {
+    if requirements.contract_version == 0 {
+        return 0.0;
+    }
+    let matches_version = node.capabilities.iter().any(|cap| {
+        cap.protocol == requirements.protocol
+            && (requirements.operation.is_empty()
+                || cap.operations.contains(&requirements.operation))
+            && cap.version == requirements.contract_version
+    });
+    if matches_version { 1.0 } else { 0.0 }
 }
 
 fn stable_random(media_session_id: Option<&str>, node_id: &str) -> f64 {
@@ -419,6 +463,7 @@ struct CandidateFilterCounts {
     wrong_status: usize,
     unhealthy: usize,
     no_capability: usize,
+    contract_version_mismatch: usize,
     no_zone: usize,
     no_network_zone: usize,
     no_capacity: usize,
@@ -430,9 +475,10 @@ fn format_no_candidate_reason(
     counts: &CandidateFilterCounts,
 ) -> String {
     format!(
-        "no node satisfies protocol={} operation={} zone={:?} network_zone={:?} transport={:?} encapsulation={:?} codecs={:?} required_constraints={:?} tenant_constraints={:?}; excluded={:?}, wrong_status={:?}, unhealthy={:?}, no_capability={:?}, no_zone={:?}, no_network_zone={:?}, no_capacity={:?}, bad_score={:?}",
+        "no node satisfies protocol={} operation={} contract_version={} zone={:?} network_zone={:?} transport={:?} encapsulation={:?} codecs={:?} required_constraints={:?} tenant_constraints={:?}; excluded={:?}, wrong_status={:?}, unhealthy={:?}, no_capability={:?}, contract_version_mismatch={:?}, no_zone={:?}, no_network_zone={:?}, no_capacity={:?}, bad_score={:?}",
         requirements.protocol,
         requirements.operation,
+        requirements.contract_version,
         requirements.zone,
         requirements.network_zone,
         requirements.transport,
@@ -444,6 +490,7 @@ fn format_no_candidate_reason(
         counts.wrong_status,
         counts.unhealthy,
         counts.no_capability,
+        counts.contract_version_mismatch,
         counts.no_zone,
         counts.no_network_zone,
         counts.no_capacity,

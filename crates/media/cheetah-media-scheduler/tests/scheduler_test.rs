@@ -70,12 +70,15 @@ fn session_id() -> MediaSessionId {
 
 fn node_with_contract_version(version: &str) -> MediaNode {
     let mut node = default_node();
+    let version_u64: u64 = version
+        .parse()
+        .expect("test version must be a positive integer");
     node.instance_id = format!("instance-{version}");
     node.node_id =
         NodeId::from_str(&format!("22222222-2222-2222-2222-22222222222{version}")).unwrap();
+    node.contract_version = version_u64 as u32;
     for cap in &mut node.capabilities {
-        cap.constraints
-            .insert("contract_version".to_string(), version.to_string());
+        cap.version = version_u64;
     }
     node
 }
@@ -134,6 +137,7 @@ fn requirements(operation: &str, session: Option<MediaSessionId>) -> MediaRequir
         required_constraints: Default::default(),
         media_session_id: session.map(|s| s.to_string()),
         require_media_sender: operation == "talk" || operation == "broadcast",
+        ..Default::default()
     }
 }
 
@@ -506,9 +510,7 @@ async fn rolling_upgrade_routes_new_sessions_to_newer_contract_version() {
     // New sessions requiring contract v2 must be scheduled on node B.
     let new_session = MediaSessionId::from_str("44444444-4444-4444-4444-444444444445").unwrap();
     let mut new_req = requirements("live", Some(new_session));
-    new_req
-        .required_constraints
-        .insert("contract_version".to_string(), "2".to_string());
+    new_req.contract_version = 2;
     let v2_chosen = scheduler
         .schedule(tenant_id(), &new_req, &[], clock.as_ref())
         .await
@@ -516,9 +518,7 @@ async fn rolling_upgrade_routes_new_sessions_to_newer_contract_version() {
     assert_eq!(v2_chosen.node_id, node_b.node_id);
 
     // Re-scheduling the old session with a v2 requirement breaks affinity and migrates to B.
-    old_req
-        .required_constraints
-        .insert("contract_version".to_string(), "2".to_string());
+    old_req.contract_version = 2;
     let migrated = scheduler
         .schedule(tenant_id(), &old_req, &[], clock.as_ref())
         .await
@@ -527,9 +527,7 @@ async fn rolling_upgrade_routes_new_sessions_to_newer_contract_version() {
 
     // Node A is still available for sessions that only need contract v1.
     let mut v1_req = requirements("live", None);
-    v1_req
-        .required_constraints
-        .insert("contract_version".to_string(), "1".to_string());
+    v1_req.contract_version = 1;
     let v1_chosen = scheduler
         .schedule(tenant_id(), &v1_req, &[], clock.as_ref())
         .await

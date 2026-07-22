@@ -32,7 +32,7 @@
 6. hard capacity；
 7. affinity和归一化负载评分。
 
-- [ ] 调度输入为不可变`MediaRequirements`。
+- [x] 调度输入为不可变`MediaRequirements`：`MediaRequirements` 已新增 `contract_version` 字段，`matches_capability` 按 `cap.version >= requirements.contract_version` 过滤并在 `format_no_candidate_reason` 中输出 `contract_version` 与 `contract_version_mismatch`，评分通过 `contract_version_score` 优先精确版本（PR #227）。
 - [ ] 同MediaSession generation重试优先原有效节点。
 - [ ] 创建有TTL的reservation并持久化Reserved MediaBinding后才调用媒体。
 - [ ] media RPC内再次原子检查容量，防止最终一致load超卖。
