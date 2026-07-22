@@ -4,12 +4,14 @@ use crate::dto::ReconciliationReport;
 use crate::media_service::*;
 use crate::media_service_helpers::*;
 use cheetah_domain::{
-    DomainError, MediaBinding, MediaBindingError, MediaBindingState, MediaNode, MediaNodeHealth,
-    MediaNodeSessionRef, MediaPurpose, MediaReservation, MediaSession, MediaSessionDesiredState,
-    MediaSessionError, MediaSessionState, NodeStatus, UnitOfWork,
+    CommandPayload, DomainError, MediaBinding, MediaBindingError, MediaBindingState, MediaNode,
+    MediaNodeCommand, MediaNodeHealth, MediaNodeSessionRef, MediaPurpose, MediaReservation,
+    MediaSession, MediaSessionDesiredState, MediaSessionError, MediaSessionState, NodeStatus,
+    UnitOfWork,
 };
 use cheetah_signal_types::{
-    DurationMs, MediaBindingId, MediaSessionId, NodeId, PageRequest, RequestContext, UtcTimestamp,
+    Deadline, DurationMs, MediaBindingId, MediaSessionId, NodeId, OwnerEpoch, PageRequest,
+    RequestContext, TenantId, UtcTimestamp,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -293,7 +295,6 @@ impl MediaService {
             uow.commit().await?;
 
             let mut orphan_cursor: Option<String> = None;
-            let mut orphan_total: u64 = 0;
             loop {
                 let request = match orphan_cursor {
                     None => PageRequest::new(1000)?,
@@ -304,23 +305,28 @@ impl MediaService {
                     .list_sessions(tenant_id, *node_id, request, self.clock.as_ref())
                     .await?;
                 orphan_cursor = page.next_cursor;
-                if let Some(total) = page.total {
-                    orphan_total = total;
-                    break;
+                for orphan in page.items {
+                    report.orphans_detected += 1;
+                    match self
+                        .stop_orphan_session(tenant_id, *node_id, node, &orphan)
+                        .await
+                    {
+                        Ok(()) => {
+                            report.orphans_stopped += 1;
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                tenant_id = %tenant_id,
+                                node_id = %node_id,
+                                media_session_id = %orphan.media_session_id,
+                                "failed to stop orphan media session: {e}"
+                            );
+                        }
+                    }
                 }
-                orphan_total += page.items.len() as u64;
                 if orphan_cursor.is_none() {
                     break;
                 }
-            }
-            if orphan_total > 0 {
-                report.orphans_detected += orphan_total;
-                tracing::warn!(
-                    tenant_id = %tenant_id,
-                    node_id = %node_id,
-                    orphan_count = orphan_total,
-                    "orphan media sessions reported by node with no local binding"
-                );
             }
         }
 
@@ -444,7 +450,7 @@ impl MediaService {
             report
                 .missing_failed
                 .saturating_add(report.migrations_failed),
-            report.orphans_detected,
+            report.orphans_stopped,
         );
 
         Ok(report)
@@ -792,6 +798,48 @@ impl MediaService {
             uow.media_binding_repository().save(binding).await?;
         }
 
+        Ok(())
+    }
+
+    /// Sends a `StopMediaSession` command to a media node for a session that has
+    /// no local signaling binding (orphan). This does not create a signaling
+    /// operation or binding because the session is not tracked by this tenant.
+    pub(crate) async fn stop_orphan_session(
+        &self,
+        tenant_id: TenantId,
+        node_id: NodeId,
+        node: &MediaNode,
+        orphan: &MediaNodeSessionRef,
+    ) -> crate::Result<()> {
+        let now = self.clock.now_wall();
+        let deadline = Deadline::from_now(now, DurationMs::from_seconds(30))
+            .ok_or_else(|| DomainError::invalid_argument("deadline overflow"))?;
+        let idempotency_key = format!(
+            "orphan-stop-{}-{}-{}",
+            node_id,
+            orphan.media_session_id,
+            self.id_generator.generate_message_id()
+        );
+        let command = MediaNodeCommand {
+            request_id: self.id_generator.generate_message_id().to_string(),
+            tenant_id,
+            media_session_id: orphan.media_session_id,
+            media_binding_id: MediaBindingId::default(),
+            media_node_id: node_id,
+            media_node_instance_epoch: orphan.media_node_instance_epoch,
+            operation_id: self.id_generator.generate_operation_id(),
+            owner_epoch: OwnerEpoch::default(),
+            source_node_id: self.source_node_id,
+            deadline: Some(deadline),
+            idempotency_key,
+            contract_version: node.contract_version,
+            payload: CommandPayload::StopMediaSession {
+                media_session_id: orphan.media_session_id,
+            },
+        };
+        self.media_port
+            .execute(command, self.clock.as_ref())
+            .await?;
         Ok(())
     }
 }
