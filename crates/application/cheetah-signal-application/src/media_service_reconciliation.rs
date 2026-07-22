@@ -268,65 +268,40 @@ impl MediaService {
                 }
             }
 
+            // Any session reported by a node that we have a local binding on, but
+            // that has no matching local binding, is an orphan. Stop it while we are
+            // already reconciling that node. We intentionally do not scan nodes on
+            // which this tenant holds no binding: doing so would fan out to every
+            // busy media node for every tenant on every reconcile tick. Cluster-wide
+            // orphan sweeps for nodes with no local binding require per-tenant
+            // session counts from the media node and are left to a future enhancement.
             for id in reported.keys() {
-                if !local_ids.contains(id) {
-                    report.orphans_detected += 1;
-                    tracing::warn!(
-                        tenant_id = %tenant_id,
-                        node_id = %node_id,
-                        media_session_id = %id,
-                        "orphan media session reported by node"
-                    );
+                if local_ids.contains(id) {
+                    continue;
+                }
+                let Some(orphan) = reported.get(id) else {
+                    continue;
+                };
+                report.orphans_detected += 1;
+                match self
+                    .stop_orphan_session(tenant_id, node_id, node, orphan)
+                    .await
+                {
+                    Ok(()) => {
+                        report.orphans_stopped += 1;
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            tenant_id = %tenant_id,
+                            node_id = %node_id,
+                            media_session_id = %id,
+                            "failed to stop orphan media session: {e}"
+                        );
+                    }
                 }
             }
             // Persist per-node state before the next media-node query.
             uow.commit().await?;
-        }
-
-        // Scan active media nodes that have no local binding for orphan sessions.
-        // We only query nodes whose reported session count is non-zero, so idle
-        // nodes do not cause fan-out.
-        for (node_id, node) in &nodes {
-            if local_node_ids.contains(node_id) || node.session_count == 0 {
-                continue;
-            }
-            // Commit any pending writes before the next media-node RPC.
-            uow.commit().await?;
-
-            let mut orphan_cursor: Option<String> = None;
-            loop {
-                let request = match orphan_cursor {
-                    None => PageRequest::new(1000)?,
-                    Some(c) => PageRequest::new(1000)?.with_cursor(c),
-                };
-                let page = self
-                    .media_port
-                    .list_sessions(tenant_id, *node_id, request, self.clock.as_ref())
-                    .await?;
-                orphan_cursor = page.next_cursor;
-                for orphan in page.items {
-                    report.orphans_detected += 1;
-                    match self
-                        .stop_orphan_session(tenant_id, *node_id, node, &orphan)
-                        .await
-                    {
-                        Ok(()) => {
-                            report.orphans_stopped += 1;
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                tenant_id = %tenant_id,
-                                node_id = %node_id,
-                                media_session_id = %orphan.media_session_id,
-                                "failed to stop orphan media session: {e}"
-                            );
-                        }
-                    }
-                }
-                if orphan_cursor.is_none() {
-                    break;
-                }
-            }
         }
 
         // Any sessions still in active_by_node are bound to media nodes that are

@@ -752,7 +752,7 @@ async fn sqlite_media_reconcile_needs_verification_and_recovery() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn sqlite_media_reconcile_stops_orphan_sessions_on_node_without_local_binding() {
+async fn sqlite_media_reconcile_stops_orphan_sessions_on_bound_node() {
     let file_id = format!(
         "{}_{}",
         std::process::id(),
@@ -877,30 +877,26 @@ async fn sqlite_media_reconcile_stops_orphan_sessions_on_node_without_local_bind
     let local_node_id = binding.media_node_id();
     let local_epoch = binding.media_node_instance_epoch();
 
-    // Report the local session on node1 and an orphan session on node2.
+    // Report the local session and an extra orphan session on the same node.
     let orphan_session_id = id_generator.generate_media_session_id();
-    let orphan_node_id = id_generator.generate_node_id();
-    let orphan_epoch = MediaNodeInstanceEpoch(1);
 
     media_port.set_node_sessions(
         tenant,
         local_node_id,
-        vec![MediaNodeSessionRef {
-            media_session_id: session.media_session_id,
-            device_id: Some(device.device_id),
-            channel_id: Some(channel_id),
-            media_node_instance_epoch: local_epoch,
-        }],
-    );
-    media_port.set_node_sessions(
-        tenant,
-        orphan_node_id,
-        vec![MediaNodeSessionRef {
-            media_session_id: orphan_session_id,
-            device_id: Some(device.device_id),
-            channel_id: Some(channel_id),
-            media_node_instance_epoch: orphan_epoch,
-        }],
+        vec![
+            MediaNodeSessionRef {
+                media_session_id: session.media_session_id,
+                device_id: Some(device.device_id),
+                channel_id: Some(channel_id),
+                media_node_instance_epoch: local_epoch,
+            },
+            MediaNodeSessionRef {
+                media_session_id: orphan_session_id,
+                device_id: Some(device.device_id),
+                channel_id: Some(channel_id),
+                media_node_instance_epoch: local_epoch,
+            },
+        ],
     );
 
     let report = media_service.reconcile(&ctx, &mut *uow).await.unwrap();
@@ -921,13 +917,18 @@ async fn sqlite_media_reconcile_stops_orphan_sessions_on_node_without_local_bind
     let orphan_page = media_port
         .list_sessions(
             tenant,
-            orphan_node_id,
+            local_node_id,
             PageRequest::new(100).unwrap(),
             clock_dyn.as_ref(),
         )
         .await
         .unwrap();
-    assert!(orphan_page.items.is_empty());
+    assert!(
+        orphan_page
+            .items
+            .iter()
+            .all(|r| r.media_session_id != orphan_session_id)
+    );
 
     // Clean up temporary database files.
     drop(uow);
