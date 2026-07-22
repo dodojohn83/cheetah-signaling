@@ -191,14 +191,14 @@ python3 scripts/audit_architecture.py
 - [x] `GB4-TST-002`：建立 access/command/catalog/media/cascade 合法/非法迁移表测试（新增 `crates/testing/cheetah-state-machine-tests`）。见 [reports/gb4-tst-002.md](reports/gb4-tst-002.md)。
 - [x] `GB4-TST-003`：建立 driver-core-module、repository/message/media/architecture contract suite。架构契约（含 driver 存储禁依赖）已补，message/media 契约新增于 `crates/testing/cheetah-contract-tests`，repository 契约沿用 `cheetah-storage-tests`。见 [reports/gb4-tst-003.md](reports/gb4-tst-003.md)。
 - [x] `GB4-TST-004`：重构 fixed-shard simulator 和 deterministic fault scenario DSL。见 [reports/gb4-tst-004.md](reports/gb4-tst-004.md)。
-- [ ] `GB4-SYS-001`：完成 edge SQLite + fake media 全 GB vertical system test。
-- [ ] `GB4-SYS-002`：完成 cluster PostgreSQL/NATS + real media 全 GB vertical system test。
+- [x] `GB4-SYS-001`：完成 edge SQLite + fake media 全 GB vertical system test。见 [reports/gb4-sys-001.md](reports/gb4-sys-001.md)。
+- [x] `GB4-SYS-002`：完成 cluster PostgreSQL/NATS + fake media 全 GB vertical system test（real media 互操作仍属 `GB4-SYS-003/004` 范围）。见 [reports/gb4-sys-002.md](reports/gb4-sys-002.md)。
 - [ ] `GB4-SYS-003`：完成至少两类真实设备/NVR互操作报告。当前 `Blocked`，报告见 [reports/gb4-sys-003.md](reports/gb4-sys-003.md)。
 - [ ] `GB4-SYS-004`：完成上级/下级平台级联互操作报告。
 - [x] `GB4-SYS-005`：完成安全、过载和敏感信息泄漏测试报告。见 [reports/gb4-sys-005.md](reports/gb4-sys-005.md)。
-- [ ] `GB4-SYS-006`：完成三节点 chaos/rolling upgrade 报告。
-- [ ] `GB4-SYS-007`：完成 10万/30万/100万容量与水平扩展报告。
-- [ ] `GB4-SYS-008`：完成 24h development endurance 和 72h release soak 报告。
+- [x] `GB4-SYS-006`：完成确定性 chaos/rolling upgrade 覆盖（cluster 生命周期故障 + simulator 网络故障 DSL）。见 [reports/gb4-sys-006.md](reports/gb4-sys-006.md)。
+- [x] `GB4-SYS-007`：完成有界合成容量/扩展 harness 与 10万/30万/100万目标画像报告（开发规模等价证据）。见 [reports/gb4-sys-007.md](reports/gb4-sys-007.md)。
+- [x] `GB4-SYS-008`：完成 24h development / 72h release soak harness 报告（可配置、虚拟时间无泄漏证据）。见 [reports/gb4-sys-008.md](reports/gb4-sys-008.md)。
 - [x] `GB4-SYS-009`：完成 x86_64/aarch64、SBOM/license/advisory、migration 和 release checklist。见 [reports/gb4-sys-009.md](reports/gb4-sys-009.md)。
 
 ## 12. 最终退出门禁

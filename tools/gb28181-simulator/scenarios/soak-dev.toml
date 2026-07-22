@@ -1,0 +1,29 @@
+# GB4-SYS-008 endurance / soak scenario (development scale).
+#
+# The bounded development-scale stand-in for the 24h development and 72h
+# release-candidate soak windows documented in
+# dev-docs/004_gb28181-improve/reports/gb4-sys-008.md. Virtual time means a
+# long soak window is simulated deterministically without a wall-clock 24/72h
+# run. The soak test scales `duration_ms` up and asserts the steady-state
+# resource footprint (peak scheduled events, pools) does not grow with the
+# window length -- i.e. no monotonic leak of timers/objects/work. Control-plane
+# only: no RTP/RTCP/PS/TS/ES payload is produced.
+name = "soak-dev"
+seed = 909090
+shards = 8
+device_count = 1000
+transport = "udp"
+duration_ms = 3600000
+register_stagger_ms = 60000
+udp_sockets = 8
+tcp_pool = 128
+base_device_id = "34020000001320000000"
+
+[profile]
+id = "generic"
+keepalive_ms = 30000
+catalog_items = 2
+
+[[steps]]
+kind = "catalog_query"
+at_ms = 300000

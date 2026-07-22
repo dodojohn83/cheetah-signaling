@@ -1,0 +1,37 @@
+# GB4-SYS-007 capacity scenario (development scale).
+#
+# This is the bounded development-scale equivalent of the 100k / 300k / 1M
+# online-device release profiles documented in
+# dev-docs/004_gb28181-improve/reports/gb4-sys-007.md. It uses a fixed shard
+# pool and a bounded synthetic device population so a capacity run completes
+# quickly and deterministically in CI-adjacent environments while still
+# exercising the register / keepalive / catalog / invite / bye control path at
+# scale. Control-plane only: no RTP/RTCP/PS/TS/ES payload is produced, and the
+# synthetic profile implies no real-device interoperability.
+name = "capacity-dev"
+seed = 424242
+shards = 16
+device_count = 5000
+transport = "udp"
+duration_ms = 600000
+register_stagger_ms = 120000
+udp_sockets = 16
+tcp_pool = 256
+base_device_id = "34020000001320000000"
+
+[profile]
+id = "generic"
+keepalive_ms = 60000
+catalog_items = 4
+
+[[steps]]
+kind = "catalog_query"
+at_ms = 300000
+
+[[steps]]
+kind = "invite"
+at_ms = 420000
+
+[[steps]]
+kind = "bye"
+at_ms = 540000

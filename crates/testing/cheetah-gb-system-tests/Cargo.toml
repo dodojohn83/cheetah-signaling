@@ -1,0 +1,36 @@
+[package]
+name = "cheetah-gb-system-tests"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "End-to-end GB28181 system, chaos, capacity and soak scenario tests (GB4-SYS)."
+
+[dependencies]
+
+[dev-dependencies]
+cheetah-gb28181-core = { path = "../../protocols/cheetah-gb28181-core" }
+cheetah-gb28181-module = { path = "../../protocols/cheetah-gb28181-module" }
+cheetah-domain = { path = "../../domain/cheetah-domain", features = ["test-util"] }
+cheetah-signal-types = { path = "../../foundation/cheetah-signal-types" }
+cheetah-signal-application = { path = "../../application/cheetah-signal-application" }
+cheetah-storage-api = { path = "../../storage/cheetah-storage-api" }
+cheetah-storage-sqlite = { path = "../../storage/cheetah-storage-sqlite" }
+cheetah-storage-postgres = { path = "../../storage/cheetah-storage-postgres" }
+cheetah-message-api = { path = "../../messaging/cheetah-message-api" }
+cheetah-message-local = { path = "../../messaging/cheetah-message-local" }
+cheetah-message-nats = { path = "../../messaging/cheetah-message-nats", features = ["test-helpers"] }
+cheetah-cluster-ownership = { path = "../../cluster/cheetah-cluster-ownership" }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+async-trait = { workspace = true }
+secrecy = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+uuid = { workspace = true }
+time = { workspace = true }
+testcontainers-modules = { version = "0.15", features = ["postgres", "nats"] }
+
+[lints]
+workspace = true

@@ -599,6 +599,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "cheetah-gb-system-tests"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "cheetah-cluster-ownership",
+ "cheetah-domain",
+ "cheetah-gb28181-core",
+ "cheetah-gb28181-module",
+ "cheetah-message-api",
+ "cheetah-message-local",
+ "cheetah-message-nats",
+ "cheetah-signal-application",
+ "cheetah-signal-types",
+ "cheetah-storage-api",
+ "cheetah-storage-postgres",
+ "cheetah-storage-sqlite",
+ "hex",
+ "secrecy",
+ "sha2",
+ "testcontainers-modules",
+ "time",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "cheetah-gb28181-core"
 version = "0.1.0"
 dependencies = [
