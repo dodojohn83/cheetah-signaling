@@ -40,12 +40,12 @@
 
 ## 5. MED-R-004：Typed client
 
-- [ ] 连接池key包含node ID、instance epoch、endpoint和TLS identity。
-- [ ] endpoint/证书变化废弃旧channel。
-- [ ] 每节点有bounded concurrency、connect timeout、request deadline和circuit breaker。
-- [ ] 只重试明确`NOT_APPLIED`的暂时错误；`UNKNOWN`交给query/reconciler。
-- [ ] cancellation向tonic request和permit传播。
-- [ ] client只接受typed request，不接收任意JSON/bytes。
+- [x] 连接池key包含node ID、instance epoch、endpoint和TLS identity：`MediaControlClient::pool_key` 由 `{endpoint}\0{node_id}\0{instance_epoch}\0{tls_identity_digest}` 组成，`tls_identity_digest` 对 CA、客户端证书、密钥名和 `allow_insecure_http` 做 hash（PR #229）。
+- [x] endpoint/证书变化废弃旧channel：`get_or_create_entry` 在插入新 channel 前，移除同一 `media_node_id` 但 key 不同的旧条目，避免 endpoint 或 TLS identity 变更后继续复用旧连接（PR #229）。
+- [x] 每节点有bounded concurrency、connect timeout、request deadline和circuit breaker：`ChannelEntry` 持有 `per_node_concurrency` 的 `Semaphore`；`connect` 使用 `connect_timeout`；`execute`/`list_sessions` 用 `timeout(request_timeout_ms)` 包装 tonic 调用；`ChannelEntry` 维护 circuit breaker 状态并在连续失败达到阈值后冷却（PR #229）。
+- [x] 只重试明确`NOT_APPLIED`的暂时错误；`UNKNOWN`交给query/reconciler：`is_retryable` 仅对 `Unavailable`/`DeadlineExceeded`/`ResourceExhausted`/`Aborted` 等暂时 gRPC 错误重试；`SchedulerMediaPort::execute` 将媒体节点返回的 `CommandStatus::Timeout` 映射为 `MediaNodeCommandResult::UnknownOutcome`，不伪造成功也不盲目重试副作用（PR #229）。
+- [x] cancellation向tonic request和permit传播：`acquire_permit` 通过 `timeout` 获取 `OwnedSemaphorePermit`，future 被 tokio 取消时 permit 自动释放；tonic 请求本身在 future drop 时也会被取消（PR #229）。
+- [x] client只接受typed request，不接收任意JSON/bytes：`MediaControlClient::execute` 接收 `MediaControlRequest`（typed `MediaCommand`），`list_sessions` 接收 `MediaListSessionsRequest`，不暴露原始 JSON/bytes 入口（PR #229）。
 
 ## 6. MED-R-005：Mapper 与 MediaPort
 
