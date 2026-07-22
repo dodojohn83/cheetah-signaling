@@ -208,5 +208,6 @@ fn start_talk(media_session_id: MediaSessionId, codec: &str) -> MediaCommand {
 
 mod bye_tests;
 mod invite_tests;
+mod mapper_tests;
 mod playback_tests;
 mod sdp_tests;
