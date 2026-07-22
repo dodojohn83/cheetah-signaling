@@ -188,25 +188,190 @@ impl RegistrationInfo {
     }
 }
 
+/// A controlled capability that may be enabled by a [`CompatibilityProfile`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum CompatibilityCapability {
+    /// Allow charset fallback and XML declaration mismatch.
+    CharsetFallback,
+    /// Recognise vendor-specific MIME aliases as typed messages.
+    MimeAlias,
+    /// Use Via `received`/`rport` to override the Contact route.
+    ContactRportRoute,
+    /// Normalise non-ambiguous malformed SIP headers.
+    HeaderNormalization,
+    /// Accept catalog fragments using `SumNum` rather than strict counts.
+    CatalogCountFragment,
+    /// Emit catalog change NOTIFY without an established subscription.
+    CatalogNotify,
+    /// Support Alarm event package subscription/notify.
+    AlarmSubscription,
+    /// Support MobilePosition event package subscription/notify.
+    MobilePosition,
+    /// Enable GB/T 28181-2016 extensions (IPv6, ConfigDownload, etc.).
+    Gb2016,
+    /// Support device configuration download queries.
+    ConfigDownload,
+    /// Support PTZ preset query commands.
+    PresetQuery,
+    /// Support broadcast commands and handshakes.
+    Broadcast,
+    /// Support media status reporting and parsing.
+    MediaStatus,
+    /// Allow duplicate REGISTER transactions for the same device identity.
+    DuplicateRegisterAllowed,
+    /// Enforce strict realm/domain alignment for digest challenges.
+    StrictRealm,
+    /// Use a non-zero minimum REGISTER expiry in responses.
+    MinimumExpiry,
+    /// Prefer UDP for outgoing SIP requests.
+    UdpRoute,
+    /// Prefer TCP for outgoing SIP requests.
+    TcpRoute,
+    /// Use per-device passwords rather than a shared node secret.
+    DevicePerPassword,
+}
+
+impl std::str::FromStr for CompatibilityCapability {
+    type Err = DomainError;
+
+    fn from_str(s: &str) -> crate::Result<Self> {
+        match s.to_ascii_lowercase().replace('-', "_").as_str() {
+            "charset_fallback" => Ok(Self::CharsetFallback),
+            "mime_alias" => Ok(Self::MimeAlias),
+            "contact_rport_route" => Ok(Self::ContactRportRoute),
+            "header_normalization" => Ok(Self::HeaderNormalization),
+            "catalog_count_fragment" => Ok(Self::CatalogCountFragment),
+            "catalog_notify" => Ok(Self::CatalogNotify),
+            "alarm_subscription" => Ok(Self::AlarmSubscription),
+            "mobile_position" => Ok(Self::MobilePosition),
+            "gb2016" => Ok(Self::Gb2016),
+            "config_download" => Ok(Self::ConfigDownload),
+            "preset_query" => Ok(Self::PresetQuery),
+            "broadcast" => Ok(Self::Broadcast),
+            "media_status" => Ok(Self::MediaStatus),
+            "duplicate_register_allowed" => Ok(Self::DuplicateRegisterAllowed),
+            "strict_realm" => Ok(Self::StrictRealm),
+            "minimum_expiry" => Ok(Self::MinimumExpiry),
+            "udp_route" => Ok(Self::UdpRoute),
+            "tcp_route" => Ok(Self::TcpRoute),
+            "device_per_password" => Ok(Self::DevicePerPassword),
+            other => Err(DomainError::invalid_argument(format!(
+                "unknown compatibility capability: {other}"
+            ))),
+        }
+    }
+}
+
 /// Compatibility profile applied to a device's protocol session.
 #[derive(Clone, Debug, Default, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct CompatibilityProfile {
     /// Optional profile id; `None` means the default behavior.
     pub profile_id: Option<String>,
-    /// Profile revision, used to detect profile changes.
+    /// GB/T 28181 standard version, e.g. `2011` or `2016`.
+    pub standard_version: Option<String>,
+    /// Device manufacturer name.
+    pub manufacturer: Option<String>,
+    /// Device model name.
+    pub model: Option<String>,
+    /// Device firmware version.
+    pub firmware: Option<String>,
+    /// Controlled capabilities enabled by this profile.
+    pub capabilities: Vec<CompatibilityCapability>,
+    /// Path or URL to the provenance fixture that justifies this profile.
+    pub evidence_ref: Option<String>,
+    /// Profile revision, used to detect profile changes and pin sessions.
     pub revision: u32,
+}
+
+/// Profile selection criteria used when resolving the best matching profile.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ProfileSelector {
+    /// Standard version advertised by the device.
+    pub standard_version: Option<String>,
+    /// Manufacturer advertised by the device.
+    pub manufacturer: Option<String>,
+    /// Model advertised by the device.
+    pub model: Option<String>,
+    /// Firmware version advertised by the device.
+    pub firmware: Option<String>,
 }
 
 impl CompatibilityProfile {
     fn validate(&self) -> crate::Result<()> {
-        if let Some(id) = &self.profile_id
-            && id.len() > MAX_FIELD_BYTES
-        {
-            return Err(DomainError::invalid_argument("profile_id too long"));
+        for (name, value) in [
+            ("profile_id", self.profile_id.as_ref()),
+            ("standard_version", self.standard_version.as_ref()),
+            ("manufacturer", self.manufacturer.as_ref()),
+            ("model", self.model.as_ref()),
+            ("firmware", self.firmware.as_ref()),
+            ("evidence_ref", self.evidence_ref.as_ref()),
+        ] {
+            if let Some(v) = value
+                && v.len() > MAX_FIELD_BYTES
+            {
+                return Err(DomainError::invalid_argument(format!("{name} too long")));
+            }
+        }
+        if self.capabilities.len() > 64 {
+            return Err(DomainError::invalid_argument(
+                "compatibility capabilities must not exceed 64",
+            ));
         }
         Ok(())
     }
+
+    /// Returns the matching score against `selector`.
+    ///
+    /// A profile only scores if all non-empty selector fields it claims to
+    /// match are equal. The score is the number of selector fields that match,
+    /// which produces the priority order `firmware > model > manufacturer >
+    /// standard_version > default`.
+    pub fn score(&self, selector: &ProfileSelector) -> u32 {
+        let mut score = 0u32;
+        if let Some(selector_value) = &selector.standard_version {
+            if match_field(self.standard_version.as_ref(), selector_value) {
+                score += 1;
+            } else {
+                return 0;
+            }
+        }
+        if let Some(selector_value) = &selector.manufacturer {
+            if match_field(self.manufacturer.as_ref(), selector_value) {
+                score += 1;
+            } else {
+                return 0;
+            }
+        }
+        if let Some(selector_value) = &selector.model {
+            if match_field(self.model.as_ref(), selector_value) {
+                score += 1;
+            } else {
+                return 0;
+            }
+        }
+        if let Some(selector_value) = &selector.firmware {
+            if match_field(self.firmware.as_ref(), selector_value) {
+                score += 1;
+            } else {
+                return 0;
+            }
+        }
+        score
+    }
+
+    /// Returns `true` if `capability` is enabled by this profile.
+    pub fn has(&self, capability: CompatibilityCapability) -> bool {
+        self.capabilities.contains(&capability)
+    }
+}
+
+fn match_field(profile_value: Option<&String>, selector_value: &str) -> bool {
+    profile_value
+        .map(|v| v.eq_ignore_ascii_case(selector_value.trim()))
+        .unwrap_or(false)
 }
 
 /// Fields required to create a [`ProtocolSession`].
