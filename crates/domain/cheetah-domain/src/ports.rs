@@ -127,6 +127,9 @@ pub struct MediaRequirements {
     pub media_session_id: Option<String>,
     /// Whether the node must be able to send audio to the device (talk/broadcast).
     pub require_media_sender: bool,
+    /// Minimum contract version the media node must advertise. A value of 0 means no requirement.
+    /// Nodes that advertise a higher, backward-compatible version are also accepted.
+    pub contract_version: u64,
 }
 
 /// A single outbox entry.
