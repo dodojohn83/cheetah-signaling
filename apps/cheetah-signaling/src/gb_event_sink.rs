@@ -18,7 +18,7 @@ use cheetah_signal_application::{
     ReplaceChannelCatalogRequest, SubmitOperationRequest, UpdateDeviceCapabilitiesRequest,
 };
 use cheetah_signal_types::{
-    ChannelId, CorrelationId, Deadline, DeviceId, DurationMs, GbCommandMethod, GbCommandOutcome,
+    CorrelationId, Deadline, DeviceId, DurationMs, GbCommandMethod, GbCommandOutcome,
     GbMetricsRecorder, MessageId, NodeId, OwnerEpoch, Principal, PrincipalKind, ProtocolIdentity,
     RequestContext, ResourceId, ResourceKind, ResourceRef, SignalError, SignalErrorKind, TenantId,
 };
@@ -594,7 +594,11 @@ async fn replace_catalog(
 
     let mut channels = Vec::with_capacity(items.len());
     for item in items {
-        let channel_id = catalog_channel_id(tenant_id, external_id, &item.device_id);
+        let channel_id = cheetah_domain::channel::map_gb28181_channel_id(
+            tenant_id,
+            external_id,
+            &item.device_id,
+        );
         let mut metadata = BTreeMap::new();
         if let Some(v) = &item.manufacturer {
             metadata.insert("manufacturer".to_string(), v.clone());
@@ -656,17 +660,4 @@ async fn replace_catalog(
         )
         .await?;
     Ok(())
-}
-
-fn catalog_channel_id(
-    tenant_id: TenantId,
-    device_external_id: &str,
-    channel_external_id: &str,
-) -> ChannelId {
-    let namespace = Uuid::NAMESPACE_OID;
-    let name = format!(
-        "gb28181/{}/{}/{}",
-        tenant_id, device_external_id, channel_external_id
-    );
-    ChannelId::from_uuid(Uuid::new_v5(&namespace, name.as_bytes()))
 }
