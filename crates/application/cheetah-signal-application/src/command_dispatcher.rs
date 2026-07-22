@@ -101,7 +101,7 @@ impl CommandDispatcher {
                 match self.command_bus.send(operation.command()).await {
                     Ok(()) => {
                         operation
-                            .mark_dispatch_attempt_acked(step_id, attempt_id, self.clock.as_ref())
+                            .mark_dispatch_attempt_sent(step_id, attempt_id, self.clock.as_ref())
                             .map_err(crate::SignalError::from)?;
                         self.save_operation(uow, &operation).await?;
                     }
