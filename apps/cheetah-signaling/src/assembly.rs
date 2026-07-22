@@ -528,6 +528,14 @@ pub async fn start(
 ) -> Result<SignalingRuntime, Box<dyn std::error::Error + Send + Sync>> {
     config.validate()?;
 
+    #[cfg(not(feature = "cluster"))]
+    if config.cluster.enabled {
+        return Err(
+            "config.cluster.enabled requires the 'cluster' feature; rebuild with --features cluster"
+                .into(),
+        );
+    }
+
     let secret_store = build_secret_store(&config);
 
     let clock: Arc<dyn Clock> = Arc::new(SystemClock::new());
