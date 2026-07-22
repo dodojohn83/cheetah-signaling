@@ -145,11 +145,14 @@ pub(crate) fn extract_catalog_with_profile(
 
     let allow_fragment = profile.has(CompatibilityCapability::CatalogCountFragment);
     if !allow_fragment {
-        if declared_num != items.len() as u32 {
+        // Count all <Item> elements present on the wire, including the malformed
+        // ones intentionally dropped, so a single bad entry does not reject the
+        // whole catalog.
+        let present = items.len() as u32 + dropped;
+        if declared_num != present {
             return Err(AccessError::InvalidXml(format!(
-                "Catalog Num {} does not match parsed item count {}",
-                declared_num,
-                items.len()
+                "Catalog Num {} does not match item element count {}",
+                declared_num, present
             )));
         }
         if sum_num > 0 && declared_num > sum_num {
@@ -387,5 +390,32 @@ mod tests {
         assert_eq!(parsed.sum_num, 0);
         assert_eq!(parsed.num, 0);
         assert!(parsed.items.is_empty());
+    }
+
+    #[test]
+    fn malformed_item_does_not_reject_whole_catalog() {
+        let body = br#"<?xml version="1.0"?>
+<Response>
+    <CmdType>Catalog</CmdType>
+    <SN>2</SN>
+    <DeviceID>34020000001320000001</DeviceID>
+    <SumNum>2</SumNum>
+    <DeviceList Num="2">
+        <Item>
+            <DeviceID>34020000001320000001</DeviceID>
+            <Name>Camera 1</Name>
+            <Status>ON</Status>
+        </Item>
+        <Item>
+            <Name>Camera 2</Name>
+            <Status>OFF</Status>
+        </Item>
+    </DeviceList>
+</Response>"#;
+        let catalog = parse_catalog(body).unwrap();
+        assert_eq!(catalog.num, 2);
+        assert_eq!(catalog.sum_num, 2);
+        assert_eq!(catalog.items.len(), 1);
+        assert_eq!(catalog.items[0].device_id, "34020000001320000001");
     }
 }
