@@ -67,10 +67,10 @@
 
 ## 10. ONVIF-002：安全HTTP/SOAP
 
-- [ ] TLS验证、connect/request deadline、cancel、connection pool和body上限。
-- [ ] 禁用DTD/XXE，限制XML深度、节点和文本。
-- [ ] redirect、DNS rebinding、scheme/port/网段和IPv4/IPv6 SSRF防护。
-- [ ] WS-Security UsernameToken使用SecretProvider和设备clock offset，不记录header。
+- [x] TLS验证、connect/request deadline、cancel、connection pool和body上限：`crates/protocols/cheetah-onvif-driver-tokio/src/soap_client.rs` 的 `SoapClient` 使用 `reqwest` 默认 TLS 证书校验，设置 `connect_timeout`/`request_timeout`，通过 `Semaphore` 限制 `max_concurrent_requests`，并在 `max_response_bytes` 处拒绝 oversized body；`timeout()` 覆盖单个请求取消。
+- [x] 禁用DTD/XXE，限制XML深度、节点和文本：`quick-xml` 默认不解析外部实体、不展开自定义实体，无 DTD 外部解析；`cheetah-onvif-module/src/config.rs` 的 `ParserLimits` 与所有服务解析器限制 `max_depth`/`max_nodes`/`max_text_bytes`/`max_input_bytes`。
+- [x] redirect、DNS rebinding、scheme/port/网段和IPv4/IPv6 SSRF防护：`cheetah-onvif-core/src/discovery/xaddr.rs` 的 `XAddrPolicy` 校验 URL scheme、端口、IPv4/IPv6 分类（loopback/private/link-local/unspecified）、域名；`SoapClient` 对每个 redirect hop 调用 `validate_redirect`，拒绝 https→http 与跨 authority 跳转；默认禁止域名以规避 DNS rebinding。
+- [ ] WS-Security UsernameToken使用SecretProvider和设备clock offset，不记录header：`crates/protocols/cheetah-onvif-driver-tokio/src/auth.rs` 已实现 `DeviceCredentials`（密码用 `SecretString`，不记录 nonce/raw header，支持 clock offset）；但 `OnvifConfig` 尚无 `credentials_ref` 字段，`onvif_discovery.rs` 仍传递 `None`，需后续接入 `SecretProvider`。
 
 ## 11. ONVIF-003：Provision 与能力
 
