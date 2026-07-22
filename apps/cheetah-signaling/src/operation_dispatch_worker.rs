@@ -26,7 +26,10 @@ pub fn spawn(
     cancel: CancellationToken,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        let mut subscription = match bus.subscribe(">", "operation-dispatcher").await {
+        let mut subscription = match bus
+            .subscribe("sig.v1.event.>", "operation-dispatcher")
+            .await
+        {
             Ok(s) => s,
             Err(e) => {
                 warn!(error = %e, "operation dispatch worker failed to subscribe to events");
@@ -77,8 +80,8 @@ pub fn spawn(
             let mut uow = match storage.begin().await {
                 Ok(u) => u,
                 Err(e) => {
-                    warn!(error = %e, %tenant_id, %operation_id, "failed to begin unit of work for operation dispatch");
-                    let _ = delivery.ack.ack().await;
+                    warn!(error = %e, %tenant_id, %operation_id, "failed to begin unit of work for operation dispatch; message will be redelivered");
+                    let _ = delivery.ack.nak(Some("storage begin failed")).await;
                     continue;
                 }
             };
