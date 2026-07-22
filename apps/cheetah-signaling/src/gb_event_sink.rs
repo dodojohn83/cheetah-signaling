@@ -970,7 +970,6 @@ async fn handle_media_session_event(
         .media_session_repository()
         .get(tenant_id, media_session_id)
         .await?;
-    let mut state_events: Vec<Event<DomainEvent>> = Vec::new();
 
     if let Some(mut session) = session {
         let clock = state.clock.as_ref();
@@ -980,76 +979,74 @@ async fn handle_media_session_event(
             id: ResourceId::MediaSession(media_session_id),
         };
 
-        let push_transition =
-            |events: &mut Vec<Event<DomainEvent>>, event: DomainEvent, revision: u64| {
-                events.push(Event::new(
-                    state.id_generator.as_ref(),
-                    clock,
-                    context,
-                    tenant_id,
-                    aggregate_ref.clone(),
-                    revision,
-                    event,
-                ));
-            };
+        let make_event = |event: DomainEvent, revision: u64| {
+            Event::new(
+                state.id_generator.as_ref(),
+                clock,
+                context,
+                tenant_id,
+                aggregate_ref.clone(),
+                revision,
+                event,
+            )
+        };
+
+        // Each transition bumps the session revision by exactly one, and both
+        // the SQL and in-memory repositories require the stored revision to be
+        // exactly one behind on every save. We therefore persist the session
+        // and append its state-change event after each individual transition,
+        // so the stored revision advances by one per save. Saving only once
+        // after a multi-step transition would jump the revision by two or three
+        // and be rejected as a concurrent modification, dropping the whole
+        // notification. This mirrors `MediaService::apply_started`.
+        macro_rules! step {
+            ($event:expr) => {{
+                let event = $event;
+                let revision = session.revision().0;
+                uow.media_session_repository().save(&session).await?;
+                uow.outbox().append(make_event(event, revision)).await?;
+            }};
+        }
 
         match transition {
             MediaSessionTransition::Start => match session.state() {
                 MediaSessionState::Requested => {
-                    let event = session.allocating(clock)?;
-                    push_transition(&mut state_events, event, session.revision().0);
-                    let event = session.inviting(clock)?;
-                    push_transition(&mut state_events, event, session.revision().0);
-                    let event = session.active(clock)?;
-                    push_transition(&mut state_events, event, session.revision().0);
+                    step!(session.allocating(clock)?);
+                    step!(session.inviting(clock)?);
+                    step!(session.active(clock)?);
                 }
                 MediaSessionState::Allocating => {
-                    let event = session.inviting(clock)?;
-                    push_transition(&mut state_events, event, session.revision().0);
-                    let event = session.active(clock)?;
-                    push_transition(&mut state_events, event, session.revision().0);
+                    step!(session.inviting(clock)?);
+                    step!(session.active(clock)?);
                 }
                 MediaSessionState::Inviting => {
-                    let event = session.active(clock)?;
-                    push_transition(&mut state_events, event, session.revision().0);
+                    step!(session.active(clock)?);
                 }
                 _ => {}
             },
             MediaSessionTransition::Stop => match session.state() {
                 MediaSessionState::Active => {
-                    let event = session.stop(clock)?;
-                    push_transition(&mut state_events, event, session.revision().0);
+                    step!(session.stop(clock)?);
                     if session.state() == MediaSessionState::Stopping {
-                        let event = session.stopped(clock)?;
-                        push_transition(&mut state_events, event, session.revision().0);
+                        step!(session.stopped(clock)?);
                     }
                 }
                 MediaSessionState::Stopping => {
-                    let event = session.stopped(clock)?;
-                    push_transition(&mut state_events, event, session.revision().0);
+                    step!(session.stopped(clock)?);
                 }
                 MediaSessionState::Requested
                 | MediaSessionState::Allocating
                 | MediaSessionState::Inviting => {
-                    let event = session.stop(clock)?;
-                    push_transition(&mut state_events, event, session.revision().0);
+                    step!(session.stop(clock)?);
                 }
                 _ => {}
             },
             MediaSessionTransition::Fail(reason) => {
                 if !session.state().is_terminal() {
-                    let event = session.failed(MediaSessionError::new("gb28181", reason), clock)?;
-                    push_transition(&mut state_events, event, session.revision().0);
+                    step!(session.failed(MediaSessionError::new("gb28181", reason), clock)?);
                 }
             }
         };
-
-        if !state_events.is_empty() {
-            uow.media_session_repository().save(&session).await?;
-            for event in state_events {
-                uow.outbox().append(event).await?;
-            }
-        }
     }
 
     // Always append the GB28181 envelope so the driver event is recorded even
