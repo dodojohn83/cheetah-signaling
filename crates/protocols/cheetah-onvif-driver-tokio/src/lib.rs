@@ -214,4 +214,9 @@ impl OnvifHttpDriver {
             None => self.client.post(endpoint, action, envelope, timeout).await,
         }
     }
+
+    /// Returns true when the underlying SOAP client request queue is saturated.
+    pub fn is_request_queue_saturated(&self) -> bool {
+        self.client.is_request_queue_saturated()
+    }
 }
