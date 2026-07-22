@@ -17,6 +17,9 @@ use cheetah_cluster_ownership::{CachingDeviceOwnerResolver, OwnerLeaseService};
 use cheetah_cluster_registry::NodeLeaseService;
 use cheetah_domain::ports::{DeviceOwnerResolver, MediaPort};
 use cheetah_domain::{DomainEvent, EventPublisher, MediaEventHandler};
+use cheetah_gb28181_core::{
+    BranchPolicy, CompatibilityCapability, CompatibilityProfile, ManagerConfig,
+};
 use cheetah_gb28181_driver_tokio::Gb28181UdpDriver;
 use cheetah_gb28181_driver_tokio::config::DriverConfig as GbDriverConfig;
 use cheetah_gb28181_module::{GbAccessSettings, build_access};
@@ -38,6 +41,7 @@ use cheetah_plugin_sdk::{PluginManifest, ProtocolDriverFactory};
 use cheetah_secret::{CompositeSecretStore, EnvSecretStore, FileSecretStore};
 use cheetah_signal_application::OutboxRelay;
 use cheetah_signal_contracts::cheetah::common::v1::media_cluster_registry_server::MediaClusterRegistryServer;
+use cheetah_signal_types::config::Gb28181CompatibilityProfileConfig;
 use cheetah_signal_types::config::{MessagingBackend, SignalConfig, StorageBackend};
 use cheetah_signal_types::{
     ChannelId, Clock, DeviceId, DurationMs, Event, IdGenerator, MediaBindingId, MediaSessionId,
@@ -946,13 +950,26 @@ pub async fn start(
             })?)
         };
 
+        let compatibility_profile = listener
+            .compatibility_profile
+            .as_deref()
+            .map(|id| build_compatibility_profile(&config.gb28181.compatibility_profiles, id))
+            .transpose()
+            .map_err(|e| {
+                format!(
+                    "gb28181 listener '{}' compatibility profile: {e}",
+                    listener.id
+                )
+            })?;
+
         let settings = GbAccessSettings::new(
             &listener.local_device_id,
             listener.digest_secret_ref.clone(),
         )
         .with_realm(&listener.realm)
         .with_challenge_optional(listener.challenge_optional)
-        .with_device_password_ref(listener.device_password_ref.clone());
+        .with_device_password_ref(listener.device_password_ref.clone())
+        .with_compatibility_profile(compatibility_profile.clone());
         let access = build_access(&settings, &secret_store).map_err(|e| {
             format!(
                 "gb28181 listener '{}' access assembly failed: {e}",
@@ -960,7 +977,22 @@ pub async fn start(
             )
         })?;
 
-        let mut driver_config = GbDriverConfig::empty();
+        let branch_policy = compatibility_profile
+            .as_ref()
+            .map_or(BranchPolicy::Strict, |p| {
+                if p.has(CompatibilityCapability::HeaderNormalization) {
+                    BranchPolicy::Permissive
+                } else {
+                    BranchPolicy::Strict
+                }
+            });
+
+        let mut driver_config = GbDriverConfig::empty()
+            .with_manager_config(ManagerConfig {
+                branch_policy,
+                ..ManagerConfig::default()
+            })
+            .with_compatibility_profile(compatibility_profile);
         if let Some(udp) = listener.udp_bind {
             driver_config = driver_config.with_udp_bind(udp);
         }
@@ -1246,4 +1278,37 @@ fn mtls_identity_interceptor(
         req.extensions_mut().insert(PeerIdentity(cn.to_string()));
     }
     Ok(req)
+}
+
+/// Builds a domain [`CompatibilityProfile`] from a named config profile.
+///
+/// Returns `None` when `id` is empty or `None`. Unknown profile ids and
+/// unrecognised capability names are startup errors because they indicate a
+/// stale or typo-ridden configuration.
+fn build_compatibility_profile(
+    profiles: &[Gb28181CompatibilityProfileConfig],
+    id: &str,
+) -> Result<CompatibilityProfile, String> {
+    let profile = profiles
+        .iter()
+        .find(|p| p.id == id)
+        .ok_or_else(|| format!("unknown compatibility profile id '{id}'"))?;
+    let capabilities = profile
+        .capabilities
+        .iter()
+        .map(|c| {
+            c.parse::<CompatibilityCapability>()
+                .map_err(|_| format!("profile '{}' has unknown capability '{c}'", profile.id))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(CompatibilityProfile {
+        profile_id: Some(profile.id.clone()),
+        standard_version: profile.standard_version.clone(),
+        manufacturer: profile.manufacturer.clone(),
+        model: profile.model.clone(),
+        firmware: profile.firmware.clone(),
+        capabilities,
+        evidence_ref: profile.evidence_ref.clone(),
+        revision: profile.revision,
+    })
 }

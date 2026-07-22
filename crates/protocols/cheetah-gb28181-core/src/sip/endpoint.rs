@@ -21,6 +21,7 @@
 //! [`EndpointRoute::is_unauthenticated_drift`]).
 
 use crate::sip::uri::SipUri;
+use crate::{CompatibilityCapability, CompatibilityProfile};
 use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 
 /// Default SIP port used when a `Contact` URI omits an explicit port.
@@ -92,17 +93,30 @@ impl ViaRouteParams {
     /// not opt into symmetric routing, so `None` is returned and callers fall
     /// back to the `Contact` or observed source.
     pub fn resolved_endpoint(&self, observed: SocketAddr) -> Option<SocketAddr> {
-        match self.rport {
-            Rport::Absent => None,
-            Rport::Requested => Some(SocketAddr::new(
-                self.received.unwrap_or_else(|| observed.ip()),
-                observed.port(),
-            )),
-            Rport::Value(port) => Some(SocketAddr::new(
-                self.received.unwrap_or_else(|| observed.ip()),
-                port,
-            )),
+        self.resolved_endpoint_with_policy(observed, false)
+    }
+
+    /// Resolves the response endpoint under an explicit `received`-preferring
+    /// policy.
+    ///
+    /// With `prefer_received` set, a `received=` parameter without `rport` is
+    /// still used as the send target. This is gated by the
+    /// [`CompatibilityCapability::ContactRportRoute`] profile so that the
+    /// observed source is not silently overridden for generic devices.
+    pub fn resolved_endpoint_with_policy(
+        &self,
+        observed: SocketAddr,
+        prefer_received: bool,
+    ) -> Option<SocketAddr> {
+        if self.rport == Rport::Absent && !(prefer_received && self.received.is_some()) {
+            return None;
         }
+        let ip = self.received.unwrap_or_else(|| observed.ip());
+        let port = match self.rport {
+            Rport::Value(port) => port,
+            _ => observed.port(),
+        };
+        Some(SocketAddr::new(ip, port))
     }
 }
 
@@ -139,8 +153,26 @@ impl EndpointRoute {
         top_via: Option<&str>,
         contact_uri: Option<SipUri>,
     ) -> Self {
-        let via_received_rport =
-            top_via.and_then(|via| ViaRouteParams::parse(via).resolved_endpoint(observed_source));
+        Self::from_registration_with_profile(observed_source, top_via, contact_uri, None)
+    }
+
+    /// Builds a route from a REGISTER with a compatibility profile.
+    ///
+    /// When [`CompatibilityCapability::ContactRportRoute`] is enabled, a `Via`
+    /// `received=` parameter is used as the send target even if `rport` was not
+    /// requested.
+    pub fn from_registration_with_profile(
+        observed_source: SocketAddr,
+        top_via: Option<&str>,
+        contact_uri: Option<SipUri>,
+        profile: Option<&CompatibilityProfile>,
+    ) -> Self {
+        let prefer_received =
+            profile.is_some_and(|p| p.has(CompatibilityCapability::ContactRportRoute));
+        let via_received_rport = top_via.and_then(|via| {
+            ViaRouteParams::parse(via)
+                .resolved_endpoint_with_policy(observed_source, prefer_received)
+        });
         let advertised_endpoint = contact_uri.as_ref().and_then(socket_addr_from_uri);
         Self {
             observed_source,
@@ -408,5 +440,33 @@ mod tests {
         assert!(RouteUpdateContext::CompatibilityProfile.may_change_route());
         assert!(!RouteUpdateContext::UnauthenticatedKeepalive.may_change_route());
         assert!(!RouteUpdateContext::UnauthenticatedRequest.may_change_route());
+    }
+
+    #[test]
+    fn contact_rport_route_uses_received_without_rport_when_enabled() {
+        let profile = CompatibilityProfile {
+            capabilities: vec![CompatibilityCapability::ContactRportRoute],
+            ..Default::default()
+        };
+        let observed = sock("203.0.113.9:41234");
+        let route = EndpointRoute::from_registration_with_profile(
+            observed,
+            Some("SIP/2.0/UDP 10.0.0.1:5060;received=198.51.100.7"),
+            Some(SipUri::parse("sip:dev@192.168.1.5:5062").unwrap()),
+            Some(&profile),
+        );
+        assert_eq!(route.send_target(), sock("198.51.100.7:41234"));
+    }
+
+    #[test]
+    fn contact_rport_route_ignores_received_without_rport_by_default() {
+        let observed = sock("203.0.113.9:41234");
+        let route = EndpointRoute::from_registration(
+            observed,
+            Some("SIP/2.0/UDP 10.0.0.1:5060;received=198.51.100.7"),
+            Some(SipUri::parse("sip:dev@192.168.1.5:5062").unwrap()),
+        );
+        // No rport and no profile: contact (IP literal) wins.
+        assert_eq!(route.send_target(), sock("192.168.1.5:5062"));
     }
 }

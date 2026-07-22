@@ -3,27 +3,35 @@
 use super::element::XmlElement;
 use super::limits::XmlLimits;
 use crate::error::AccessError;
-use encoding_rs::{Encoding, UTF_8};
+use cheetah_domain::{CompatibilityCapability, CompatibilityProfile};
+use encoding_rs::{Encoding, GB18030, GBK, UTF_8};
 use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
 
-/// Parses a raw XML body into a generic element tree.
+/// Parses a raw XML body into a generic element tree using the default
+/// (strict) compatibility profile.
+pub fn parse_xml(body: &[u8], limits: &XmlLimits) -> Result<XmlElement, AccessError> {
+    parse_xml_with_profile(body, limits, &CompatibilityProfile::default())
+}
+
+/// Parses a raw XML body into a generic element tree under a compatibility
+/// profile.
 ///
 /// The body is decoded according to the `encoding` attribute in the XML
 /// declaration, or UTF-8 by default. GB2312/GBK payloads are decoded using
-/// `encoding_rs`.
-pub fn parse_xml(body: &[u8], limits: &XmlLimits) -> Result<XmlElement, AccessError> {
+/// `encoding_rs`. With [`CompatibilityCapability::CharsetFallback`] enabled,
+/// a declared-UTF-8 byte stream that fails UTF-8 validation is re-attempted
+/// with GBK and GB18030 before rejecting.
+pub fn parse_xml_with_profile(
+    body: &[u8],
+    limits: &XmlLimits,
+    profile: &CompatibilityProfile,
+) -> Result<XmlElement, AccessError> {
     if body.len() > limits.max_body_bytes {
         return Err(AccessError::InvalidXml("body too large".to_string()));
     }
 
-    let encoding = detect_encoding(body).unwrap_or(UTF_8);
-    let (decoded, had_errors) = encoding.decode_without_bom_handling(body);
-    if had_errors {
-        return Err(AccessError::InvalidXml(
-            "invalid byte sequence for declared encoding".to_string(),
-        ));
-    }
+    let decoded = decode_body(body, profile)?;
 
     let mut reader = Reader::from_reader(decoded.as_bytes());
     reader.config_mut().trim_text(true);
@@ -114,6 +122,31 @@ pub fn parse_xml(body: &[u8], limits: &XmlLimits) -> Result<XmlElement, AccessEr
     }
 
     root.ok_or_else(|| AccessError::InvalidXml("empty XML document".to_string()))
+}
+
+fn decode_body<'a>(
+    body: &'a [u8],
+    profile: &CompatibilityProfile,
+) -> Result<std::borrow::Cow<'a, str>, AccessError> {
+    let declared = detect_encoding(body).unwrap_or(UTF_8);
+    let (decoded, had_errors) = declared.decode_without_bom_handling(body);
+    if !had_errors {
+        return Ok(decoded);
+    }
+    if profile.has(CompatibilityCapability::CharsetFallback) {
+        for fallback in [GBK, GB18030, UTF_8] {
+            if fallback == declared {
+                continue;
+            }
+            let (d, err) = fallback.decode_without_bom_handling(body);
+            if !err {
+                return Ok(d);
+            }
+        }
+    }
+    Err(AccessError::InvalidXml(
+        "invalid byte sequence for declared encoding".to_string(),
+    ))
 }
 
 fn start_element(

@@ -4,6 +4,7 @@ use super::error::{SipError, SipErrorKind};
 use super::headers::{HeaderName, HeaderValue, SipHeaders};
 use super::message::{Body, Method, RequestLine, SipMessage, StatusLine};
 use super::uri::SipUri;
+use crate::{CompatibilityCapability, CompatibilityProfile};
 
 /// Limits and behavior of the SIP parser.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -61,6 +62,7 @@ enum ParserState {
 #[derive(Clone, Debug)]
 pub struct SipParser {
     config: SipParserConfig,
+    profile: Option<CompatibilityProfile>,
     state: ParserState,
     buffer: Vec<u8>,
 }
@@ -68,8 +70,18 @@ pub struct SipParser {
 impl SipParser {
     /// Creates a parser with the given limits.
     pub fn new(config: SipParserConfig) -> Self {
+        Self::new_with_profile(config, None)
+    }
+
+    /// Creates a parser with the given limits and an optional compatibility
+    /// profile that gates non-ambiguous header normalization.
+    pub fn new_with_profile(
+        config: SipParserConfig,
+        profile: Option<CompatibilityProfile>,
+    ) -> Self {
         Self {
             config,
+            profile,
             state: ParserState::default(),
             buffer: Vec::new(),
         }
@@ -80,12 +92,22 @@ impl SipParser {
     /// # Errors
     ///
     /// Returns `SipError` for malformed or oversized messages.
-    pub fn parse_datagram(
+    pub fn parse_datagram(data: &[u8], config: SipParserConfig) -> Result<SipMessage, SipError> {
+        Self::parse_datagram_with_profile(data, config, None)
+    }
+
+    /// Parses a complete UDP datagram with a compatibility profile.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SipError` for malformed or oversized messages.
+    pub fn parse_datagram_with_profile(
         data: &[u8],
         mut config: SipParserConfig,
+        profile: Option<&CompatibilityProfile>,
     ) -> Result<SipMessage, SipError> {
         config.datagram_mode = true;
-        let mut parser = Self::new(config);
+        let mut parser = Self::new_with_profile(config, profile.cloned());
         parser.feed(data)?;
         match parser.pop_message() {
             Some(Ok(message)) => {
@@ -195,7 +217,13 @@ impl SipParser {
                     return None;
                 }
                 let body = self.buffer[..content_length].to_vec();
-                let result = build_message(&start_line, &headers, body, content_length);
+                let result = build_message(
+                    &start_line,
+                    &headers,
+                    body,
+                    content_length,
+                    self.profile.as_ref(),
+                );
                 self.buffer.drain(..content_length);
                 self.state = ParserState::StartLine;
                 Some(result)
@@ -347,6 +375,19 @@ impl SipParser {
                     )));
                 }
 
+                let line_trimmed = line.trim();
+                if line_trimmed.is_empty()
+                    && profile_has(
+                        self.profile.as_ref(),
+                        CompatibilityCapability::HeaderNormalization,
+                    )
+                {
+                    // Non-ambiguous blank line inside the header block: skip it.
+                    let line_len_with_crlf = end - consumed + 2;
+                    consumed += line_len_with_crlf;
+                    continue;
+                }
+
                 let (name, value) = match line.split_once(':') {
                     Some(pair) => pair,
                     None => {
@@ -358,7 +399,15 @@ impl SipParser {
                     }
                 };
                 let name = HeaderName::parse(name.trim());
-                let value = HeaderValue::new(value.trim());
+                let mut value = HeaderValue::new(value.trim());
+                if name == HeaderName::CSeq
+                    && profile_has(
+                        self.profile.as_ref(),
+                        CompatibilityCapability::HeaderNormalization,
+                    )
+                {
+                    value = normalize_cseq_value(value);
+                }
                 headers.append(name, value);
 
                 header_count += 1;
@@ -377,11 +426,26 @@ impl SipParser {
     }
 }
 
+fn profile_has(profile: Option<&CompatibilityProfile>, cap: CompatibilityCapability) -> bool {
+    profile.is_some_and(|p| p.has(cap))
+}
+
+fn normalize_cseq_value(value: HeaderValue) -> HeaderValue {
+    let raw = value.as_str();
+    let trimmed = raw.trim();
+    let (num, method) = match trimmed.split_once(char::is_whitespace) {
+        Some((num, method)) => (num, method.trim_start()),
+        None => return value,
+    };
+    HeaderValue::new(format!("{} {}", num, method.to_ascii_uppercase()))
+}
+
 fn build_message(
     start_line: &str,
     headers: &SipHeaders,
     body: Body,
     content_length: usize,
+    profile: Option<&CompatibilityProfile>,
 ) -> Result<SipMessage, SipError> {
     if body.len() != content_length {
         return Err(SipError::new(
@@ -418,7 +482,12 @@ fn build_message(
         let _version = parts.next().ok_or_else(|| {
             SipError::new(SipErrorKind::InvalidStartLine, None, "missing version")
         })?;
-        let method = Method::parse(method_str)?;
+        let method_str = if profile_has(profile, CompatibilityCapability::HeaderNormalization) {
+            method_str.to_ascii_uppercase()
+        } else {
+            method_str.to_string()
+        };
+        let method = Method::parse(&method_str)?;
         let uri = SipUri::parse(uri_str)?;
         Ok(SipMessage::Request {
             line: RequestLine::new(method, uri),
@@ -497,5 +566,40 @@ mod tests {
         let err = SipParser::parse_datagram(raw.as_bytes(), config)
             .expect_err("too many headers must be rejected");
         assert_eq!(err.kind, SipErrorKind::TooManyHeaders);
+    }
+
+    #[test]
+    fn lower_case_method_rejected_without_profile() {
+        let raw = "register sip:registrar SIP/2.0\r\n\
+                   Via: SIP/2.0/UDP 192.0.2.1:5060;branch=z9hG4bKabc\r\n\
+                   CSeq: 1 register\r\n\
+                   Content-Length: 0\r\n\r\n";
+        assert!(SipParser::parse_datagram(raw.as_bytes(), SipParserConfig::default()).is_err());
+    }
+
+    #[test]
+    fn header_normalization_uppercases_method_and_cseq() {
+        let profile = CompatibilityProfile {
+            capabilities: vec![CompatibilityCapability::HeaderNormalization],
+            ..Default::default()
+        };
+        let raw = "register sip:registrar SIP/2.0\r\n\
+                   Via: SIP/2.0/UDP 192.0.2.1:5060;branch=z9hG4bKabc\r\n\
+                   CSeq: 1 register\r\n\
+                   Content-Length: 0\r\n\r\n";
+        let msg = SipParser::parse_datagram_with_profile(
+            raw.as_bytes(),
+            SipParserConfig::default(),
+            Some(&profile),
+        )
+        .expect("normalize request line and cseq");
+        let SipMessage::Request { line, headers, .. } = msg else {
+            panic!("expected request");
+        };
+        assert_eq!(line.method, Method::Register);
+        assert_eq!(
+            headers.get(&HeaderName::CSeq).unwrap().as_str(),
+            "1 REGISTER"
+        );
     }
 }

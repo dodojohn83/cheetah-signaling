@@ -1,0 +1,16 @@
+MESSAGE sip:34020000002000000001@example.com SIP/2.0
+Via: SIP/2.0/UDP 203.0.113.10:5060;branch=z9hG4bK0001;rport
+From: <sip:34020000001320000001@example.com>;tag=1
+To: <sip:34020000002000000001@example.com>
+Call-ID: mime-alias-001@example.com
+CSeq: 1 MESSAGE
+Content-Type: application/kslp+xml
+Content-Length: 158
+
+<?xml version="1.0"?>
+<Notify>
+    <CmdType>Keepalive</CmdType>
+    <SN>1</SN>
+    <DeviceID>34020000001320000001</DeviceID>
+    <Status>OK</Status>
+</Notify>

@@ -23,6 +23,7 @@ pub mod error;
 pub mod events;
 pub mod ingress;
 pub mod media;
+pub(crate) mod mime;
 pub mod ports;
 pub mod profile;
 mod registration;

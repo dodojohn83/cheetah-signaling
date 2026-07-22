@@ -1,0 +1,6 @@
+source = "synthetic"
+standard = "GB/T 28181-2016"
+profile = "gb4-comp-002-header-normalization"
+expected = "Lowercase SIP method, lowercase CSeq method and missing branch magic cookie are accepted when HeaderNormalization is enabled"
+desensitization = "Device IDs, IP addresses, Call-IDs and branch values replaced with synthetic dummy values"
+license = "CC0-1.0"

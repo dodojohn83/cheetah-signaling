@@ -1,0 +1,17 @@
+register sip:34020000002000000001@example.com SIP/2.0
+Via: SIP/2.0/UDP 203.0.113.10:5060;branch=0002;rport
+From: <sip:34020000001320000001@example.com>;tag=2
+To: <sip:34020000002000000001@example.com>
+Call-ID: header-norm-001@example.com
+CSeq: 1 register
+
+Content-Type: application/manscdp+xml
+Content-Length: 158
+
+<?xml version="1.0"?>
+<Notify>
+    <CmdType>Keepalive</CmdType>
+    <SN>2</SN>
+    <DeviceID>34020000001320000001</DeviceID>
+    <Status>OK</Status>
+</Notify>

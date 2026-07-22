@@ -2,6 +2,7 @@
 
 use crate::error::AccessError;
 use crate::types::DomainId;
+use cheetah_domain::CompatibilityProfile;
 use cheetah_gb28181_core::DigestAlgorithm;
 use secrecy::{ExposeSecret, SecretSlice};
 use std::fmt;
@@ -45,6 +46,7 @@ pub struct Gb28181DomainConfig {
     auth_max_failures_per_source: u32,
     auth_rate_window_seconds: u64,
     auth_rate_max_sources: usize,
+    compatibility: CompatibilityProfile,
 }
 
 impl Gb28181DomainConfig {
@@ -88,6 +90,7 @@ impl Gb28181DomainConfig {
             auth_max_failures_per_source: DEFAULT_MAX_AUTH_FAILURES,
             auth_rate_window_seconds: DEFAULT_AUTH_RATE_WINDOW_SECONDS,
             auth_rate_max_sources: DEFAULT_AUTH_RATE_MAX_SOURCES,
+            compatibility: CompatibilityProfile::default(),
         })
     }
 
@@ -166,6 +169,12 @@ impl Gb28181DomainConfig {
         self.auth_rate_max_sources
     }
 
+    /// Compatibility profile applied to parsing/encoding and endpoint decisions
+    /// for this domain.
+    pub fn compatibility(&self) -> &CompatibilityProfile {
+        &self.compatibility
+    }
+
     /// Returns the digest secret without exposing the underlying bytes.
     ///
     /// Callers must use `secrecy::ExposeSecret` to access the bytes.
@@ -230,6 +239,12 @@ impl Gb28181DomainConfig {
         self.auth_rate_max_sources = max_sources;
         self
     }
+
+    /// Returns a new config with the supplied compatibility profile.
+    pub fn with_compatibility(mut self, profile: CompatibilityProfile) -> Self {
+        self.compatibility = profile;
+        self
+    }
 }
 
 impl Clone for Gb28181DomainConfig {
@@ -250,6 +265,7 @@ impl Clone for Gb28181DomainConfig {
             auth_max_failures_per_source: self.auth_max_failures_per_source,
             auth_rate_window_seconds: self.auth_rate_window_seconds,
             auth_rate_max_sources: self.auth_rate_max_sources,
+            compatibility: self.compatibility.clone(),
         }
     }
 }
@@ -275,6 +291,7 @@ impl fmt::Debug for Gb28181DomainConfig {
             )
             .field("auth_rate_window_seconds", &self.auth_rate_window_seconds)
             .field("auth_rate_max_sources", &self.auth_rate_max_sources)
+            .field("compatibility", &self.compatibility)
             .finish()
     }
 }

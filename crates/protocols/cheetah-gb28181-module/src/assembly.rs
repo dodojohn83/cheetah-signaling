@@ -16,6 +16,7 @@ use crate::config::{AuthPolicy, Gb28181DomainConfig};
 use crate::error::AccessError;
 use crate::ports::{CredentialError, CredentialProvider};
 use crate::types::DeviceId;
+use cheetah_domain::CompatibilityProfile;
 use cheetah_signal_types::{SecretStore, SignalErrorKind};
 use secrecy::{ExposeSecret, SecretSlice, SecretString};
 use std::sync::Arc;
@@ -58,6 +59,7 @@ pub struct GbAccessSettings {
     digest_secret_ref: String,
     challenge_optional: bool,
     device_password_ref: Option<String>,
+    compatibility_profile: Option<CompatibilityProfile>,
 }
 
 impl GbAccessSettings {
@@ -82,6 +84,7 @@ impl GbAccessSettings {
             digest_secret_ref: digest_secret_ref.into(),
             challenge_optional: false,
             device_password_ref: None,
+            compatibility_profile: None,
         }
     }
 
@@ -109,6 +112,12 @@ impl GbAccessSettings {
         self
     }
 
+    /// Sets the optional compatibility profile applied to the access machine.
+    pub fn with_compatibility_profile(mut self, profile: Option<CompatibilityProfile>) -> Self {
+        self.compatibility_profile = profile;
+        self
+    }
+
     /// Resolved logical domain id.
     pub fn domain_id(&self) -> &str {
         &self.domain_id
@@ -131,6 +140,11 @@ impl GbAccessSettings {
         } else {
             AuthPolicy::Required
         }
+    }
+
+    /// Optional compatibility profile for this listener.
+    pub fn compatibility_profile(&self) -> Option<&CompatibilityProfile> {
+        self.compatibility_profile.as_ref()
     }
 }
 
@@ -190,6 +204,11 @@ pub fn build_domain_config(
     let digest_secret = resolve_digest_secret(secret_store.as_ref(), &settings.digest_secret_ref)?;
     let config = Gb28181DomainConfig::new(&settings.domain_id, &settings.realm, digest_secret)?
         .with_auth_policy(settings.auth_policy());
+    let config = if let Some(profile) = settings.compatibility_profile() {
+        config.with_compatibility(profile.clone())
+    } else {
+        config
+    };
     Ok(config)
 }
 

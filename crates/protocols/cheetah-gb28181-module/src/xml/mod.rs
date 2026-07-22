@@ -33,11 +33,12 @@ pub use mobile_position::{
     MobilePositionInfo, build_mobile_position_notify, parse_mobile_position,
 };
 pub use reader::parse_xml;
+pub(crate) use reader::parse_xml_with_profile;
 pub use record_info::{RecordInfoResponse, RecordItem, parse_record_info};
 pub use writer::encode_xml;
 
 pub(crate) use alarm::extract_alarm;
-pub(crate) use catalog::extract_catalog;
+pub(crate) use catalog::extract_catalog_with_profile;
 pub(crate) use device_control::extract_device_control_response;
 pub(crate) use device_info::extract_device_info;
 pub(crate) use device_status::extract_device_status;
@@ -51,6 +52,7 @@ mod tests {
 
     use super::*;
     use crate::AccessError;
+    use cheetah_domain::{CompatibilityCapability, CompatibilityProfile};
 
     #[test]
     fn parse_valid_keepalive() {
@@ -299,5 +301,63 @@ mod tests {
     </RecordList>
 </Response>"#;
         assert!(parse_record_info(body).is_err());
+    }
+
+    #[test]
+    fn charset_fallback_decodes_declared_utf8_gbk_payload() {
+        let body = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../testdata/gb28181/profiles/charset-fallback.xml"
+        ));
+        let profile = CompatibilityProfile {
+            capabilities: vec![CompatibilityCapability::CharsetFallback],
+            ..Default::default()
+        };
+        let root = reader::parse_xml_with_profile(body, &XmlLimits::default(), &profile)
+            .expect("decode GBK using charset fallback");
+        assert_eq!(root.child_text("CmdType").unwrap(), "Catalog");
+        let item = root
+            .child("DeviceList")
+            .and_then(|d| d.child("Item"))
+            .expect("catalog item");
+        assert_eq!(item.child_text("Name").unwrap(), "\u{6d4b}\u{8bd5}");
+    }
+
+    #[test]
+    fn catalog_notify_root_accepted_with_capability() {
+        let body = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../testdata/gb28181/profiles/catalog-notify.xml"
+        ));
+        let profile = CompatibilityProfile {
+            capabilities: vec![CompatibilityCapability::CatalogNotify],
+            ..Default::default()
+        };
+        let root = reader::parse_xml_with_profile(body, &XmlLimits::default(), &profile)
+            .expect("parse notify catalog");
+        let catalog =
+            extract_catalog_with_profile(&root, &profile).expect("extract notify catalog");
+        assert!(catalog.items.is_empty());
+        assert_eq!(catalog.num, 0);
+        assert_eq!(catalog.sum_num, 0);
+    }
+
+    #[test]
+    fn catalog_count_fragment_allows_inconsistent_counts() {
+        let body = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../testdata/gb28181/profiles/catalog-count-fragment.xml"
+        ));
+        let profile = CompatibilityProfile {
+            capabilities: vec![CompatibilityCapability::CatalogCountFragment],
+            ..Default::default()
+        };
+        let root = reader::parse_xml_with_profile(body, &XmlLimits::default(), &profile)
+            .expect("parse fragment catalog");
+        let catalog =
+            extract_catalog_with_profile(&root, &profile).expect("extract fragment catalog");
+        assert_eq!(catalog.items.len(), 3);
+        assert_eq!(catalog.num, 5);
+        assert_eq!(catalog.sum_num, 3);
     }
 }

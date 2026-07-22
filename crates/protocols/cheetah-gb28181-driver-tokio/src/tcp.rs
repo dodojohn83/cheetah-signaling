@@ -77,7 +77,10 @@ async fn handle_connection<M>(
 ) where
     M: GbAccessMachine + Send + 'static,
 {
-    let mut parser = SipParser::new(shared.parser_config());
+    let mut parser = SipParser::new_with_profile(
+        shared.parser_config(),
+        shared.compatibility_profile().cloned(),
+    );
     let mut chunk = vec![0u8; shared.tcp_read_chunk_bytes().max(1)];
     let idle = shared.tcp_idle_timeout();
 

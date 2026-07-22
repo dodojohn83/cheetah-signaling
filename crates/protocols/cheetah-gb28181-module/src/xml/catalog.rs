@@ -7,6 +7,7 @@ use super::limits::XmlLimits;
 use super::reader::parse_xml;
 use super::writer::encode_xml;
 use crate::error::AccessError;
+use cheetah_domain::{CompatibilityCapability, CompatibilityProfile};
 
 /// Parsed content of a GB28181 `Catalog` response.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -78,15 +79,26 @@ pub struct CatalogItem {
 /// Parses a `Catalog` response body.
 pub fn parse_catalog(body: &[u8]) -> Result<CatalogResponse, AccessError> {
     let root = parse_xml(body, &XmlLimits::default())?;
-    extract_catalog(&root)
+    extract_catalog_with_profile(&root, &CompatibilityProfile::default())
 }
 
-pub(crate) fn extract_catalog(root: &XmlElement) -> Result<CatalogResponse, AccessError> {
+pub(crate) fn extract_catalog_with_profile(
+    root: &XmlElement,
+    profile: &CompatibilityProfile,
+) -> Result<CatalogResponse, AccessError> {
     let cmd_type = root
         .child_text("CmdType")
         .ok_or_else(|| AccessError::InvalidXml("missing CmdType".to_string()))?;
     if cmd_type != "Catalog" {
         return Err(AccessError::UnsupportedCmdType(cmd_type));
+    }
+
+    let allow_notify = profile.has(CompatibilityCapability::CatalogNotify);
+    if root.name != "Response" && !(allow_notify && root.name == "Notify") {
+        return Err(AccessError::InvalidXml(format!(
+            "unexpected Catalog root element: {}",
+            root.name
+        )));
     }
 
     let device_list = root
@@ -130,6 +142,23 @@ pub(crate) fn extract_catalog(root: &XmlElement) -> Result<CatalogResponse, Acce
         .get("Num")
         .and_then(|v| parse_u32(v).ok())
         .unwrap_or(items.len() as u32);
+
+    let allow_fragment = profile.has(CompatibilityCapability::CatalogCountFragment);
+    if !allow_fragment {
+        if declared_num != items.len() as u32 {
+            return Err(AccessError::InvalidXml(format!(
+                "Catalog Num {} does not match parsed item count {}",
+                declared_num,
+                items.len()
+            )));
+        }
+        if sum_num > 0 && declared_num > sum_num {
+            return Err(AccessError::InvalidXml(format!(
+                "Catalog Num {} exceeds SumNum {}",
+                declared_num, sum_num
+            )));
+        }
+    }
 
     Ok(CatalogResponse {
         sn,
