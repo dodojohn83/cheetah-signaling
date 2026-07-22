@@ -293,22 +293,13 @@ impl MediaService {
 
             for (mut session, mut binding) in sessions {
                 let session_active = session.state() == MediaSessionState::Active;
-                let binding_active = binding.state() == MediaBindingState::Active;
+                let binding_state = binding.state();
+                let binding_active = binding_state == MediaBindingState::Active;
+                let binding_needs_verification =
+                    binding_state == MediaBindingState::NeedsVerification;
 
-                if session_active && binding_active && needs_verification {
-                    self.mark_binding_needs_verification(
-                        context,
-                        uow,
-                        &mut session,
-                        &mut binding,
-                        "node_lease_expired",
-                        "media node lease expired or is unhealthy; binding needs verification",
-                        &mut report,
-                    )
-                    .await?;
-                } else {
-                    // Setup-phase sessions or nodes that are gone cannot be left in
-                    // NeedsVerification; attempt to migrate to a healthy node or fail.
+                if gone {
+                    // Node has deregistered or is unknown. Migrate to a healthy node or fail.
                     self.migrate_or_fail(
                         context,
                         uow,
@@ -319,6 +310,37 @@ impl MediaService {
                         &mut report,
                     )
                     .await?;
+                } else if needs_verification {
+                    if session_active && binding_active {
+                        self.mark_binding_needs_verification(
+                            context,
+                            uow,
+                            &mut session,
+                            &mut binding,
+                            "node_lease_expired",
+                            "media node lease expired or is unhealthy; binding needs verification",
+                            &mut report,
+                        )
+                        .await?;
+                    } else if session_active && binding_needs_verification {
+                        // Already verifying; wait for the next callback/reconcile cycle to
+                        // either reactivate the binding or escalate once the node is gone.
+                    } else {
+                        // Setup-phase sessions cannot wait in NeedsVerification;
+                        // attempt to migrate to a healthy node or fail.
+                        self.migrate_or_fail(
+                            context,
+                            uow,
+                            &mut session,
+                            &mut binding,
+                            "node_unavailable_setup",
+                            "media node unhealthy during setup",
+                            &mut report,
+                        )
+                        .await?;
+                    }
+                } else {
+                    // Node is in a protection window; nothing to do.
                 }
             }
         }
