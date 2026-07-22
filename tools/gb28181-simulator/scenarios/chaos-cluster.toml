@@ -1,0 +1,63 @@
+# GB4-SYS-006 chaos scenario: deterministic transport faults over a bounded
+# synthetic device population. Partial packet loss, slow keepalives, duplicate
+# catalog responses and intermittent platform 503s exercise the SIP state
+# machines under adversarial conditions. The run must stay deterministic
+# (identical transcript hash across runs), degrade gracefully (a bounded subset
+# of devices still register and converge) and keep resources bounded (fixed
+# shard count, no per-device task/timer explosion). Control-plane only: no
+# RTP/RTCP/PS/TS/ES payload is produced.
+name = "chaos-cluster"
+seed = 20240722
+shards = 8
+device_count = 200
+transport = "tcp"
+duration_ms = 300000
+register_stagger_ms = 60000
+udp_sockets = 8
+tcp_pool = 128
+base_device_id = "34020000001320000000"
+
+[profile]
+id = "generic"
+keepalive_ms = 60000
+catalog_items = 2
+
+[[steps]]
+kind = "catalog_query"
+at_ms = 150000
+
+[[steps]]
+kind = "invite"
+at_ms = 200000
+
+[[steps]]
+kind = "bye"
+at_ms = 250000
+
+# Intermittent device->platform loss (register storm survivors reconnect path).
+[[faults]]
+kind = "drop"
+rate = 0.05
+direction = "device_to_platform"
+target = "any"
+
+# Slow, jittery keepalives model degraded / slow peers.
+[[faults]]
+kind = "delay"
+extra_ms = 40
+jitter_ms = 20
+rate = 0.3
+target = "keepalive"
+
+# Duplicate catalog responses model retransmit storms.
+[[faults]]
+kind = "duplicate"
+rate = 0.05
+target = "catalog"
+
+# Intermittent platform overload rejections.
+[[faults]]
+kind = "sip_error"
+rate = 0.1
+code = 503
+target = "register"
