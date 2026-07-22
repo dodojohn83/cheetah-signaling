@@ -18,6 +18,8 @@ pub const DEFAULT_TCP_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
 pub const DEFAULT_SHUTDOWN_DRAIN: Duration = Duration::from_secs(5);
 /// Default access-machine tick interval.
 pub const DEFAULT_TICK_INTERVAL: Duration = Duration::from_secs(1);
+/// Default command channel capacity.
+pub const DEFAULT_COMMAND_CHANNEL_CAPACITY: usize = 1024;
 
 /// GB28181 transport driver configuration.
 ///
@@ -55,6 +57,8 @@ pub struct DriverConfig {
     /// Optional compatibility profile applied to incoming and outgoing SIP
     /// parsing/encoding for this listener.
     pub compatibility_profile: Option<CompatibilityProfile>,
+    /// Bounded capacity of the per-driver command channel.
+    pub command_channel_capacity: usize,
 }
 
 impl DriverConfig {
@@ -77,6 +81,7 @@ impl DriverConfig {
             shutdown_drain: DEFAULT_SHUTDOWN_DRAIN,
             manager_config: ManagerConfig::default(),
             compatibility_profile: None,
+            command_channel_capacity: DEFAULT_COMMAND_CHANNEL_CAPACITY,
         }
     }
 
@@ -168,6 +173,12 @@ impl DriverConfig {
     /// Sets the compatibility profile for SIP parser/encoder normalization.
     pub fn with_compatibility_profile(mut self, profile: Option<CompatibilityProfile>) -> Self {
         self.compatibility_profile = profile;
+        self
+    }
+
+    /// Sets the per-driver command channel capacity.
+    pub fn with_command_channel_capacity(mut self, capacity: usize) -> Self {
+        self.command_channel_capacity = capacity;
         self
     }
 }

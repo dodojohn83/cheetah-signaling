@@ -1,15 +1,55 @@
-//! In-memory accumulator for paginated GB28181 catalog fragments.
+//! In-memory accumulator for paginated GB28181 catalog and record-info fragments.
 
-use cheetah_gb28181_module::{DeviceId as GbDeviceId, xml::CatalogItem as GbCatalogItem};
+use cheetah_gb28181_module::{
+    DeviceId as GbDeviceId,
+    xml::{CatalogItem as GbCatalogItem, RecordItem},
+};
 use cheetah_signal_types::TenantId;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use tracing::warn;
 
-/// Creates a stable key for a catalog fragment from the sorted set of channel
-/// external ids it contains. Retransmissions of the same fragment will share
-/// the same key and therefore contribute their declared `Num` only once.
-pub(crate) fn fragment_key(batch: &HashMap<String, GbCatalogItem>) -> String {
+const TTL: Duration = Duration::from_secs(60);
+pub(crate) const CATALOG_CLEANUP_INTERVAL: Duration = Duration::from_secs(30);
+
+/// Items that can be accumulated across paginated SIP MESSAGE fragments.
+pub(crate) trait FragmentItem: Clone {
+    /// Human-readable label used in diagnostic logs.
+    const LABEL: &'static str;
+
+    /// Stable key that uniquely identifies this item within a single fragment
+    /// and across fragments. Retransmissions of the same fragment will produce
+    /// the same set of keys and therefore contribute their declared `Num` only
+    /// once.
+    fn stable_key(&self) -> String;
+}
+
+impl FragmentItem for GbCatalogItem {
+    const LABEL: &'static str = "catalog";
+
+    fn stable_key(&self) -> String {
+        self.device_id.clone()
+    }
+}
+
+impl FragmentItem for RecordItem {
+    const LABEL: &'static str = "record";
+
+    fn stable_key(&self) -> String {
+        format!(
+            "{}|{}|{}|{}",
+            self.device_id,
+            self.start_time.as_deref().unwrap_or(""),
+            self.end_time.as_deref().unwrap_or(""),
+            self.file_path.as_deref().unwrap_or("")
+        )
+    }
+}
+
+/// Creates a stable key for a fragment from the sorted set of item keys it
+/// contains. Retransmissions of the same fragment will share the same key and
+/// therefore contribute their declared `Num` only once.
+fn fragment_key<T>(batch: &HashMap<String, T>) -> String {
     if batch.is_empty() {
         return "empty".to_string();
     }
@@ -18,43 +58,40 @@ pub(crate) fn fragment_key(batch: &HashMap<String, GbCatalogItem>) -> String {
     ids.join(",")
 }
 
-pub(crate) const CATALOG_FRAGMENT_TTL: Duration = Duration::from_secs(60);
-pub(crate) const CATALOG_CLEANUP_INTERVAL: Duration = Duration::from_secs(30);
-
-/// In-memory accumulator for paginated GB28181 catalog fragments.
+/// In-memory accumulator for paginated GB28181 fragment responses.
 ///
-/// Devices may split a catalog response across multiple SIP MESSAGE bodies.
-/// Fragments are keyed by (tenant, device, sequence number) and merged into a
-/// single `replace_channel_catalog` call once `sum_num` distinct channel ids
-/// have been seen. Items are de-duplicated by their channel `device_id`.
+/// Devices may split a catalog or record-info response across multiple SIP
+/// MESSAGE bodies. Fragments are keyed by (tenant, device, sequence number)
+/// and merged into a single collection once `sum_num` distinct item keys have
+/// been seen. Items are de-duplicated by their [`FragmentItem::stable_key`].
 ///
 /// To avoid stalling when a camera drops malformed items, completion also falls
 /// back to the sum of declared `Num` values for each *unique* fragment content
 /// (retransmissions are ignored). If the unique fragment count equals `sum_num`
-/// but fewer distinct channels were collected, the partial catalog is emitted as
-/// a best-effort replacement and a warning is logged. Overlapping fragments that
+/// but fewer distinct items were collected, the partial result is emitted as a
+/// best-effort replacement and a warning is logged. Overlapping fragments that
 /// would push the unique declared count above `sum_num` are not used to trigger
-/// completion. Partial transfers expire after `CATALOG_FRAGMENT_TTL` and are
+/// completion. Partial transfers expire after 60 seconds and are
 /// evicted by the background worker cleanup tick.
-pub(crate) struct CatalogBuffer {
-    entries: HashMap<CatalogKey, PartialCatalog>,
+pub(crate) struct FragmentBuffer<T: FragmentItem> {
+    entries: HashMap<FragmentKey, PartialFragment<T>>,
     max_entries: usize,
     max_items_per_entry: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
-pub(crate) struct CatalogKey {
+pub(crate) struct FragmentKey {
     tenant_id: TenantId,
     device_id: String,
     sn: String,
 }
 
-pub(crate) struct PartialCatalog {
-    /// Accumulated catalog items keyed by channel external id (`device_id`).
-    items: HashMap<String, GbCatalogItem>,
+struct PartialFragment<T: FragmentItem> {
+    /// Accumulated items keyed by [`FragmentItem::stable_key`].
+    items: HashMap<String, T>,
     /// Declared total number of items across all fragments (`SumNum`).
     expected: u32,
-    /// Declared `Num` values keyed by a digest of the fragment's channel ids.
+    /// Declared `Num` values keyed by a digest of the fragment's item keys.
     ///
     /// Retransmissions of the same fragment share the same key and do not
     /// contribute multiple times. For each unique fragment the largest `Num`
@@ -63,7 +100,7 @@ pub(crate) struct PartialCatalog {
     last_seen: Instant,
 }
 
-impl PartialCatalog {
+impl<T: FragmentItem> PartialFragment<T> {
     /// Sum of declared `Num` values for unique fragments received so far.
     fn received_num(&self) -> u32 {
         self.fragments
@@ -78,7 +115,9 @@ impl PartialCatalog {
             if distinct > self.expected as usize {
                 warn!(
                     expected = self.expected,
-                    distinct, "gb28181 catalog has more distinct channels than declared"
+                    distinct,
+                    "gb28181 {} has more distinct items than declared",
+                    T::LABEL,
                 );
             }
             return true;
@@ -90,7 +129,8 @@ impl PartialCatalog {
                 expected = self.expected,
                 distinct,
                 received,
-                "gb28181 catalog unique fragment count reached sum_num with fewer distinct channels; some items may have been malformed or dropped"
+                "gb28181 {} unique fragment count reached sum_num with fewer distinct items; some items may have been malformed or dropped",
+                T::LABEL,
             );
             return true;
         }
@@ -100,7 +140,8 @@ impl PartialCatalog {
                 expected = self.expected,
                 distinct,
                 received,
-                "gb28181 catalog fragments overlap or repeat declared counts; waiting for distinct channel ids"
+                "gb28181 {} fragments overlap or repeat declared counts; waiting for distinct item ids",
+                T::LABEL,
             );
         }
 
@@ -108,7 +149,7 @@ impl PartialCatalog {
     }
 }
 
-impl CatalogBuffer {
+impl<T: FragmentItem> FragmentBuffer<T> {
     pub(crate) fn new(max_entries: usize, max_items_per_entry: usize) -> Self {
         Self {
             entries: HashMap::new(),
@@ -124,12 +165,12 @@ impl CatalogBuffer {
         sn: &str,
         expected: u32,
         num: u32,
-        items: Vec<GbCatalogItem>,
-    ) -> Option<Vec<GbCatalogItem>> {
+        items: Vec<T>,
+    ) -> Option<Vec<T>> {
         // De-duplicate within the incoming fragment before any size checks.
         let mut batch = HashMap::with_capacity(items.len());
         for item in items {
-            batch.insert(item.device_id.clone(), item);
+            batch.insert(item.stable_key(), item);
         }
 
         if expected == 0 {
@@ -143,12 +184,13 @@ impl CatalogBuffer {
                 sn,
                 expected,
                 max_items_per_entry = self.max_items_per_entry,
-                "gb28181 catalog fragment declares more items than allowed; dropping"
+                "gb28181 {} fragment declares more items than allowed; dropping",
+                T::LABEL,
             );
             return None;
         }
 
-        let key = CatalogKey {
+        let key = FragmentKey {
             tenant_id,
             device_id: device_id.as_ref().to_string(),
             sn: sn.to_string(),
@@ -158,7 +200,8 @@ impl CatalogBuffer {
             warn!(
                 sn,
                 max_entries = self.max_entries,
-                "gb28181 catalog fragment buffer full; dropping new fragment"
+                "gb28181 {} fragment buffer full; dropping new fragment",
+                T::LABEL,
             );
             return None;
         }
@@ -175,7 +218,8 @@ impl CatalogBuffer {
                     sn,
                     accumulated = total,
                     max_items_per_entry = self.max_items_per_entry,
-                    "gb28181 catalog fragment exceeded per-entry item limit; dropping partial"
+                    "gb28181 {} fragment exceeded per-entry item limit; dropping partial",
+                    T::LABEL,
                 );
                 self.entries.remove(&key);
                 return None;
@@ -202,7 +246,8 @@ impl CatalogBuffer {
                 sn,
                 accumulated = batch.len(),
                 max_items_per_entry = self.max_items_per_entry,
-                "gb28181 catalog fragment exceeded per-entry item limit; dropping"
+                "gb28181 {} fragment exceeded per-entry item limit; dropping",
+                T::LABEL,
             );
             return None;
         }
@@ -211,7 +256,7 @@ impl CatalogBuffer {
         if num > 0 || !batch.is_empty() {
             fragments.insert(fragment_key(&batch), num);
         }
-        let partial = PartialCatalog {
+        let partial = PartialFragment {
             items: batch,
             expected,
             fragments,
@@ -228,13 +273,17 @@ impl CatalogBuffer {
         let now = Instant::now();
         let before = self.entries.len();
         self.entries
-            .retain(|_, partial| now.duration_since(partial.last_seen) <= CATALOG_FRAGMENT_TTL);
+            .retain(|_, partial| now.duration_since(partial.last_seen) <= TTL);
         let dropped = before.saturating_sub(self.entries.len());
         if dropped > 0 {
             warn!(
                 dropped,
-                "gb28181 catalog fragment buffer evicted stale entries"
+                "gb28181 {} fragment buffer evicted stale entries",
+                T::LABEL,
             );
         }
     }
 }
+
+pub(crate) type CatalogBuffer = FragmentBuffer<GbCatalogItem>;
+pub(crate) type RecordInfoBuffer = FragmentBuffer<RecordItem>;

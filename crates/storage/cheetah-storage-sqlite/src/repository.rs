@@ -810,6 +810,7 @@ struct ProcessedMessageRow {
 fn processed_status_to_string(status: ProcessedMessageStatus) -> &'static str {
     match status {
         ProcessedMessageStatus::Pending => "pending",
+        ProcessedMessageStatus::Accepted => "accepted",
         ProcessedMessageStatus::Completed => "completed",
         ProcessedMessageStatus::Failed => "failed",
         ProcessedMessageStatus::Duplicate => "duplicate",
@@ -819,6 +820,7 @@ fn processed_status_to_string(status: ProcessedMessageStatus) -> &'static str {
 fn processed_status_from_string(status: &str) -> Result<ProcessedMessageStatus, DomainError> {
     match status {
         "pending" => Ok(ProcessedMessageStatus::Pending),
+        "accepted" => Ok(ProcessedMessageStatus::Accepted),
         "completed" => Ok(ProcessedMessageStatus::Completed),
         "failed" => Ok(ProcessedMessageStatus::Failed),
         "duplicate" => Ok(ProcessedMessageStatus::Duplicate),

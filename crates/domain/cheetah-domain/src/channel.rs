@@ -463,3 +463,24 @@ fn validate_stream_profiles(profiles: &[StreamProfile]) -> crate::Result<()> {
     }
     Ok(())
 }
+
+/// Maps a GB28181 catalog/record item external id to a stable internal
+/// [`ChannelId`].
+///
+/// The id is deterministic per `(tenant_id, device_external_id,
+/// channel_external_id)` so repeated registrations and queries always resolve to
+/// the same channel, and it is independent of the internal device id assignment.
+pub fn map_gb28181_channel_id(
+    tenant_id: TenantId,
+    device_external_id: &str,
+    channel_external_id: &str,
+) -> ChannelId {
+    let namespace = uuid::Uuid::NAMESPACE_OID;
+    let name = format!(
+        "gb28181/{}/{}/{}",
+        tenant_id.as_uuid(),
+        device_external_id,
+        channel_external_id
+    );
+    ChannelId::from_uuid(uuid::Uuid::new_v5(&namespace, name.as_bytes()))
+}

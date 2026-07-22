@@ -491,6 +491,9 @@ pub trait MediaPort: Send + Sync {
 pub enum ProcessedMessageStatus {
     /// The message has been accepted but not yet processed.
     Pending,
+    /// The message was accepted and dispatched; the operation outcome is not
+    /// yet known.
+    Accepted,
     /// The message was processed successfully.
     Completed,
     /// Processing the message failed.
@@ -503,6 +506,7 @@ impl std::fmt::Display for ProcessedMessageStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ProcessedMessageStatus::Pending => write!(f, "pending"),
+            ProcessedMessageStatus::Accepted => write!(f, "accepted"),
             ProcessedMessageStatus::Completed => write!(f, "completed"),
             ProcessedMessageStatus::Failed => write!(f, "failed"),
             ProcessedMessageStatus::Duplicate => write!(f, "duplicate"),
