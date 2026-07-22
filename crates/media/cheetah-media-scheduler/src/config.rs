@@ -1,5 +1,7 @@
 //! Scheduler and registry configuration.
 
+use cheetah_signal_contracts::version::MAXIMUM_SUPPORTED_CONTRACT_VERSION;
+
 /// Configuration for the media node registry gRPC service.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MediaRegistryConfig {
@@ -8,8 +10,12 @@ pub struct MediaRegistryConfig {
     pub require_mtls: bool,
     /// Default lease duration in milliseconds for new registrations.
     pub default_lease_ttl_ms: u64,
+    /// Expected heartbeat interval in milliseconds advertised to media nodes.
+    pub heartbeat_interval_ms: u64,
     /// Heartbeat timeout in milliseconds after which a node is considered stale.
     pub heartbeat_timeout_ms: u64,
+    /// Contract version accepted by this registry; returned to media nodes on registration.
+    pub accepted_contract_version: u64,
     /// Allowed URI schemes for a media node control endpoint.
     pub allowed_endpoint_schemes: Vec<String>,
     /// Maximum length of a control endpoint URI in bytes.
@@ -44,7 +50,9 @@ impl MediaRegistryConfig {
         Self {
             require_mtls: true,
             default_lease_ttl_ms: 30_000,
+            heartbeat_interval_ms: 15_000,
             heartbeat_timeout_ms: 60_000,
+            accepted_contract_version: MAXIMUM_SUPPORTED_CONTRACT_VERSION,
             allowed_endpoint_schemes: vec!["http".to_string(), "https".to_string()],
             max_endpoint_uri_length: 2048,
             max_string_field_length: 256,

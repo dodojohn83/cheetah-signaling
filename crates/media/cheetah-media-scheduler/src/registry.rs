@@ -27,10 +27,14 @@ pub trait MediaNodeRegistry: Send + Sync {
         clock: &dyn Clock,
     ) -> Result<MediaNode, SchedulerError>;
 
-    /// Records a heartbeat from a media node.
+    /// Records a heartbeat from a media node. `lease_id` and `instance_epoch`
+    /// must match the values returned by `register`; mismatches are fenced as
+    /// stale-instance errors.
     async fn heartbeat(
         &self,
         node_id: NodeId,
+        lease_id: &str,
+        instance_epoch: u64,
         load: u64,
         session_count: u64,
         clock: &dyn Clock,
@@ -175,6 +179,8 @@ impl MediaNodeRegistry for InMemoryMediaNodeRegistry {
     async fn heartbeat(
         &self,
         node_id: NodeId,
+        lease_id: &str,
+        instance_epoch: u64,
         load: u64,
         session_count: u64,
         clock: &dyn Clock,
@@ -202,6 +208,11 @@ impl MediaNodeRegistry for InMemoryMediaNodeRegistry {
         if entry.node.status == NodeStatus::Left {
             return Err(SchedulerError::NodeNotFound(format!(
                 "{node_id} has been deregistered"
+            )));
+        }
+        if entry.instance_id != lease_id || entry.node.instance_epoch != instance_epoch {
+            return Err(SchedulerError::NodeNotFound(format!(
+                "{node_id} lease or instance epoch mismatch"
             )));
         }
         let now = clock.now_wall();

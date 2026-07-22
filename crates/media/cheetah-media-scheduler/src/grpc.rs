@@ -176,7 +176,7 @@ impl MediaClusterRegistry for MediaClusterRegistryService {
         );
 
         Ok(Response::new(RegisterMediaNodeResponse {
-            node: Some(to_media_node_info(node)),
+            node: Some(to_media_node_info(node, &self.config, self.clock.as_ref())),
         }))
     }
 
@@ -196,6 +196,8 @@ impl MediaClusterRegistry for MediaClusterRegistryService {
             .registry
             .heartbeat(
                 node_id,
+                &heartbeat.lease_id,
+                heartbeat.instance_epoch,
                 heartbeat.load,
                 heartbeat.session_count,
                 self.clock.as_ref(),
@@ -204,7 +206,7 @@ impl MediaClusterRegistry for MediaClusterRegistryService {
             .map_err(map_scheduler_error)?;
 
         Ok(Response::new(HeartbeatMediaNodeResponse {
-            node: Some(to_media_node_info(node)),
+            node: Some(to_media_node_info(node, &self.config, self.clock.as_ref())),
         }))
     }
 
@@ -238,7 +240,7 @@ impl MediaClusterRegistry for MediaClusterRegistryService {
         );
 
         Ok(Response::new(DrainMediaNodeResponse {
-            node: Some(to_media_node_info(node)),
+            node: Some(to_media_node_info(node, &self.config, self.clock.as_ref())),
         }))
     }
 
@@ -274,7 +276,7 @@ impl MediaClusterRegistry for MediaClusterRegistryService {
         );
 
         Ok(Response::new(DeregisterMediaNodeResponse {
-            node: Some(to_media_node_info(node)),
+            node: Some(to_media_node_info(node, &self.config, self.clock.as_ref())),
         }))
     }
 }
@@ -319,7 +321,11 @@ fn from_media_capacity(cap: media_proto::MediaNodeCapacity) -> MediaNodeCapacity
 }
 
 #[allow(deprecated)]
-fn to_media_node_info(node: MediaNode) -> media_proto::MediaNodeInfo {
+fn to_media_node_info(
+    node: MediaNode,
+    config: &MediaRegistryConfig,
+    clock: &dyn Clock,
+) -> media_proto::MediaNodeInfo {
     let capabilities: Vec<_> = node
         .capabilities
         .into_iter()
@@ -345,11 +351,16 @@ fn to_media_node_info(node: MediaNode) -> media_proto::MediaNodeInfo {
             available_bandwidth_mbps: node.capacity.max_bandwidth_mbps,
             available_cpu_percent: node.capacity.max_cpu_percent.saturating_sub(node.load),
         }),
-        instance_id: node.instance_id,
+        instance_id: node.instance_id.clone(),
         zone: node.zone,
         network_zones: node.network_zones,
         load: node.load,
         session_count: node.session_count,
+        lease_id: node.instance_id,
+        lease_ttl_ms: config.default_lease_ttl_ms,
+        heartbeat_interval_ms: config.heartbeat_interval_ms,
+        cluster_time: Some(clock.now_wall().to_prost_timestamp()),
+        accepted_contract_version: config.accepted_contract_version,
     }
 }
 
@@ -574,6 +585,8 @@ mod tests {
         async fn heartbeat(
             &self,
             _node_id: NodeId,
+            _lease_id: &str,
+            _instance_epoch: u64,
             load: u64,
             session_count: u64,
             _clock: &dyn Clock,
