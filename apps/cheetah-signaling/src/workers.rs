@@ -105,9 +105,16 @@ impl Gb28181CommandBus for MultiListenerCommandBus {
                 ),
             )
         })?;
-        tx.send(command)
-            .await
-            .map_err(|_| SignalError::new(SignalErrorKind::Internal, "gb28181 command bus closed"))
+        // Use a bounded channel but do not await capacity while the inbox's
+        // database transaction is held open.
+        tx.try_send(command).map_err(|e| match e {
+            mpsc::error::TrySendError::Full(_) => {
+                SignalError::new(SignalErrorKind::Busy, "gb28181 command bus full")
+            }
+            mpsc::error::TrySendError::Closed(_) => {
+                SignalError::new(SignalErrorKind::Internal, "gb28181 command bus closed")
+            }
+        })
     }
 }
 
