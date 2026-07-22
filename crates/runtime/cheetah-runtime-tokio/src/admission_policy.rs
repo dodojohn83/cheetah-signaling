@@ -178,8 +178,11 @@ impl AdmissionPolicy {
 
     /// Records a dead-lettered message for later redrive.
     ///
-    /// If the ticket was already observed by the coalescer, release the pending
+    /// If the ticket reached the coalescer during `pre_admit` and was then
+    /// dead-lettered because the target mailbox was full, release the pending
     /// key so a later equivalent event is not permanently coalesced away.
+    /// Rate-limited or shed messages never reached the coalescer, so they must
+    /// not release a key that belongs to a different in-flight message.
     pub(crate) fn dead_letter(
         &self,
         ticket: AdmissionTicket,
@@ -193,7 +196,11 @@ impl AdmissionPolicy {
         state
             .dead_letter
             .push(PendingAdmission { ticket, message }, reason, now_ms);
-        if class.is_coalescible() {
+        // Only the `Admit` path calls `coalescer.observe()`; that path can only
+        // reach `dead_letter` with `Overloaded` when `route_send` returns
+        // `Full`. Other reasons (RateLimited, PriorityShed) returned before the
+        // coalescer was consulted and must not touch a pending key.
+        if reason == DeadLetterReason::Overloaded && class.is_coalescible() {
             state.coalescer.release(&(device_key, class));
         }
     }
@@ -360,5 +367,28 @@ mod tests {
             0,
         );
         assert_eq!(policy.pre_admit(0, 0, t).action, PreAdmitAction::Admit);
+    }
+
+    #[test]
+    fn non_admit_dead_letter_does_not_release_coalescer_key() {
+        let policy = AdmissionPolicy::new(&config());
+        let t = ticket(TrafficClass::Keepalive);
+        // Admit a keepalive and hold the coalescer reservation.
+        assert_eq!(policy.pre_admit(0, 0, t).action, PreAdmitAction::Admit);
+
+        // A subsequent keepalive is shed (low priority + overload) before it ever
+        // reaches the coalescer, so dead-lettering it must not release the
+        // pending key that belongs to the first in-flight message.
+        assert_eq!(policy.pre_admit(0, 20, t).action, PreAdmitAction::Shed);
+        policy.dead_letter(
+            t,
+            RuntimeMessage::ProtocolEvent {
+                device_key: t.device_key,
+                payload: vec![1],
+            },
+            DeadLetterReason::PriorityShed,
+            0,
+        );
+        assert_eq!(policy.pre_admit(0, 0, t).action, PreAdmitAction::Coalesce);
     }
 }
