@@ -52,8 +52,8 @@ use cheetah_signal_types::config::{
 use cheetah_signal_types::config::{MessagingBackend, SignalConfig, StorageBackend};
 use cheetah_signal_types::{
     ChannelId, Clock, CorrelationId, DeviceId, DurationMs, Event, IdGenerator, MediaBindingId,
-    MediaSessionId, MessageId, NodeId, Principal, PrincipalKind, RequestContext, SecretStore,
-    TenantId, UtcTimestamp,
+    MediaSessionId, MessageId, NodeId, PageRequest, Principal, PrincipalKind, RequestContext,
+    SecretStore, TenantId, UtcTimestamp,
 };
 use cheetah_storage_api::Storage;
 #[cfg(feature = "cluster")]
@@ -523,7 +523,7 @@ impl cheetah_storage_api::NodeRepository for StorageBackedNodeRepo {
     }
 }
 
-/// Request to reconcile a tenant after a media event sequence gap is detected.
+/// Request to reconcile after a media event sequence gap is detected.
 #[derive(Clone, Copy, Debug)]
 struct ReconcileRequest {
     node_id: NodeId,
@@ -532,24 +532,49 @@ struct ReconcileRequest {
     actual_sequence: u64,
 }
 
-/// Background worker state for tenant-level media reconciliation.
+/// Removes a tenant from the in-flight set when its reconciliation task
+/// finishes, even if the task panics.
+struct TenantInFlightGuard {
+    in_flight: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<TenantId>>>,
+    tenant_id: TenantId,
+}
+
+impl Drop for TenantInFlightGuard {
+    fn drop(&mut self) {
+        let mut set = self.in_flight.lock().unwrap_or_else(|e| e.into_inner());
+        set.remove(&self.tenant_id);
+    }
+}
+
+/// Background worker state for media reconciliation.
 #[derive(Clone)]
 struct ReconcileWorker {
     media_service: cheetah_signal_application::MediaService,
     storage: std::sync::Arc<dyn cheetah_storage_api::Storage>,
     node_id: NodeId,
+    /// Limits the number of tenant reconciliations running in parallel.
     concurrency: std::sync::Arc<tokio::sync::Semaphore>,
-    in_flight: std::sync::Arc<tokio::sync::Mutex<std::collections::HashSet<TenantId>>>,
+    /// Tenants currently being reconciled; guards prevent duplicate work and are
+    /// panic-safe.
+    in_flight: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<TenantId>>>,
 }
 
 impl ReconcileWorker {
-    async fn run(&self, req: ReconcileRequest) {
+    /// Reconciles one tenant. This is spawned inside `run` with a concurrency
+    /// semaphore and an in-flight guard.
+    async fn reconcile_tenant(&self, tenant_id: TenantId, req: ReconcileRequest) {
+        let _permit = match self.concurrency.clone().acquire_owned().await {
+            Ok(p) => p,
+            Err(_) => return,
+        };
+
         let mut uow = match self.storage.begin().await {
             Ok(uow) => uow,
             Err(e) => {
                 tracing::warn!(
                     node_id = %req.node_id,
-                    tenant_id = %req.tenant_id,
+                    tenant_id = %tenant_id,
+                    trigger_tenant = %req.tenant_id,
                     expected_sequence = req.expected_sequence,
                     actual_sequence = req.actual_sequence,
                     error = %e,
@@ -560,7 +585,7 @@ impl ReconcileWorker {
         };
 
         let context = RequestContext {
-            tenant_id: req.tenant_id,
+            tenant_id,
             principal: Principal {
                 id: "media-event-consumer".to_string(),
                 kind: PrincipalKind::Service,
@@ -578,12 +603,71 @@ impl ReconcileWorker {
         if let Err(e) = self.media_service.reconcile(&context, uow.as_mut()).await {
             tracing::warn!(
                 node_id = %req.node_id,
-                tenant_id = %req.tenant_id,
+                tenant_id = %tenant_id,
+                trigger_tenant = %req.tenant_id,
                 expected_sequence = req.expected_sequence,
                 actual_sequence = req.actual_sequence,
                 error = %e,
                 "media gap reconciliation failed"
             );
+        }
+    }
+
+    /// A sequence gap on a media node may affect every tenant with sessions on
+    /// that node, so reconcile all tenants rather than only the triggering one.
+    async fn run(&self, req: ReconcileRequest) {
+        let mut cursor: Option<String> = None;
+        loop {
+            let page_request = match cursor {
+                None => match PageRequest::new(1000) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "invalid page request for tenant listing");
+                        return;
+                    }
+                },
+                Some(c) => match PageRequest::new(1000) {
+                    Ok(p) => p.with_cursor(c),
+                    Err(e) => {
+                        tracing::warn!(error = %e, "invalid page request for tenant listing");
+                        return;
+                    }
+                },
+            };
+
+            let repo = self.storage.tenant_repository();
+            let page = match repo.list(None, page_request).await {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::warn!(error = %e, "failed to list tenants for gap reconciliation");
+                    return;
+                }
+            };
+
+            for tenant in page.items {
+                let guard = {
+                    let mut set = self.in_flight.lock().unwrap_or_else(|e| e.into_inner());
+                    if !set.insert(tenant.tenant_id) {
+                        continue;
+                    }
+                    Some(TenantInFlightGuard {
+                        in_flight: self.in_flight.clone(),
+                        tenant_id: tenant.tenant_id,
+                    })
+                };
+
+                let worker = self.clone();
+                let tenant_id = tenant.tenant_id;
+                tokio::spawn(async move {
+                    let _guard = guard;
+                    worker.reconcile_tenant(tenant_id, req).await;
+                });
+            }
+
+            match page.next_cursor {
+                None => break,
+                Some(c) => cursor = Some(c),
+            }
         }
     }
 }
@@ -595,31 +679,14 @@ async fn reconcile_worker(
 ) {
     loop {
         tokio::select! {
-            Some(req) = rx.recv() => {
-                let mut in_flight = state.in_flight.lock().await;
-                if !in_flight.insert(req.tenant_id) {
-                    continue;
-                }
-                drop(in_flight);
-
-                let Ok(permit) = state.concurrency.clone().acquire_owned().await else {
-                    break;
-                };
-                let state = state.clone();
-                tokio::spawn(async move {
-                    let _permit = permit;
-                    state.run(req).await;
-                    let mut in_flight = state.in_flight.lock().await;
-                    in_flight.remove(&req.tenant_id);
-                });
-            }
+            Some(req) = rx.recv() => state.run(req).await,
             _ = cancel.cancelled() => break,
         }
     }
 }
 
-/// Handler that enqueues heavy tenant reconciliations onto a bounded
-/// background worker instead of blocking the media event stream.
+/// Handler that enqueues gap reconciliation onto a bounded background worker
+/// instead of blocking the media event stream.
 #[derive(Clone)]
 struct AppReconciliationHandler {
     tx: tokio::sync::mpsc::Sender<ReconcileRequest>,
@@ -658,7 +725,7 @@ fn spawn_reconcile_worker(
         storage,
         node_id,
         concurrency: std::sync::Arc::new(tokio::sync::Semaphore::new(4)),
-        in_flight: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashSet::new())),
+        in_flight: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
     };
     tokio::spawn(reconcile_worker(rx, worker, cancel));
     AppReconciliationHandler { tx }
