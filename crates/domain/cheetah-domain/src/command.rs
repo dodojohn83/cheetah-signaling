@@ -240,6 +240,15 @@ pub enum CommandPayload {
         /// Target media node for the binding.
         media_node_id: NodeId,
     },
+    /// Start a one-way voice broadcast to the device (media sender only).
+    StartBroadcast {
+        /// Media session being started.
+        media_session_id: MediaSessionId,
+        /// Channel that receives the broadcast audio.
+        channel_id: ChannelId,
+        /// Target media node for the binding.
+        media_node_id: NodeId,
+    },
     /// Stop a media session.
     StopMediaSession {
         /// Media session being stopped.
@@ -285,6 +294,7 @@ impl CommandPayload {
             Self::StartLive { .. } => "StartLive",
             Self::StartPlayback { .. } => "StartPlayback",
             Self::StartTalk { .. } => "StartTalk",
+            Self::StartBroadcast { .. } => "StartBroadcast",
             Self::StopMediaSession { .. } => "StopMediaSession",
             Self::ControlPlayback { .. } => "ControlPlayback",
             Self::Ptz { .. } => "Ptz",

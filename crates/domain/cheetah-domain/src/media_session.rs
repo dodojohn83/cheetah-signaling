@@ -100,6 +100,16 @@ pub enum MediaPurpose {
     Playback,
     /// Two-way talk.
     Talk,
+    /// One-way voice broadcast from the platform to the device (media sender).
+    Broadcast,
+}
+
+impl MediaPurpose {
+    /// Whether this purpose sends audio from the platform to the device and
+    /// therefore requires a media-node sender resource.
+    pub const fn requires_media_sender(self) -> bool {
+        matches!(self, Self::Talk | Self::Broadcast)
+    }
 }
 
 impl std::fmt::Display for MediaPurpose {
@@ -109,6 +119,7 @@ impl std::fmt::Display for MediaPurpose {
             Self::Live => "live",
             Self::Playback => "playback",
             Self::Talk => "talk",
+            Self::Broadcast => "broadcast",
         };
         f.write_str(s)
     }
@@ -122,6 +133,7 @@ impl std::str::FromStr for MediaPurpose {
             "live" => Self::Live,
             "playback" => Self::Playback,
             "talk" => Self::Talk,
+            "broadcast" => Self::Broadcast,
             _ => Self::Unknown,
         };
         if purpose == Self::Unknown {

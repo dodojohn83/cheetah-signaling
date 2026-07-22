@@ -234,6 +234,59 @@ pub(super) fn on_command(
             };
             do_start(media, &p, &sdp)
         }
+        MediaCommand::StartBroadcast {
+            media_session_id,
+            channel_id,
+            device_id,
+            target,
+            call_id,
+            local_tag,
+            cseq,
+            branch,
+            subject_session,
+            media_address,
+            media_port,
+            codec,
+            transport,
+        } => {
+            // Validate the audio codec before creating any session state so an
+            // unsupported request fails with a stable error and no side effects.
+            let rtpmap = match codec.as_str() {
+                "G.711A" | "PCMA" => SdpParams::pcma_rtpmap(),
+                "G.711U" | "PCMU" => SdpParams::pcmu_rtpmap(),
+                _ => return Err(MediaError::Unsupported(codec)),
+            };
+            let p = StartParams {
+                media_session_id,
+                channel_id,
+                device_id,
+                target,
+                call_id,
+                local_tag,
+                cseq,
+                branch,
+                subject_session,
+                media_address,
+                media_port,
+            };
+            let sdp = SdpParams {
+                session_name: "Broadcast".to_string(),
+                media_type: "audio".to_string(),
+                media_port: p.media_port,
+                transport,
+                // Broadcast is one-way: the platform sends audio to the device.
+                direction: SdpDirection::SendOnly,
+                time: SdpTime {
+                    start: "0".to_string(),
+                    stop: "0".to_string(),
+                },
+                ssrc: None,
+                media_address: p.media_address.clone(),
+                rtpmap: Some(rtpmap),
+                extra_attrs: Vec::new(),
+            };
+            do_start(media, &p, &sdp)
+        }
         MediaCommand::ControlPlayback {
             media_session_id,
             action,

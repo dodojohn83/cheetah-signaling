@@ -54,6 +54,18 @@ pub enum MediaNodeCommandResult {
         /// Human-readable error message.
         message: String,
     },
+    /// The media node could not confirm whether the side effect was applied
+    /// (e.g. the request timed out or the connection dropped after dispatch).
+    ///
+    /// The caller must not treat this as success or terminal failure; the
+    /// affected session/binding is left in a non-terminal state for the
+    /// reconciler to resolve by querying the media node.
+    UnknownOutcome {
+        /// Stable diagnostic code.
+        code: String,
+        /// Human-readable diagnostic message.
+        message: String,
+    },
 }
 
 /// A command sent to a specific media node.
@@ -112,6 +124,8 @@ pub struct MediaRequirements {
     pub required_constraints: std::collections::BTreeMap<String, String>,
     /// Optional media session id used for stable affinity during retries.
     pub media_session_id: Option<String>,
+    /// Whether the node must be able to send audio to the device (talk/broadcast).
+    pub require_media_sender: bool,
 }
 
 /// A single outbox entry.
@@ -425,6 +439,34 @@ pub trait MediaPort: Send + Sync {
         requirements: &MediaRequirements,
         clock: &dyn Clock,
     ) -> Result<MediaReservation>;
+
+    /// Reserves a media node for a one-way broadcast session.
+    ///
+    /// Broadcast shares the talk media-sender resource semantics, so the
+    /// default implementation delegates to [`MediaPort::reserve_talk`].
+    /// Implementations that need distinct selection may override this.
+    #[allow(clippy::too_many_arguments)]
+    async fn reserve_broadcast(
+        &self,
+        tenant_id: TenantId,
+        device_id: DeviceId,
+        channel_id: ChannelId,
+        media_session_id: MediaSessionId,
+        media_binding_id: MediaBindingId,
+        requirements: &MediaRequirements,
+        clock: &dyn Clock,
+    ) -> Result<MediaReservation> {
+        self.reserve_talk(
+            tenant_id,
+            device_id,
+            channel_id,
+            media_session_id,
+            media_binding_id,
+            requirements,
+            clock,
+        )
+        .await
+    }
 
     /// Releases a media binding.
     async fn release(

@@ -11,8 +11,8 @@ use axum::{
 };
 use cheetah_domain::DomainError;
 use cheetah_signal_application::dto::{
-    ControlPlaybackRequest, MediaSessionDto, StartLiveRequest, StartPlaybackRequest,
-    StartTalkRequest, StopLiveRequest,
+    ControlPlaybackRequest, MediaSessionDto, StartBroadcastRequest, StartLiveRequest,
+    StartPlaybackRequest, StartTalkRequest, StopLiveRequest,
 };
 use cheetah_signal_types::{AuditOutcome, DeviceId, MediaSessionId, Page, UtcTimestamp};
 use std::sync::Arc;
@@ -93,6 +93,16 @@ pub async fn create_session(
             state
                 .media_service
                 .start_talk(&ctx.0, &mut *uow, request)
+                .await
+                .map_err(HttpError::from)?
+        }
+        "broadcast" => {
+            let mut request: StartBroadcastRequest =
+                serde_json::from_value(body).map_err(HttpError::from)?;
+            request.idempotency_key = idempotency.0.clone();
+            state
+                .media_service
+                .start_broadcast(&ctx.0, &mut *uow, request)
                 .await
                 .map_err(HttpError::from)?
         }

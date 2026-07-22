@@ -20,7 +20,7 @@ use cheetah_signal_types::{
     OwnerEpoch, Page, PageRequest, Principal, ProtocolIdentity, ProtocolSessionId, RequestContext,
     ResourceId, ResourceKind, ResourceRef, Revision, TenantId, UtcTimestamp, WebhookId,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use time::{Duration as TimeDuration, OffsetDateTime};
@@ -1177,6 +1177,12 @@ pub struct InMemoryMediaPort {
     reservations: Arc<Mutex<BTreeMap<(TenantId, MediaBindingId), MediaReservation>>>,
     node_sessions: Arc<Mutex<MediaNodeSessionMap>>,
     id_generator: Arc<dyn IdGenerator>,
+    /// Scripted results consumed one-per-call by [`InMemoryMediaPort::execute`],
+    /// used to deterministically drive failure/unknown-outcome contract tests.
+    scripted_execute: Arc<Mutex<VecDeque<MediaNodeCommandResult>>>,
+    /// Scripted reservation errors consumed one-per-call by the `reserve_*`
+    /// methods, used to exercise reservation failure and compensation paths.
+    scripted_reserve_errors: Arc<Mutex<VecDeque<DomainError>>>,
 }
 
 impl std::fmt::Debug for InMemoryMediaPort {
@@ -1195,7 +1201,21 @@ impl InMemoryMediaPort {
             reservations: Arc::new(Mutex::new(BTreeMap::new())),
             node_sessions: Arc::new(Mutex::new(BTreeMap::new())),
             id_generator,
+            scripted_execute: Arc::new(Mutex::new(VecDeque::new())),
+            scripted_reserve_errors: Arc::new(Mutex::new(VecDeque::new())),
         }
+    }
+
+    /// Queues a result to be returned by the next [`InMemoryMediaPort::execute`]
+    /// call instead of the default behavior. Results are consumed in FIFO order;
+    /// once the queue is empty the default behavior resumes.
+    pub fn script_execute_result(&self, result: MediaNodeCommandResult) {
+        lock_mutex(&self.scripted_execute).push_back(result);
+    }
+
+    /// Queues an error to be returned by the next `reserve_*` call.
+    pub fn script_reserve_error(&self, error: DomainError) {
+        lock_mutex(&self.scripted_reserve_errors).push_back(error);
     }
 
     /// Configures the sessions reported by a media node for reconciliation tests.
@@ -1221,6 +1241,9 @@ impl InMemoryMediaPort {
         tenant_id: TenantId,
         media_binding_id: MediaBindingId,
     ) -> crate::Result<MediaReservation> {
+        if let Some(error) = lock_mutex(&self.scripted_reserve_errors).pop_front() {
+            return Err(error);
+        }
         let mut reservations = lock_mutex(&self.reservations);
         let key = (tenant_id, media_binding_id);
         if reservations.contains_key(&key) {
@@ -1296,6 +1319,9 @@ impl crate::MediaPort for InMemoryMediaPort {
         command: MediaNodeCommand,
         _clock: &dyn Clock,
     ) -> crate::Result<MediaNodeCommandResult> {
+        if let Some(result) = lock_mutex(&self.scripted_execute).pop_front() {
+            return Ok(result);
+        }
         let tenant_id = command.tenant_id;
         let node_id = command.media_node_id;
         let epoch = command.media_node_instance_epoch;
@@ -1311,6 +1337,11 @@ impl crate::MediaPort for InMemoryMediaPort {
                 ..
             }
             | CommandPayload::StartTalk {
+                media_session_id,
+                channel_id,
+                ..
+            }
+            | CommandPayload::StartBroadcast {
                 media_session_id,
                 channel_id,
                 ..

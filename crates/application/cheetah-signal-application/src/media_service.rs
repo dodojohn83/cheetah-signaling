@@ -406,6 +406,7 @@ pub(crate) fn build_media_requirements(
         tenant_constraints: std::collections::BTreeMap::new(),
         required_constraints: extra_constraints,
         media_session_id: Some(media_session_id.to_string()),
+        require_media_sender: purpose.requires_media_sender(),
     }
 }
 
