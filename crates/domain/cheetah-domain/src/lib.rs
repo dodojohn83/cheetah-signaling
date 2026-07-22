@@ -19,6 +19,7 @@ pub mod media_node;
 pub mod media_session;
 pub mod node;
 pub mod operation;
+pub mod platform_link;
 pub mod ports;
 pub mod protocol_session;
 pub mod tenant;
@@ -51,6 +52,11 @@ pub use node::{ClusterNode, NodeCapacity, NodeLoad};
 pub use operation::{
     DispatchAttempt, DispatchAttemptStatus, Operation, OperationError, OperationResult,
     OperationStatus, OperationStep, OperationStepStatus,
+};
+pub use platform_link::{
+    ActualRegistrationState, BackoffPolicy, DesiredRegistrationState, GbPlatformLink,
+    MAX_CASCADE_HOPS, NewPlatformLink, PlatformAcl, PlatformCredential, PlatformDirection,
+    PlatformEndpoint, PlatformIdentityPair, RegistrationRuntime, SubscriptionLimits, detect_loop,
 };
 pub use ports::*;
 pub use protocol_session::{

@@ -1,11 +1,13 @@
 //! Test fixtures for repository contract tests.
 
 use cheetah_domain::{
-    Channel, ChannelKind, ChannelStatus, Clock, ClusterNode, CommandPayload, CompatibilityProfile,
-    Device, DeviceKind, DomainError, LocalIdentity, MediaBinding, MediaPurpose, MediaSession,
-    MediaSessionDesiredState, NewProtocolSession, NodeCapacity, NodeLoad, Operation, Protocol,
-    ProtocolSession, PtzCapabilities, PtzDirection, RegistrationInfo, SessionEndpoint,
-    SipTransport, WebhookConfig,
+    BackoffPolicy, Channel, ChannelKind, ChannelStatus, Clock, ClusterNode, CommandPayload,
+    CompatibilityProfile, Device, DeviceKind, DomainError, GbPlatformLink, LocalIdentity,
+    MediaBinding, MediaPurpose, MediaSession, MediaSessionDesiredState, NewPlatformLink,
+    NewProtocolSession, NodeCapacity, NodeLoad, Operation, PlatformAcl, PlatformCredential,
+    PlatformDirection, PlatformEndpoint, PlatformIdentityPair, Protocol, ProtocolSession,
+    PtzCapabilities, PtzDirection, RegistrationInfo, SessionEndpoint, SipTransport,
+    SubscriptionLimits, WebhookConfig,
     in_memory::{InMemoryClock, InMemoryIdGenerator},
 };
 use cheetah_signal_types::{
@@ -154,6 +156,53 @@ impl Fixtures {
                 owner_node_id: None,
                 owner_epoch: OwnerEpoch::default(),
                 compatibility: CompatibilityProfile::default(),
+            },
+        )
+    }
+
+    /// Creates a new cascade platform link aggregate.
+    ///
+    /// `remote_suffix` differentiates the remote platform identity so multiple
+    /// links can coexist in one tenant.
+    pub fn platform_link(
+        &self,
+        tenant_id: TenantId,
+        direction: PlatformDirection,
+        remote_suffix: u16,
+    ) -> cheetah_domain::Result<GbPlatformLink> {
+        let local = ProtocolIdentity::new("34020000002000000001")
+            .map_err(|e| DomainError::invalid_argument(e.to_string()))?;
+        let remote = ProtocolIdentity::new(format!("110000000020000{remote_suffix:05}"))
+            .map_err(|e| DomainError::invalid_argument(e.to_string()))?;
+        GbPlatformLink::new(
+            self.clock(),
+            NewPlatformLink {
+                platform_link_id: self.id_generator.generate_platform_link_id(),
+                tenant_id,
+                direction,
+                identity: PlatformIdentityPair { local, remote },
+                endpoint: PlatformEndpoint {
+                    host: "203.0.113.9".to_string(),
+                    port: 5060,
+                    transport: SipTransport::Udp,
+                    realm: "1100000000".to_string(),
+                    domain: "1100000000".to_string(),
+                },
+                credential: PlatformCredential {
+                    credential_ref: "secret://upstream".to_string(),
+                    allow_md5: false,
+                },
+                acl: PlatformAcl {
+                    allowed_catalog_prefixes: vec!["3402000000".to_string()],
+                    allow_control: true,
+                    allow_media: true,
+                    denied_platform_ids: vec![],
+                },
+                backoff: BackoffPolicy::default(),
+                subscription_limits: SubscriptionLimits::default(),
+                register_interval_secs: 3600,
+                compatibility_profile_id: None,
+                compatibility_profile_revision: 0,
             },
         )
     }

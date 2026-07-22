@@ -4,7 +4,7 @@ use crate::{
     MediaNodeRepository, Migration, NodeRepository, OperationStepRepository, OwnerRepository,
     StorageError, TenantRepository,
 };
-use cheetah_domain::{ProtocolSessionRepository, UnitOfWork};
+use cheetah_domain::{PlatformLinkRepository, ProtocolSessionRepository, UnitOfWork};
 
 /// Storage abstraction.
 ///
@@ -35,6 +35,9 @@ pub trait Storage: Send + Sync {
 
     /// Returns the protocol session repository backed by the storage pools.
     fn protocol_session_repository(&self) -> Box<dyn ProtocolSessionRepository>;
+
+    /// Returns the cascade platform link repository backed by the storage pools.
+    fn platform_link_repository(&self) -> Box<dyn PlatformLinkRepository>;
 
     /// Gracefully closes the storage.
     async fn close(self) -> Result<(), StorageError>;

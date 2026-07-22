@@ -6,11 +6,14 @@ use crate::migration::PostgresMigration;
 use crate::node::PostgresNodeRepository;
 use crate::operation_step::PostgresOperationStepRepository;
 use crate::owner::{PostgresDeviceOwnerResolver, PostgresOwnerRepository};
+use crate::platform_link::PostgresPlatformLinkRepository;
 use crate::protocol_session::PostgresProtocolSessionRepository;
 use crate::tenant::PostgresTenantRepository;
 use crate::unit_of_work::PostgresUnitOfWork;
 use cheetah_domain::Clock;
-use cheetah_domain::ports::{DeviceOwnerResolver, ProtocolSessionRepository};
+use cheetah_domain::ports::{
+    DeviceOwnerResolver, PlatformLinkRepository, ProtocolSessionRepository,
+};
 use cheetah_storage_api::{
     MediaNodeRepository, Migration as MigrationTrait, NodeRepository, OperationStepRepository,
     OwnerRepository, Storage, StorageError, TenantRepository,
@@ -133,6 +136,13 @@ impl Storage for PostgresStorage {
 
     fn protocol_session_repository(&self) -> Box<dyn ProtocolSessionRepository> {
         Box::new(PostgresProtocolSessionRepository::new(
+            self.read_pool.clone(),
+            self.write_pool.clone(),
+        ))
+    }
+
+    fn platform_link_repository(&self) -> Box<dyn PlatformLinkRepository> {
+        Box::new(PostgresPlatformLinkRepository::new(
             self.read_pool.clone(),
             self.write_pool.clone(),
         ))

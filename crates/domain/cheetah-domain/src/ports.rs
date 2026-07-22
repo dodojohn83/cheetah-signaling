@@ -3,14 +3,15 @@
 use std::sync::Arc;
 
 use crate::{
-    Channel, Command, CommandPayload, Device, DomainError, DomainEvent, MediaBinding, MediaSession,
-    Operation, Protocol, ProtocolSession, WebhookConfig, WebhookDelivery,
+    Channel, Command, CommandPayload, Device, DomainError, DomainEvent, GbPlatformLink,
+    MediaBinding, MediaSession, Operation, PlatformDirection, Protocol, ProtocolSession,
+    WebhookConfig, WebhookDelivery,
 };
 use cheetah_signal_types::{
     ChannelId, Deadline, DeliveryId, DeviceId, Event, EventId, MediaBindingId,
     MediaNodeInstanceEpoch, MediaSessionId, MessageId, MetricsExporter, NodeId, OperationId,
-    OwnerEpoch, Page, PageRequest, ProtocolIdentity, ProtocolSessionId, Revision, TenantId,
-    UtcTimestamp, WebhookId,
+    OwnerEpoch, Page, PageRequest, PlatformLinkId, ProtocolIdentity, ProtocolSessionId, Revision,
+    TenantId, UtcTimestamp, WebhookId,
 };
 
 pub use cheetah_signal_types::{Clock, IdGenerator};
@@ -219,6 +220,60 @@ pub trait ProtocolSessionRepository: Send + Sync {
         now: UtcTimestamp,
         page: PageRequest,
     ) -> Result<Page<ProtocolSession>>;
+}
+
+/// Repository for GB28181 cascade platform link aggregates.
+///
+/// Like [`ProtocolSessionRepository`], links are managed through a
+/// connection-scoped repository so an owner shard can drive registration and
+/// query cascade state independently of device write transactions.
+///
+/// Every method is tenant-scoped, and [`save`](Self::save) applies optimistic
+/// concurrency on [`Revision`], mapping a zero-row update to
+/// [`DomainError::ConcurrentModification`].
+#[async_trait::async_trait]
+pub trait PlatformLinkRepository: Send + Sync {
+    /// Gets a platform link by id, scoped to a tenant.
+    async fn get(
+        &self,
+        tenant_id: TenantId,
+        platform_link_id: PlatformLinkId,
+    ) -> Result<Option<GbPlatformLink>>;
+
+    /// Gets a platform link by its remote platform identity, scoped to a
+    /// tenant and direction.
+    ///
+    /// This is used to route an inbound downstream REGISTER or an outbound
+    /// upstream refresh to the right link without scanning the table.
+    async fn get_by_remote_identity(
+        &self,
+        tenant_id: TenantId,
+        direction: PlatformDirection,
+        remote_identity: ProtocolIdentity,
+    ) -> Result<Option<GbPlatformLink>>;
+
+    /// Inserts or updates a platform link.
+    ///
+    /// Updates must match the stored revision (`link.revision() - 1`); a
+    /// mismatch is reported as [`DomainError::ConcurrentModification`].
+    async fn save(&mut self, link: &GbPlatformLink) -> Result<()>;
+
+    /// Deletes a platform link if it still matches `expected_revision`.
+    async fn delete(
+        &mut self,
+        tenant_id: TenantId,
+        platform_link_id: PlatformLinkId,
+        expected_revision: Revision,
+    ) -> Result<()>;
+
+    /// Lists platform links for a tenant with optional direction filter and
+    /// stable cursor pagination.
+    async fn list(
+        &self,
+        tenant_id: TenantId,
+        direction: Option<PlatformDirection>,
+        page: PageRequest,
+    ) -> Result<Page<GbPlatformLink>>;
 }
 
 /// Repository for channel aggregates.

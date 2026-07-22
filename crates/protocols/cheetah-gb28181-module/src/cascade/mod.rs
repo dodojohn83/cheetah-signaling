@@ -5,12 +5,14 @@ mod catalog;
 mod keepalive;
 mod machine;
 mod machine_response;
+mod manager;
 mod registration;
 mod report;
 mod request_handler;
 mod subscription;
 
 pub use catalog::{CatalogError, CatalogFilter, CatalogPage, CatalogProvider, CatalogQuery};
+pub use manager::{CascadeManager, CascadeRoutingError};
 
 use crate::events::Gb28181Event;
 use crate::types::DomainId;

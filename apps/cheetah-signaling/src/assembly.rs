@@ -221,6 +221,9 @@ impl IdGenerator for UuidIdGenerator {
     fn generate_protocol_session_id(&self) -> cheetah_signal_types::ProtocolSessionId {
         cheetah_signal_types::ProtocolSessionId::from_uuid(Uuid::now_v7())
     }
+    fn generate_platform_link_id(&self) -> cheetah_signal_types::PlatformLinkId {
+        cheetah_signal_types::PlatformLinkId::from_uuid(Uuid::now_v7())
+    }
     fn generate_media_session_id(&self) -> MediaSessionId {
         MediaSessionId::from_uuid(Uuid::now_v7())
     }
