@@ -12,29 +12,34 @@
 
 ### 1.1 Digest 凭据与算法策略
 
-来源：GB4-SEC-002 实现与测试（`crates/protocols/cheetah-gb28181-core` / `module` / `config`）。
+来源：GB4-SEC-002 实现与测试（`crates/protocols/cheetah-gb28181-core/tests/digest_validate_tests.rs`、`crates/protocols/cheetah-gb28181-module/tests/register_tests.rs`）。
 
 | 测试 | 验证点 | 状态 |
 |------|--------|------|
-| `parse_rejects_md5_sess_algorithm` | `MD5-sess` 在解析期被拒绝 | pass |
-| `parse_rejects_unknown_algorithm` | 未知 digest 算法在解析期被拒绝 | pass |
-| `algorithm_downgrade_to_md5_is_rejected` | 服务端优先 SHA-256 时客户端回退 MD5 被判定为 `AlgorithmDowngrade` | pass |
-| `unspecified_algorithm_against_sha256_is_rejected` | 客户端省略 algorithm 字段（隐含 MD5）对 SHA-256 challenge 被拒绝 | pass |
-| `register_rejects_md5_downgrade_against_sha256_challenge_with_401` | module 层将降级映射为 `401` | pass |
-| `challenge_optional_allowed_with_explicit_edge_profile` | 仅在显式 `system.profile = "edge"` 时允许 `challenge_optional` | pass |
-| `challenge_optional_requires_explicit_edge_profile` | 推断 edge 但未显式设置时启动失败 | pass |
-| `challenge_optional_rejected_in_cluster_profile` | cluster 模式下 `challenge_optional=true` 启动失败 | pass |
+| `md5_disallowed_by_policy` | policy 为 SHA-256 时 `MD5` algorithm 被拒绝 | pass |
+| `qop_downgrade_is_rejected` | `auth-int`/`auth` qop 降级被拒绝 | pass |
+| `register_required_rejects_unknown_algorithm_with_400` | 未知 digest 算法在 register 处理阶段返回 `400` | pass |
+| `challenge_optional_register_without_auth_succeeds` | `challenge_optional=true` 时未认证 REGISTER 被接受 | pass |
+| `challenge_optional_rejects_invalid_credentials_with_401` | `challenge_optional=true` 但携带错误凭据仍返回 `401` | pass |
+| `challenge_optional_rejects_credential_backend_error` | 凭据后端故障不被视为“无密码”放行 | pass |
+
+> 注：`challenge_optional` 的 dev-only 策略由 `Gb28181Config` 显式字段控制；`apps/cheetah-signaling/src/assembly.rs` 启动路径会记录警告并标记 readiness insecure，无同名 `#[test]` 覆盖。
 
 ### 1.2 Replay / nonce 保护
+
+来源：`crates/protocols/cheetah-gb28181-core/tests/digest_validate_tests.rs`。
 
 | 测试 | 验证点 | 状态 |
 |------|--------|------|
 | `replay_is_detected` | 重复 `(nonce, nc)` 被拒绝 | pass |
-| `nc` 乱序拒绝 | `nc` 非严格递增被拒绝 | pass |
-| `stale_nonce` | nonce 签名时间戳超过 TTL 被视为 `StaleNonce` | pass |
-| `tampered_nonce` | 签名被篡改的 nonce 被拒绝 | pass |
+| `out_of_order_nc_is_replay` | `nc` 非严格递增被视为 replay | pass |
+| `same_nc_with_different_cnonce_is_replay` | 相同 `nc` 但不同 `cnonce` 被视为 replay | pass |
+| `expired_nonce_is_stale` | nonce 签名时间戳超过 TTL 被视为 `StaleNonce` | pass |
+| `tampered_nonce_fails_signature` | 签名被篡改的 nonce 被拒绝 | pass |
 
 ### 1.3 限流与暴力破解
+
+来源：`crates/protocols/cheetah-gb28181-module/tests/register_tests.rs`。
 
 | 测试 | 验证点 | 状态 |
 |------|--------|------|
@@ -50,46 +55,43 @@
 
 ## 2. 过载保护测试
 
-来源：GB4-OPS-003 / GB4-OPS-004 实现与测试（`crates/foundation/cheetah-signal-types`、`crates/runtime/cheetah-runtime-tokio`、`crates/application/cheetah-signal-application`）。
+来源：GB4-OPS-003 / GB4-OPS-004 实现与测试（`crates/foundation/cheetah-signal-types/src/admission/mod.rs`、`crates/runtime/cheetah-runtime-tokio/src/admission_policy.rs`、`crates/runtime/cheetah-runtime-tokio/tests/admission_test.rs`、`crates/application/cheetah-signal-application/tests/lifecycle_recovery_system.rs`）。
 
 | 测试 | 验证点 | 状态 |
 |------|--------|------|
-| `token_bucket_allows_burst_then_refills` | 令牌桶在容量内允许突发并按速率恢复 | pass |
-| `token_bucket_rejects_saturated_bucket` | 桶满后拒绝请求 | pass |
-| `token_bucket_ignores_clock_regression` | 单调时钟回退按零处理，避免重复计票 | pass |
-| `keyed_rate_limiter_lru_eviction_and_metrics` | per-key 限流器有 LRU 上限，超限 key 被淘汰并计数 | pass |
-| `coalescer_merges_equivalent_events` | 同一 key 已 pending 事件被折叠 | pass |
-| `coalescer_does_not_block_new_keys_when_full` | coalescer key 上限满时仍放行新 key | pass |
-| `dead_letter_queue_bounded_fifo` | dead-letter 队列有界，满时丢弃最旧 | pass |
-| `backlog_controller_hysteresis` | backlog high/low watermark 带滞回，避免抖动 | pass |
-| `shed_low_priority_when_overloaded` | 过载时仅丢弃 `Priority::Low` 流量 | pass |
-| `runtime_drain_rejects_new_work_and_empties_mailbox` | `Runtime::drain(deadline)` 停止新工作并清空 mailbox | pass |
-| `lifecycle_recovery_system` | 崩溃后旧 owner epoch 命令被 fence，outbox 落库事件由恢复节点重放 | pass |
+| `token_bucket_enforces_capacity_and_refill` | 令牌桶在容量内允许突发并按速率恢复 | pass |
+| `token_bucket_ignores_backwards_time` | 单调时钟回退按零处理，避免重复计票 | pass |
+| `keyed_rate_limiter_bounds_keys_via_lru` | per-key 限流器有 LRU 上限，超限 key 被淘汰并计数 | pass |
+| `coalescer_collapses_pending_and_releases` | 同一 key 已 pending 事件被折叠 | pass |
+| `dead_letter_queue_is_bounded_and_redrivable` | dead-letter 队列有界，满时丢弃最旧 | pass |
+| `backlog_controller_has_hysteresis` | backlog high/low watermark 带滞回，避免抖动 | pass |
+| `traffic_class_priorities` | `Command` 优先级高于 `Background` | pass |
+| `sheds_low_priority_when_overloaded` | 过载时仅丢弃 `Priority::Low` 流量 | pass |
+| `admit_sheds_low_priority_then_redrives_after_recovery` | 运行时过载后低优被 drop，恢复后重投 | pass |
+| `send_message_rejected_while_draining` | `Runtime::drain` 后新消息被拒绝 | pass |
+| `drain_reports_clean_completion_for_idle_runtime` | 空载 drain 干净完成 | pass |
+| `sqlite_startup_graceful_shutdown_and_crash_recovery` | 崩溃后旧 owner epoch 命令被 fence，outbox 落库事件由恢复节点重放 | pass |
 
 ## 3. 敏感信息泄漏测试
 
-来源：GB4-SEC-004 实现与测试（`crates/foundation/cheetah-signal-types/src/redaction.rs`）。
+来源：GB4-SEC-004 实现与测试（`crates/foundation/cheetah-signal-types/src/redaction.rs`、`crates/plugin/cheetah-plugin-host/src/oob/log_sanitize.rs`）。
 
 | 测试 | 验证点 | 状态 |
 |------|--------|------|
-| `redact_details_strips_authorization` | `Authorization` header 被替换为 `[REDACTED]` | pass |
-| `redact_details_strips_proxy_and_www_authenticate` | `Proxy-Authorization`、`WWW-Authenticate` 被脱敏 | pass |
-| `redact_details_strips_password_and_secret` | `password`、`secret`、`nonce`、`credentials`、`token`、`privateKey`、`key` 被脱敏 | pass |
-| `redacted_display_is_redacted` | `Redacted<T>` 的 `Display`/`Debug` 输出 `[REDACTED]` | pass |
-| `safe_details_passes_through_non_sensitive` | 非敏感字段原样保留 | pass |
+| `redacts_authorization_header` | `Authorization`、`Proxy-Authorization`、`WWW-Authenticate` 等被替换为 `[REDACTED]` | pass |
+| `keeps_innocent_lines` | 非敏感字段原样保留 | pass |
+| `redacted_display_is_masked` | `Redacted<T>` 的 `Display`/`Debug` 输出 `[REDACTED]` | pass |
 
 `AuditEvent.details` 已从 `Option<String>` 改为 `Option<SafeDetails>`，强制所有审计事件构造点经过脱敏。
 
 ## 4. CI 运行结果
 
-当前 `devin/gb4-base-all-v2` 基线（含 `GB4-SEC-002`、`GB4-OPS-003/004`、`GB4-SEC-004`、`GB4-COMP-001`、`GB4-ACC-004`、`GB4-CMD-001`、`GB4-SIP-006`）的 CI 全部通过：
+报告所引用的安全、过载与脱敏实现随仓库 CI 常态化运行，本 PR 修改仅涉及报告本身；报告提交前的本地验证结果：
 
-- `fmt-check`：通过；
-- `clippy`：通过；
-- `deny`：通过；
-- `nextest`：通过；
-- `proto`：通过；
-- `contract-baseline`：通过。
+- `cargo fmt --all -- --check`：通过；
+- `cargo clippy --workspace --all-targets -- -D warnings`：通过；
+- `cargo test --workspace`：通过；
+- `python3 scripts/audit_architecture.py`：无新增违规。
 
 ## 5. 结论与后续工作
 
