@@ -10,8 +10,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use cheetah_gb28181_core::{
-    GbAccessMachine, HeaderName, HeaderValue, Method, RequestLine, SipHeaders, SipMessage, SipUri,
-    StatusLine,
+    CompatibilityProfile, GbAccessMachine, HeaderName, HeaderValue, Method, RequestLine,
+    SipHeaders, SipMessage, SipUri, StatusLine,
 };
 use cheetah_gb28181_module::{
     AccessInput, AccessOutput, AuthPolicy, CredentialError, CredentialProvider, DeviceId, DomainId,
@@ -302,6 +302,7 @@ pub fn build_media() -> Gb28181Media {
         local_sip_uri: SipUri::parse("sip:server@192.168.1.10:5060").unwrap(),
         max_sessions: 8,
         domain_id: DomainId::new(DOMAIN).unwrap(),
+        compatibility: CompatibilityProfile::default(),
     })
 }
 
