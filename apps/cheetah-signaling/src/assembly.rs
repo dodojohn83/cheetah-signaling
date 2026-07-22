@@ -5,6 +5,7 @@
 
 use crate::gb_event_sink;
 use crate::onvif_discovery;
+use crate::operation_dispatch_worker;
 #[cfg(feature = "cluster")]
 use crate::workers::spawn_node_lease_worker;
 use crate::workers::{
@@ -18,7 +19,7 @@ use cheetah_cluster_ownership::{CachingDeviceOwnerResolver, OwnerLeaseService};
 #[cfg(feature = "cluster")]
 use cheetah_cluster_registry::NodeLeaseService;
 use cheetah_domain::ports::{DeviceOwnerResolver, MediaPort};
-use cheetah_domain::{DomainEvent, EventPublisher, MediaEventHandler};
+use cheetah_domain::{CommandBus, DomainEvent, EventPublisher, MediaEventHandler};
 use cheetah_gb28181_core::{
     BranchPolicy, BroadcastAddressSource, BroadcastOverride, CompatibilityCapability,
     CompatibilityOverrides, CompatibilityProfile, ManagerConfig, MediaStatusOverride,
@@ -628,64 +629,74 @@ pub async fn start(
         ))
     };
 
-    let (bus, command_bus): (Arc<dyn RawEventBus>, Arc<dyn RawCommandBus>) =
-        match config.messaging.backend {
-            MessagingBackend::Local => {
-                let local = Arc::new(InProcessMessageBus::new(
-                    config.messaging.max_pending.max(64),
-                    config.messaging.max_pending.max(64),
-                ));
-                (local.clone(), local)
+    let (bus, command_bus, command_bus_domain): (
+        Arc<dyn RawEventBus>,
+        Arc<dyn RawCommandBus>,
+        Arc<dyn CommandBus>,
+    ) = match config.messaging.backend {
+        MessagingBackend::Local => {
+            let local = Arc::new(InProcessMessageBus::new(
+                config.messaging.max_pending.max(64),
+                config.messaging.max_pending.max(64),
+            ));
+            (local.clone(), local.clone(), local)
+        }
+        #[cfg(feature = "cluster")]
+        MessagingBackend::Nats => {
+            let url = if let Some(ref_key) = config.messaging.nats_url_ref.as_deref() {
+                secret_store
+                    .get(ref_key)
+                    .map_err(|e| {
+                        format!("failed to resolve messaging.nats_url_ref ({ref_key}): {e}")
+                    })?
+                    .expose_secret()
+                    .to_string()
+            } else {
+                config.messaging.nats_url.clone()
+            };
+            if url.is_empty() {
+                return Err(
+                    "messaging.nats_url or messaging.nats_url_ref is required when backend=nats"
+                        .into(),
+                );
             }
-            #[cfg(feature = "cluster")]
-            MessagingBackend::Nats => {
-                let url = if let Some(ref_key) = config.messaging.nats_url_ref.as_deref() {
-                    secret_store
-                        .get(ref_key)
-                        .map_err(|e| {
-                            format!("failed to resolve messaging.nats_url_ref ({ref_key}): {e}")
-                        })?
-                        .expose_secret()
-                        .to_string()
-                } else {
-                    config.messaging.nats_url.clone()
-                };
-                if url.is_empty() {
-                    return Err(
-                        "messaging.nats_url or messaging.nats_url_ref is required when backend=nats"
-                            .into(),
-                    );
-                }
-                let scheme = url.split("://").next().unwrap_or(&url).to_lowercase();
-                if !matches!(scheme.as_str(), "tls" | "wss") {
-                    return Err(
+            let scheme = url.split("://").next().unwrap_or(&url).to_lowercase();
+            if !matches!(scheme.as_str(), "tls" | "wss") {
+                return Err(
                     "messaging.nats_url must use tls:// or wss:// scheme for cluster deployments"
                         .into(),
                 );
-                }
-                let connect_timeout = Duration::from_secs(5);
-                let operation_timeout = Duration::from_secs(30);
-                let nats = Arc::new(
-                    NatsBus::connect(
-                        url,
-                        node_id,
-                        owner_resolver.clone(),
-                        connect_timeout,
-                        operation_timeout,
-                    )
-                    .await?,
-                );
-                (nats.clone(), nats)
             }
-            #[cfg(not(feature = "cluster"))]
-            MessagingBackend::Nats => {
-                return Err("nats messaging requires the 'cluster' feature".into());
-            }
-            _ => {
-                return Err("unsupported messaging.backend; use local or nats".into());
-            }
-        };
+            let connect_timeout = Duration::from_secs(5);
+            let operation_timeout = Duration::from_secs(30);
+            let nats = Arc::new(
+                NatsBus::connect(
+                    url,
+                    node_id,
+                    owner_resolver.clone(),
+                    connect_timeout,
+                    operation_timeout,
+                )
+                .await?,
+            );
+            (nats.clone(), nats.clone(), nats)
+        }
+        #[cfg(not(feature = "cluster"))]
+        MessagingBackend::Nats => {
+            return Err("nats messaging requires the 'cluster' feature".into());
+        }
+        _ => {
+            return Err("unsupported messaging.backend; use local or nats".into());
+        }
+    };
     let publisher: Arc<dyn EventPublisher> = Arc::new(EventBusPublisher::new(bus.clone()));
+
+    let command_dispatcher = cheetah_signal_application::CommandDispatcher::new(
+        clock.clone(),
+        id_generator.clone(),
+        owner_resolver.clone(),
+        command_bus_domain,
+    );
 
     let mut media_registry_config = MediaRegistryConfig::production();
     let media_metrics = cheetah_media_scheduler::MediaMetrics::arc();
@@ -1088,6 +1099,15 @@ pub async fn start(
             cancel.child_token(),
         ));
         info!("inbox consumer worker started");
+
+        workers.push(operation_dispatch_worker::spawn(
+            command_dispatcher.clone(),
+            storage.clone(),
+            bus.clone(),
+            node_id,
+            cancel.child_token(),
+        ));
+        info!("operation dispatch worker started");
     }
 
     // Protocol session expiry reaper is a single global, cross-tenant worker.

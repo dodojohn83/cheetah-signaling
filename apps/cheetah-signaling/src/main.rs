@@ -4,6 +4,7 @@ mod assembly;
 mod gb_catalog_buffer;
 mod gb_event_sink;
 mod onvif_discovery;
+mod operation_dispatch_worker;
 mod workers;
 
 use cheetah_signal_types::config::ConfigSource;
