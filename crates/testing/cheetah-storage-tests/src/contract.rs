@@ -17,6 +17,7 @@ pub(crate) mod outbox;
 pub(crate) mod outbox_retry;
 pub(crate) mod owner;
 pub(crate) mod ownership;
+pub(crate) mod platform_link;
 pub(crate) mod processed_message;
 pub(crate) mod protocol_session;
 pub(crate) mod step;
@@ -37,6 +38,7 @@ pub async fn run_all(storage: &dyn Storage, fixtures: &Fixtures) -> TestResult<(
     media::run(storage, fixtures).await?;
     media_node::run(storage, fixtures).await?;
     protocol_session::run(storage, fixtures).await?;
+    platform_link::run(storage, fixtures).await?;
     list::run(storage, fixtures).await?;
     outbox::run(storage, fixtures).await?;
     outbox_retry::run(storage, fixtures).await?;

@@ -4,23 +4,26 @@
 //! asynchronous tests. They use `std::sync::Mutex` and never hold a lock across
 //! an `.await` point.
 
+use crate::GbPlatformLink;
 use crate::{
     Channel, ChannelRepository, ChannelStatus, Command, CommandBus, CommandPayload, DeliveryStatus,
     Device, DeviceLifecycle, DeviceRepository, DomainError, DomainEvent, EventPublisher,
     MediaBinding, MediaBindingRepository, MediaNodeCommand, MediaNodeCommandResult,
     MediaNodeSessionRef, MediaPurpose, MediaReservation, MediaSession, MediaSessionRepository,
     MediaSessionState, Operation, OperationRepository, OperationStatus, Outbox, OutboxEntry,
-    OwnerInfo, ProcessedMessageRecord, ProcessedMessageRepository, ProcessedMessageStatus,
-    Protocol, ProtocolSession, ProtocolSessionRepository, UnitOfWork, WebhookConfig,
-    WebhookConfigRepository, WebhookDelivery, WebhookDeliveryRepository,
+    OwnerInfo, PlatformDirection, PlatformLinkRepository, ProcessedMessageRecord,
+    ProcessedMessageRepository, ProcessedMessageStatus, Protocol, ProtocolSession,
+    ProtocolSessionRepository, UnitOfWork, WebhookConfig, WebhookConfigRepository, WebhookDelivery,
+    WebhookDeliveryRepository,
 };
 use cheetah_signal_types::{
     ChannelId, Clock, DeliveryId, DeviceId, DurationMs, Event, IdGenerator, ListCursor,
     MediaBindingId, MediaNodeInstanceEpoch, MediaSessionId, MessageId, NodeId, OperationId,
-    OwnerEpoch, Page, PageRequest, Principal, ProtocolIdentity, ProtocolSessionId, RequestContext,
-    ResourceId, ResourceKind, ResourceRef, Revision, TenantId, UtcTimestamp, WebhookId,
+    OwnerEpoch, Page, PageRequest, PlatformLinkId, Principal, ProtocolIdentity, ProtocolSessionId,
+    RequestContext, ResourceId, ResourceKind, ResourceRef, Revision, TenantId, UtcTimestamp,
+    WebhookId,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use time::{Duration as TimeDuration, OffsetDateTime};
@@ -211,6 +214,10 @@ impl IdGenerator for InMemoryIdGenerator {
 
     fn generate_protocol_session_id(&self) -> cheetah_signal_types::ProtocolSessionId {
         cheetah_signal_types::ProtocolSessionId::from_uuid(self.next_uuid())
+    }
+
+    fn generate_platform_link_id(&self) -> cheetah_signal_types::PlatformLinkId {
+        cheetah_signal_types::PlatformLinkId::from_uuid(self.next_uuid())
     }
 
     fn generate_media_session_id(&self) -> MediaSessionId {
@@ -1177,6 +1184,12 @@ pub struct InMemoryMediaPort {
     reservations: Arc<Mutex<BTreeMap<(TenantId, MediaBindingId), MediaReservation>>>,
     node_sessions: Arc<Mutex<MediaNodeSessionMap>>,
     id_generator: Arc<dyn IdGenerator>,
+    /// Scripted results consumed one-per-call by [`InMemoryMediaPort::execute`],
+    /// used to deterministically drive failure/unknown-outcome contract tests.
+    scripted_execute: Arc<Mutex<VecDeque<MediaNodeCommandResult>>>,
+    /// Scripted reservation errors consumed one-per-call by the `reserve_*`
+    /// methods, used to exercise reservation failure and compensation paths.
+    scripted_reserve_errors: Arc<Mutex<VecDeque<DomainError>>>,
 }
 
 impl std::fmt::Debug for InMemoryMediaPort {
@@ -1195,7 +1208,21 @@ impl InMemoryMediaPort {
             reservations: Arc::new(Mutex::new(BTreeMap::new())),
             node_sessions: Arc::new(Mutex::new(BTreeMap::new())),
             id_generator,
+            scripted_execute: Arc::new(Mutex::new(VecDeque::new())),
+            scripted_reserve_errors: Arc::new(Mutex::new(VecDeque::new())),
         }
+    }
+
+    /// Queues a result to be returned by the next [`InMemoryMediaPort::execute`]
+    /// call instead of the default behavior. Results are consumed in FIFO order;
+    /// once the queue is empty the default behavior resumes.
+    pub fn script_execute_result(&self, result: MediaNodeCommandResult) {
+        lock_mutex(&self.scripted_execute).push_back(result);
+    }
+
+    /// Queues an error to be returned by the next `reserve_*` call.
+    pub fn script_reserve_error(&self, error: DomainError) {
+        lock_mutex(&self.scripted_reserve_errors).push_back(error);
     }
 
     /// Configures the sessions reported by a media node for reconciliation tests.
@@ -1221,6 +1248,9 @@ impl InMemoryMediaPort {
         tenant_id: TenantId,
         media_binding_id: MediaBindingId,
     ) -> crate::Result<MediaReservation> {
+        if let Some(error) = lock_mutex(&self.scripted_reserve_errors).pop_front() {
+            return Err(error);
+        }
         let mut reservations = lock_mutex(&self.reservations);
         let key = (tenant_id, media_binding_id);
         if reservations.contains_key(&key) {
@@ -1296,6 +1326,9 @@ impl crate::MediaPort for InMemoryMediaPort {
         command: MediaNodeCommand,
         _clock: &dyn Clock,
     ) -> crate::Result<MediaNodeCommandResult> {
+        if let Some(result) = lock_mutex(&self.scripted_execute).pop_front() {
+            return Ok(result);
+        }
         let tenant_id = command.tenant_id;
         let node_id = command.media_node_id;
         let epoch = command.media_node_instance_epoch;
@@ -1311,6 +1344,11 @@ impl crate::MediaPort for InMemoryMediaPort {
                 ..
             }
             | CommandPayload::StartTalk {
+                media_session_id,
+                channel_id,
+                ..
+            }
+            | CommandPayload::StartBroadcast {
                 media_session_id,
                 channel_id,
                 ..
@@ -1582,6 +1620,164 @@ impl ProtocolSessionRepository for InMemoryProtocolSessionRepository {
                 .ok_or_else(|| DomainError::internal("empty page"))?;
             Some(
                 ListCursor::new(last.updated_at(), last.protocol_session_id().as_uuid())
+                    .and_then(|c| c.encode())
+                    .map_err(|e| DomainError::internal(format!("failed to encode cursor: {e}")))?,
+            )
+        } else {
+            None
+        };
+
+        let mut result = Page::new(items.into_iter().take(page_size).collect());
+        if let Some(cursor) = next_cursor {
+            result = result.with_next_cursor(cursor);
+        }
+        Ok(result)
+    }
+}
+
+/// In-memory [`PlatformLinkRepository`] for tests.
+///
+/// Mirrors the SQL adapters' optimistic-concurrency and tenant-scoping
+/// semantics for GB28181 cascade platform links.
+#[derive(Clone, Debug, Default)]
+pub struct InMemoryPlatformLinkRepository {
+    links: Arc<Mutex<BTreeMap<uuid::Uuid, GbPlatformLink>>>,
+}
+
+impl InMemoryPlatformLinkRepository {
+    /// Creates an empty repository.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Returns the number of stored links.
+    pub fn len(&self) -> usize {
+        lock_mutex(&self.links).len()
+    }
+
+    /// Returns `true` when no links are stored.
+    pub fn is_empty(&self) -> bool {
+        lock_mutex(&self.links).is_empty()
+    }
+}
+
+#[async_trait::async_trait]
+impl PlatformLinkRepository for InMemoryPlatformLinkRepository {
+    async fn get(
+        &self,
+        tenant_id: TenantId,
+        platform_link_id: PlatformLinkId,
+    ) -> crate::Result<Option<GbPlatformLink>> {
+        let links = lock_mutex(&self.links);
+        Ok(links
+            .get(&platform_link_id.as_uuid())
+            .filter(|l| l.tenant_id() == tenant_id)
+            .cloned())
+    }
+
+    async fn get_by_remote_identity(
+        &self,
+        tenant_id: TenantId,
+        direction: PlatformDirection,
+        remote_identity: ProtocolIdentity,
+    ) -> crate::Result<Option<GbPlatformLink>> {
+        let links = lock_mutex(&self.links);
+        Ok(links
+            .values()
+            .find(|l| {
+                l.tenant_id() == tenant_id
+                    && l.direction() == direction
+                    && l.identity().remote == remote_identity
+            })
+            .cloned())
+    }
+
+    async fn save(&mut self, link: &GbPlatformLink) -> crate::Result<()> {
+        let mut links = lock_mutex(&self.links);
+        save_with_revision(
+            &mut links,
+            link.platform_link_id().as_uuid(),
+            link.clone(),
+            GbPlatformLink::revision,
+        )
+    }
+
+    async fn delete(
+        &mut self,
+        tenant_id: TenantId,
+        platform_link_id: PlatformLinkId,
+        expected_revision: Revision,
+    ) -> crate::Result<()> {
+        let mut links = lock_mutex(&self.links);
+        match links.get(&platform_link_id.as_uuid()) {
+            Some(existing)
+                if existing.tenant_id() == tenant_id
+                    && existing.revision() == expected_revision =>
+            {
+                links.remove(&platform_link_id.as_uuid());
+                Ok(())
+            }
+            Some(existing) if existing.tenant_id() == tenant_id => {
+                Err(DomainError::ConcurrentModification {
+                    expected: expected_revision.0,
+                    found: existing.revision().0,
+                })
+            }
+            _ => Err(DomainError::not_found(
+                "platform_link",
+                platform_link_id.as_uuid().to_string(),
+            )),
+        }
+    }
+
+    async fn list(
+        &self,
+        tenant_id: TenantId,
+        direction: Option<PlatformDirection>,
+        page: PageRequest,
+    ) -> crate::Result<Page<GbPlatformLink>> {
+        let after = match &page.cursor {
+            None => None,
+            Some(value) => {
+                let cursor = ListCursor::decode(value)
+                    .map_err(|e| DomainError::invalid_argument(format!("invalid cursor: {e}")))?;
+                let (ts, id) = cursor
+                    .parse()
+                    .map_err(|e| DomainError::invalid_argument(format!("invalid cursor: {e}")))?;
+                Some((ts, id))
+            }
+        };
+
+        let mut items: Vec<GbPlatformLink> = {
+            let links = lock_mutex(&self.links);
+            links
+                .values()
+                .filter(|l| {
+                    l.tenant_id() == tenant_id
+                        && direction.map(|d| l.direction() == d).unwrap_or(true)
+                })
+                .cloned()
+                .collect()
+        };
+        items.sort_by(|a, b| {
+            a.updated_at().cmp(&b.updated_at()).then_with(|| {
+                a.platform_link_id()
+                    .as_uuid()
+                    .cmp(&b.platform_link_id().as_uuid())
+            })
+        });
+        if let Some((ts, id)) = after {
+            items.retain(|l| (l.updated_at(), l.platform_link_id().as_uuid()) > (ts, id));
+        }
+
+        let page_size = page.page_size_as_usize();
+        let has_more = items.len() > page_size;
+        let next_cursor = if has_more {
+            let last = items
+                .get(page_size - 1)
+                .ok_or_else(|| DomainError::internal("empty page"))?;
+            Some(
+                ListCursor::new(last.updated_at(), last.platform_link_id().as_uuid())
                     .and_then(|c| c.encode())
                     .map_err(|e| DomainError::internal(format!("failed to encode cursor: {e}")))?,
             )

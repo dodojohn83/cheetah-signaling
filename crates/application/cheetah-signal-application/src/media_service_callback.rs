@@ -177,6 +177,18 @@ async fn apply_started(
     binding: &mut cheetah_domain::MediaBinding,
     operation: &mut Option<cheetah_domain::Operation>,
 ) -> Result<(), DomainError> {
+    // Early media: a `Started` callback may arrive before the dispatch response
+    // transitioned the session out of `Allocating`. Drive it through the
+    // intermediate `Inviting` state so it activates deterministically instead of
+    // being stranded. Terminal sessions are left untouched (no resurrection).
+    if session.state() == MediaSessionState::Allocating {
+        let ev = session.inviting(service.clock.as_ref())?;
+        append_session_event(service, context, uow, session, ev).await?;
+        // Persist the intermediate transition so the optimistic-concurrency
+        // guard (one revision increment per save) is respected before the
+        // session advances again to `Active` below.
+        uow.media_session_repository().save(session).await?;
+    }
     if session.state() == MediaSessionState::Inviting {
         let ev = session.active(service.clock.as_ref())?;
         append_session_event(service, context, uow, session, ev).await?;

@@ -8,6 +8,7 @@
 
 pub mod channel;
 pub mod command;
+pub mod compatibility;
 pub mod device;
 pub mod error;
 pub mod event;
@@ -19,6 +20,7 @@ pub mod media_node;
 pub mod media_session;
 pub mod node;
 pub mod operation;
+pub mod platform_link;
 pub mod ports;
 pub mod protocol_session;
 pub mod tenant;
@@ -27,12 +29,19 @@ pub mod webhook;
 #[cfg(any(test, feature = "test-util"))]
 pub mod in_memory;
 
+#[cfg(any(test, feature = "test-util"))]
+pub mod media_contract;
+
 pub use channel::{
     Channel, ChannelKind, ChannelStatus, PresetAction, PtzCapabilities, StreamProfile,
 };
 pub use command::{
     Command, CommandPayload, DeviceControlCommand, DeviceControlKind, IdempotencyScope,
     MediaControl, PresetCommand, PtzDirection, QueryCommand, QueryKind,
+};
+pub use compatibility::{
+    BroadcastAddressSource, BroadcastOverride, CompatibilityOverrides,
+    MEDIA_STATUS_STOPPED_NOTIFY_TYPE, MediaStatusOutcome, MediaStatusOverride, SdpMediaOverride,
 };
 pub use device::{
     Capability, CapabilityValue, Connectivity, Device, DeviceKind, DeviceLifecycle, Protocol,
@@ -51,6 +60,11 @@ pub use node::{ClusterNode, NodeCapacity, NodeLoad};
 pub use operation::{
     DispatchAttempt, DispatchAttemptStatus, Operation, OperationError, OperationResult,
     OperationStatus, OperationStep, OperationStepStatus,
+};
+pub use platform_link::{
+    ActualRegistrationState, BackoffPolicy, DesiredRegistrationState, GbPlatformLink,
+    MAX_CASCADE_HOPS, NewPlatformLink, PlatformAcl, PlatformCredential, PlatformDirection,
+    PlatformEndpoint, PlatformIdentityPair, RegistrationRuntime, SubscriptionLimits, detect_loop,
 };
 pub use ports::*;
 pub use protocol_session::{

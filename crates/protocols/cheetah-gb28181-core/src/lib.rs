@@ -11,7 +11,10 @@
 
 #![warn(missing_docs)]
 
-pub use cheetah_domain::{CompatibilityCapability, CompatibilityProfile};
+pub use cheetah_domain::{
+    BroadcastAddressSource, BroadcastOverride, CompatibilityCapability, CompatibilityOverrides,
+    CompatibilityProfile, MediaStatusOutcome, MediaStatusOverride, SdpMediaOverride,
+};
 
 pub mod access;
 pub mod sdp;

@@ -20,6 +20,7 @@ pub mod bootstrap;
 pub mod cascade;
 pub mod command;
 pub mod config;
+pub mod endpoint_policy;
 pub mod error;
 pub mod events;
 pub mod ingress;
@@ -39,11 +40,15 @@ pub use assembly::{
 };
 pub use cascade::{
     CascadeConfig, CascadeCredentialProvider, CascadeError, CascadeEvent, CascadeInput,
-    CascadeOutput, Gb28181Cascade,
+    CascadeManager, CascadeOutput, CascadeRoutingError, Gb28181Cascade,
 };
 pub use cheetah_gb28181_core::{AccessInput, AccessOutput, GbAccessMachine};
 pub use command::Gb28181Command;
 pub use config::{AuthPolicy, CharsetPolicy, Gb28181DomainConfig};
+pub use endpoint_policy::{
+    EndpointHost, EndpointPolicy, EndpointPolicyBuilder, EndpointPolicyError, EndpointTransport,
+    NetworkZoneClass, require_explicit_advertised_host,
+};
 pub use error::AccessError;
 pub use events::{DevicePresence, Gb28181Event};
 pub use ingress::{

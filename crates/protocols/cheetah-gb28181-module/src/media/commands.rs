@@ -4,6 +4,7 @@ use super::control::{PlaybackAction, build_info_mansrtsp};
 use super::invite::{SdpParams, build_bye, build_cancel, build_invite};
 use super::session::{Session, SessionState};
 use super::{Gb28181Media, MediaCommand, MediaError, MediaOutput};
+use cheetah_gb28181_core::BroadcastAddressSource;
 use cheetah_gb28181_core::sdp::{SdpAttribute, SdpDirection, SdpTime};
 
 /// Shared fields for every start-media command.
@@ -206,12 +207,75 @@ pub(super) fn on_command(
                 media_address,
                 media_port,
             };
+            // Broadcast/voice-talk address handling is profile gated: some
+            // intercom devices require the audio connection to be anchored at
+            // the signaling host rather than the media node. The default keeps
+            // the media-node address negotiated through the MediaPort.
+            let talk_address = match media.config.compatibility.broadcast_address_source() {
+                BroadcastAddressSource::SignalingHost => {
+                    media.config.local_sip_uri.host().to_string()
+                }
+                _ => p.media_address.clone(),
+            };
             let sdp = SdpParams {
                 session_name: "Talk".to_string(),
                 media_type: "audio".to_string(),
                 media_port: p.media_port,
                 transport,
                 direction: SdpDirection::SendRecv,
+                time: SdpTime {
+                    start: "0".to_string(),
+                    stop: "0".to_string(),
+                },
+                ssrc: None,
+                media_address: talk_address,
+                rtpmap: Some(rtpmap),
+                extra_attrs: Vec::new(),
+            };
+            do_start(media, &p, &sdp)
+        }
+        MediaCommand::StartBroadcast {
+            media_session_id,
+            channel_id,
+            device_id,
+            target,
+            call_id,
+            local_tag,
+            cseq,
+            branch,
+            subject_session,
+            media_address,
+            media_port,
+            codec,
+            transport,
+        } => {
+            // Validate the audio codec before creating any session state so an
+            // unsupported request fails with a stable error and no side effects.
+            let rtpmap = match codec.as_str() {
+                "G.711A" | "PCMA" => SdpParams::pcma_rtpmap(),
+                "G.711U" | "PCMU" => SdpParams::pcmu_rtpmap(),
+                _ => return Err(MediaError::Unsupported(codec)),
+            };
+            let p = StartParams {
+                media_session_id,
+                channel_id,
+                device_id,
+                target,
+                call_id,
+                local_tag,
+                cseq,
+                branch,
+                subject_session,
+                media_address,
+                media_port,
+            };
+            let sdp = SdpParams {
+                session_name: "Broadcast".to_string(),
+                media_type: "audio".to_string(),
+                media_port: p.media_port,
+                transport,
+                // Broadcast is one-way: the platform sends audio to the device.
+                direction: SdpDirection::SendOnly,
                 time: SdpTime {
                     start: "0".to_string(),
                     stop: "0".to_string(),

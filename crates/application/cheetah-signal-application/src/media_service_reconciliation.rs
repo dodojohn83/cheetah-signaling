@@ -466,6 +466,19 @@ impl MediaService {
                     )
                     .await
             }
+            MediaPurpose::Broadcast => {
+                self.media_port
+                    .reserve_broadcast(
+                        tenant_id,
+                        session.device_id(),
+                        session.channel_id(),
+                        session.media_session_id(),
+                        media_binding_id,
+                        &requirements,
+                        self.clock.as_ref(),
+                    )
+                    .await
+            }
             _ => Err(DomainError::invalid_argument(
                 "unknown media purpose for migration",
             )),

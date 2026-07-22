@@ -825,6 +825,97 @@ pub struct Gb28181CompatibilityProfileConfig {
     pub evidence_ref: Option<String>,
     /// Profile revision, used to detect profile changes and pin sessions.
     pub revision: u32,
+    /// Controlled media-negotiation overrides (SDP/broadcast/MediaStatus).
+    pub overrides: Gb28181CompatibilityOverridesConfig,
+}
+
+/// Maximum number of entries in any single compatibility override list.
+pub const MAX_COMPATIBILITY_OVERRIDE_ENTRIES: usize = 64;
+
+/// Maximum byte length of an individual compatibility override list entry.
+pub const MAX_COMPATIBILITY_OVERRIDE_ENTRY_BYTES: usize = 64;
+
+/// Controlled media-negotiation overrides for a GB28181 compatibility profile.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+#[serde(deny_unknown_fields)]
+pub struct Gb28181CompatibilityOverridesConfig {
+    /// Extra RTP payload types (decimal strings) tolerated in device SDP answers.
+    pub sdp_allowed_payload_types: Vec<String>,
+    /// Extra vendor `a=` attribute names tolerated in device SDP answers.
+    pub sdp_allowed_attribute_names: Vec<String>,
+    /// Broadcast/talk media connection address source (`media_node` or
+    /// `signaling_host`). `None` keeps the default `media_node` behaviour.
+    pub broadcast_address_source: Option<String>,
+    /// Vendor `MediaStatus` `NotifyType` values normalised to the stopped
+    /// outcome in addition to the canonical `121`.
+    pub media_status_stopped_codes: Vec<String>,
+}
+
+impl Gb28181CompatibilityOverridesConfig {
+    /// Returns `true` when no override is configured.
+    pub fn is_empty(&self) -> bool {
+        self.sdp_allowed_payload_types.is_empty()
+            && self.sdp_allowed_attribute_names.is_empty()
+            && self.broadcast_address_source.is_none()
+            && self.media_status_stopped_codes.is_empty()
+    }
+
+    fn validate(&self, profile_id: &str) -> Result<()> {
+        for (field, entries) in [
+            ("sdp_allowed_payload_types", &self.sdp_allowed_payload_types),
+            (
+                "sdp_allowed_attribute_names",
+                &self.sdp_allowed_attribute_names,
+            ),
+            (
+                "media_status_stopped_codes",
+                &self.media_status_stopped_codes,
+            ),
+        ] {
+            if entries.len() > MAX_COMPATIBILITY_OVERRIDE_ENTRIES {
+                return Err(SignalError::new(
+                    SignalErrorKind::InvalidArgument,
+                    format!(
+                        "gb28181 compatibility profile '{profile_id}' override '{field}' \
+                         must not exceed {MAX_COMPATIBILITY_OVERRIDE_ENTRIES} entries"
+                    ),
+                ));
+            }
+            for entry in entries {
+                if entry.trim().is_empty() {
+                    return Err(SignalError::new(
+                        SignalErrorKind::InvalidArgument,
+                        format!(
+                            "gb28181 compatibility profile '{profile_id}' override '{field}' \
+                             entries must not be empty"
+                        ),
+                    ));
+                }
+                if entry.len() > MAX_COMPATIBILITY_OVERRIDE_ENTRY_BYTES {
+                    return Err(SignalError::new(
+                        SignalErrorKind::InvalidArgument,
+                        format!(
+                            "gb28181 compatibility profile '{profile_id}' override '{field}' \
+                             entry exceeds maximum length"
+                        ),
+                    ));
+                }
+            }
+        }
+        if let Some(source) = &self.broadcast_address_source
+            && !matches!(source.as_str(), "media_node" | "signaling_host")
+        {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                format!(
+                    "gb28181 compatibility profile '{profile_id}' broadcast_address_source \
+                     must be 'media_node' or 'signaling_host', got '{source}'"
+                ),
+            ));
+        }
+        Ok(())
+    }
 }
 
 impl Gb28181Config {
@@ -919,6 +1010,7 @@ impl Gb28181Config {
                     "gb28181.compatibility_profiles[].capabilities must not exceed 64 entries",
                 ));
             }
+            profile.overrides.validate(&profile.id)?;
             if !profile_ids.insert(profile.id.as_str()) {
                 return Err(SignalError::new(
                     SignalErrorKind::InvalidArgument,
@@ -1460,6 +1552,75 @@ mod gb28181_listener_tests {
         let mut l = listener("a", "domain-a", "realm-a", 5060);
         l.tenant_id = String::new();
         cfg.listeners.push(l);
+        assert!(cfg.validate().is_err());
+    }
+
+    fn profile_with_overrides(
+        overrides: Gb28181CompatibilityOverridesConfig,
+    ) -> Gb28181CompatibilityProfileConfig {
+        Gb28181CompatibilityProfileConfig {
+            id: "p1".to_string(),
+            overrides,
+            ..Gb28181CompatibilityProfileConfig::default()
+        }
+    }
+
+    #[test]
+    fn compatibility_override_defaults_are_valid() {
+        let mut cfg = Gb28181Config::default();
+        cfg.compatibility_profiles.push(profile_with_overrides(
+            Gb28181CompatibilityOverridesConfig::default(),
+        ));
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn compatibility_override_accepts_known_broadcast_source() {
+        let mut cfg = Gb28181Config::default();
+        cfg.compatibility_profiles.push(profile_with_overrides(
+            Gb28181CompatibilityOverridesConfig {
+                broadcast_address_source: Some("signaling_host".to_string()),
+                ..Default::default()
+            },
+        ));
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn compatibility_override_rejects_unknown_broadcast_source() {
+        let mut cfg = Gb28181Config::default();
+        cfg.compatibility_profiles.push(profile_with_overrides(
+            Gb28181CompatibilityOverridesConfig {
+                broadcast_address_source: Some("nonsense".to_string()),
+                ..Default::default()
+            },
+        ));
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn compatibility_override_rejects_empty_entry() {
+        let mut cfg = Gb28181Config::default();
+        cfg.compatibility_profiles.push(profile_with_overrides(
+            Gb28181CompatibilityOverridesConfig {
+                sdp_allowed_payload_types: vec!["  ".to_string()],
+                ..Default::default()
+            },
+        ));
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn compatibility_override_rejects_too_many_entries() {
+        let mut cfg = Gb28181Config::default();
+        cfg.compatibility_profiles.push(profile_with_overrides(
+            Gb28181CompatibilityOverridesConfig {
+                media_status_stopped_codes: (0..(MAX_COMPATIBILITY_OVERRIDE_ENTRIES + 1))
+                    .map(|i| i.to_string())
+                    .collect(),
+                ..Default::default()
+            },
+        ));
         assert!(cfg.validate().is_err());
     }
 

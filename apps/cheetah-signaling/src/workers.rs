@@ -239,6 +239,7 @@ impl OwnerCommandHandler {
             .with_payload(format!(
                 r#"{{"command_kind":"{kind}","protocol":"gb28181"}}"#
             ))),
+            Err(e) if e.is_retryable() => Err(e),
             Err(e) => Ok(CommandHandlerResult::accepted(
                 CommandDispatch::TransportFailed {
                     reason: e.to_string(),
@@ -758,4 +759,111 @@ pub fn builtin_plugin_ids(id_generator: &dyn IdGenerator) -> (PluginId, PluginId
 #[allow(dead_code)]
 fn _now(clock: &dyn Clock) -> UtcTimestamp {
     clock.now_wall()
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+    use cheetah_domain::in_memory::{InMemoryClock, InMemoryIdGenerator};
+    use cheetah_domain::{Operation, PtzDirection};
+    use cheetah_gb28181_module::types::DeviceId as GbDeviceId;
+    use cheetah_signal_types::{
+        OwnerEpoch, Principal, PrincipalKind, RequestContext, ResourceId, ResourceKind, ResourceRef,
+    };
+
+    const DEVICE_GB_ID: &str = "34020000001320000001";
+
+    fn gb_command(listener_id: &str) -> Gb28181Command {
+        let clock = InMemoryClock::new();
+        let ids = InMemoryIdGenerator::new();
+        let tenant_id = ids.generate_tenant_id();
+        let device_id = ids.generate_device_id();
+        let channel_id = ids.generate_channel_id();
+
+        let context = RequestContext {
+            tenant_id,
+            principal: Principal {
+                id: "tester".to_string(),
+                kind: PrincipalKind::Service,
+                scopes: vec!["write".to_string()],
+            },
+            message_id: ids.generate_message_id(),
+            correlation_id: ids.generate_correlation_id(),
+            traceparent: None,
+            tracestate: None,
+            deadline: None,
+            node_id: Some(ids.generate_node_id()),
+            source_ip: None,
+        };
+        let target = ResourceRef {
+            tenant_id,
+            kind: ResourceKind::Device,
+            id: ResourceId::Device(device_id),
+        };
+        let payload = CommandPayload::Ptz {
+            channel_id,
+            direction: PtzDirection::Up,
+            speed: 1.0,
+        };
+        let (operation, _event) = Operation::new(
+            &ids,
+            &clock,
+            &context,
+            "idem-ptz",
+            device_id,
+            target,
+            payload,
+            None,
+            OwnerEpoch(1),
+        )
+        .expect("operation");
+
+        Gb28181Command::new(
+            operation.command().clone(),
+            GbDeviceId::new(DEVICE_GB_ID).expect("valid gb id"),
+            None,
+            listener_id.to_string(),
+        )
+    }
+
+    /// A command must be routed to the bus of the listener that the device
+    /// registered on, and to no other listener. A device registered on the
+    /// second listener was previously unreachable because only the first
+    /// listener's bus was captured.
+    #[tokio::test]
+    async fn routes_command_to_owning_listener_only() {
+        let (tx_a, mut rx_a) = mpsc::channel(4);
+        let (tx_b, mut rx_b) = mpsc::channel(4);
+        let mut buses = HashMap::new();
+        buses.insert("listener-a".to_string(), tx_a);
+        buses.insert("listener-b".to_string(), tx_b);
+        let bus = MultiListenerCommandBus::new(buses);
+
+        bus.send(gb_command("listener-b")).await.expect("send");
+
+        let received = rx_b.try_recv().expect("second listener must receive it");
+        assert_eq!(received.device_external_id.as_ref(), DEVICE_GB_ID);
+        assert_eq!(received.listener_id, "listener-b");
+        assert!(
+            rx_a.try_recv().is_err(),
+            "first listener must not receive the command"
+        );
+    }
+
+    /// Routing to an unconfigured listener fails instead of silently dropping
+    /// the command.
+    #[tokio::test]
+    async fn unknown_listener_is_rejected() {
+        let (tx_a, _rx_a) = mpsc::channel(4);
+        let mut buses = HashMap::new();
+        buses.insert("listener-a".to_string(), tx_a);
+        let bus = MultiListenerCommandBus::new(buses);
+
+        let err = bus
+            .send(gb_command("listener-missing"))
+            .await
+            .expect_err("unknown listener must error");
+        assert_eq!(err.kind(), SignalErrorKind::Internal);
+    }
 }

@@ -45,7 +45,8 @@ pub use gb_metrics::{
 pub use id::{
     ChannelId, CorrelationId, DeliveryId, DeviceId, EndpointId, EventId, MediaBindingId,
     MediaNodeInstanceEpoch, MediaSessionId, MessageId, NodeId, NodeInstanceId, OperationId,
-    OwnerEpoch, PluginId, ProtocolIdentity, ProtocolSessionId, Revision, TenantId, WebhookId,
+    OwnerEpoch, PlatformLinkId, PluginId, ProtocolIdentity, ProtocolSessionId, Revision, TenantId,
+    WebhookId,
 };
 pub use metrics::MetricsExporter;
 pub use net::is_internal_ip;
