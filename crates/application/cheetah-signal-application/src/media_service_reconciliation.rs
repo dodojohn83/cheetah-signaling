@@ -2,6 +2,7 @@
 
 use crate::dto::ReconciliationReport;
 use crate::media_service::*;
+use crate::media_service_helpers::*;
 use cheetah_domain::{
     DomainError, MediaBinding, MediaBindingError, MediaBindingState, MediaNode, MediaNodeHealth,
     MediaNodeSessionRef, MediaPurpose, MediaReservation, MediaSession, MediaSessionDesiredState,
@@ -764,46 +765,4 @@ fn classify_inactive_node(node: Option<&MediaNode>, now: UtcTimestamp) -> (bool,
         _ if lease_expired || node.health == MediaNodeHealth::Unhealthy => (false, true),
         _ => (false, false),
     }
-}
-
-async fn append_session_event(
-    service: &MediaService,
-    context: &RequestContext,
-    uow: &mut dyn UnitOfWork,
-    session: &MediaSession,
-    event: cheetah_domain::DomainEvent,
-) -> crate::Result<()> {
-    uow.outbox()
-        .append(wrap_event(
-            service.id_generator.as_ref(),
-            service.clock.as_ref(),
-            context,
-            context.tenant_id,
-            media_session_resource_ref(context.tenant_id, session.media_session_id()),
-            session.revision().0,
-            event,
-        ))
-        .await?;
-    Ok(())
-}
-
-async fn append_binding_event(
-    service: &MediaService,
-    context: &RequestContext,
-    uow: &mut dyn UnitOfWork,
-    binding: &MediaBinding,
-    event: cheetah_domain::DomainEvent,
-) -> crate::Result<()> {
-    uow.outbox()
-        .append(wrap_event(
-            service.id_generator.as_ref(),
-            service.clock.as_ref(),
-            context,
-            context.tenant_id,
-            media_binding_resource_ref(context.tenant_id, binding.media_binding_id()),
-            binding.revision().0,
-            event,
-        ))
-        .await?;
-    Ok(())
 }

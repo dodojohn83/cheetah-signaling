@@ -2,6 +2,7 @@
 
 use crate::dto::MediaSessionDto;
 use crate::media_service::*;
+use crate::media_service_helpers::*;
 use cheetah_domain::{
     DomainError, MediaBindingError, MediaBindingState, MediaNodeCallback, MediaNodeCallbackKind,
     MediaSessionError, MediaSessionState, OperationResult, UnitOfWork,
@@ -283,46 +284,6 @@ async fn apply_failed(
         append_operation_event(service, context, uow, operation, ev).await?;
     }
     Ok(())
-}
-
-async fn append_session_event(
-    service: &MediaService,
-    context: &RequestContext,
-    uow: &mut dyn UnitOfWork,
-    session: &cheetah_domain::MediaSession,
-    payload: cheetah_domain::DomainEvent,
-) -> Result<(), DomainError> {
-    uow.outbox()
-        .append(wrap_event(
-            service.id_generator.as_ref(),
-            service.clock.as_ref(),
-            context,
-            context.tenant_id,
-            media_session_resource_ref(context.tenant_id, session.media_session_id()),
-            session.revision().0,
-            payload,
-        ))
-        .await
-}
-
-async fn append_binding_event(
-    service: &MediaService,
-    context: &RequestContext,
-    uow: &mut dyn UnitOfWork,
-    binding: &cheetah_domain::MediaBinding,
-    payload: cheetah_domain::DomainEvent,
-) -> Result<(), DomainError> {
-    uow.outbox()
-        .append(wrap_event(
-            service.id_generator.as_ref(),
-            service.clock.as_ref(),
-            context,
-            context.tenant_id,
-            media_binding_resource_ref(context.tenant_id, binding.media_binding_id()),
-            binding.revision().0,
-            payload,
-        ))
-        .await
 }
 
 async fn append_operation_event(
