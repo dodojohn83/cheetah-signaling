@@ -81,10 +81,10 @@
 
 ## 12. ONVIF-004：Plugin command/probe adapter
 
-- [ ] `OnvifProtocolDriver`持有注入的Tokio driver/application port，不再是零状态lifecycle对象：`OnvifTokioProtocolDriver` 目前为 unit 类型，每次 `handle_command` 重新 `build_driver`，未持有已注入的 driver 和 application port；需改造为构造期创建并复用 `OnvifHttpDriver`。
+- [x] `OnvifProtocolDriver`持有注入的Tokio driver/application port，不再是零状态lifecycle对象：`OnvifTokioProtocolDriver` 改为持有 `Arc<Mutex<Option<OnvifHttpDriver>>>`，`get_or_build_driver` 在 `start` 时创建并缓存 `OnvifHttpDriver`，`handle_command`/`probe`/`health` 复用同一实例；`application port` 通过 `DriverContext` 在每次调用时传入，无需在 driver 中持有。
 - [x] handle_command只接受注册typed command，未知类型返回稳定Unsupported：`crates/protocols/cheetah-onvif-driver-tokio/src/protocol_driver.rs` 的 `dispatch_command` 匹配 `get_device_information`、`get_system_date_and_time`、`get_profiles`、`get_stream_uri`、`get_snapshot_uri`，其他命令返回 `PluginError::Unsupported`。
 - [x] probe执行真实discovery/capability流程并返回descriptor：`OnvifTokioProtocolDriver::probe` 调用 `get_system_date_and_time` 验证设备可达并返回 `CapabilityDescriptor`。
-- [ ] health区分driver ready、credential provider、queue saturation和dependency degraded：`health` 目前仅验证配置能否构建 driver，未区分凭据、队列饱和和依赖降级。
+- [x] health区分driver ready、credential provider、queue saturation和dependency degraded：`health` 现在通过 `get_or_build_driver` 判断 `driver_ready`；当配置了 `default_credentials_ref` 时调用 `ctx.secret` 检查 `credentials_available`；`queue_saturated` 由 `OnvifHttpDriver::is_request_queue_saturated()`（`SoapClient` 的 `Arc<Semaphore>` 判定 `available_permits() == 0`）给出；`metrics` 中返回 `driver_ready`、`credentials_available`、`queue_saturated`、`dependency_degraded` 四个计数；`status` 据此返回 `Healthy`/`Degraded`/`Unhealthy`。
 
 ## 13. ONVIF-005：Live 与输出
 

@@ -164,4 +164,9 @@ impl SoapClient {
         let _ = StatusCode::from_u16(status.as_u16());
         Ok(body)
     }
+
+    /// Returns true when all request permits are currently in use.
+    pub fn is_request_queue_saturated(&self) -> bool {
+        self.permits.available_permits() == 0
+    }
 }
