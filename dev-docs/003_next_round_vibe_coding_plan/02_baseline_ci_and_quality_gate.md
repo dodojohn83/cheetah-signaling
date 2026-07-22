@@ -45,8 +45,8 @@ cargo deny check
 
 ## 5. BAS-004：架构与占位检查
 
-- [ ] 用 `cargo metadata`/`cargo tree`验证AGENTS定义的六层依赖方向。
-- [ ] 扫描生产路径的 `todo!()`、`unimplemented!()`、固定成功、空provider和直接SQL/媒体实现引用。
+- [x] 用 `cargo metadata`/`cargo tree`验证AGENTS定义的六层依赖方向：`scripts/audit_architecture.py` 已运行，快照报告见 [`reports/bas-004-architecture-audit-32244e4.md`](reports/bas-004-architecture-audit-32244e4.md)。
+- [x] 扫描生产路径的 `todo!()`、`unimplemented!()`、固定成功、空provider和直接SQL/媒体实现引用：`scripts/audit_architecture.py` 扫描结果：生产路径无 `todo!`/`unimplemented!`，无固定成功，无直接 SQL/媒体实现引用；2 处生产 `panic!` 已修复（`cheetah-onvif-driver-tokio` 静态 plugin name 改为 `expect`；`cheetah-storage-api` 重复 backfill 改为 `assert!`），剩余架构依赖违规见报告。
 - [ ] 测试fake中的 `unimplemented!()`改为显式错误或完整fake，避免测试因意外调用panic。
 - [ ] 检查domain不依赖Tokio/SQLx/Tonic，protocol core不依赖I/O。
 - [ ] 检查信令workspace不引入RTP payload parser、codec、media engine。

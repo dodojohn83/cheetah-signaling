@@ -101,10 +101,12 @@ impl PhaseMigrationPlanner {
 
         let mut seen_backfills = std::collections::HashSet::new();
         for m in &migrations {
-            if m.phase == MigrationPhase::Backfill && !seen_backfills.insert(m.version) {
-                panic!(
+            if m.phase == MigrationPhase::Backfill {
+                assert!(
+                    seen_backfills.insert(m.version),
                     "duplicate backfill version {}: {}",
-                    m.version, m.description
+                    m.version,
+                    m.description
                 );
             }
         }

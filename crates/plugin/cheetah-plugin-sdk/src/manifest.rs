@@ -40,6 +40,27 @@ impl PluginName {
         Ok(Self(name))
     }
 
+    /// Creates a `PluginName` from a trusted static string without re-validating.
+    ///
+    /// The caller is responsible for ensuring the string satisfies the
+    /// `PluginName` validation rules. This is intended for static plugin
+    /// names that are known correct at build time.
+    pub fn from_static_unchecked(name: &'static str) -> Self {
+        debug_assert!(
+            !name.is_empty()
+                && name.len() <= 128
+                && name.bytes().all(|b| {
+                    b.is_ascii_lowercase()
+                        || b.is_ascii_digit()
+                        || b == b'-'
+                        || b == b'_'
+                        || b == b'/'
+                }),
+            "static plugin name must be valid: {name}"
+        );
+        Self(name.to_string())
+    }
+
     /// Returns the name as a string slice.
     pub fn as_str(&self) -> &str {
         &self.0
