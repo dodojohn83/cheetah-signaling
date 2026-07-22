@@ -99,6 +99,9 @@ max_sessions_per_device = 4
 default_invite_timeout_ms = 30000
 # Interval between periodic media reconciliations in milliseconds. Default: 30000.
 periodic_reconcile_interval_ms = 30000
+# Grace period before a NeedsVerification binding is escalated to migration/fail.
+# Default: 60000.
+needs_verification_grace_ms = 60000
 # Readiness policy for media nodes: "optional" (default) or "required".
 # When "required", /health/ready fails until at least one media node lease is alive.
 readiness_policy = "optional"

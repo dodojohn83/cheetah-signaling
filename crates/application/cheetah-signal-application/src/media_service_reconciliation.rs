@@ -8,7 +8,7 @@ use cheetah_domain::{
     MediaSessionError, MediaSessionState, NodeStatus, UnitOfWork,
 };
 use cheetah_signal_types::{
-    MediaBindingId, MediaSessionId, NodeId, PageRequest, RequestContext, UtcTimestamp,
+    DurationMs, MediaBindingId, MediaSessionId, NodeId, PageRequest, RequestContext, UtcTimestamp,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -323,8 +323,24 @@ impl MediaService {
                         )
                         .await?;
                     } else if session_active && binding_needs_verification {
-                        // Already verifying; wait for the next callback/reconcile cycle to
-                        // either reactivate the binding or escalate once the node is gone.
+                        // Already verifying. Escalate to migrate/fail once the grace window
+                        // expires so a crashed-but-not-deregistered node cannot leave
+                        // sessions stuck indefinitely.
+                        let grace_deadline = binding.updated_at().checked_add(
+                            DurationMs::from_millis(self.needs_verification_grace_ms as i64),
+                        );
+                        if grace_deadline.is_some_and(|deadline| now >= deadline) {
+                            self.migrate_or_fail(
+                                context,
+                                uow,
+                                &mut session,
+                                &mut binding,
+                                "node_verification_grace_expired",
+                                "media node remained unhealthy beyond needs-verification grace period",
+                                &mut report,
+                            )
+                            .await?;
+                        }
                     } else {
                         // Setup-phase sessions cannot wait in NeedsVerification;
                         // attempt to migrate to a healthy node or fail.

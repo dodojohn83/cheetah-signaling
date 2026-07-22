@@ -836,6 +836,9 @@ pub async fn start(
     .with_runtime_health(gb_metrics.clone())
     .with_audit(audit.clone());
     state.cancel = cancel.clone();
+    state.media_service.set_needs_verification_grace_ms(
+        u64::try_from(config.media.needs_verification_grace_ms.as_millis()).unwrap_or(60_000),
+    );
 
     // Periodic media reconciliation: recover missed media state changes when
     // event-driven gap reconciliation drops or is delayed.
