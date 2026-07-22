@@ -32,8 +32,8 @@ use cheetah_http_api::state::{ApiConfig, ApiServer, ApiState};
 use cheetah_media_client::{MediaClientConfig, MediaControlClient};
 use cheetah_media_scheduler::{
     LeastLoadedScheduler, MediaClusterRegistryService, MediaEventConsumer,
-    MediaEventConsumerConfig, MediaRegistryConfig, NoopReconciliationHandler, PeerIdentity,
-    PersistentMediaNodeRegistry, SchedulerConfig, SchedulerMediaPort,
+    MediaEventConsumerConfig, MediaRegistryConfig, PeerIdentity, PersistentMediaNodeRegistry,
+    ReconciliationHandler, SchedulerConfig, SchedulerMediaPort,
 };
 use cheetah_message_api::publisher::publish_domain_event;
 use cheetah_message_api::{RawCommandBus, RawEventBus};
@@ -51,8 +51,9 @@ use cheetah_signal_types::config::{
 };
 use cheetah_signal_types::config::{MessagingBackend, SignalConfig, StorageBackend};
 use cheetah_signal_types::{
-    ChannelId, Clock, DeviceId, DurationMs, Event, IdGenerator, MediaBindingId, MediaSessionId,
-    NodeId, SecretStore, TenantId, UtcTimestamp,
+    ChannelId, Clock, CorrelationId, DeviceId, DurationMs, Event, IdGenerator, MediaBindingId,
+    MediaSessionId, MessageId, NodeId, Principal, PrincipalKind, RequestContext, SecretStore,
+    TenantId, UtcTimestamp,
 };
 use cheetah_storage_api::Storage;
 #[cfg(feature = "cluster")]
@@ -522,6 +523,71 @@ impl cheetah_storage_api::NodeRepository for StorageBackedNodeRepo {
     }
 }
 
+/// Reconciliation handler triggered by media event sequence gaps.
+///
+/// Starts a unit of work and runs the media reconciler for the affected
+/// tenant so any skipped events are recovered without waiting for the
+/// periodic reconciliation job.
+#[derive(Clone)]
+struct AppReconciliationHandler {
+    media_service: cheetah_signal_application::MediaService,
+    storage: std::sync::Arc<dyn cheetah_storage_api::Storage>,
+    node_id: NodeId,
+}
+
+#[async_trait::async_trait]
+impl ReconciliationHandler for AppReconciliationHandler {
+    async fn reconcile(
+        &self,
+        node_id: NodeId,
+        tenant_id: TenantId,
+        expected_sequence: u64,
+        actual_sequence: u64,
+    ) {
+        let mut uow = match self.storage.begin().await {
+            Ok(uow) => uow,
+            Err(e) => {
+                tracing::warn!(
+                    node_id = %node_id,
+                    tenant_id = %tenant_id,
+                    expected_sequence,
+                    actual_sequence,
+                    error = %e,
+                    "failed to begin unit of work for gap reconciliation"
+                );
+                return;
+            }
+        };
+
+        let context = RequestContext {
+            tenant_id,
+            principal: Principal {
+                id: "media-event-consumer".to_string(),
+                kind: PrincipalKind::Service,
+                scopes: vec!["media:reconcile".to_string()],
+            },
+            message_id: MessageId::generate(),
+            correlation_id: CorrelationId::generate(),
+            traceparent: None,
+            tracestate: None,
+            deadline: None,
+            node_id: Some(self.node_id),
+            source_ip: None,
+        };
+
+        if let Err(e) = self.media_service.reconcile(&context, uow.as_mut()).await {
+            tracing::warn!(
+                node_id = %node_id,
+                tenant_id = %tenant_id,
+                expected_sequence,
+                actual_sequence,
+                error = %e,
+                "media gap reconciliation failed"
+            );
+        }
+    }
+}
+
 /// Assembles storage, local bus, application services, protocol drivers and the HTTP API.
 pub async fn start(
     config: SignalConfig,
@@ -821,7 +887,11 @@ pub async fn start(
         clock.clone(),
         node_id,
         MediaEventConsumerConfig::default(),
-        Arc::new(NoopReconciliationHandler),
+        Arc::new(AppReconciliationHandler {
+            media_service: state.media_service.clone(),
+            storage: storage.clone(),
+            node_id,
+        }),
         media_metrics.clone(),
     ));
     let consumer_cancel = cancel.child_token();

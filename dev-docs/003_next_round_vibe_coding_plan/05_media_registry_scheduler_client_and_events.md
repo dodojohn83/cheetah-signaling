@@ -58,12 +58,12 @@
 
 ## 7. MED-R-006：Event consumer
 
-- [ ] 每节点单独bounded subscription和resume cursor。
-- [ ] inbox在副作用前按tenant+event ID去重。
-- [ ] 校验node instance、binding、session generation和owner epoch。
-- [ ] 旧事件只记diagnostic，不推进新binding。
-- [ ] gap触发目标节点分页reconciliation，不假定丢失事件无关紧要。
-- [ ] cursor与inbox提交顺序保证crash后可安全重放。
+- [x] 每节点单独bounded subscription和resume cursor：`MediaEventConsumer` 用 `max_concurrent_subscriptions` 信号量限制同时订阅数；每个节点通过 `load_cursor`/`update_cursor` 从 `processed_message_repository` 恢复/保存 cursor（`crates/media/cheetah-media-scheduler/src/event_consumer.rs:236-285`、`540-615`）。
+- [x] inbox在副作用前按tenant+event ID去重：`process_event` 先 `get_processed_message` 查 `(tenant_id, message_id)` 重复记录，命中则更新 cursor 后返回（`event_consumer.rs:360-385`）。
+- [x] 校验node instance、binding、session generation和owner epoch：`MediaService::apply_media_event` 比对 `media_node_id`、`media_node_instance_epoch`、`owner_epoch`、`binding_revision`、`session_revision`，任一不匹配返回 `DomainError`（`crates/application/cheetah-signal-application/src/media_service_callback.rs:39-78`）。
+- [x] 旧事件只记diagnostic，不推进新binding：`apply_media_event` 对 terminal operation 直接返回现有 `MediaSessionDto`；`MediaEventConsumer` 对乱序/过旧事件记录 `event_too_old`/`sequence_behind` 诊断计数后忽略（`media_service_callback.rs:93-95`、`event_consumer.rs:310-352`）。
+- [x] gap触发目标节点分页reconciliation：`detect_sequence_gap` 调用 `ReconciliationHandler::reconcile`；`assembly.rs` 现在提供 `AppReconciliationHandler`，它启动事务并调用 `MediaService::reconcile` 全量对账，确保丢失事件被追回（`event_consumer.rs:563-571`、`apps/cheetah-signaling/src/assembly.rs:526-589`）。
+- [x] cursor与inbox提交顺序保证crash后可安全重放：`process_event` 在同一 `uow` 中先写 cursor processed message、调用 `event_handler`、再 `uow.commit()`，cursor 与副作用原子提交（`event_consumer.rs:377-426`）。
 
 ## 8. MED-R-007：Scheduler/registry reconciler
 
