@@ -12,18 +12,32 @@ mod subscription;
 
 pub use catalog::{CatalogError, CatalogFilter, CatalogPage, CatalogProvider, CatalogQuery};
 
+use crate::endpoint_policy::{EndpointPolicy, require_explicit_advertised_host};
 use crate::events::Gb28181Event;
 use crate::types::DomainId;
 use cheetah_gb28181_core::{
     DigestChallenge, DigestClient, DigestContext, DigestError, DigestReplayCache, SipMessage,
     SipUri,
 };
-use cheetah_signal_types::is_internal_ip;
 use secrecy::{SecretBox, SecretString};
 use std::collections::BTreeMap;
 use std::net::IpAddr;
-use std::str::FromStr;
 use std::sync::{Arc, Mutex};
+
+/// Builds the network-zone policy applied to the cascade upstream endpoint.
+///
+/// The upstream is an outbound target crossing a trust boundary, so by default
+/// only public `sip`/`sips` endpoints are accepted. When
+/// `allow_internal_upstreams` is set (private / 专网 deployments) every
+/// non-unspecified zone is admitted, but the unspecified address is still
+/// rejected because it is never a valid registrar.
+pub(crate) fn upstream_endpoint_policy(allow_internal: bool) -> EndpointPolicy {
+    if allow_internal {
+        EndpointPolicy::any_zone_sip()
+    } else {
+        EndpointPolicy::public_sip()
+    }
+}
 
 /// Provider for upstream platform credentials.
 pub trait CascadeCredentialProvider: Send + Sync {
@@ -87,6 +101,12 @@ pub struct CascadeConfig {
     pub allow_md5: bool,
     /// Whether internal IP literals are accepted as upstream targets.
     pub allow_internal_upstreams: bool,
+    /// Optional network-zone policy applied to the connection addresses of SDP
+    /// offers/answers exchanged with the upstream platform. When set, an
+    /// upstream INVITE whose SDP advertises an address outside the policy is
+    /// rejected with `400`. `None` (the default) accepts any parseable SDP,
+    /// preserving legacy behaviour for private / 专网 deployments.
+    pub sdp_endpoint_policy: Option<EndpointPolicy>,
     /// Interval in seconds between periodic keepalive MESSAGE requests.
     pub keepalive_interval_seconds: u32,
     /// How long a keepalive MESSAGE transaction may stay pending.
@@ -185,14 +205,18 @@ impl CascadeConfig {
         validate_token(local_uri.user().unwrap_or(""))?;
         validate_token(upstream.host())?;
 
-        if let Ok(ip) = IpAddr::from_str(upstream.host())
-            && is_internal_ip(ip)
-            && !allow_internal_upstreams
-        {
-            return Err(CascadeError::Internal(
-                "upstream host is an internal IP".to_string(),
-            ));
-        }
+        // The advertised (local) platform address must be explicitly
+        // configured, never derived from an untrusted Host/Contact header.
+        require_explicit_advertised_host(local_uri.host()).map_err(|e| {
+            CascadeError::Internal(format!("local advertised host is not explicit: {e}"))
+        })?;
+
+        // Validate the outbound upstream endpoint (scheme/transport/port and,
+        // for IP-literal hosts, the network zone). Domain-name hosts defer to
+        // DNS re-verification (see `verify_upstream_resolved_addresses`).
+        upstream_endpoint_policy(allow_internal_upstreams)
+            .validate_sip_endpoint(&upstream)
+            .map_err(|e| CascadeError::Internal(format!("invalid upstream endpoint: {e}")))?;
 
         Ok(Self {
             domain_id,
@@ -209,6 +233,7 @@ impl CascadeConfig {
             transaction_timeout_seconds: 32,
             allow_md5,
             allow_internal_upstreams,
+            sdp_endpoint_policy: None,
             keepalive_interval_seconds: 30,
             keepalive_timeout_seconds: 10,
             keepalive_max_failures: 3,
@@ -252,6 +277,31 @@ impl CascadeConfig {
         self.catalog_inbound_digest_credential_ref = Some(credential_ref);
         self.catalog_inbound_digest_server_secret = Some(Arc::new(SecretBox::new(boxed)));
         Ok(self)
+    }
+
+    /// Applies a network-zone policy to SDP connection addresses exchanged with
+    /// the upstream platform.
+    #[must_use]
+    pub fn with_sdp_endpoint_policy(mut self, policy: EndpointPolicy) -> Self {
+        self.sdp_endpoint_policy = Some(policy);
+        self
+    }
+
+    /// Re-verifies the addresses the upstream host resolved to.
+    ///
+    /// The cascade state machine is Sans-I/O and never resolves DNS itself. A
+    /// driver resolves [`Self::upstream`] and calls this both with the freshly
+    /// resolved address set (before connecting) and with the connected peer
+    /// address, so a name that resolved to a permitted address cannot later be
+    /// rebound to an internal one. Every address must satisfy the same
+    /// network-zone policy applied to IP-literal upstreams at construction.
+    pub fn verify_upstream_resolved_addresses(
+        &self,
+        addresses: &[IpAddr],
+    ) -> Result<(), CascadeError> {
+        upstream_endpoint_policy(self.allow_internal_upstreams)
+            .verify_resolved_addresses(addresses)
+            .map_err(|e| CascadeError::Internal(format!("upstream address rejected: {e}")))
     }
 }
 
