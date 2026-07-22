@@ -15,10 +15,10 @@ use axum::{
     response::IntoResponse,
 };
 use cheetah_domain::{CommandPayload, DeviceControlKind, PtzDirection, QueryKind};
-use cheetah_signal_application::dto::SubmitOperationRequest;
+use cheetah_signal_application::dto::{OperationDto, SubmitOperationRequest};
 use cheetah_signal_types::{
-    ChannelId, Deadline, DeviceId, DurationMs, OwnerEpoch, ResourceId, ResourceKind, ResourceRef,
-    UtcTimestamp,
+    AuditOutcome, ChannelId, Deadline, DeviceId, DurationMs, OwnerEpoch, ResourceId, ResourceKind,
+    ResourceRef, UtcTimestamp,
 };
 use serde::Deserialize;
 use std::sync::Arc;
@@ -28,7 +28,8 @@ use std::sync::Arc;
 pub struct CommandOptions {
     /// RFC 3339 deadline.  Defaults to 30 seconds from now when omitted.
     pub deadline: Option<String>,
-    /// Expected owner epoch for fencing.  Defaults to 1 when omitted.
+    /// Expected owner epoch for fencing.  Defaults to the device's current
+    /// resolved owner epoch when omitted.
     pub owner_epoch: Option<u64>,
 }
 
@@ -106,25 +107,68 @@ fn build_deadline(
     ))
 }
 
-fn owner_epoch(options: &CommandOptions) -> OwnerEpoch {
-    OwnerEpoch(options.owner_epoch.unwrap_or(1))
+async fn resolve_owner_epoch(
+    state: &ApiState,
+    tenant_id: cheetah_signal_types::TenantId,
+    device_id: DeviceId,
+    options: &CommandOptions,
+) -> Result<OwnerEpoch, HttpError> {
+    if let Some(epoch) = options.owner_epoch {
+        return Ok(OwnerEpoch(epoch));
+    }
+    let owner = state
+        .owner_resolver
+        .resolve(tenant_id, device_id)
+        .await
+        .map_err(HttpError::from)?;
+    Ok(owner.map(|o| o.owner_epoch).unwrap_or(OwnerEpoch(0)))
 }
 
-macro_rules! submit_command {
-    ($state:expr, $ctx:expr, $uow:expr, $device_id:expr, $payload:expr, $idempotency:expr, $options:expr) => {{
-        let tenant_id = $ctx.0.tenant_id;
-        let request = SubmitOperationRequest {
-            device_id: $device_id,
-            target: build_target(tenant_id, $device_id),
-            payload: $payload,
-            idempotency_key: $idempotency.0,
-            deadline: build_deadline(&$state, &$options)?,
-            expected_owner_epoch: owner_epoch(&$options),
-        };
-        $state
-            .operation_service
-            .submit_operation(&$ctx.0, $uow, request)
-    }};
+async fn submit_device_command(
+    state: &ApiState,
+    ctx: &ApiRequestContext,
+    device_id: DeviceId,
+    payload: CommandPayload,
+    idempotency_key: String,
+    options: &CommandOptions,
+    action: &'static str,
+) -> Result<OperationDto, HttpError> {
+    let tenant_id = ctx.0.tenant_id;
+    let expected_owner_epoch = resolve_owner_epoch(state, tenant_id, device_id, options).await?;
+    let mut uow = state.storage.begin().await.map_err(HttpError::from)?;
+    let request = SubmitOperationRequest {
+        device_id,
+        target: build_target(tenant_id, device_id),
+        payload,
+        idempotency_key,
+        deadline: build_deadline(state, options)?,
+        expected_owner_epoch,
+    };
+    let operation = state
+        .operation_service
+        .submit_operation(&ctx.0, &mut *uow, request)
+        .await
+        .map_err(HttpError::from)?;
+    let operation_id = operation.operation_id.to_string();
+    crate::audit::record(
+        state,
+        ctx,
+        action,
+        "operation",
+        Some(operation_id.clone()),
+        None,
+        AuditOutcome::Success,
+    );
+    Ok(operation)
+}
+
+fn operation_response(operation: OperationDto) -> axum::response::Response {
+    let operation_id = operation.operation_id.to_string();
+    let mut response = (StatusCode::ACCEPTED, Json(operation)).into_response();
+    if let Ok(value) = HeaderValue::from_str(&format!("/api/v1/operations/{operation_id}")) {
+        response.headers_mut().insert(header::LOCATION, value);
+    }
+    response
 }
 
 pub async fn ptz(
@@ -137,28 +181,21 @@ pub async fn ptz(
 ) -> Result<axum::response::Response, HttpError> {
     ctx.require_scope("operator")?;
     let device_id = device_id.parse::<DeviceId>().map_err(HttpError::from)?;
-    let mut uow = state.storage.begin().await.map_err(HttpError::from)?;
-    let operation = submit_command!(
-        state,
-        ctx,
-        &mut *uow,
+    let operation = submit_device_command(
+        &state,
+        &ctx,
         device_id,
         CommandPayload::Ptz {
             channel_id: request.channel_id,
             direction: request.direction,
             speed: request.speed,
         },
-        idempotency,
-        options
+        idempotency.0,
+        &options,
+        "device.command.ptz",
     )
-    .await
-    .map_err(HttpError::from)?;
-    let operation_id = operation.operation_id.to_string();
-    let mut response = (StatusCode::ACCEPTED, Json(operation)).into_response();
-    if let Ok(value) = HeaderValue::from_str(&format!("/api/v1/operations/{operation_id}")) {
-        response.headers_mut().insert(header::LOCATION, value);
-    }
-    Ok(response)
+    .await?;
+    Ok(operation_response(operation))
 }
 
 pub async fn preset(
@@ -171,11 +208,9 @@ pub async fn preset(
 ) -> Result<axum::response::Response, HttpError> {
     ctx.require_scope("operator")?;
     let device_id = device_id.parse::<DeviceId>().map_err(HttpError::from)?;
-    let mut uow = state.storage.begin().await.map_err(HttpError::from)?;
-    let operation = submit_command!(
-        state,
-        ctx,
-        &mut *uow,
+    let operation = submit_device_command(
+        &state,
+        &ctx,
         device_id,
         CommandPayload::Preset {
             preset: cheetah_domain::PresetCommand {
@@ -184,17 +219,12 @@ pub async fn preset(
                 preset_id: request.preset_id,
             },
         },
-        idempotency,
-        options
+        idempotency.0,
+        &options,
+        "device.command.preset",
     )
-    .await
-    .map_err(HttpError::from)?;
-    let operation_id = operation.operation_id.to_string();
-    let mut response = (StatusCode::ACCEPTED, Json(operation)).into_response();
-    if let Ok(value) = HeaderValue::from_str(&format!("/api/v1/operations/{operation_id}")) {
-        response.headers_mut().insert(header::LOCATION, value);
-    }
-    Ok(response)
+    .await?;
+    Ok(operation_response(operation))
 }
 
 pub async fn query(
@@ -207,7 +237,6 @@ pub async fn query(
 ) -> Result<axum::response::Response, HttpError> {
     ctx.require_scope("operator")?;
     let device_id = device_id.parse::<DeviceId>().map_err(HttpError::from)?;
-    let mut uow = state.storage.begin().await.map_err(HttpError::from)?;
     let start_time = request
         .start_time
         .as_deref()
@@ -220,10 +249,9 @@ pub async fn query(
         .map(UtcTimestamp::parse_rfc3339)
         .transpose()
         .map_err(HttpError::from)?;
-    let operation = submit_command!(
-        state,
-        ctx,
-        &mut *uow,
+    let operation = submit_device_command(
+        &state,
+        &ctx,
         device_id,
         CommandPayload::Query {
             query: cheetah_domain::QueryCommand {
@@ -235,17 +263,12 @@ pub async fn query(
                 scale: request.scale,
             },
         },
-        idempotency,
-        options
+        idempotency.0,
+        &options,
+        "device.command.query",
     )
-    .await
-    .map_err(HttpError::from)?;
-    let operation_id = operation.operation_id.to_string();
-    let mut response = (StatusCode::ACCEPTED, Json(operation)).into_response();
-    if let Ok(value) = HeaderValue::from_str(&format!("/api/v1/operations/{operation_id}")) {
-        response.headers_mut().insert(header::LOCATION, value);
-    }
-    Ok(response)
+    .await?;
+    Ok(operation_response(operation))
 }
 
 pub async fn device_control(
@@ -258,11 +281,9 @@ pub async fn device_control(
 ) -> Result<axum::response::Response, HttpError> {
     ctx.require_scope("operator")?;
     let device_id = device_id.parse::<DeviceId>().map_err(HttpError::from)?;
-    let mut uow = state.storage.begin().await.map_err(HttpError::from)?;
-    let operation = submit_command!(
-        state,
-        ctx,
-        &mut *uow,
+    let operation = submit_device_command(
+        &state,
+        &ctx,
         device_id,
         CommandPayload::DeviceControl {
             control: cheetah_domain::DeviceControlCommand {
@@ -272,15 +293,10 @@ pub async fn device_control(
                 param: request.param,
             },
         },
-        idempotency,
-        options
+        idempotency.0,
+        &options,
+        "device.command.control",
     )
-    .await
-    .map_err(HttpError::from)?;
-    let operation_id = operation.operation_id.to_string();
-    let mut response = (StatusCode::ACCEPTED, Json(operation)).into_response();
-    if let Ok(value) = HeaderValue::from_str(&format!("/api/v1/operations/{operation_id}")) {
-        response.headers_mut().insert(header::LOCATION, value);
-    }
-    Ok(response)
+    .await?;
+    Ok(operation_response(operation))
 }
