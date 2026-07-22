@@ -361,6 +361,7 @@ fn to_media_node_info(
         heartbeat_interval_ms: config.heartbeat_interval_ms,
         cluster_time: Some(clock.now_wall().to_prost_timestamp()),
         accepted_contract_version: config.accepted_contract_version,
+        instance_epoch: node.instance_epoch,
     }
 }
 

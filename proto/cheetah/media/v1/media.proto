@@ -347,6 +347,8 @@ message MediaNodeInfo {
   google.protobuf.Timestamp cluster_time = 18;
   // Contract version accepted by this registry; media nodes must not exceed it.
   uint64 accepted_contract_version = 19;
+  // Monotonic instance epoch assigned during registration; heartbeats must echo it.
+  uint64 instance_epoch = 20;
 }
 
 // Media node heartbeat payload.
