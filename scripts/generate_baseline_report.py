@@ -52,9 +52,11 @@ def _git_commit() -> str:
 def _tool_version(name: str, cmd: list[str]) -> str:
     try:
         rc, out, _ = _run(cmd, timeout=30)
-        first = (out or "").strip().splitlines()[0]
-        return first if rc == 0 else f"{name} not available"
-    except FileNotFoundError:
+        lines = (out or "").strip().splitlines()
+        if rc == 0 and lines:
+            return lines[0]
+        return f"{name} not available"
+    except (FileNotFoundError, subprocess.TimeoutExpired):
         return f"{name} not found"
 
 
@@ -80,18 +82,28 @@ def _memory_gb() -> str:
     return "unknown"
 
 
-def _cargo_test_summary(stdout: str) -> tuple[int, int, int, list[str]]:
+def _test_summary(name: str, stdout: str) -> tuple[int, int, int, list[str]]:
     passed = failed = ignored = 0
     failure_lines: list[str] = []
     for line in stdout.splitlines():
-        m = re.search(
-            r"test result: (?:ok|FAILED).*?(\d+) passed; (\d+) failed; (\d+) ignored",
-            line,
-        )
-        if m:
-            passed += int(m.group(1))
-            failed += int(m.group(2))
-            ignored += int(m.group(3))
+        if name == "test":
+            m = re.search(
+                r"test result: (?:ok|FAILED).*?(\d+) passed; (\d+) failed; (\d+) ignored",
+                line,
+            )
+            if m:
+                passed += int(m.group(1))
+                failed += int(m.group(2))
+                ignored += int(m.group(3))
+        elif name == "nextest":
+            m = re.search(
+                r"(\d+) tests? run: (\d+) passed, (\d+) failed(?:, \d+ flaky)?(?:, (\d+) skipped)?",
+                line,
+            )
+            if m:
+                passed += int(m.group(2))
+                failed += int(m.group(3))
+                ignored += int(m.group(4)) if m.group(4) else 0
         if "FAILED" in line or "error[" in line:
             failure_lines.append(line.strip())
     return passed, failed, ignored, failure_lines
@@ -138,7 +150,6 @@ def main() -> int:
     commands: list[tuple[str, list[str], Optional[int]]] = [
         ("fmt", ["cargo", "fmt", "--all", "--", "--check"], 120),
         ("clippy", ["cargo", "clippy", "--workspace", "--all-targets", "--", "-D", "warnings"], 600),
-        ("test", ["cargo", "test", "--workspace", "--lib", "--bins", "--tests"], 900),
         ("deny", ["cargo", "deny", "check"], 120),
     ]
 
@@ -153,6 +164,7 @@ def main() -> int:
     if shutil.which("cargo-nextest"):
         commands.append(("nextest", ["cargo", "nextest", "run", "--workspace"], 900))
     else:
+        commands.append(("test", ["cargo", "test", "--workspace", "--lib", "--bins", "--tests"], 900))
         summary["unrun"].append({"command": "cargo nextest", "reason": "cargo-nextest not installed; fell back to cargo test"})
 
     total_pass = total_fail = total_ignore = 0
@@ -164,8 +176,8 @@ def main() -> int:
 
         (raw_dir / f"{name}.txt").write_text(out, encoding="utf-8")
 
-        if name == "test":
-            p, f, i, _ = _cargo_test_summary(out)
+        if name in ("test", "nextest"):
+            p, f, i, _ = _test_summary(name, out)
             total_pass += p
             total_fail += f
             total_ignore += i
@@ -174,8 +186,10 @@ def main() -> int:
             mapping = _known_failure_mapping(line)
             if mapping and mapping not in summary["failures"]:
                 summary["failures"].append(mapping)
-            if "warning:" in line and line not in summary["warnings"]:
-                summary["warnings"].append(line.strip()[:500])
+            if "warning:" in line:
+                w = line.strip()[:500]
+                if w not in summary["warnings"]:
+                    summary["warnings"].append(w)
 
         summary["commands"].append({
             "name": name,
@@ -183,9 +197,9 @@ def main() -> int:
             "exit_code": rc,
             "duration_seconds": round(dur, 2),
             "raw": os.path.relpath(raw_dir / f"{name}.txt", REPO),
-            "passed": total_pass if name == "test" else None,
-            "failed": total_fail if name == "test" else None,
-            "ignored": total_ignore if name == "test" else None,
+            "passed": total_pass if name in ("test", "nextest") else None,
+            "failed": total_fail if name in ("test", "nextest") else None,
+            "ignored": total_ignore if name in ("test", "nextest") else None,
         })
 
     # Collect active cargo features from workspace members for the report.

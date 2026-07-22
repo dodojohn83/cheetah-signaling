@@ -69,7 +69,7 @@ cargo deny check
 - warning、ignored test和feature列表；
 - 失败对应任务ID。
 
-- [x] 已实现 `scripts/generate_baseline_report.py`：运行 `BAS-003` 命令、捕获原始输出、生成 Markdown/JSON 摘要并映射已知失败到任务 ID。样例摘要见 [`reports/bas-006-4851c93.md`](reports/bas-006-4851c93.md)。当前环境缺少 `buf` 与 `cargo-nextest`，已记录为 `unrun`；`clippy`/`cargo test` 失败已映射到 `GB4-COMP-003/004`（修复见 PR #210）。
+- [x] 已实现 `scripts/generate_baseline_report.py`：运行 `BAS-003` 命令、捕获原始输出、生成 Markdown/JSON 摘要并映射已知失败到任务 ID。样例摘要见 [`reports/bas-006-cdd7ea3.md`](reports/bas-006-cdd7ea3.md)。当前环境缺少 `buf` 与 `cargo-nextest`，已记录为 `unrun`；`clippy`/`cargo test` 失败已映射到 `GB4-COMP-003/004`（修复见 PR #210）。
 
 ## 8. 退出门禁
 
