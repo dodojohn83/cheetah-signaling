@@ -427,3 +427,75 @@ fn build_message(
         })
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    fn datagram(data: &str) -> Result<SipMessage, SipError> {
+        SipParser::parse_datagram(data.as_bytes(), SipParserConfig::default())
+    }
+
+    #[test]
+    fn compact_headers_parse_to_canonical_names() {
+        let msg = datagram(
+            "REGISTER sip:registrar SIP/2.0\r\n\
+             v: SIP/2.0/UDP 192.0.2.1:5060;branch=z9hG4bKabc\r\n\
+             f: <sip:a@example.com>;tag=1\r\n\
+             t: <sip:a@example.com>\r\n\
+             i: call-1@example.com\r\n\
+             CSeq: 1 REGISTER\r\n\
+             l: 0\r\n\r\n",
+        )
+        .expect("parse compact headers");
+        let SipMessage::Request { headers, .. } = &msg else {
+            panic!("expected request");
+        };
+        assert!(headers.get(&HeaderName::Via).is_some());
+        assert!(headers.get(&HeaderName::From).is_some());
+        assert!(headers.get(&HeaderName::To).is_some());
+        assert!(headers.get(&HeaderName::CallId).is_some());
+        assert_eq!(msg.call_id(), Some("call-1@example.com"));
+    }
+
+    #[test]
+    fn unknown_headers_are_preserved_as_other() {
+        let msg = datagram(
+            "REGISTER sip:registrar SIP/2.0\r\n\
+             Via: SIP/2.0/UDP 192.0.2.1:5060;branch=z9hG4bKabc\r\n\
+             X-Vendor-Tag: keep-me\r\n\
+             CSeq: 1 REGISTER\r\n\
+             Content-Length: 0\r\n\r\n",
+        )
+        .expect("parse unknown header");
+        let SipMessage::Request { headers, .. } = &msg else {
+            panic!("expected request");
+        };
+        let value = headers.get(&HeaderName::Other("x-vendor-tag".to_string()));
+        assert_eq!(value.map(|v| v.as_str()), Some("keep-me"));
+    }
+
+    #[test]
+    fn unknown_headers_count_against_the_bound() {
+        let mut header_lines = String::new();
+        for i in 0..10 {
+            header_lines.push_str(&format!("X-Ext-{i}: v\r\n"));
+        }
+        let raw = format!(
+            "REGISTER sip:registrar SIP/2.0\r\n\
+             Via: SIP/2.0/UDP 192.0.2.1:5060;branch=z9hG4bKabc\r\n\
+             {header_lines}\
+             CSeq: 1 REGISTER\r\n\
+             Content-Length: 0\r\n\r\n"
+        );
+        let config = SipParserConfig {
+            max_headers: 4,
+            datagram_mode: true,
+            ..SipParserConfig::default()
+        };
+        let err = SipParser::parse_datagram(raw.as_bytes(), config)
+            .expect_err("too many headers must be rejected");
+        assert_eq!(err.kind, SipErrorKind::TooManyHeaders);
+    }
+}

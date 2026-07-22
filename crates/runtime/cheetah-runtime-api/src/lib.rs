@@ -5,7 +5,7 @@
 /// Admission control port.
 pub use admission::AdmissionController;
 /// Runtime configuration.
-pub use config::RuntimeConfig;
+pub use config::{AdmissionPolicyConfig, RuntimeConfig};
 /// Device actor API and actor context.
 pub use device_actor::{ActorContext, DeviceActor};
 /// Runtime error types.

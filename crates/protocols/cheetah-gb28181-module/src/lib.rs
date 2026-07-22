@@ -23,6 +23,7 @@ pub mod events;
 pub mod media;
 pub mod ports;
 mod registration;
+pub mod session;
 pub mod types;
 pub mod xml;
 
@@ -44,5 +45,8 @@ pub use media::{
     PlaybackAction,
 };
 pub use ports::{CredentialError, CredentialProvider};
+pub use session::{
+    ProtocolSessionLink, RegisterOutcome, RegisterParams, SessionContext, SessionLinkError,
+};
 pub use types::{DeviceId, DomainId};
 pub use xml::{KeepaliveInfo, XmlElement, XmlLimits, encode_xml, parse_keepalive, parse_xml};

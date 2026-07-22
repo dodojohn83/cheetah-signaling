@@ -9,7 +9,8 @@ use crate::workers::{
     OwnerCommandHandler, SingleNodeOwnerResolver, StorageDeviceProtocolLookup,
     build_assignment_service, build_drain_service, build_takeover_service, builtin_plugin_ids,
     spawn_drain_migration_worker, spawn_inbox_worker, spawn_node_lease_worker,
-    spawn_owner_lease_renew_worker, spawn_takeover_health_worker,
+    spawn_owner_lease_renew_worker, spawn_protocol_session_reaper_worker,
+    spawn_takeover_health_worker,
 };
 use ::time::{OffsetDateTime, UtcOffset};
 use cheetah_cluster_ownership::{CachingDeviceOwnerResolver, OwnerLeaseService};
@@ -902,42 +903,75 @@ pub async fn start(
         info!("takeover service armed");
     }
 
-    let default_tenant_id = config
-        .gb28181
-        .default_tenant_id
-        .as_ref()
-        .map(|s| s.parse::<TenantId>())
-        .transpose()
-        .map_err(|e| format!("gb28181.default_tenant_id is not a valid UUID: {e}"))?;
-
-    // GB28181 access listener. All protocol business mapping (domain defaults,
-    // auth policy, digest secret resolution, credential provider) lives in the
-    // module's assembly adapter; here we only inject dependencies and manage
-    // the driver lifecycle.
+    // GB28181 access listeners. Each listener binds its own sockets and maps to
+    // an explicit realm/domain/tenant. All protocol business mapping (domain
+    // defaults, auth policy, digest secret resolution, credential provider)
+    // lives in the module's assembly adapter; here we only inject dependencies
+    // and manage the driver lifecycle.
+    //
+    // Legacy single-listener settings (`sip_port`/`sip_domain`/
+    // `default_tenant_id`/...) are converted into a single synthetic listener
+    // during a compatibility window; validation rejects mixing them with the
+    // explicit `listeners` list.
+    let (gb_listeners, gb_legacy) = config.gb28181.resolve_listeners();
+    if gb_legacy {
+        warn!(
+            "gb28181 legacy sip_port/sip_domain/default_tenant_id settings are deprecated; \
+             migrate to gb28181.listeners. Converting to a single listener for now."
+        );
+    }
     let mut gb28181_addr = None;
-    if config.gb28181.sip_port > 0 {
-        if config.gb28181.challenge_optional {
+    if gb_listeners.is_empty() {
+        warn!("no gb28181 listeners configured; protocol listener not started");
+    }
+    for listener in &gb_listeners {
+        if listener.challenge_optional {
             warn!(
-                "gb28181.challenge_optional is enabled; unauthenticated REGISTER is accepted (dev profile only)"
+                listener_id = %listener.id,
+                "gb28181 listener challenge_optional is enabled; unauthenticated REGISTER is accepted (dev profile only)"
             );
         }
-        let digest_ref = config
-            .gb28181
-            .digest_secret_ref
-            .clone()
-            .ok_or("gb28181.digest_secret_ref is required when sip_port > 0")?;
-        let settings = GbAccessSettings::new(&config.gb28181.sip_domain, digest_ref)
-            .with_challenge_optional(config.gb28181.challenge_optional)
-            .with_device_password_ref(config.gb28181.device_password_ref.clone());
-        let access = build_access(&settings, &secret_store)
-            .map_err(|e| format!("gb28181 access assembly failed: {e}"))?;
 
-        let bind = SocketAddr::from(([0, 0, 0, 0], config.gb28181.sip_port));
-        let driver_config = GbDriverConfig::new(bind);
+        // An empty tenant is only reachable through the legacy compatibility
+        // path (no default_tenant_id); explicit listeners require a tenant.
+        // When absent, unattributable events are dropped by the sink.
+        let tenant_id = if listener.tenant_id.is_empty() {
+            None
+        } else {
+            Some(listener.tenant_id.parse::<TenantId>().map_err(|e| {
+                format!(
+                    "gb28181 listener '{}' tenant_id is not a valid UUID: {e}",
+                    listener.id
+                )
+            })?)
+        };
+
+        let settings = GbAccessSettings::new(
+            &listener.local_device_id,
+            listener.digest_secret_ref.clone(),
+        )
+        .with_realm(&listener.realm)
+        .with_challenge_optional(listener.challenge_optional)
+        .with_device_password_ref(listener.device_password_ref.clone());
+        let access = build_access(&settings, &secret_store).map_err(|e| {
+            format!(
+                "gb28181 listener '{}' access assembly failed: {e}",
+                listener.id
+            )
+        })?;
+
+        let mut driver_config = GbDriverConfig::empty();
+        if let Some(udp) = listener.udp_bind {
+            driver_config = driver_config.with_udp_bind(udp);
+        }
+        if let Some(tcp) = listener.tcp_bind {
+            driver_config = driver_config.with_tcp_bind(tcp);
+        }
+
         let (sink, gb_event_handle) = gb_event_sink::spawn(
             state.clone(),
             node_id,
-            default_tenant_id,
+            tenant_id,
             config.runtime.queue_depth,
             config.gb28181.catalog_fragment_max_entries as usize,
             config.gb28181.catalog_fragment_max_items as usize,
@@ -945,23 +979,47 @@ pub async fn start(
             cancel.child_token(),
         );
         workers.push(gb_event_handle);
+
         let (driver, local) = Gb28181UdpDriver::bind(driver_config, access, sink)
             .await
-            .map_err(|e| format!("gb28181 bind failed: {e}"))?;
-        gb28181_addr = Some(local);
+            .map_err(|e| format!("gb28181 listener '{}' bind failed: {e}", listener.id))?;
+        if gb28181_addr.is_none() {
+            gb28181_addr = Some(local);
+        }
         let worker_cancel = cancel.child_token();
+        let listener_id = listener.id.clone();
         workers.push(tokio::spawn(async move {
             // The driver observes cancellation directly and performs a bounded
             // drain of in-flight connections before returning.
             if let Err(e) = driver.run_with_cancellation(worker_cancel).await {
-                warn!(error = %e, "gb28181 driver exited with error");
+                warn!(listener_id = %listener_id, error = %e, "gb28181 driver exited with error");
             } else {
-                info!("gb28181 driver stopped");
+                info!(listener_id = %listener_id, "gb28181 driver stopped");
             }
         }));
-        info!(%local, "gb28181 SIP UDP listening");
-    } else {
-        warn!("gb28181.sip_port is 0; protocol UDP listener not started");
+        info!(listener_id = %listener.id, %local, realm = %listener.realm, domain = %listener.domain, "gb28181 SIP listening");
+    }
+
+    // Protocol session expiry reaper is a single global, cross-tenant worker.
+    // Spawn it once after all listeners are configured, not once per listener.
+    if !gb_listeners.is_empty() {
+        let reaper_interval_ms = config.gb28181.session_reaper_interval_ms.as_millis();
+        if reaper_interval_ms > 0 {
+            let interval =
+                Duration::from_millis(u64::try_from(reaper_interval_ms).unwrap_or(30_000));
+            workers.push(spawn_protocol_session_reaper_worker(
+                state.storage.clone(),
+                state.clock.clone(),
+                state.id_generator.clone(),
+                interval,
+                config.gb28181.session_reaper_batch_size.max(1),
+                config.gb28181.session_reaper_max_per_tick.max(1) as usize,
+                cancel.child_token(),
+            ));
+            info!("gb28181 protocol session reaper worker started");
+        } else {
+            warn!("gb28181.session_reaper_interval_ms is 0; expiry reaper not started");
+        }
     }
 
     // ONVIF WS-Discovery worker: periodically probes the network for cameras

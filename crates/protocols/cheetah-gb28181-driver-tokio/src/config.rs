@@ -1,6 +1,6 @@
 //! Driver configuration.
 
-use cheetah_gb28181_core::SipParserConfig;
+use cheetah_gb28181_core::{ManagerConfig, SipParserConfig};
 use std::net::SocketAddr;
 use std::time::Duration;
 
@@ -49,6 +49,9 @@ pub struct DriverConfig {
     pub tick_interval: Duration,
     /// Bounded deadline for draining in-flight TCP connections on shutdown.
     pub shutdown_drain: Duration,
+    /// Bounds (per-role capacity and TTL) and timer configuration for the SIP
+    /// transaction tables.
+    pub manager_config: ManagerConfig,
 }
 
 impl DriverConfig {
@@ -69,6 +72,7 @@ impl DriverConfig {
             tcp_idle_timeout: DEFAULT_TCP_IDLE_TIMEOUT,
             tick_interval: DEFAULT_TICK_INTERVAL,
             shutdown_drain: DEFAULT_SHUTDOWN_DRAIN,
+            manager_config: ManagerConfig::default(),
         }
     }
 
@@ -148,6 +152,12 @@ impl DriverConfig {
     /// Sets the bounded shutdown drain deadline.
     pub fn with_shutdown_drain(mut self, drain: Duration) -> Self {
         self.shutdown_drain = drain;
+        self
+    }
+
+    /// Sets the transaction-table bounds and timer configuration.
+    pub fn with_manager_config(mut self, config: ManagerConfig) -> Self {
+        self.manager_config = config;
         self
     }
 }

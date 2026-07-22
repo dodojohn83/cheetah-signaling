@@ -1618,6 +1618,174 @@ fn malformed_message_does_not_commit_online_presence_transition() {
     assert!(keepalive_seen);
 }
 
+fn add_authorization_with_password(request: &mut SipMessage, nonce: &str, password: &str) {
+    let response = compute_response_with_password(nonce, password);
+    let value = format!(
+        r##"Digest username="{DEVICE_ID}", realm="{REALM}", nonce="{nonce}", uri="sip:{DEVICE_ID}@{REALM}", response="{response}", cnonce="clientnonce", nc="00000001", qop="auth", algorithm="SHA-256""##
+    );
+    request
+        .headers_mut()
+        .append(HeaderName::Authorization, HeaderValue::new(value));
+}
+
+fn compute_response_with_password(nonce: &str, password: &str) -> String {
+    let a1 = format!("{DEVICE_ID}:{REALM}:{password}");
+    let ha1 = hash_hex(&a1);
+    let a2 = format!("REGISTER:sip:{DEVICE_ID}@{REALM}");
+    let ha2 = hash_hex(&a2);
+    let a3 = format!("{ha1}:{nonce}:00000001:clientnonce:auth:{ha2}");
+    hash_hex(&a3)
+}
+
+/// Sends an unauthenticated REGISTER and returns the challenge nonce.
+fn obtain_challenge_nonce(access: &mut Gb28181Access<impl CredentialProvider>) -> String {
+    let request = make_request(1, false);
+    let outputs = access
+        .process(AccessInput {
+            source: "192.168.1.100:5060".parse().unwrap(),
+            now: 1000,
+            message: request,
+        })
+        .unwrap();
+    let challenge = find_response(&outputs);
+    let www_auth = challenge
+        .headers()
+        .get(&HeaderName::WwwAuthenticate)
+        .expect("WWW-Authenticate")
+        .as_str();
+    extract_nonce(www_auth)
+}
+
+fn known_password_provider() -> impl Fn(&DeviceId) -> Result<Option<SecretString>, CredentialError>
+{
+    |device: &DeviceId| {
+        if device.as_ref() == DEVICE_ID {
+            Ok(Some(SecretString::from(PASSWORD)))
+        } else {
+            Ok(None)
+        }
+    }
+}
+
+#[test]
+fn brute_force_source_is_rate_limited_with_429() {
+    // After the configured number of failed authentication attempts from a
+    // single source, further attempts are rejected with 429 before any digest
+    // computation.
+    let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec())
+        .unwrap()
+        .with_auth_rate_limit(3, 60, 128);
+    let mut access = Gb28181Access::new(config, known_password_provider()).unwrap();
+
+    let nonce = obtain_challenge_nonce(&mut access);
+    let source = "203.0.113.5:5060".parse().unwrap();
+
+    // Three failures with a wrong password each return a 401 challenge.
+    for _ in 0..3 {
+        let mut request = make_request(2, false);
+        add_authorization_with_password(&mut request, &nonce, "wrong-password");
+        let outputs = access
+            .process(AccessInput {
+                source,
+                now: 1000,
+                message: request,
+            })
+            .unwrap();
+        let SipMessage::Response { line, .. } = find_response(&outputs) else {
+            panic!("expected response");
+        };
+        assert_eq!(line.code, 401);
+    }
+
+    // The fourth attempt is rate-limited regardless of the credentials offered.
+    let mut request = make_request(2, false);
+    add_authorization_with_password(&mut request, &nonce, "wrong-password");
+    let outputs = access
+        .process(AccessInput {
+            source,
+            now: 1000,
+            message: request,
+        })
+        .unwrap();
+    let response = find_response(&outputs);
+    let SipMessage::Response { line, headers, .. } = response else {
+        panic!("expected response");
+    };
+    assert_eq!(line.code, 429);
+    assert!(headers.get(&HeaderName::parse("Retry-After")).is_some());
+
+    // A different source is unaffected by the offending source's failures.
+    let mut other = make_request(2, false);
+    add_authorization_with_password(&mut other, &nonce, "wrong-password");
+    let outputs = access
+        .process(AccessInput {
+            source: "198.51.100.9:5060".parse().unwrap(),
+            now: 1000,
+            message: other,
+        })
+        .unwrap();
+    let SipMessage::Response { line, .. } = find_response(&outputs) else {
+        panic!("expected response");
+    };
+    assert_eq!(line.code, 401);
+}
+
+#[test]
+fn successful_auth_clears_rate_limit_failures() {
+    let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec())
+        .unwrap()
+        .with_auth_rate_limit(3, 60, 128);
+    let mut access = Gb28181Access::new(config, known_password_provider()).unwrap();
+
+    let nonce = obtain_challenge_nonce(&mut access);
+    let source = "203.0.113.7:5060".parse().unwrap();
+
+    // Two failures: below the budget, so still challenged.
+    for _ in 0..2 {
+        let mut request = make_request(2, false);
+        add_authorization_with_password(&mut request, &nonce, "wrong-password");
+        access
+            .process(AccessInput {
+                source,
+                now: 1000,
+                message: request,
+            })
+            .unwrap();
+    }
+
+    // A valid authentication succeeds and clears the failure counter.
+    let mut good = make_request(2, false);
+    add_authorization(&mut good, &nonce);
+    let outputs = access
+        .process(AccessInput {
+            source,
+            now: 1000,
+            message: good,
+        })
+        .unwrap();
+    let SipMessage::Response { line, .. } = find_response(&outputs) else {
+        panic!("expected response");
+    };
+    assert_eq!(line.code, 200);
+
+    // Two further failures must not trip the limiter because the counter reset.
+    for _ in 0..2 {
+        let mut request = make_request(2, false);
+        add_authorization_with_password(&mut request, &nonce, "wrong-password");
+        let outputs = access
+            .process(AccessInput {
+                source,
+                now: 1000,
+                message: request,
+            })
+            .unwrap();
+        let SipMessage::Response { line, .. } = find_response(&outputs) else {
+            panic!("expected response");
+        };
+        assert_eq!(line.code, 401);
+    }
+}
+
 #[test]
 fn message_missing_device_id_returns_400() {
     let (mut access, now) = make_registered_access();

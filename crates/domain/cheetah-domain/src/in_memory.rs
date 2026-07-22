@@ -11,13 +11,14 @@ use crate::{
     MediaNodeSessionRef, MediaPurpose, MediaReservation, MediaSession, MediaSessionRepository,
     MediaSessionState, Operation, OperationRepository, OperationStatus, Outbox, OutboxEntry,
     OwnerInfo, ProcessedMessageRecord, ProcessedMessageRepository, ProcessedMessageStatus,
-    UnitOfWork, WebhookConfig, WebhookConfigRepository, WebhookDelivery, WebhookDeliveryRepository,
+    Protocol, ProtocolSession, ProtocolSessionRepository, UnitOfWork, WebhookConfig,
+    WebhookConfigRepository, WebhookDelivery, WebhookDeliveryRepository,
 };
 use cheetah_signal_types::{
     ChannelId, Clock, DeliveryId, DeviceId, DurationMs, Event, IdGenerator, ListCursor,
     MediaBindingId, MediaNodeInstanceEpoch, MediaSessionId, MessageId, NodeId, OperationId,
-    OwnerEpoch, Page, PageRequest, Principal, ProtocolIdentity, RequestContext, ResourceId,
-    ResourceKind, ResourceRef, Revision, TenantId, UtcTimestamp, WebhookId,
+    OwnerEpoch, Page, PageRequest, Principal, ProtocolIdentity, ProtocolSessionId, RequestContext,
+    ResourceId, ResourceKind, ResourceRef, Revision, TenantId, UtcTimestamp, WebhookId,
 };
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -1338,8 +1339,11 @@ impl crate::MediaPort for InMemoryMediaPort {
                 Ok(MediaNodeCommandResult::Completed)
             }
             CommandPayload::ControlPlayback { .. } => Ok(MediaNodeCommandResult::Completed),
-            CommandPayload::Ptz { .. } => Err(DomainError::invalid_argument(
-                "PTZ command not dispatched through media node port",
+            CommandPayload::Ptz { .. }
+            | CommandPayload::Query { .. }
+            | CommandPayload::Preset { .. }
+            | CommandPayload::DeviceControl { .. } => Err(DomainError::invalid_argument(
+                "device command not dispatched through media node port",
             )),
         }
     }
@@ -1418,6 +1422,178 @@ impl EventPublisher for InMemoryEventPublisher {
     async fn publish(&self, event: &Event<DomainEvent>) -> crate::Result<()> {
         lock_mutex(&self.events).push(event.clone());
         Ok(())
+    }
+}
+
+/// In-memory [`ProtocolSessionRepository`] for tests.
+///
+/// Mirrors the SQL adapters' optimistic-concurrency and tenant-scoping
+/// semantics: reads filter by [`TenantId`], [`save`](Self::save) applies the
+/// `revision == stored + 1` guard, [`delete`](ProtocolSessionRepository::delete)
+/// checks the expected revision, and [`list_expired`] pages in
+/// `(updated_at, id)` order so the reaper sees a stable sweep.
+#[derive(Clone, Debug, Default)]
+pub struct InMemoryProtocolSessionRepository {
+    sessions: Arc<Mutex<BTreeMap<uuid::Uuid, ProtocolSession>>>,
+}
+
+impl InMemoryProtocolSessionRepository {
+    /// Creates an empty repository.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Returns the number of stored sessions.
+    pub fn len(&self) -> usize {
+        lock_mutex(&self.sessions).len()
+    }
+
+    /// Returns `true` when no sessions are stored.
+    pub fn is_empty(&self) -> bool {
+        lock_mutex(&self.sessions).is_empty()
+    }
+}
+
+#[async_trait::async_trait]
+impl ProtocolSessionRepository for InMemoryProtocolSessionRepository {
+    async fn get(
+        &self,
+        tenant_id: TenantId,
+        protocol_session_id: ProtocolSessionId,
+    ) -> crate::Result<Option<ProtocolSession>> {
+        let sessions = lock_mutex(&self.sessions);
+        Ok(sessions
+            .get(&protocol_session_id.as_uuid())
+            .filter(|s| s.tenant_id() == tenant_id)
+            .cloned())
+    }
+
+    async fn get_by_device(
+        &self,
+        tenant_id: TenantId,
+        protocol: Protocol,
+        device_id: DeviceId,
+    ) -> crate::Result<Option<ProtocolSession>> {
+        let sessions = lock_mutex(&self.sessions);
+        Ok(sessions
+            .values()
+            .find(|s| {
+                s.tenant_id() == tenant_id && s.protocol() == protocol && s.device_id() == device_id
+            })
+            .cloned())
+    }
+
+    async fn get_by_identity(
+        &self,
+        tenant_id: TenantId,
+        protocol: Protocol,
+        protocol_identity: ProtocolIdentity,
+    ) -> crate::Result<Option<ProtocolSession>> {
+        let sessions = lock_mutex(&self.sessions);
+        Ok(sessions
+            .values()
+            .find(|s| {
+                s.tenant_id() == tenant_id
+                    && s.protocol() == protocol
+                    && s.protocol_identity() == &protocol_identity
+            })
+            .cloned())
+    }
+
+    async fn save(&mut self, session: &ProtocolSession) -> crate::Result<()> {
+        let mut sessions = lock_mutex(&self.sessions);
+        save_with_revision(
+            &mut sessions,
+            session.protocol_session_id().as_uuid(),
+            session.clone(),
+            ProtocolSession::revision,
+        )
+    }
+
+    async fn delete(
+        &mut self,
+        tenant_id: TenantId,
+        protocol_session_id: ProtocolSessionId,
+        expected_revision: Revision,
+    ) -> crate::Result<()> {
+        let mut sessions = lock_mutex(&self.sessions);
+        match sessions.get(&protocol_session_id.as_uuid()) {
+            Some(existing)
+                if existing.tenant_id() == tenant_id
+                    && existing.revision() == expected_revision =>
+            {
+                sessions.remove(&protocol_session_id.as_uuid());
+                Ok(())
+            }
+            Some(existing) if existing.tenant_id() == tenant_id => {
+                Err(DomainError::ConcurrentModification {
+                    expected: expected_revision.0,
+                    found: existing.revision().0,
+                })
+            }
+            _ => Err(DomainError::not_found(
+                "protocol_session",
+                protocol_session_id.as_uuid().to_string(),
+            )),
+        }
+    }
+
+    async fn list_expired(
+        &self,
+        now: UtcTimestamp,
+        page: PageRequest,
+    ) -> crate::Result<Page<ProtocolSession>> {
+        let after = match &page.cursor {
+            None => None,
+            Some(value) => {
+                let cursor = ListCursor::decode(value)
+                    .map_err(|e| DomainError::invalid_argument(format!("invalid cursor: {e}")))?;
+                let (ts, id) = cursor
+                    .parse()
+                    .map_err(|e| DomainError::invalid_argument(format!("invalid cursor: {e}")))?;
+                Some((ts, id))
+            }
+        };
+
+        let mut items: Vec<ProtocolSession> = {
+            let sessions = lock_mutex(&self.sessions);
+            sessions
+                .values()
+                .filter(|s| s.is_expired(now))
+                .cloned()
+                .collect()
+        };
+        items.sort_by(|a, b| {
+            a.updated_at().cmp(&b.updated_at()).then_with(|| {
+                a.protocol_session_id()
+                    .as_uuid()
+                    .cmp(&b.protocol_session_id().as_uuid())
+            })
+        });
+        if let Some((ts, id)) = after {
+            items.retain(|s| (s.updated_at(), s.protocol_session_id().as_uuid()) > (ts, id));
+        }
+
+        let page_size = page.page_size_as_usize();
+        let has_more = items.len() > page_size;
+        let next_cursor = if has_more {
+            let last = items
+                .get(page_size - 1)
+                .ok_or_else(|| DomainError::internal("empty page"))?;
+            Some(
+                ListCursor::new(last.updated_at(), last.protocol_session_id().as_uuid())
+                    .and_then(|c| c.encode())
+                    .map_err(|e| DomainError::internal(format!("failed to encode cursor: {e}")))?,
+            )
+        } else {
+            None
+        };
+
+        let mut result = Page::new(items.into_iter().take(page_size).collect());
+        if let Some(cursor) = next_cursor {
+            result = result.with_next_cursor(cursor);
+        }
+        Ok(result)
     }
 }
 

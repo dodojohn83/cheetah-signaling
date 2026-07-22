@@ -9,10 +9,12 @@
 pub(crate) mod client;
 pub(crate) mod context;
 pub(crate) mod nonce;
+pub(crate) mod rate_limit;
 pub(crate) mod replay_cache;
 pub(crate) mod response;
 
 pub use client::DigestClient;
 pub use context::DigestContext;
+pub use rate_limit::AuthRateLimiter;
 pub use replay_cache::DigestReplayCache;
 pub use response::{DigestAlgorithm, DigestChallenge, DigestError, DigestQop, DigestResponse};

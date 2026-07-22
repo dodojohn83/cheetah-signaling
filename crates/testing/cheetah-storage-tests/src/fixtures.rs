@@ -1,9 +1,11 @@
 //! Test fixtures for repository contract tests.
 
 use cheetah_domain::{
-    Channel, ChannelKind, ChannelStatus, Clock, ClusterNode, CommandPayload, Device, DeviceKind,
-    DomainError, MediaBinding, MediaPurpose, MediaSession, MediaSessionDesiredState, NodeCapacity,
-    NodeLoad, Operation, Protocol, PtzCapabilities, PtzDirection, WebhookConfig,
+    Channel, ChannelKind, ChannelStatus, Clock, ClusterNode, CommandPayload, CompatibilityProfile,
+    Device, DeviceKind, DomainError, LocalIdentity, MediaBinding, MediaPurpose, MediaSession,
+    MediaSessionDesiredState, NewProtocolSession, NodeCapacity, NodeLoad, Operation, Protocol,
+    ProtocolSession, PtzCapabilities, PtzDirection, RegistrationInfo, SessionEndpoint,
+    SipTransport, WebhookConfig,
     in_memory::{InMemoryClock, InMemoryIdGenerator},
 };
 use cheetah_signal_types::{
@@ -104,6 +106,56 @@ impl Fixtures {
             BTreeMap::new(),
         )?;
         Ok(device)
+    }
+
+    /// Creates a new protocol session aggregate that expires after `expires_in`.
+    pub fn protocol_session(
+        &self,
+        tenant_id: TenantId,
+        device_id: DeviceId,
+        expires_in: DurationMs,
+    ) -> cheetah_domain::Result<ProtocolSession> {
+        let protocol_identity = ProtocolIdentity::new(format!(
+            "3402000000132000{:012}",
+            device_id.as_uuid().as_u128()
+        ))
+        .map_err(|e| DomainError::invalid_argument(e.to_string()))?;
+        let expiry_at = self
+            .clock
+            .now_wall()
+            .checked_add(expires_in)
+            .ok_or_else(|| DomainError::internal("session expiry overflow"))?;
+        ProtocolSession::new(
+            self.clock(),
+            NewProtocolSession {
+                protocol_session_id: self.id_generator.generate_protocol_session_id(),
+                tenant_id,
+                device_id,
+                protocol: Protocol::Gb28181,
+                protocol_identity,
+                local_identity: LocalIdentity {
+                    listener_id: "listener-a".to_string(),
+                    local_device_id: "34020000002000000001".to_string(),
+                    domain: "3402000000".to_string(),
+                    realm: "3402000000".to_string(),
+                },
+                transport: SipTransport::Udp,
+                endpoint: SessionEndpoint {
+                    observed_source: "203.0.113.10:5060".to_string(),
+                    contact_uri: "sip:34020000001320000001@203.0.113.10:5060".to_string(),
+                    advertised_endpoint: "192.0.2.1:5060".to_string(),
+                },
+                registration: RegistrationInfo {
+                    call_id: "call-id-0001".to_string(),
+                    cseq: 1,
+                    expires_secs: 3600,
+                },
+                expiry_at,
+                owner_node_id: None,
+                owner_epoch: OwnerEpoch::default(),
+                compatibility: CompatibilityProfile::default(),
+            },
+        )
     }
 
     /// Creates a new channel aggregate.

@@ -7,6 +7,7 @@
 
 #![doc = include_str!("../README.md")]
 
+pub mod admission;
 pub mod audit;
 pub mod config;
 pub mod context;
@@ -24,6 +25,11 @@ pub mod test_support;
 pub mod time;
 pub mod trace_context;
 
+pub use admission::{
+    BacklogController, BacklogObservation, BacklogState, CoalesceDecision, Coalescer,
+    DeadLetterEntry, DeadLetterQueue, DeadLetterReason, KeyedRateLimiter, Priority, TokenBucket,
+    TokenBucketConfig, TrafficClass,
+};
 pub use audit::{AuditEvent, AuditLog, AuditOutcome, NoOpAuditLog};
 pub use config::{ConfigSource, DeploymentProfile, SignalConfig};
 pub use context::{
