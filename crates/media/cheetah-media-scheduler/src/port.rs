@@ -424,7 +424,12 @@ async fn reserve(
                     contract_version: node.contract_version,
                 });
             }
-            Err(SchedulerError::CapacityExhausted(_)) => {
+            // The scheduler returned a node, but it drained, left or ran out of
+            // capacity between scheduling and reservation. Exclude it and try
+            // the next best candidate rather than failing the whole request.
+            Err(SchedulerError::CapacityExhausted(_))
+            | Err(SchedulerError::NodeDraining(_))
+            | Err(SchedulerError::NodeNotFound(_)) => {
                 excluded.push(node_id);
                 continue;
             }
