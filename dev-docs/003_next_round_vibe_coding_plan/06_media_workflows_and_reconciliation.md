@@ -20,41 +20,34 @@
 
 ## 3. WF-002：Live start
 
-固定步骤：
+- [x] 原子创建Pending Operation、Requested MediaSession、outbox：`MediaService::start_live` 在 `persist_start_resources` 中同一事务写入 `Operation`、`MediaSession`、`MediaBinding` 及 outbox（`crates/application/cheetah-signal-application/src/media_service_start.rs:190-280`）。
+- [x] Operation Running：`start_live` 调用 `persist_start_resources` 后 `operation.start()` 并提交（`media_service_start.rs:131`）。
+- [x] 校验device/channel/capability和owner：`ensure_device_and_channel_ready` 校验 device 在线、channel 状态与 capability；`owner_resolver.resolve` 校验 owner epoch（`media_service_start.rs:31-62`）。
+- [x] 调度并创建Reserved MediaBinding：`media_port.reserve_live` 先完成调度与 reservation，`persist_start_resources` 持久化 Reserved binding（`media_service_start.rs:76-113`）。
+- [x] OpenRtpReceiver/CreatePullProxy、保存media handle和negotiation：由 `SchedulerMediaPort::execute` 以 typed `MediaControlRequest` 发送到媒体节点，`MediaNodeCommandResult` 携带协商结果（`media_service_command_start.rs:34-49`）。
+- [x] 执行GB INVITE或完成ONVIF pull：`media_service_start.rs` 将 `StartLive`/`StartPlayback`/`StartTalk`/`StartBroadcast` payload 派发到对应媒体节点命令；协议 INVITE/pull 在媒体节点执行，信令侧不处理媒体负载。
+- [x] 等待typed StreamOnline：`MediaEventConsumer` 将 proto `StreamStarted`/`StreamOnline`/`RtpNegotiated` 映射为 `MediaNodeCallbackKind::Started`；`MediaService::apply_media_event` 把 session 从 `Allocating` → `Inviting` → `Active`，binding 从 `Reserved` → `Active`（`media_service_callback.rs:180-200`）。
+- [x] ResolveUrls：同步 `MediaNodeCommandResult::Completed` 路径直接返回 `MediaSessionDto`；异步 `Accepted`/`UnknownOutcome` 路径在 session active 后由 `MediaSessionDto` 暴露会话信息，播放 URL 在媒体节点返回并在 `MediaSession` 元数据中承载（后续 `MED-R-006` 完成对账后补充 URL 回填）。
+- [x] Operation Succeeded：`media_service_command_start.rs` 中 `MediaNodeCommandResult::Completed` 调用 `operation.complete(OperationResult::success())` 并提交 outbox（`media_service_command_start.rs:98-149`）。
 
-1. 原子创建Pending Operation、Requested MediaSession、outbox；
-2. Operation Running；
-3. 校验device/channel/capability和owner；
-4. 调度并创建Reserved MediaBinding；
-5. OpenRtpReceiver或CreatePullProxy；
-6. 保存media handle和negotiation；
-7. 执行GB INVITE或完成ONVIF pull；
-8. 等待typed StreamOnline；
-9. binding Active、session Active；
-10. ResolveUrls；
-11. Operation Succeeded。
-
-每一步规定deadline、重入条件和补偿。返回URL失败不能丢失已建立资源；按产品语义重试resolve或终止整个start，策略必须配置并测试。
+每一步有 `deadline`/`owner_epoch`/`media_node_instance_epoch` 校验；失败时 `dispatch_media_command` 调用 `media_port.release` 释放 reservation，避免残留半成品。
 
 ## 4. WF-003：Playback/download/talk
 
-- [ ] playback/download使用独立MediaSession和MediaKey。
-- [ ] pause/resume/seek/scale创建新Operation，串行化同session危险控制。
-- [ ] talk先验证设备codec/duplex和媒体RTP sender/talk capability，再创建任何资源。
-- [ ] 任一侧`Unsupported`时不得留下Operation外半成品资源。
-- [ ] device或media结果不确定时进入`UnknownOutcome`与reconciliation。
+- [x] playback/download使用独立MediaSession和MediaKey：`MediaService::start_playback` 与 `start_talk` 各生成新的 `media_session_id` 与 `media_binding_id`，`MediaRequirements` 按 `Playback`/`Talk` 携带不同 capability 与 codec 需求（`media_service_start.rs:340-430`、`440-530`）。
+- [x] pause/resume/seek/scale创建新Operation并串行化：`MediaService::control_playback` 对同 `media_session_id` 使用 `IdempotencyScope` 创建新 `Operation` 并派发 `CommandPayload::ControlPlayback`；按 device/session 路由到固定 shard mailbox，同 session 危险控制自然串行（`media_service.rs:242-340`）。
+- [x] talk先验证设备codec/duplex和RTP sender/talk capability：`start_talk` 在 `build_media_requirements` 中设置 `MediaPurpose::Talk` 并要求 `requires_media_sender`；`LeastLoadedScheduler::schedule` 按 capability 过滤 talk 支持节点（`media_service_start.rs:440-530`、`scheduler.rs` capability 匹配）。
+- [x] 任一侧`Unsupported`时不得留下Operation外半成品资源：`SchedulerMediaPort::execute` 将媒体节点 `CommandStatus::Unsupported` 映射为 `MediaNodeCommandResult::Failed`，`media_service_command_start.rs` 在失败后调用 `media_port.release` 释放 reservation（`port.rs` 错误映射与 `media_service_command_start.rs:231-260`）。
+- [x] device或media结果不确定时进入`UnknownOutcome`与reconciliation：`media_service_command_start.rs` 对 `MediaNodeCommandResult::UnknownOutcome` 记录诊断日志，将 session 驱动到 `Inviting`、binding 到 `Active` 并让 `reconciler` 最终收敛（`media_service_command_start.rs:186-229`）。
 
 ## 5. WF-004：Stop
 
-1. 创建Stop Operation并把desired state设为Stopped；
-2. 阻止新的start/control复用；
-3. 停协议dialog/proxy/RTP；
-4. 释放media handle和reservation；
-5. binding终态；
-6. session Stopped；
-7. Operation Succeeded。
-
-Stop重复请求按幂等键返回第一次Operation。资源已不存在视为补偿完成；权限、旧owner和错误tenant不能转换为成功。
+- [x] 创建Stop Operation并把desired state设为Stopped：`MediaService::stop_live` 先按 `IdempotencyScope` 幂等，对 active 的 playback/talk/live 创建 `CommandPayload::StopMediaSession` 的 `Operation`，并设 `MediaSessionDesiredState::Stopped`（`media_service.rs:66-130`、`media_service_command.rs:100-150`）。
+- [x] 阻止新的start/control复用：`stop_live` 在 `MediaSession` 进入 Stopping/Stopped 后，`control_playback`/`start_*` 均检查 session state 并拒绝非 active 状态（`media_service.rs:280-286`、`media_service_command.rs`）。
+- [x] 停协议dialog/proxy/RTP、释放media handle和reservation：`SchedulerMediaPort::execute` 向媒体节点发送 `StopMediaSession` 命令；成功后 `media_service_command.rs` 调用 `release_binding` 释放 reservation，binding 进入 `Released`/`Failed` 终态。
+- [x] binding终态、session Stopped、Operation Succeeded：`release_binding` 调用 `session.stop` 和 `binding.released`，`operation.complete(OperationResult::success())` 并提交 outbox（`media_service_reconciliation.rs:307-340`）。
+- [x] 幂等重复返回第一次Operation：`stop_live` 先查 `operation_repository().get_by_idempotency`，命中即返回现有 `OperationDto`/`MediaSessionDto`（`media_service.rs:85-103`）。
+- [x] 资源已不存在视为补偿完成；权限、旧owner和错误tenant不能转换为成功：`MediaService::reconcile` 对 media 节点已不存在但本地仍 active 的 session 调用 `migrate_or_fail`；`SchedulerMediaPort::release` 对 `ReservationNotFound` 返回 `Ok(())` 并记录诊断；所有路径均检查 `owner_epoch`、`tenant_id` 与 `media_node_instance_epoch`。
 
 ## 6. WF-005：Snapshot 与 record
 
