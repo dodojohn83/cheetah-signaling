@@ -375,6 +375,78 @@ fn config_allows_internal_upstream_ip_when_enabled() {
 }
 
 #[test]
+fn config_rejects_upstream_with_unspecified_address() {
+    // Even when internal upstreams are allowed, the unspecified address is
+    // never a valid registrar.
+    let upstream = SipUri::parse("sip:registrar@0.0.0.0").unwrap();
+    let result = CascadeConfig::with_options(
+        domain_id(),
+        local_uri(),
+        upstream,
+        "example.com".to_string(),
+        "cred".to_string(),
+        3600,
+        30,
+        true,
+        true,
+    );
+    assert!(result.is_err());
+}
+
+#[test]
+fn config_accepts_public_upstream_ip() {
+    let upstream = SipUri::parse("sip:registrar@8.8.8.8:5060").unwrap();
+    let result = CascadeConfig::with_options(
+        domain_id(),
+        local_uri(),
+        upstream,
+        "example.com".to_string(),
+        "cred".to_string(),
+        3600,
+        30,
+        true,
+        false,
+    );
+    assert!(result.is_ok());
+}
+
+#[test]
+fn verify_upstream_resolved_addresses_enforces_zone_policy() {
+    use std::net::IpAddr;
+    // Default config disallows internal upstreams (public-only policy).
+    let cfg = config();
+    assert!(
+        cfg.verify_upstream_resolved_addresses(&["8.8.8.8".parse::<IpAddr>().unwrap()])
+            .is_ok()
+    );
+    // A name that resolves (or is rebound) to an internal address is rejected.
+    assert!(
+        cfg.verify_upstream_resolved_addresses(&["192.168.1.10".parse::<IpAddr>().unwrap()])
+            .is_err()
+    );
+    // An empty resolution set is rejected.
+    assert!(cfg.verify_upstream_resolved_addresses(&[]).is_err());
+}
+
+#[test]
+fn config_rejects_unspecified_local_advertised_host() {
+    let local = SipUri::parse("sip:34020000001320000001@0.0.0.0").unwrap();
+    let upstream = SipUri::parse("sip:registrar@8.8.8.8:5060").unwrap();
+    let result = CascadeConfig::with_options(
+        domain_id(),
+        local,
+        upstream,
+        "example.com".to_string(),
+        "cred".to_string(),
+        3600,
+        30,
+        true,
+        false,
+    );
+    assert!(result.is_err());
+}
+
+#[test]
 fn failure_backoff_eventually_disconnects() {
     let mut cfg = config();
     cfg.max_retries = 1;

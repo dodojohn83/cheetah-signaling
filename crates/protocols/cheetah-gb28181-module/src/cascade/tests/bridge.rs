@@ -859,3 +859,67 @@ fn refresh_preserves_bridge_cleanup_outputs_when_credentials_disappear() {
             .all(|o| !matches!(o, CascadeOutput::SendRequest(_)))
     );
 }
+
+fn response_code(output: &CascadeOutput) -> Option<u16> {
+    match output {
+        CascadeOutput::SendResponse(SipMessage::Response { line, .. }) => Some(line.code),
+        _ => None,
+    }
+}
+
+#[test]
+fn bridge_invite_rejected_when_sdp_address_violates_zone_policy() {
+    use crate::endpoint_policy::EndpointPolicy;
+    // `public_sip` rejects the private 10.0.0.1 media address in `sample_sdp`.
+    let cfg = config().with_sdp_endpoint_policy(EndpointPolicy::public_sip());
+    let mut cascade = Gb28181Cascade::new(cfg, password_provider()).unwrap();
+    register_to_connected(&mut cascade);
+    let msg = build_invite(
+        "call-zone",
+        "34020000001320000002",
+        &upstream_uri(),
+        "from-tag",
+        sample_sdp().as_bytes(),
+    );
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 100,
+            event: CascadeEvent::Request(Box::new(msg)),
+        })
+        .unwrap();
+    assert_eq!(outputs.len(), 1);
+    assert_eq!(response_code(&outputs[0]), Some(400));
+    // No bridge event is emitted for a rejected offer.
+    assert!(
+        outputs
+            .iter()
+            .all(|o| !matches!(o, CascadeOutput::EmitEvent(_)))
+    );
+}
+
+#[test]
+fn bridge_invite_accepted_when_sdp_address_matches_zone_policy() {
+    use crate::endpoint_policy::EndpointPolicy;
+    // `any_zone_sip` admits the private media address, so the bridge proceeds.
+    let cfg = config().with_sdp_endpoint_policy(EndpointPolicy::any_zone_sip());
+    let mut cascade = Gb28181Cascade::new(cfg, password_provider()).unwrap();
+    register_to_connected(&mut cascade);
+    let msg = build_invite(
+        "call-zone-ok",
+        "34020000001320000002",
+        &upstream_uri(),
+        "from-tag",
+        sample_sdp().as_bytes(),
+    );
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 100,
+            event: CascadeEvent::Request(Box::new(msg)),
+        })
+        .unwrap();
+    assert_eq!(response_code(&outputs[0]), Some(100));
+    assert!(outputs.iter().any(|o| matches!(
+        o,
+        CascadeOutput::EmitEvent(Gb28181Event::CascadePlayRequested { .. })
+    )));
+}

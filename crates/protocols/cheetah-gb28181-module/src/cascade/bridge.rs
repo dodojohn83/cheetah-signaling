@@ -6,14 +6,39 @@
 //! When the application signals readiness or failure, the cascade sends the
 //! corresponding final response to the upstream platform.
 
-use cheetah_gb28181_core::sdp::{SdpParserConfig, parse_sdp};
+use cheetah_gb28181_core::sdp::{SdpParserConfig, SdpSession, parse_sdp};
 use cheetah_gb28181_core::{
     Body, HeaderName, HeaderValue, Method, RequestLine, SipHeaders, SipMessage, SipUri, StatusLine,
 };
 use std::collections::btree_map::Entry;
 
 use super::{CascadeError, CascadeOutput, Gb28181Cascade, State, validate_token};
+use crate::endpoint_policy::EndpointPolicy;
 use crate::events::Gb28181Event;
+
+/// Returns `true` when every media stream's effective connection address in
+/// `session` satisfies `policy`.
+///
+/// The effective connection is the media-level `c=` line when present, else the
+/// session-level `c=` line. A media stream with no connection address at either
+/// level is rejected, as is any address outside the policy's network zone.
+fn sdp_connections_allowed(session: &SdpSession, policy: &EndpointPolicy) -> bool {
+    if session.media.is_empty() {
+        // No media to place; validate the session-level connection if present.
+        return match &session.connection {
+            Some(conn) => policy.validate_sdp_connection(conn, 1).is_ok(),
+            None => true,
+        };
+    }
+    session.media.iter().all(|media| {
+        match media.connection.as_ref().or(session.connection.as_ref()) {
+            Some(conn) => policy
+                .validate_sdp_connection(conn, media.port.max(1))
+                .is_ok(),
+            None => false,
+        }
+    })
+}
 
 /// SDP parser limits for bodies received from an upstream cascade platform.
 const UPSTREAM_SDP_CONFIG: SdpParserConfig = SdpParserConfig {
@@ -190,7 +215,25 @@ fn handle_invite<P: super::CascadeCredentialProvider>(
             ))];
         }
     };
-    if parse_sdp(remote_sdp.as_bytes(), &UPSTREAM_SDP_CONFIG).is_err() {
+    let session = match parse_sdp(remote_sdp.as_bytes(), &UPSTREAM_SDP_CONFIG) {
+        Ok(session) => session,
+        Err(_) => {
+            return vec![CascadeOutput::SendResponse(build_response(
+                &msg,
+                400,
+                "Bad Request",
+                &cascade.next_local_tag(now),
+                Vec::new(),
+            ))];
+        }
+    };
+    // When a network-zone policy is configured, the SDP connection addresses
+    // must fall inside it. This rejects offers that advertise loopback or
+    // otherwise disallowed media endpoints (internal-network probing) before
+    // the request reaches the application/media layer.
+    if let Some(policy) = &cascade.config.sdp_endpoint_policy
+        && !sdp_connections_allowed(&session, policy)
+    {
         return vec![CascadeOutput::SendResponse(build_response(
             &msg,
             400,
