@@ -8,7 +8,11 @@ COPY . .
 
 # Build the signaling binary. SQLx query macros use offline mode by default in
 # this repository; if metadata needs to be regenerated, use `cargo sqlx prepare`.
-RUN cargo build --release --locked --bin cheetah-signaling
+# The container image defaults to the `cluster` feature so multi-replica
+# Postgres+NATS deployments continue to work. Override with `--build-arg
+# CARGO_FEATURES=edge` to produce a smaller edge-only binary.
+ARG CARGO_FEATURES=cluster
+RUN cargo build --release --locked --bin cheetah-signaling --features "$CARGO_FEATURES"
 
 # Pin runtime base image digest for reproducibility (linux/amd64).
 FROM debian:bookworm-slim@sha256:63a496b5d3b99214b39f5ed70eb71a61e590a77979c79cbee4faf991f8c0783e AS runtime
