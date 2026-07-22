@@ -1,0 +1,6 @@
+source = "synthetic"
+standard = "GB/T 28181-2022"
+profile = "generic"
+expected = "RecordInfo Response with CmdType=RecordInfo, SN=6, one synthetic record item"
+desensitization = "All device IDs, coordinates, timestamps and record metadata are synthetic."
+license = "MIT-0"
