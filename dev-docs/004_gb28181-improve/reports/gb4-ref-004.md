@@ -23,15 +23,17 @@
 
 - `testdata/gb28181/sip/`：7 组 SIP 报文与预期响应，全部通过 `cargo test` 与 `scripts/verify_gb4_fixtures.py`。
 - `testdata/gb28181/xml/`：Keepalive、Catalog query/response 等 XML fixture，全部通过校验。
+- `GB4-CAS-001..006`：平台级联模型 `GbPlatformLink`、`PlatformLinkRepository`、`CascadeManager`、loop/hop/ACL/唯一 control owner 已通过领域单测、存储 contract 和管理器单测，为真实上下级平台互操作提供控制面基线。
+- `tools/gb28181-simulator` platform 模块：可本地模拟上下级注册、目录查询/通知、订阅和桥接 INVITE/200/ACK/BYE，用于预互操作冒烟，但不替代真实平台证据。
 - 所有 fixture 来源标记为 `synthetic` 或 `reference-peer`，许可证 MIT-0，符合 clean-room 规则。
 
 ## 4. 待真实设备/平台联调项
 
-- 至少两类真实设备或 NVR（`GB4-SYS-003`）。
-- 至少一个上级/下级平台级联组合（`GB4-SYS-004`）。
+- 至少两类真实设备或 NVR（`GB4-SYS-003`，报告模板已建立）。
+- 至少一个上级/下级平台级联组合（`GB4-SYS-004`，报告模板已建立并关联 `GB4-CAS-001..006` 控制面模型）。
 - 网络拓扑：公网/专网、NAT、IPv4/IPv6、UDP/TCP。
 - 记录项：manufacturer/model/firmware、标准版本、profile、脱敏 semantic transcript、不支持能力。
 
 ## 5. 结论
 
-当前 `GB4-REF-004` 处于 `Blocked`：已完成参考 peer 与 synthetic fixture 的互操作映射，真实设备/平台证据需在 `GB4-SYS-003/004` 阶段补充。
+当前 `GB4-REF-004` 处于 `Blocked`：已完成参考 peer、synthetic fixture、`GB4-CAS` 控制面基线和 simulator harness 的互操作映射；`GB4-SYS-003` 与 `GB4-SYS-004` 报告模板已建立，真实设备/平台证据需在获得外部对端后补充。
