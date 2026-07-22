@@ -1012,7 +1012,13 @@ pub async fn start(
         if gb28181_addr.is_none() {
             gb28181_addr = Some(local);
         }
-        if gb_command_tx.is_none() {
+        // Outbound commands are transmitted over the driver's first UDP socket
+        // (see `run_with_cancellation` in cheetah-gb28181-driver-tokio). Only
+        // adopt the command bus from a UDP-capable listener so commands are
+        // never accepted against a driver that cannot transmit them. When no
+        // listener has a UDP bind the bus stays unset and the command handler
+        // rejects commands rather than silently dropping them.
+        if gb_command_tx.is_none() && listener.udp_bind.is_some() {
             gb_command_tx = Some(driver.command_bus());
         }
         let worker_cancel = cancel.child_token();
@@ -1031,6 +1037,12 @@ pub async fn start(
 
     // Inbox consumer after GB28181 driver bind so the command bus is wired.
     {
+        if gb_command_tx.is_none() && !gb_listeners.is_empty() {
+            warn!(
+                "no gb28181 listener has a UDP bind; outbound device commands are disabled and \
+                 will be rejected instead of silently dropped"
+            );
+        }
         let gb_bus = gb_command_tx.map(|tx| {
             Arc::new(DriverCommandBus::new(tx)) as Arc<dyn crate::workers::Gb28181CommandBus>
         });
