@@ -66,6 +66,21 @@ jobs:
       - uses: taiki-e/install-action@cargo-deny
       - run: cargo deny check
 
+  doctest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.96.1
+      - uses: Swatinem/rust-cache@v2
+      - uses: arduino/setup-protoc@v3
+        with:
+          version: "25.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - run: cargo test --doc --workspace
+
   proto:
     runs-on: ubuntu-latest
     timeout-minutes: 10

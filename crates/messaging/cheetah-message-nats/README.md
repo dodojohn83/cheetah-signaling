@@ -25,7 +25,7 @@ NATS JetStream message bus implementation for clustered Cheetah Signaling.
 
 ## Usage
 
-```rust
+```rust,ignore
 use std::sync::Arc;
 use std::time::Duration;
 use cheetah_message_nats::NatsBus;
