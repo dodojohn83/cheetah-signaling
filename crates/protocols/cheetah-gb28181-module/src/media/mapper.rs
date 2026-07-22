@@ -323,8 +323,17 @@ pub fn map_control(
                 ));
             }
             // MANSRTSP Range uses NPT seconds relative to the recording start.
+            // Preserve the millisecond precision the domain models: whole
+            // seconds render as a plain integer, sub-second offsets keep three
+            // fractional digits (e.g. `npt=1.500-`).
             let seconds = *offset_ms / 1000;
-            (PlaybackAction::Play, None, Some(format!("npt={seconds}-")))
+            let millis = *offset_ms % 1000;
+            let npt = if millis == 0 {
+                format!("npt={seconds}-")
+            } else {
+                format!("npt={seconds}.{millis:03}-")
+            };
+            (PlaybackAction::Play, None, Some(npt))
         }
         MediaControl::Scale { value } => {
             if !value.is_finite() {

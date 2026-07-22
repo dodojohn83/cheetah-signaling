@@ -298,6 +298,33 @@ fn seek_maps_to_play_with_npt_range() {
 }
 
 #[test]
+fn seek_preserves_sub_second_precision() {
+    let cmd = map_control(
+        MediaSessionId::generate(),
+        &MediaControl::Seek { offset_ms: 1_500 },
+    )
+    .unwrap();
+    match cmd {
+        MediaCommand::ControlPlayback { range, .. } => {
+            assert_eq!(range.as_deref(), Some("npt=1.500-"));
+        }
+        _ => panic!("expected ControlPlayback"),
+    }
+
+    let cmd = map_control(
+        MediaSessionId::generate(),
+        &MediaControl::Seek { offset_ms: 500 },
+    )
+    .unwrap();
+    match cmd {
+        MediaCommand::ControlPlayback { range, .. } => {
+            assert_eq!(range.as_deref(), Some("npt=0.500-"));
+        }
+        _ => panic!("expected ControlPlayback"),
+    }
+}
+
+#[test]
 fn scale_maps_to_play_with_scale() {
     let cmd = map_control(
         MediaSessionId::generate(),
