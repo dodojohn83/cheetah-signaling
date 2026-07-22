@@ -32,12 +32,16 @@ const REDRIVE_BATCH_SIZE: usize = 64;
 /// Maximum redrive attempts for a dead-lettered event before it is dropped.
 const MAX_REDRIVE_ATTEMPTS: u32 = 5;
 
+/// Maximum age (milliseconds) a dead-lettered event may wait before its
+/// redrive budget is considered exhausted.
+const MAX_REDRIVE_AGE_MS: i64 =
+    (MAX_REDRIVE_ATTEMPTS as i64) * (REDRIVE_INTERVAL.as_millis() as i64);
+
 /// Internal wrapper that carries an event together with its admission
 /// classification so the worker does not need to re-classify.
 #[derive(Clone, Debug)]
 struct TaggedGb28181Event {
     event: Gb28181Event,
-    traffic_class: TrafficClass,
     coalescing_key: Option<String>,
 }
 
@@ -219,7 +223,6 @@ impl AdmissionState {
 
         let tagged = TaggedGb28181Event {
             event,
-            traffic_class: class,
             coalescing_key: key,
         };
         match self.tx.try_send(tagged) {
@@ -264,20 +267,28 @@ impl AdmissionState {
     }
 
     /// Attempts to redrive up to `batch_size` dead-lettered events into the
-    /// bounded channel.
-    fn redrive(&mut self, _now_ms: i64, batch_size: usize) {
-        let entries = self.dlq.drain(batch_size);
+    /// bounded channel. Only as many entries as there are free channel slots are
+    /// drained, so transient backpressure does not consume the redrive budget.
+    fn redrive(&mut self, now_ms: i64, batch_size: usize) {
+        if self.tx.is_closed() {
+            return;
+        }
+
+        let capacity = self.tx.capacity();
+        if capacity == 0 {
+            return;
+        }
+
+        let entries = self.dlq.drain(batch_size.min(capacity));
         for mut entry in entries {
-            if entry.attempts >= MAX_REDRIVE_ATTEMPTS {
+            if now_ms.saturating_sub(entry.enqueued_at_ms) > MAX_REDRIVE_AGE_MS {
                 self.drop_dead_letter_entry(entry);
                 continue;
             }
 
-            entry.attempts += 1;
-            let (class, key) = classify_event(&entry.payload, self.tenant_id);
+            let (_, key) = classify_event(&entry.payload, self.tenant_id);
             let tagged = TaggedGb28181Event {
                 event: entry.payload,
-                traffic_class: class,
                 coalescing_key: key,
             };
 
@@ -288,16 +299,14 @@ impl AdmissionState {
                     self.metrics.record_gb28181_event_redriven();
                 }
                 Err(e) => {
-                    let tagged = e.into_inner();
-                    if entry.attempts >= MAX_REDRIVE_ATTEMPTS {
-                        self.drop_dead_letter_tagged(tagged, entry.attempts);
-                    } else {
-                        entry.payload = tagged.event;
-                        let dropped_before = self.dlq.dropped_total();
-                        self.dlq.push_entry(entry);
-                        if self.dlq.dropped_total() > dropped_before {
-                            self.metrics.record_gb28181_event_dropped();
-                        }
+                    // Put the entry back without consuming its redrive budget;
+                    // a full channel is transient and will be retried later.
+                    let TaggedGb28181Event { event, .. } = e.into_inner();
+                    entry.payload = event;
+                    let dropped_before = self.dlq.dropped_total();
+                    self.dlq.push_entry(entry);
+                    if self.dlq.dropped_total() > dropped_before {
+                        self.metrics.record_gb28181_event_dropped();
                     }
                 }
             }
@@ -307,14 +316,10 @@ impl AdmissionState {
     /// Drops a dead-letter entry that has exhausted its redrive budget.
     fn drop_dead_letter_entry(&mut self, entry: DeadLetterEntry<Gb28181Event>) {
         let (class, key) = classify_event(&entry.payload, self.tenant_id);
-        self.drop_dead_letter_inner(class, key, entry.attempts);
+        self.drop_dead_letter_inner(class, key);
     }
 
-    fn drop_dead_letter_tagged(&mut self, tagged: TaggedGb28181Event, attempts: u32) {
-        self.drop_dead_letter_inner(tagged.traffic_class, tagged.coalescing_key, attempts);
-    }
-
-    fn drop_dead_letter_inner(&mut self, class: TrafficClass, key: Option<String>, attempts: u32) {
+    fn drop_dead_letter_inner(&mut self, class: TrafficClass, key: Option<String>) {
         if let Some(key) = key {
             self.coalescer.release(&key);
         }
@@ -322,7 +327,6 @@ impl AdmissionState {
         self.metrics.record_gb28181_event_dropped();
         warn!(
             event_type = ?class,
-            attempts,
             "gb28181 event dead-letter redrive budget exhausted; dropping event"
         );
     }
