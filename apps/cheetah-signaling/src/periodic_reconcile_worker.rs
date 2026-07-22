@@ -87,6 +87,30 @@ async fn reconcile_all_tenants(
                 .await
                 .map_err(|e| format!("failed to begin unit of work for tenant {tenant_id}: {e}"))?;
 
+            // Cheap gate: skip tenants that have no media sessions at all to
+            // avoid O(tenants x media_nodes) RPC fan-out on every tick.
+            let session_page = uow
+                .media_session_repository()
+                .list(
+                    tenant_id,
+                    None,
+                    None,
+                    None,
+                    None,
+                    PageRequest::new(1).map_err(|e| e.to_string())?,
+                )
+                .await
+                .map_err(|e| {
+                    format!("failed to list media sessions for tenant {tenant_id}: {e}")
+                })?;
+
+            if session_page.items.is_empty() {
+                uow.rollback().await.map_err(|e| {
+                    format!("failed to rollback unit of work for tenant {tenant_id}: {e}")
+                })?;
+                continue;
+            }
+
             if let Err(e) = media_service.reconcile(&context, uow.as_mut()).await {
                 warn!(tenant_id = %tenant_id, error = %e, "periodic reconcile failed for tenant");
             }
