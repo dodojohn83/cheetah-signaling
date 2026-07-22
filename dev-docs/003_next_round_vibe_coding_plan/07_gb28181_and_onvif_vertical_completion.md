@@ -74,17 +74,17 @@
 
 ## 11. ONVIF-003：Provision 与能力
 
-- [ ] GetServices/GetCapabilities/GetDeviceInformation/GetSystemDateAndTime可部分成功。
-- [ ] Media2优先、Media1 fallback；每项记录Supported/Unsupported/Failed。
-- [ ] workflow可重入、可取消、设备级并发受限。
-- [ ] capability TTL/ETag或revision过期后刷新，失败不删除上次可用能力。
+- [ ] GetServices/GetCapabilities/GetDeviceInformation/GetSystemDateAndTime可部分成功：`OnvifHttpDriver` 已实现 `get_device_information` 和 `get_system_date_and_time`；`GetServices`/`GetCapabilities` 尚未实现，需 ONVIF-003 接入后补充。
+- [x] Media2优先、Media1 fallback；每项记录Supported/Unsupported/Failed：`OnvifHttpDriver::get_profiles` 按 `prefer` 顺序尝试 Media2→Media1（或 Media1→Media2）并返回实际使用的 dialect；`get_stream_uri`/`get_snapshot_uri` 支持按 dialect 构造请求；解析失败返回明确错误。
+- [ ] workflow可重入、可取消、设备级并发受限：尚未以 `Operation`/`Saga` 形式封装 ONVIF 探测/取流/截图 workflow，设备级并发由 `OnvifHttpDriver` 内部 `Semaphore` 限制。
+- [ ] capability TTL/ETag或revision过期后刷新，失败不删除上次可用能力：尚未实现 capability cache/TTL 刷新。
 
 ## 12. ONVIF-004：Plugin command/probe adapter
 
-- [ ] `OnvifProtocolDriver`持有注入的Tokio driver/application port，不再是零状态lifecycle对象。
-- [ ] handle_command只接受注册typed command，未知类型返回稳定Unsupported。
-- [ ] probe执行真实discovery/capability流程并返回descriptor。
-- [ ] health区分driver ready、credential provider、queue saturation和dependency degraded。
+- [ ] `OnvifProtocolDriver`持有注入的Tokio driver/application port，不再是零状态lifecycle对象：`OnvifTokioProtocolDriver` 目前为 unit 类型，每次 `handle_command` 重新 `build_driver`，未持有已注入的 driver 和 application port；需改造为构造期创建并复用 `OnvifHttpDriver`。
+- [x] handle_command只接受注册typed command，未知类型返回稳定Unsupported：`crates/protocols/cheetah-onvif-driver-tokio/src/protocol_driver.rs` 的 `dispatch_command` 匹配 `get_device_information`、`get_system_date_and_time`、`get_profiles`、`get_stream_uri`、`get_snapshot_uri`，其他命令返回 `PluginError::Unsupported`。
+- [x] probe执行真实discovery/capability流程并返回descriptor：`OnvifTokioProtocolDriver::probe` 调用 `get_system_date_and_time` 验证设备可达并返回 `CapabilityDescriptor`。
+- [ ] health区分driver ready、credential provider、queue saturation和dependency degraded：`health` 目前仅验证配置能否构建 driver，未区分凭据、队列饱和和依赖降级。
 
 ## 13. ONVIF-005：Live 与输出
 
