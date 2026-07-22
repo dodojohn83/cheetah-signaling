@@ -8,7 +8,7 @@
 //! current operation status before sending.
 
 use cheetah_domain::DomainEvent;
-use cheetah_message_api::{RawEventBus, decode_event};
+use cheetah_message_api::{EventEnvelope, Subscription, decode_event};
 use cheetah_signal_application::CommandDispatcher;
 use cheetah_signal_types::{Event, MessageId, NodeId, Principal, PrincipalKind, RequestContext};
 use cheetah_storage_api::Storage;
@@ -21,22 +21,11 @@ use tracing::{info, warn};
 pub fn spawn(
     command_dispatcher: CommandDispatcher,
     storage: Arc<dyn Storage>,
-    bus: Arc<dyn RawEventBus>,
+    mut subscription: Box<dyn Subscription<EventEnvelope>>,
     node_id: NodeId,
     cancel: CancellationToken,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        let mut subscription = match bus
-            .subscribe("sig.v1.event.>", "operation-dispatcher")
-            .await
-        {
-            Ok(s) => s,
-            Err(e) => {
-                warn!(error = %e, "operation dispatch worker failed to subscribe to events");
-                return;
-            }
-        };
-
         info!(%node_id, "operation dispatch worker started");
 
         loop {

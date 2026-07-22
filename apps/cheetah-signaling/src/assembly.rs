@@ -698,6 +698,21 @@ pub async fn start(
         command_bus_domain,
     );
 
+    // Subscribe the operation dispatch worker before the outbox relay starts
+    // so that replayed OperationSubmitted events are not lost on the local bus.
+    let operation_dispatch_subscription = bus
+        .subscribe("sig.v1.event.>", "operation-dispatcher")
+        .await
+        .map_err(|e| format!("failed to subscribe operation dispatch worker: {e}"))?;
+    workers.push(operation_dispatch_worker::spawn(
+        command_dispatcher.clone(),
+        storage.clone(),
+        operation_dispatch_subscription,
+        node_id,
+        cancel.child_token(),
+    ));
+    info!("operation dispatch worker subscribed and started");
+
     let mut media_registry_config = MediaRegistryConfig::production();
     let media_metrics = cheetah_media_scheduler::MediaMetrics::arc();
     let media_repo = storage.media_node_repository();
@@ -1099,15 +1114,6 @@ pub async fn start(
             cancel.child_token(),
         ));
         info!("inbox consumer worker started");
-
-        workers.push(operation_dispatch_worker::spawn(
-            command_dispatcher.clone(),
-            storage.clone(),
-            bus.clone(),
-            node_id,
-            cancel.child_token(),
-        ));
-        info!("operation dispatch worker started");
     }
 
     // Protocol session expiry reaper is a single global, cross-tenant worker.
