@@ -146,7 +146,12 @@ async fn drain_and_deregister(storage: &dyn Storage, fixtures: &Fixtures) -> Tes
     assert!(matches!(drained.status, NodeStatus::Draining));
 
     let deregistered = repo
-        .deregister(node_id, "instance-1".to_string(), now)
+        .deregister(
+            node_id,
+            "instance-1".to_string(),
+            now,
+            Some(lease_at(now, 60_000)?),
+        )
         .await?
         .ok_or("deregister failed")?;
     assert!(matches!(deregistered.status, NodeStatus::Left));

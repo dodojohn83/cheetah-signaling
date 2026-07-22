@@ -370,15 +370,17 @@ impl MediaNodeRepository for SqliteMediaNodeRepository {
         node_id: NodeId,
         instance_id: String,
         updated_at: UtcTimestamp,
+        lease_until: Option<UtcTimestamp>,
     ) -> Result<Option<MediaNode>, StorageError> {
         let row: Option<MediaNodeRow> = sqlx::query_as::<sqlx::Sqlite, MediaNodeRow>(
             &format!(
-                "UPDATE media_nodes SET status = 'left', lease_until = NULL, updated_at = ?, revision = revision + 1
+                "UPDATE media_nodes SET status = 'left', lease_until = ?, updated_at = ?, revision = revision + 1
                  WHERE node_id = ? AND instance_id = ?
                  RETURNING {}",
                 media_node_columns()
             )
         )
+        .bind(lease_until.map(to_millis))
         .bind(to_millis(updated_at))
         .bind(node_id.as_uuid())
         .bind(&instance_id)

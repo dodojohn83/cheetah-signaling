@@ -236,11 +236,13 @@ pub trait MediaNodeRepository: Send + Sync {
     ) -> Result<Option<MediaNode>, StorageError>;
 
     /// Marks the node as `Left` if `instance_id` matches, retaining it for a
-    /// protection window. Returns the updated node, or `None` if fenced.
+    /// protection window. `lease_until` controls how long the record remains
+    /// visible to the reconciler. Returns the updated node, or `None` if fenced.
     async fn deregister(
         &mut self,
         node_id: NodeId,
         instance_id: String,
         updated_at: UtcTimestamp,
+        lease_until: Option<UtcTimestamp>,
     ) -> Result<Option<MediaNode>, StorageError>;
 }

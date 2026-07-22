@@ -252,20 +252,20 @@ impl MediaNodeRegistry for PersistentMediaNodeRegistry {
             .ok_or_else(|| SchedulerError::NodeNotFound(node_id.to_string()))?;
         let now = clock.now_wall();
         let instance_id = entry.instance_id.clone();
+        let protection_lease = lease_until(clock, self.config.deregister_protection_ttl_ms);
 
         let persisted = self
             .repo
             .lock()
             .await
-            .deregister(node_id, instance_id, now)
+            .deregister(node_id, instance_id, now, protection_lease)
             .await
             .map_err(|e| SchedulerError::Backend(e.to_string()))?;
 
         match persisted {
             Some(node) => {
                 entry.node = node;
-                entry.node.lease_until =
-                    lease_until(clock, self.config.deregister_protection_ttl_ms);
+                entry.node.lease_until = protection_lease;
                 Ok(to_media_node(entry, now, &self.config))
             }
             None => Err(SchedulerError::NodeNotFound(node_id.to_string())),

@@ -58,7 +58,10 @@ pub trait MediaNodeRegistry: Send + Sync {
     /// Returns the current runtime view of a node, if known.
     async fn get(&self, node_id: NodeId, clock: &dyn Clock) -> Option<MediaNode>;
 
-    /// Lists nodes that are not left and whose lease has not expired.
+    /// Lists nodes whose lease has not expired. This includes active and
+    /// draining nodes, and nodes marked `Left` that are still within their
+    /// deregister protection window. Callers must filter by `status` when they
+    /// need to exclude left or draining nodes.
     async fn list_active(&self, clock: &dyn Clock) -> Vec<MediaNode>;
 
     /// Reserves capacity for a media binding on the given node.
