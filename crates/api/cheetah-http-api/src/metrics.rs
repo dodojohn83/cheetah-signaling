@@ -31,6 +31,18 @@ pub struct RequestMetrics {
     pub responses_5xx: AtomicU64,
     /// Number of GB28181 events dropped because the application sink queue was full.
     pub gb28181_events_dropped_total: AtomicU64,
+    /// Number of GB28181 events admitted into the application sink queue.
+    pub gb28181_events_admitted_total: AtomicU64,
+    /// Number of redundant GB28181 events coalesced before reaching the sink queue.
+    pub gb28181_events_coalesced_total: AtomicU64,
+    /// Number of low-priority GB28181 events shed under overload.
+    pub gb28181_events_shed_total: AtomicU64,
+    /// Number of GB28181 events placed in the dead-letter queue for redrive.
+    pub gb28181_events_dead_lettered_total: AtomicU64,
+    /// Number of GB28181 events successfully redriven from the dead-letter queue.
+    pub gb28181_events_redriven_total: AtomicU64,
+    /// Number of GB28181 events dropped after exhausting dead-letter redrive budget.
+    pub gb28181_events_redrive_exhausted_total: AtomicU64,
     /// Sum of response durations in nanoseconds.
     response_duration_sum_ns: AtomicU64,
     /// Cumulative response-duration histogram buckets, ending with `+Inf`.
@@ -47,6 +59,12 @@ impl Default for RequestMetrics {
             responses_4xx: AtomicU64::new(0),
             responses_5xx: AtomicU64::new(0),
             gb28181_events_dropped_total: AtomicU64::new(0),
+            gb28181_events_admitted_total: AtomicU64::new(0),
+            gb28181_events_coalesced_total: AtomicU64::new(0),
+            gb28181_events_shed_total: AtomicU64::new(0),
+            gb28181_events_dead_lettered_total: AtomicU64::new(0),
+            gb28181_events_redriven_total: AtomicU64::new(0),
+            gb28181_events_redrive_exhausted_total: AtomicU64::new(0),
             response_duration_sum_ns: AtomicU64::new(0),
             response_duration_buckets: (0..bucket_count).map(|_| AtomicU64::new(0)).collect(),
         }
@@ -74,6 +92,42 @@ impl RequestMetrics {
     /// Records a GB28181 event dropped due to a full sink queue.
     pub fn record_gb28181_event_dropped(&self) {
         self.gb28181_events_dropped_total
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Records a GB28181 event admitted into the sink queue.
+    pub fn record_gb28181_event_admitted(&self) {
+        self.gb28181_events_admitted_total
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Records a redundant GB28181 event that was coalesced away.
+    pub fn record_gb28181_event_coalesced(&self) {
+        self.gb28181_events_coalesced_total
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Records a low-priority GB28181 event shed under overload.
+    pub fn record_gb28181_event_shed(&self) {
+        self.gb28181_events_shed_total
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Records a GB28181 event placed in the dead-letter queue.
+    pub fn record_gb28181_event_dead_lettered(&self) {
+        self.gb28181_events_dead_lettered_total
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Records a GB28181 event successfully redriven from the dead-letter queue.
+    pub fn record_gb28181_event_redriven(&self) {
+        self.gb28181_events_redriven_total
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Records a GB28181 event dropped after exhausting dead-letter redrive budget.
+    pub fn record_gb28181_event_redrive_exhausted(&self) {
+        self.gb28181_events_redrive_exhausted_total
             .fetch_add(1, Ordering::Relaxed);
     }
 
@@ -114,6 +168,22 @@ pub fn metrics_response(
     let responses_4xx = metrics.responses_4xx.load(Ordering::Relaxed);
     let responses_5xx = metrics.responses_5xx.load(Ordering::Relaxed);
     let gb28181_events_dropped_total = metrics.gb28181_events_dropped_total.load(Ordering::Relaxed);
+    let gb28181_events_admitted_total = metrics
+        .gb28181_events_admitted_total
+        .load(Ordering::Relaxed);
+    let gb28181_events_coalesced_total = metrics
+        .gb28181_events_coalesced_total
+        .load(Ordering::Relaxed);
+    let gb28181_events_shed_total = metrics.gb28181_events_shed_total.load(Ordering::Relaxed);
+    let gb28181_events_dead_lettered_total = metrics
+        .gb28181_events_dead_lettered_total
+        .load(Ordering::Relaxed);
+    let gb28181_events_redriven_total = metrics
+        .gb28181_events_redriven_total
+        .load(Ordering::Relaxed);
+    let gb28181_events_redrive_exhausted_total = metrics
+        .gb28181_events_redrive_exhausted_total
+        .load(Ordering::Relaxed);
 
     let sum_ns = metrics.response_duration_sum_ns.load(Ordering::Relaxed);
     let sum_seconds = (sum_ns as f64) / 1_000_000_000.0;
@@ -131,6 +201,18 @@ pub fn metrics_response(
          cheetah_http_responses_5xx_total {responses_5xx}\n\
          # TYPE cheetah_gb28181_events_dropped_total counter\n\
          cheetah_gb28181_events_dropped_total {gb28181_events_dropped_total}\n\
+         # TYPE cheetah_gb28181_events_admitted_total counter\n\
+         cheetah_gb28181_events_admitted_total {gb28181_events_admitted_total}\n\
+         # TYPE cheetah_gb28181_events_coalesced_total counter\n\
+         cheetah_gb28181_events_coalesced_total {gb28181_events_coalesced_total}\n\
+         # TYPE cheetah_gb28181_events_shed_total counter\n\
+         cheetah_gb28181_events_shed_total {gb28181_events_shed_total}\n\
+         # TYPE cheetah_gb28181_events_dead_lettered_total counter\n\
+         cheetah_gb28181_events_dead_lettered_total {gb28181_events_dead_lettered_total}\n\
+         # TYPE cheetah_gb28181_events_redriven_total counter\n\
+         cheetah_gb28181_events_redriven_total {gb28181_events_redriven_total}\n\
+         # TYPE cheetah_gb28181_events_redrive_exhausted_total counter\n\
+         cheetah_gb28181_events_redrive_exhausted_total {gb28181_events_redrive_exhausted_total}\n\
          # TYPE cheetah_http_response_duration_seconds histogram\n"
     );
 
