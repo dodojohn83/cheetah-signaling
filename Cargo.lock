@@ -557,6 +557,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "cheetah-contract-tests"
+version = "0.1.0"
+dependencies = [
+ "cheetah-domain",
+ "cheetah-message-api",
+ "cheetah-message-local",
+ "cheetah-signal-types",
+ "tokio",
+]
+
+[[package]]
 name = "cheetah-ctl"
 version = "0.1.0"
 dependencies = [
@@ -1110,6 +1121,18 @@ dependencies = [
  "url",
  "uuid",
  "x509-parser",
+]
+
+[[package]]
+name = "cheetah-state-machine-tests"
+version = "0.1.0"
+dependencies = [
+ "cheetah-domain",
+ "cheetah-gb28181-core",
+ "cheetah-gb28181-module",
+ "cheetah-signal-types",
+ "secrecy",
+ "uuid",
 ]
 
 [[package]]
