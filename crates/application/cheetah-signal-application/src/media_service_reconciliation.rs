@@ -371,6 +371,8 @@ impl MediaService {
                     // Node is in a protection window; nothing to do.
                 }
             }
+            // Persist per-node state before the next inactive-node lookup.
+            uow.commit().await?;
         }
         // Persist migrations/failures before releasing scheduler reservations.
         uow.commit().await?;
