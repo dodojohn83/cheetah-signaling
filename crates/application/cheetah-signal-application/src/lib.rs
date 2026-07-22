@@ -12,6 +12,7 @@ pub(crate) mod media_service_command;
 pub(crate) mod media_service_command_start;
 pub(crate) mod media_service_helpers;
 pub(crate) mod media_service_reconciliation;
+pub(crate) mod media_service_reconciliation_support;
 pub(crate) mod media_service_reconnect;
 pub(crate) mod media_service_start;
 pub mod operation_reconciler;
