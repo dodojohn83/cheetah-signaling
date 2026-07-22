@@ -523,35 +523,35 @@ impl cheetah_storage_api::NodeRepository for StorageBackedNodeRepo {
     }
 }
 
-/// Reconciliation handler triggered by media event sequence gaps.
-///
-/// Starts a unit of work and runs the media reconciler for the affected
-/// tenant so any skipped events are recovered without waiting for the
-/// periodic reconciliation job.
+/// Request to reconcile a tenant after a media event sequence gap is detected.
+#[derive(Clone, Copy, Debug)]
+struct ReconcileRequest {
+    node_id: NodeId,
+    tenant_id: TenantId,
+    expected_sequence: u64,
+    actual_sequence: u64,
+}
+
+/// Background worker state for tenant-level media reconciliation.
 #[derive(Clone)]
-struct AppReconciliationHandler {
+struct ReconcileWorker {
     media_service: cheetah_signal_application::MediaService,
     storage: std::sync::Arc<dyn cheetah_storage_api::Storage>,
     node_id: NodeId,
+    concurrency: std::sync::Arc<tokio::sync::Semaphore>,
+    in_flight: std::sync::Arc<tokio::sync::Mutex<std::collections::HashSet<TenantId>>>,
 }
 
-#[async_trait::async_trait]
-impl ReconciliationHandler for AppReconciliationHandler {
-    async fn reconcile(
-        &self,
-        node_id: NodeId,
-        tenant_id: TenantId,
-        expected_sequence: u64,
-        actual_sequence: u64,
-    ) {
+impl ReconcileWorker {
+    async fn run(&self, req: ReconcileRequest) {
         let mut uow = match self.storage.begin().await {
             Ok(uow) => uow,
             Err(e) => {
                 tracing::warn!(
-                    node_id = %node_id,
-                    tenant_id = %tenant_id,
-                    expected_sequence,
-                    actual_sequence,
+                    node_id = %req.node_id,
+                    tenant_id = %req.tenant_id,
+                    expected_sequence = req.expected_sequence,
+                    actual_sequence = req.actual_sequence,
                     error = %e,
                     "failed to begin unit of work for gap reconciliation"
                 );
@@ -560,7 +560,7 @@ impl ReconciliationHandler for AppReconciliationHandler {
         };
 
         let context = RequestContext {
-            tenant_id,
+            tenant_id: req.tenant_id,
             principal: Principal {
                 id: "media-event-consumer".to_string(),
                 kind: PrincipalKind::Service,
@@ -577,15 +577,91 @@ impl ReconciliationHandler for AppReconciliationHandler {
 
         if let Err(e) = self.media_service.reconcile(&context, uow.as_mut()).await {
             tracing::warn!(
-                node_id = %node_id,
-                tenant_id = %tenant_id,
-                expected_sequence,
-                actual_sequence,
+                node_id = %req.node_id,
+                tenant_id = %req.tenant_id,
+                expected_sequence = req.expected_sequence,
+                actual_sequence = req.actual_sequence,
                 error = %e,
                 "media gap reconciliation failed"
             );
         }
     }
+}
+
+async fn reconcile_worker(
+    mut rx: tokio::sync::mpsc::Receiver<ReconcileRequest>,
+    state: ReconcileWorker,
+    cancel: CancellationToken,
+) {
+    loop {
+        tokio::select! {
+            Some(req) = rx.recv() => {
+                let mut in_flight = state.in_flight.lock().await;
+                if !in_flight.insert(req.tenant_id) {
+                    continue;
+                }
+                drop(in_flight);
+
+                let Ok(permit) = state.concurrency.clone().acquire_owned().await else {
+                    break;
+                };
+                let state = state.clone();
+                tokio::spawn(async move {
+                    let _permit = permit;
+                    state.run(req).await;
+                    let mut in_flight = state.in_flight.lock().await;
+                    in_flight.remove(&req.tenant_id);
+                });
+            }
+            _ = cancel.cancelled() => break,
+        }
+    }
+}
+
+/// Handler that enqueues heavy tenant reconciliations onto a bounded
+/// background worker instead of blocking the media event stream.
+#[derive(Clone)]
+struct AppReconciliationHandler {
+    tx: tokio::sync::mpsc::Sender<ReconcileRequest>,
+}
+
+#[async_trait::async_trait]
+impl ReconciliationHandler for AppReconciliationHandler {
+    async fn reconcile(
+        &self,
+        node_id: NodeId,
+        tenant_id: TenantId,
+        expected_sequence: u64,
+        actual_sequence: u64,
+    ) {
+        let req = ReconcileRequest {
+            node_id,
+            tenant_id,
+            expected_sequence,
+            actual_sequence,
+        };
+        // Drop the request if the bounded queue is full; the periodic
+        // reconciler will eventually catch up.
+        let _ = self.tx.try_send(req);
+    }
+}
+
+fn spawn_reconcile_worker(
+    media_service: cheetah_signal_application::MediaService,
+    storage: std::sync::Arc<dyn cheetah_storage_api::Storage>,
+    node_id: NodeId,
+    cancel: CancellationToken,
+) -> AppReconciliationHandler {
+    let (tx, rx) = tokio::sync::mpsc::channel(64);
+    let worker = ReconcileWorker {
+        media_service,
+        storage,
+        node_id,
+        concurrency: std::sync::Arc::new(tokio::sync::Semaphore::new(4)),
+        in_flight: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashSet::new())),
+    };
+    tokio::spawn(reconcile_worker(rx, worker, cancel));
+    AppReconciliationHandler { tx }
 }
 
 /// Assembles storage, local bus, application services, protocol drivers and the HTTP API.
@@ -887,11 +963,12 @@ pub async fn start(
         clock.clone(),
         node_id,
         MediaEventConsumerConfig::default(),
-        Arc::new(AppReconciliationHandler {
-            media_service: state.media_service.clone(),
-            storage: storage.clone(),
+        Arc::new(spawn_reconcile_worker(
+            state.media_service.clone(),
+            storage.clone(),
             node_id,
-        }),
+            cancel.child_token(),
+        )),
         media_metrics.clone(),
     ));
     let consumer_cancel = cancel.child_token();
