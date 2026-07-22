@@ -191,7 +191,14 @@ impl MediaControlClient {
             request.media_node_id,
             request.target_media_node_instance_epoch,
         );
-        let entry = self.get_or_create_entry(&key, endpoint).await?;
+        let entry = self
+            .get_or_create_entry(
+                &key,
+                endpoint,
+                request.media_node_id,
+                request.target_media_node_instance_epoch,
+            )
+            .await?;
 
         entry.can_attempt()?;
 
@@ -294,7 +301,14 @@ impl MediaControlClient {
             request.media_node_id,
             request.media_node_instance_epoch,
         );
-        let entry = self.get_or_create_entry(&key, endpoint).await?;
+        let entry = self
+            .get_or_create_entry(
+                &key,
+                endpoint,
+                request.media_node_id,
+                request.media_node_instance_epoch,
+            )
+            .await?;
 
         entry.can_attempt()?;
 
@@ -374,6 +388,8 @@ impl MediaControlClient {
         &self,
         key: &str,
         endpoint: &str,
+        media_node_id: NodeId,
+        media_node_instance_epoch: MediaNodeInstanceEpoch,
     ) -> Result<Arc<ChannelEntry>, MediaClientError> {
         {
             let pool = self.pool.lock().map_err(|_| {
@@ -404,6 +420,32 @@ impl MediaControlClient {
             existing.touch();
             return Ok(Arc::clone(existing));
         }
+
+        // If the same media node is now reached through a different endpoint,
+        // TLS identity, or newer instance epoch, close the stale channel(s) so
+        // the pool does not keep an obsolete connection open after rotation.
+        let node_id_str = media_node_id.to_string();
+        let new_epoch = media_node_instance_epoch.0;
+        let stale: Vec<String> = pool
+            .keys()
+            .filter(|k| {
+                if *k == key {
+                    return false;
+                }
+                let mut parts = k.split('\0');
+                let same_node = parts.nth(1) == Some(&node_id_str);
+                let stale_or_older_epoch = parts
+                    .next()
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .is_some_and(|epoch| epoch <= new_epoch);
+                same_node && stale_or_older_epoch
+            })
+            .cloned()
+            .collect();
+        for stale_key in stale {
+            pool.remove(&stale_key);
+        }
+
         if pool.len() >= self.config.max_connections
             && let Some((oldest_key, _)) = pool.iter().min_by_key(|(_, e)| e.last_used())
         {
