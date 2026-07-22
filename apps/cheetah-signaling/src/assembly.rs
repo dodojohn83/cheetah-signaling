@@ -3,7 +3,7 @@
 //! Startup order (per AGENTS.md): config/secret → schema check → bus →
 //! repository → ownership → media → protocol → public listener → ready.
 
-use crate::gb_event_sink;
+use crate::gb_event_admission;
 use crate::onvif_discovery;
 use crate::workers::{
     DriverCommandBus, OwnerCommandHandler, SingleNodeOwnerResolver, StorageDeviceProtocolLookup,
@@ -988,7 +988,7 @@ pub async fn start(
             driver_config = driver_config.with_tcp_bind(tcp);
         }
 
-        let (sink, gb_event_handle) = gb_event_sink::spawn(
+        let (sink, gb_event_handle) = gb_event_admission::spawn(
             state.clone(),
             node_id,
             tenant_id,
