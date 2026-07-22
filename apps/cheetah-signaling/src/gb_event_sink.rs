@@ -6,7 +6,8 @@
 //! background worker.
 
 use cheetah_domain::{
-    Connectivity, Device, DomainEvent, MediaSessionError, MediaSessionState, Protocol,
+    Connectivity, Device, DomainEvent, MediaSession, MediaSessionError, MediaSessionState,
+    Protocol, UnitOfWork,
 };
 use cheetah_gb28181_driver_tokio::sink::EventSink;
 use cheetah_gb28181_module::DeviceId as GbDeviceId;
@@ -874,9 +875,6 @@ async fn replace_catalog(
             &item.device_id,
         );
         let mut metadata = BTreeMap::new();
-        // Persist the GB28181 channel external ID so channel-scoped commands
-        // (PTZ, preset, device control, record info) can address the SIP target.
-        metadata.insert("external_id".to_string(), item.device_id.clone());
         if let Some(v) = &item.manufacturer {
             metadata.insert("manufacturer".to_string(), v.clone());
         }
@@ -949,10 +947,41 @@ enum MediaSessionTransition {
     Fail(String),
 }
 
-/// Drives a [`MediaSession`] through the requested transition, appends each
-/// resulting `MediaSessionStateChanged` event with the revision captured at the
-/// moment the transition occurred, and appends a `Gb28181EventReceived` envelope
-/// in the same UnitOfWork.
+/// Persists a single [`MediaSession`] state transition and appends the resulting
+/// `MediaSessionStateChanged` event to the outbox in the same UnitOfWork.
+async fn save_and_append_media_session_transition(
+    uow: &mut dyn UnitOfWork,
+    state: &ApiState,
+    context: &RequestContext,
+    tenant_id: TenantId,
+    media_session_id: MediaSessionId,
+    session: &MediaSession,
+    event: DomainEvent,
+) -> Result<(), SignalError> {
+    uow.media_session_repository().save(session).await?;
+    let aggregate_ref = ResourceRef {
+        tenant_id,
+        kind: ResourceKind::MediaSession,
+        id: ResourceId::MediaSession(media_session_id),
+    };
+    uow.outbox()
+        .append(Event::new(
+            state.id_generator.as_ref(),
+            state.clock.as_ref(),
+            context,
+            tenant_id,
+            aggregate_ref,
+            session.revision().0,
+            event,
+        ))
+        .await?;
+    Ok(())
+}
+
+/// Drives a [`MediaSession`] through the requested transition, saving and
+/// appending each resulting `MediaSessionStateChanged` event one step at a time
+/// so the repository's optimistic-concurrency check succeeds. The
+/// `Gb28181EventReceived` envelope is always appended in the same UnitOfWork.
 #[allow(clippy::too_many_arguments)]
 async fn handle_media_session_event(
     state: &ApiState,
@@ -973,77 +1002,153 @@ async fn handle_media_session_event(
 
     if let Some(mut session) = session {
         let clock = state.clock.as_ref();
-        let aggregate_ref = ResourceRef {
-            tenant_id,
-            kind: ResourceKind::MediaSession,
-            id: ResourceId::MediaSession(media_session_id),
-        };
-
-        let make_event = |event: DomainEvent, revision: u64| {
-            Event::new(
-                state.id_generator.as_ref(),
-                clock,
-                context,
-                tenant_id,
-                aggregate_ref.clone(),
-                revision,
-                event,
-            )
-        };
-
-        // Each transition bumps the session revision by exactly one, and both
-        // the SQL and in-memory repositories require the stored revision to be
-        // exactly one behind on every save. We therefore persist the session
-        // and append its state-change event after each individual transition,
-        // so the stored revision advances by one per save. Saving only once
-        // after a multi-step transition would jump the revision by two or three
-        // and be rejected as a concurrent modification, dropping the whole
-        // notification. This mirrors `MediaService::apply_started`.
-        macro_rules! step {
-            ($event:expr) => {{
-                let event = $event;
-                let revision = session.revision().0;
-                uow.media_session_repository().save(&session).await?;
-                uow.outbox().append(make_event(event, revision)).await?;
-            }};
-        }
 
         match transition {
             MediaSessionTransition::Start => match session.state() {
                 MediaSessionState::Requested => {
-                    step!(session.allocating(clock)?);
-                    step!(session.inviting(clock)?);
-                    step!(session.active(clock)?);
+                    let event = session.allocating(clock)?;
+                    save_and_append_media_session_transition(
+                        &mut *uow,
+                        state,
+                        context,
+                        tenant_id,
+                        media_session_id,
+                        &session,
+                        event,
+                    )
+                    .await?;
+                    let event = session.inviting(clock)?;
+                    save_and_append_media_session_transition(
+                        &mut *uow,
+                        state,
+                        context,
+                        tenant_id,
+                        media_session_id,
+                        &session,
+                        event,
+                    )
+                    .await?;
+                    let event = session.active(clock)?;
+                    save_and_append_media_session_transition(
+                        &mut *uow,
+                        state,
+                        context,
+                        tenant_id,
+                        media_session_id,
+                        &session,
+                        event,
+                    )
+                    .await?;
                 }
                 MediaSessionState::Allocating => {
-                    step!(session.inviting(clock)?);
-                    step!(session.active(clock)?);
+                    let event = session.inviting(clock)?;
+                    save_and_append_media_session_transition(
+                        &mut *uow,
+                        state,
+                        context,
+                        tenant_id,
+                        media_session_id,
+                        &session,
+                        event,
+                    )
+                    .await?;
+                    let event = session.active(clock)?;
+                    save_and_append_media_session_transition(
+                        &mut *uow,
+                        state,
+                        context,
+                        tenant_id,
+                        media_session_id,
+                        &session,
+                        event,
+                    )
+                    .await?;
                 }
                 MediaSessionState::Inviting => {
-                    step!(session.active(clock)?);
+                    let event = session.active(clock)?;
+                    save_and_append_media_session_transition(
+                        &mut *uow,
+                        state,
+                        context,
+                        tenant_id,
+                        media_session_id,
+                        &session,
+                        event,
+                    )
+                    .await?;
                 }
                 _ => {}
             },
             MediaSessionTransition::Stop => match session.state() {
                 MediaSessionState::Active => {
-                    step!(session.stop(clock)?);
+                    let event = session.stop(clock)?;
+                    save_and_append_media_session_transition(
+                        &mut *uow,
+                        state,
+                        context,
+                        tenant_id,
+                        media_session_id,
+                        &session,
+                        event,
+                    )
+                    .await?;
                     if session.state() == MediaSessionState::Stopping {
-                        step!(session.stopped(clock)?);
+                        let event = session.stopped(clock)?;
+                        save_and_append_media_session_transition(
+                            &mut *uow,
+                            state,
+                            context,
+                            tenant_id,
+                            media_session_id,
+                            &session,
+                            event,
+                        )
+                        .await?;
                     }
                 }
                 MediaSessionState::Stopping => {
-                    step!(session.stopped(clock)?);
+                    let event = session.stopped(clock)?;
+                    save_and_append_media_session_transition(
+                        &mut *uow,
+                        state,
+                        context,
+                        tenant_id,
+                        media_session_id,
+                        &session,
+                        event,
+                    )
+                    .await?;
                 }
                 MediaSessionState::Requested
                 | MediaSessionState::Allocating
                 | MediaSessionState::Inviting => {
-                    step!(session.stop(clock)?);
+                    let event = session.stop(clock)?;
+                    save_and_append_media_session_transition(
+                        &mut *uow,
+                        state,
+                        context,
+                        tenant_id,
+                        media_session_id,
+                        &session,
+                        event,
+                    )
+                    .await?;
                 }
                 _ => {}
             },
             MediaSessionTransition::Fail(reason) => {
                 if !session.state().is_terminal() {
-                    step!(session.failed(MediaSessionError::new("gb28181", reason), clock)?);
+                    let event = session.failed(MediaSessionError::new("gb28181", reason), clock)?;
+                    save_and_append_media_session_transition(
+                        &mut *uow,
+                        state,
+                        context,
+                        tenant_id,
+                        media_session_id,
+                        &session,
+                        event,
+                    )
+                    .await?;
                 }
             }
         };
