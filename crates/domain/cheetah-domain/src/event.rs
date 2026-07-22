@@ -309,4 +309,25 @@ pub enum DomainEvent {
         /// Whether this was a takeover from a different or failed node.
         takeover: bool,
     },
+    /// A GB28181 protocol event was received from a device or upstream platform.
+    ///
+    /// This is a typed envelope for GB28181-specific notifications (alarm,
+    /// mobile position, control response, record info, media session lifecycle
+    /// and cascade events) that do not directly mutate a device/channel
+    /// aggregate. The payload preserves the original field names so downstream
+    /// consumers can interpret them according to the GB28181 event type.
+    Gb28181EventReceived {
+        /// Tenant of the originating device or platform.
+        tenant_id: TenantId,
+        /// Device identifier, when the event belongs to a device.
+        device_id: Option<DeviceId>,
+        /// GB28181 event type, e.g. `Alarm`, `MobilePosition`, `DeviceControl`.
+        event_type: String,
+        /// Protocol that produced the event.
+        protocol: Protocol,
+        /// Stable external protocol identity, when known.
+        external_id: Option<String>,
+        /// Payload fields as key/value pairs. Complex values are JSON-encoded.
+        payload: std::collections::BTreeMap<String, String>,
+    },
 }
