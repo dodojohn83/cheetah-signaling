@@ -23,6 +23,14 @@ The inbox service now records `ProcessedMessageStatus::Accepted` when a command 
   - Changed `mark_dispatch_attempt_acked` to `mark_dispatch_attempt_sent` on successful `command_bus.send`.
 - `apps/cheetah-signaling/src/workers.rs`
   - `OwnerCommandHandler` returns `Accepted` + `Sent` + `Unknown` for GB28181/plugin commands and `Rejected` for unsupported commands or missing infrastructure.
+  - Added `MultiListenerCommandBus` and resolved each command to the listener that the device registered on, so commands are not silently delivered to the wrong driver in multi-listener deployments.
+  - Loads the active `ProtocolSession` to obtain the `listener_id` and passes it in `Gb28181Command`.
+- `apps/cheetah-signaling/src/assembly.rs`
+  - Collects all listener command senders and builds a `MultiListenerCommandBus` instead of only keeping the first sender.
+- `crates/protocols/cheetah-gb28181-module/src/command.rs`
+  - Added `listener_id` to `Gb28181Command`.
+- `apps/cheetah-signaling/src/gb_event_sink.rs`
+  - Persists `external_id` metadata for each catalog channel so channel-scoped GB28181 commands can address the correct SIP target.
 - `crates/application/cheetah-signal-application/tests/inbox_service_test.rs`
   - Updated `RecordingHandler` to use the new `CommandHandlerResult` API and assert `ProcessedMessageStatus::Accepted`.
 
