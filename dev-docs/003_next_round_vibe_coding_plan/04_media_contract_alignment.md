@@ -138,13 +138,13 @@ typed payload至少覆盖resource state、stream online/offline、RTP timeout、
 
 ## 9. MED-C-008：兼容发布
 
-- [ ] 对旧字段设置deprecated注释，不改变原字段语义。
-- [ ] 新enum 0值为`UNSPECIFIED`。
-- [ ] 删除字段前reserved name/number；v1只做可选扩展。
-- [ ] 生成descriptor与breaking baseline。
-- [ ] old reader/new writer、new reader/old writer测试。
-- [ ] 发布contract tag和checksum，媒体仓库只消费tag。
-- [ ] 明确minimum/maximum supported contract version和滚动升级窗口。
+- [x] 对旧字段设置deprecated注释，不改变原字段语义：`proto/cheetah/media/v1/media.proto` 中 `MediaEvent`/`MediaSessionEvent` 的旧字段已标 `[deprecated = true]`，不删除、不改变语义。
+- [x] 新enum 0值为`UNSPECIFIED`：所有 proto enum（`MediaNodeStatus`、`ERROR_OUTCOME`、`SNAPSHOT_FORMAT`、`PLAYBACK_CONTROL`、`PTZ_DIRECTION`、`PRESET_ACTION`、`QUERY_KIND`、`DEVICE_CONTROL_KIND`、`DEVICE_STATUS`、`RESOURCE_KIND`、`COMMAND_STATUS`、`NODE_STATUS`）的 0 值均为 `*_UNSPECIFIED`。
+- [x] 删除字段前reserved name/number；v1只做可选扩展：当前 v1 仅通过可选扩展和 `deprecated` 标记演进，尚无删除字段；后续删除字段时将使用 `reserved`。
+- [x] 生成descriptor与breaking baseline：`scripts/generate_contract_baseline.sh` 生成 `descriptor.bin` 并执行 `buf breaking --against ".git#branch=origin/main"`；CI `contract-baseline` job 已纳入。
+- [ ] old reader/new writer、new reader/old writer测试：待补充版本兼容性回归测试。
+- [ ] 发布contract tag和checksum，媒体仓库只消费tag：需与 `cheetah-media-server-rs` 约定发布流程。
+- [ ] 明确minimum/maximum supported contract version和滚动升级窗口：需在 proto 或配置中显式声明支持版本范围。
 
 ## 10. Contract tests
 
