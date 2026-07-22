@@ -14,6 +14,9 @@ pub enum SchedulerError {
     /// The requested media node is at capacity.
     #[error("media node capacity exhausted: {0}")]
     CapacityExhausted(String),
+    /// The requested media node is draining and cannot accept new reservations.
+    #[error("media node is draining: {0}")]
+    NodeDraining(String),
     /// The reservation is not known to this scheduler.
     #[error("reservation not found: tenant={tenant_id}, binding={binding_id}")]
     ReservationNotFound {

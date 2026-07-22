@@ -58,7 +58,10 @@ pub trait MediaNodeRegistry: Send + Sync {
     /// Returns the current runtime view of a node, if known.
     async fn get(&self, node_id: NodeId, clock: &dyn Clock) -> Option<MediaNode>;
 
-    /// Lists nodes that are not left and whose lease has not expired.
+    /// Lists nodes whose lease has not expired. This includes active and
+    /// draining nodes, and nodes marked `Left` that are still within their
+    /// deregister protection window. Callers must filter by `status` when they
+    /// need to exclude left or draining nodes.
     async fn list_active(&self, clock: &dyn Clock) -> Vec<MediaNode>;
 
     /// Reserves capacity for a media binding on the given node.
@@ -259,7 +262,7 @@ impl MediaNodeRegistry for InMemoryMediaNodeRegistry {
             .get_mut(&node_id)
             .ok_or_else(|| SchedulerError::NodeNotFound(node_id.to_string()))?;
         entry.node.status = NodeStatus::Left;
-        entry.node.lease_until = None;
+        entry.node.lease_until = lease_until(clock, self.config.deregister_protection_ttl_ms);
         let now = clock.now_wall();
         Ok(to_media_node(entry, now, &self.config))
     }
@@ -299,6 +302,12 @@ impl MediaNodeRegistry for InMemoryMediaNodeRegistry {
         let entry = nodes
             .get_mut(&node_id)
             .ok_or_else(|| SchedulerError::NodeNotFound(node_id.to_string()))?;
+        if entry.node.draining || entry.node.status == NodeStatus::Draining {
+            return Err(SchedulerError::NodeDraining(node_id.to_string()));
+        }
+        if entry.node.status == NodeStatus::Left {
+            return Err(SchedulerError::NodeNotFound(node_id.to_string()));
+        }
         let now = clock.now_wall();
         let ttl = i64::try_from(self.config.reservation_ttl_ms).unwrap_or(i64::MAX);
         let deadline = now
@@ -362,14 +371,16 @@ pub(crate) fn is_active(
     now: UtcTimestamp,
     config: &MediaRegistryConfig,
 ) -> bool {
-    entry.node.status != NodeStatus::Left
-        && !is_lease_expired(entry, now)
-        && !is_stale(entry, now, config)
+    match entry.node.status {
+        NodeStatus::Left => !is_lease_expired(entry, now),
+        _ => !is_lease_expired(entry, now) && !is_stale(entry, now, config),
+    }
 }
 
 pub(crate) fn is_lease_expired(entry: &NodeEntry, now: UtcTimestamp) -> bool {
     match entry.node.lease_until {
-        None => false,
+        // No lease means the node is not valid for scheduling or protection.
+        None => true,
         Some(lease) => now >= lease,
     }
 }

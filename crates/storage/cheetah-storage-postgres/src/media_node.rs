@@ -282,7 +282,7 @@ impl MediaNodeRepository for PostgresMediaNodeRepository {
         page: PageRequest,
     ) -> Result<Page<MediaNode>, StorageError> {
         let mut qb: sqlx::QueryBuilder<'_, sqlx::Postgres> = sqlx::QueryBuilder::new(&format!(
-            "SELECT {} FROM media_nodes WHERE status != 'left' AND lease_until > ",
+            "SELECT {} FROM media_nodes WHERE lease_until IS NOT NULL AND lease_until > ",
             media_node_columns()
         ));
         qb.push_bind(to_millis(now));
@@ -370,15 +370,17 @@ impl MediaNodeRepository for PostgresMediaNodeRepository {
         node_id: NodeId,
         instance_id: String,
         updated_at: UtcTimestamp,
+        lease_until: Option<UtcTimestamp>,
     ) -> Result<Option<MediaNode>, StorageError> {
         let row: Option<MediaNodeRow> = sqlx::query_as::<sqlx::Postgres, MediaNodeRow>(
             &format!(
-                "UPDATE media_nodes SET status = 'left', lease_until = NULL, updated_at = $1, revision = revision + 1
-                 WHERE node_id = $2 AND instance_id = $3
+                "UPDATE media_nodes SET status = 'left', lease_until = $1, updated_at = $2, revision = revision + 1
+                 WHERE node_id = $3 AND instance_id = $4
                  RETURNING {}",
                 media_node_columns()
             )
         )
+        .bind(lease_until.map(to_millis))
         .bind(to_millis(updated_at))
         .bind(node_id.as_uuid())
         .bind(&instance_id)

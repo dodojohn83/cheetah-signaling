@@ -13,8 +13,8 @@ use crate::mapper::map_media_event_to_callback;
 use crate::metrics::MediaMetrics;
 use crate::registry::MediaNodeRegistry;
 use cheetah_domain::{
-    DomainError, MediaEventHandler, MediaNode, MediaNodeCallback, ProcessedMessageRecord,
-    ProcessedMessageStatus, UnitOfWork,
+    DomainError, MediaEventHandler, MediaNode, MediaNodeCallback, NodeStatus,
+    ProcessedMessageRecord, ProcessedMessageStatus, UnitOfWork,
 };
 use cheetah_media_client::MediaControlClient;
 use cheetah_signal_contracts::cheetah::media::v1::MediaEvent;
@@ -102,7 +102,11 @@ impl MediaEventConsumer {
             }
 
             let nodes = self.node_registry.list_active(self.clock.as_ref()).await;
-            let active: BTreeSet<NodeId> = nodes.into_iter().map(|n| n.node_id).collect();
+            let active: BTreeSet<NodeId> = nodes
+                .into_iter()
+                .filter(|n| n.status != NodeStatus::Left)
+                .map(|n| n.node_id)
+                .collect();
             Arc::clone(&self)
                 .reconcile_subscriptions(active, &cancel)
                 .await?;
