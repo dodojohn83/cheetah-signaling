@@ -344,14 +344,6 @@ async fn process_event(
             remote_port,
             remote_proto,
         } => {
-            update_media_session(
-                state,
-                &context,
-                tenant_id,
-                media_session_id,
-                MediaSessionTransition::Start,
-            )
-            .await?;
             let internal_id = resolve_device_id(state, tenant_id, device_id.as_ref()).await;
             let mut payload = BTreeMap::new();
             payload.insert("domain_id".to_string(), domain_id.to_string());
@@ -365,12 +357,14 @@ async fn process_event(
             }
             payload.insert("remote_port".to_string(), remote_port.to_string());
             payload.insert("remote_proto".to_string(), remote_proto);
-            append_gb_event(
+            handle_media_session_event(
                 state,
                 &context,
                 tenant_id,
+                media_session_id,
+                MediaSessionTransition::Start,
                 internal_id,
-                None,
+                Some(device_id.as_ref()),
                 "MediaSessionStarted",
                 payload,
             )
@@ -383,14 +377,6 @@ async fn process_event(
             channel_id,
             source,
         } => {
-            update_media_session(
-                state,
-                &context,
-                tenant_id,
-                media_session_id,
-                MediaSessionTransition::Stop,
-            )
-            .await?;
             let internal_id = resolve_device_id(state, tenant_id, device_id.as_ref()).await;
             let mut payload = BTreeMap::new();
             payload.insert("domain_id".to_string(), domain_id.to_string());
@@ -400,12 +386,14 @@ async fn process_event(
             if let Some(s) = source {
                 payload.insert("remote_address".to_string(), s.to_string());
             }
-            append_gb_event(
+            handle_media_session_event(
                 state,
                 &context,
                 tenant_id,
+                media_session_id,
+                MediaSessionTransition::Stop,
                 internal_id,
-                None,
+                Some(device_id.as_ref()),
                 "MediaSessionStopped",
                 payload,
             )
@@ -419,14 +407,6 @@ async fn process_event(
             source,
             reason,
         } => {
-            update_media_session(
-                state,
-                &context,
-                tenant_id,
-                media_session_id,
-                MediaSessionTransition::Fail(reason.clone()),
-            )
-            .await?;
             let internal_id = resolve_device_id(state, tenant_id, device_id.as_ref()).await;
             let mut payload = BTreeMap::new();
             payload.insert("domain_id".to_string(), domain_id.to_string());
@@ -436,13 +416,15 @@ async fn process_event(
             if let Some(s) = source {
                 payload.insert("remote_address".to_string(), s.to_string());
             }
-            payload.insert("reason".to_string(), reason);
-            append_gb_event(
+            payload.insert("reason".to_string(), reason.clone());
+            handle_media_session_event(
                 state,
                 &context,
                 tenant_id,
+                media_session_id,
+                MediaSessionTransition::Fail(reason),
                 internal_id,
-                None,
+                Some(device_id.as_ref()),
                 "MediaSessionFailed",
                 payload,
             )
@@ -964,14 +946,21 @@ enum MediaSessionTransition {
     Fail(String),
 }
 
-/// Updates a [`MediaSession`] state in response to a GB28181 media lifecycle
-/// event and persists the resulting [`DomainEvent`]s to the outbox.
-async fn update_media_session(
+/// Drives a [`MediaSession`] through the requested transition, appends each
+/// resulting `MediaSessionStateChanged` event with the revision captured at the
+/// moment the transition occurred, and appends a `Gb28181EventReceived` envelope
+/// in the same UnitOfWork.
+#[allow(clippy::too_many_arguments)]
+async fn handle_media_session_event(
     state: &ApiState,
     context: &RequestContext,
     tenant_id: TenantId,
     media_session_id: MediaSessionId,
     transition: MediaSessionTransition,
+    device_id: Option<DeviceId>,
+    external_id: Option<&str>,
+    event_type: &str,
+    payload: BTreeMap<String, String>,
 ) -> Result<(), SignalError> {
     let mut uow = state.storage.begin().await.map_err(storage_error)?;
     let mut session = match uow
@@ -983,73 +972,105 @@ async fn update_media_session(
         None => return Ok(()),
     };
     let clock = state.clock.as_ref();
-
-    let events: Vec<DomainEvent> = match transition {
-        MediaSessionTransition::Start => match session.state() {
-            MediaSessionState::Requested => vec![
-                session.allocating(clock)?,
-                session.inviting(clock)?,
-                session.active(clock)?,
-            ],
-            MediaSessionState::Allocating => {
-                vec![session.inviting(clock)?, session.active(clock)?]
-            }
-            MediaSessionState::Inviting => vec![session.active(clock)?],
-            _ => Vec::new(),
-        },
-        MediaSessionTransition::Stop => match session.state() {
-            MediaSessionState::Active => {
-                let mut events = vec![session.stop(clock)?];
-                if session.state() == MediaSessionState::Stopping {
-                    events.push(session.stopped(clock)?);
-                }
-                events
-            }
-            MediaSessionState::Stopping => vec![session.stopped(clock)?],
-            MediaSessionState::Requested
-            | MediaSessionState::Allocating
-            | MediaSessionState::Inviting => vec![session.stop(clock)?],
-            _ => Vec::new(),
-        },
-        MediaSessionTransition::Fail(reason) => {
-            if session.state().is_terminal() {
-                Vec::new()
-            } else {
-                vec![session.failed(MediaSessionError::new("gb28181", reason), clock)?]
-            }
-        }
+    let aggregate_ref = ResourceRef {
+        tenant_id,
+        kind: ResourceKind::MediaSession,
+        id: ResourceId::MediaSession(media_session_id),
     };
+    let mut state_events: Vec<Event<DomainEvent>> = Vec::new();
 
-    if !events.is_empty() {
-        uow.media_session_repository().save(&session).await?;
-        let aggregate_ref = ResourceRef {
-            tenant_id,
-            kind: ResourceKind::MediaSession,
-            id: ResourceId::MediaSession(media_session_id),
-        };
-        for event in events {
-            let wrapped = Event::new(
+    let push_transition =
+        |events: &mut Vec<Event<DomainEvent>>, event: DomainEvent, revision: u64| {
+            events.push(Event::new(
                 state.id_generator.as_ref(),
                 clock,
                 context,
                 tenant_id,
                 aggregate_ref.clone(),
-                session.revision().0,
+                revision,
                 event,
-            );
-            uow.outbox().append(wrapped).await?;
+            ));
+        };
+
+    match transition {
+        MediaSessionTransition::Start => match session.state() {
+            MediaSessionState::Requested => {
+                let event = session.allocating(clock)?;
+                push_transition(&mut state_events, event, session.revision().0);
+                let event = session.inviting(clock)?;
+                push_transition(&mut state_events, event, session.revision().0);
+                let event = session.active(clock)?;
+                push_transition(&mut state_events, event, session.revision().0);
+            }
+            MediaSessionState::Allocating => {
+                let event = session.inviting(clock)?;
+                push_transition(&mut state_events, event, session.revision().0);
+                let event = session.active(clock)?;
+                push_transition(&mut state_events, event, session.revision().0);
+            }
+            MediaSessionState::Inviting => {
+                let event = session.active(clock)?;
+                push_transition(&mut state_events, event, session.revision().0);
+            }
+            _ => {}
+        },
+        MediaSessionTransition::Stop => match session.state() {
+            MediaSessionState::Active => {
+                let event = session.stop(clock)?;
+                push_transition(&mut state_events, event, session.revision().0);
+                if session.state() == MediaSessionState::Stopping {
+                    let event = session.stopped(clock)?;
+                    push_transition(&mut state_events, event, session.revision().0);
+                }
+            }
+            MediaSessionState::Stopping => {
+                let event = session.stopped(clock)?;
+                push_transition(&mut state_events, event, session.revision().0);
+            }
+            MediaSessionState::Requested
+            | MediaSessionState::Allocating
+            | MediaSessionState::Inviting => {
+                let event = session.stop(clock)?;
+                push_transition(&mut state_events, event, session.revision().0);
+            }
+            _ => {}
+        },
+        MediaSessionTransition::Fail(reason) => {
+            if !session.state().is_terminal() {
+                let event = session.failed(MediaSessionError::new("gb28181", reason), clock)?;
+                push_transition(&mut state_events, event, session.revision().0);
+            }
         }
-        uow.commit().await?;
+    };
+
+    if !state_events.is_empty() {
+        uow.media_session_repository().save(&session).await?;
+        for event in state_events {
+            uow.outbox().append(event).await?;
+        }
     }
+
+    // Always append the GB28181 envelope so the driver event is recorded even
+    // when the session is already in a terminal state.
+    let envelope = build_gb_event(
+        state,
+        context,
+        tenant_id,
+        device_id,
+        external_id,
+        event_type,
+        payload,
+    );
+    uow.outbox().append(envelope).await?;
+    uow.commit().await?;
     Ok(())
 }
 
-/// Appends a [`DomainEvent::Gb28181EventReceived`] to the outbox.
+/// Builds a [`DomainEvent::Gb28181EventReceived`] outbox event.
 ///
 /// When an internal device identifier is known the event is attached to the
-/// device aggregate; otherwise it is attached to a synthetic event aggregate so
-/// the outbox still captures the occurrence.
-async fn append_gb_event(
+/// device aggregate; otherwise it is attached to a synthetic event aggregate.
+fn build_gb_event(
     state: &ApiState,
     context: &RequestContext,
     tenant_id: TenantId,
@@ -1057,8 +1078,7 @@ async fn append_gb_event(
     external_id: Option<&str>,
     event_type: &str,
     payload: BTreeMap<String, String>,
-) -> Result<(), SignalError> {
-    let mut uow = state.storage.begin().await.map_err(storage_error)?;
+) -> Event<DomainEvent> {
     let event_id = state.id_generator.generate_event_id();
     let aggregate_ref = match device_id {
         Some(id) => ResourceRef {
@@ -1072,7 +1092,7 @@ async fn append_gb_event(
             id: ResourceId::Event(event_id),
         },
     };
-    let event = Event {
+    Event {
         event_id,
         tenant_id,
         aggregate_ref,
@@ -1091,7 +1111,29 @@ async fn append_gb_event(
             external_id: external_id.map(String::from),
             payload,
         },
-    };
+    }
+}
+
+/// Appends a [`DomainEvent::Gb28181EventReceived`] to the outbox.
+async fn append_gb_event(
+    state: &ApiState,
+    context: &RequestContext,
+    tenant_id: TenantId,
+    device_id: Option<DeviceId>,
+    external_id: Option<&str>,
+    event_type: &str,
+    payload: BTreeMap<String, String>,
+) -> Result<(), SignalError> {
+    let mut uow = state.storage.begin().await.map_err(storage_error)?;
+    let event = build_gb_event(
+        state,
+        context,
+        tenant_id,
+        device_id,
+        external_id,
+        event_type,
+        payload,
+    );
     uow.outbox().append(event).await?;
     uow.commit().await?;
     Ok(())
