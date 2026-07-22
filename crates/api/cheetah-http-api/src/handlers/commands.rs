@@ -121,7 +121,9 @@ async fn resolve_owner_epoch(
         .resolve(tenant_id, device_id)
         .await
         .map_err(HttpError::from)?;
-    Ok(owner.map(|o| o.owner_epoch).unwrap_or(OwnerEpoch(0)))
+    // A newly acquired owner always starts at epoch 1; defaulting to 0 would
+    // cause any later owner-recovered operation to fail the epoch fence.
+    Ok(owner.map(|o| o.owner_epoch).unwrap_or(OwnerEpoch(1)))
 }
 
 async fn submit_device_command(
