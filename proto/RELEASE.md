@@ -20,7 +20,7 @@ tagged and consumed by downstream repositories (e.g. `cheetah-media-server-rs`).
 1. Make sure `scripts/generate_contract_baseline.sh` passes and the generated
    `target/contract-baseline/descriptor.bin` reflects the contract state you
    intend to publish.
-2. Run `scripts/publish_proto_tag.sh <version>` (e.g. `1.0.0`). The script:
+2. Run `scripts/publish_proto_tag.sh <version>` (e.g. `1`). The script:
    - Creates an annotated Git tag `proto/cheetah.media.v1/v<version>`.
    - Computes the SHA-256 checksum of `target/contract-baseline/descriptor.bin`.
    - Writes the checksum to `target/contract-baseline/descriptor.bin.sha256`.

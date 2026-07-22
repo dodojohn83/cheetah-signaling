@@ -3,7 +3,12 @@
 # Usage: publish_proto_tag.sh <version>
 set -euo pipefail
 
-VERSION="${1:?contract version required (e.g. 1.0.0)}"
+VERSION="${1:?contract version required (positive integer, e.g. 1)}"
+
+if ! [[ "$VERSION" =~ ^[1-9][0-9]*$ ]]; then
+    echo "error: contract version must be a positive integer, got '$VERSION'" >&2
+    exit 1
+fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 OUT_DIR="${ROOT_DIR}/target/contract-baseline"
