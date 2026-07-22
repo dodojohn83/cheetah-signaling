@@ -147,6 +147,8 @@ impl MediaNodeRegistry for PersistentMediaNodeRegistry {
     async fn heartbeat(
         &self,
         node_id: NodeId,
+        lease_id: &str,
+        instance_epoch: u64,
         load: u64,
         session_count: u64,
         clock: &dyn Clock,
@@ -173,16 +175,27 @@ impl MediaNodeRegistry for PersistentMediaNodeRegistry {
                 "{node_id} has been deregistered"
             )));
         }
+        if entry.instance_id != lease_id || entry.node.instance_epoch != instance_epoch {
+            return Err(SchedulerError::NodeNotFound(format!(
+                "{node_id} lease or instance epoch mismatch"
+            )));
+        }
         let now = clock.now_wall();
         let lease = lease_until(clock, self.config.default_lease_ttl_ms)
             .ok_or_else(|| SchedulerError::Backend("lease timestamp overflow".to_string()))?;
-        let instance_id = entry.instance_id.clone();
 
         let persisted = self
             .repo
             .lock()
             .await
-            .heartbeat(node_id, instance_id, lease, now, load, session_count)
+            .heartbeat(
+                node_id,
+                lease_id.to_string(),
+                lease,
+                now,
+                load,
+                session_count,
+            )
             .await
             .map_err(|e| SchedulerError::Backend(e.to_string()))?;
 

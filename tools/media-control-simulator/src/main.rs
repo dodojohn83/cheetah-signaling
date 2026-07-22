@@ -169,6 +169,7 @@ impl State {
             network_zones: vec![],
             load: 0,
             session_count: 0,
+            ..Default::default()
         };
         Self {
             config,

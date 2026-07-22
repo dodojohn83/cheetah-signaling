@@ -338,6 +338,17 @@ message MediaNodeInfo {
   uint64 load = 12;
   uint64 session_count = 13;
   repeated MediaCapability capabilities = 14;
+  // Opaque lease identifier assigned during registration; heartbeats must echo it.
+  string lease_id = 15;
+  // Lease TTL and expected heartbeat interval, in milliseconds, returned by the registry.
+  uint64 lease_ttl_ms = 16;
+  uint64 heartbeat_interval_ms = 17;
+  // Server wall clock at the time the response was generated.
+  google.protobuf.Timestamp cluster_time = 18;
+  // Contract version accepted by this registry; media nodes must not exceed it.
+  uint64 accepted_contract_version = 19;
+  // Monotonic instance epoch assigned during registration; heartbeats must echo it.
+  uint64 instance_epoch = 20;
 }
 
 // Media node heartbeat payload.
@@ -345,6 +356,10 @@ message MediaNodeHeartbeat {
   string node_id = 1;
   uint64 load = 2;
   uint64 session_count = 3;
+  // Opaque lease identifier echoed from the register response.
+  string lease_id = 4;
+  // Monotonic instance epoch from the register response; used to fence stale instances.
+  uint64 instance_epoch = 5;
 }
 
 // Media node drain request.
