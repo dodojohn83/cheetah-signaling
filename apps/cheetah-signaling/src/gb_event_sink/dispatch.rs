@@ -461,7 +461,8 @@ pub(super) async fn process_event(
             upstream_from,
             upstream_to,
             target_user,
-            // Raw negotiated SDP body is intentionally not persisted.
+            // Raw negotiated SDP body is intentionally not persisted; only
+            // bounded, desensitized control fields are recorded (AGENTS.md §8).
             remote_sdp: _,
         } => {
             let mut payload = BTreeMap::new();
