@@ -12,11 +12,11 @@
 
 ## 2. WF-001：Saga step与dispatch
 
-- [ ] 每个Operation持久化有序OperationStep和DispatchAttempt。
-- [ ] 聚合变更、step和outbox同事务提交。
-- [ ] Command包含operation/step、idempotency、deadline和owner epoch。
-- [ ] ack、重投、dead-letter只更新dispatch诊断，不直接伪造Operation结果。
-- [ ] worker崩溃后按step状态和外部query恢复。
+- [x] 每个Operation持久化有序OperationStep和DispatchAttempt：`Operation` 聚合持有 `steps: Vec<OperationStep>`，每个 `OperationStep` 包含 `attempts: Vec<DispatchAttempt>`；`CommandDispatcher::dispatch` 在状态迁移动作中调用 `record_dispatch_attempt`、`mark_dispatch_attempt_sent`/`nacked`（PR #232）。
+- [x] 聚合变更、step和outbox同事务提交：`save_operation` 在同一 `UnitOfWork` 中先 `operation_repository().save()`，再 `uow.outbox().append()`，最后 `uow.commit().await`；`CommandDispatcher` 每次状态迁移后都提交（PR #232）。
+- [x] Command包含operation/step、idempotency、deadline和owner epoch：`Command` 结构体包含 `operation_id`、`step_id`、`idempotency_key`、`idempotency_scope`、`deadline`、`expected_owner_epoch`，由 `Operation::command` 派生（PR #232）。
+- [x] ack、重投、dead-letter只更新dispatch诊断，不直接伪造Operation结果：`InboxService` 返回 `CommandHandlerResult` 描述 `receipt`/`dispatch`/`outcome`；`CommandDispatcher` 仅在 transport 明确不可达（`command_bus.send` 失败）或 owner epoch 不匹配时标记 `DispatchAttempt` 为 `Nacked` 并完成 `Operation`，不伪造成功；`OwnerCommandHandler` 对设备/媒体侧暂时错误返回 `Err` 让 inbox `nak` 重投，业务结果最终由外部查询或 reconciler 收敛（PR #232）。
+- [x] worker崩溃后按step状态和外部query恢复：`apps/cheetah-signaling/src/operation_dispatch_worker.rs` 订阅 `OperationSubmitted` 事件，在 `CommandDispatcher::dispatch` 中检查 operation 是否已 `terminal` 或 `running`；outbox relay 在崩溃重启后会重放未确认事件，从而自动恢复未决 dispatch（PR #232）。
 
 ## 3. WF-002：Live start
 
