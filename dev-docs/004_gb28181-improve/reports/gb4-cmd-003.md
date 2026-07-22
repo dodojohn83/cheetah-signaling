@@ -32,6 +32,9 @@ The inbox service now records `ProcessedMessageStatus::Accepted` when a command 
   - Added `listener_id` to `Gb28181Command`.
 - `apps/cheetah-signaling/src/gb_event_sink.rs`
   - Persists `external_id` metadata for each catalog channel so channel-scoped GB28181 commands can address the correct SIP target.
+  - Restored the `force ||` condition in `ensure_online` so re-registration can refresh the online state of an already-online device.
+- `crates/protocols/cheetah-gb28181-core/src/sip/parser.rs`
+  - Fixed a TCP stream-mode deadlock in the `HeaderNormalization` blank-line handling: a header terminator (`\r\n\r\n`) with no trailing bytes, or a body without a trailing CRLF, is now treated as the end of headers instead of waiting indefinitely for more data.
 - `crates/application/cheetah-signal-application/tests/inbox_service_test.rs`
   - Updated `RecordingHandler` to use the new `CommandHandlerResult` API and assert `ProcessedMessageStatus::Accepted`.
 

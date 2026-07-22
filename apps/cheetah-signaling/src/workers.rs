@@ -220,7 +220,7 @@ impl OwnerCommandHandler {
             None => {
                 return Ok(CommandHandlerResult::rejected(
                     "unable to resolve gb28181 command target",
-                ))
+                ));
             }
         };
 
