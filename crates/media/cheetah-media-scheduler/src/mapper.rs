@@ -337,6 +337,22 @@ mod tests {
     }
 
     #[test]
+    fn map_session_ref_rejects_empty_session_id() {
+        let proto = MediaSessionRef {
+            media_session_id: String::new(),
+            device_id: String::new(),
+            channel_id: String::new(),
+            media_node_instance_epoch: 7,
+        };
+        let result = map_proto_session_ref(
+            TenantId::from_str("11111111-1111-1111-1111-111111111111").unwrap(),
+            NodeId::from_str("44444444-4444-4444-4444-444444444444").unwrap(),
+            &proto,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn map_session_ref_rejects_invalid_session_id() {
         let proto = MediaSessionRef {
             media_session_id: "not-a-uuid".to_string(),

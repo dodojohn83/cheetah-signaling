@@ -49,12 +49,12 @@
 
 ## 6. MED-R-005：Mapper 与 MediaPort
 
-- [ ] domain newtype ↔ Proto显式转换，错误字段精确定位。
-- [ ] MediaKey按001规则稳定编码tenant/app/stream。
-- [ ] reserve_live/playback/talk只调度和创建reservation，不隐式执行协议步骤。
-- [ ] execute校验node/instance/owner/deadline后调用typed operation。
-- [ ] release重复调用安全；结果不存在视为已释放但记录对账。
-- [ ] list_sessions严格tenant分页，畸形返回项导致节点contract violation而非静默跳过。
+- [x] domain newtype ↔ Proto显式转换，错误字段精确定位：`crates/media/cheetah-media-scheduler/src/mapper.rs` 提供 `map_command_to_media_command`、`map_proto_session_ref`、`map_media_event_to_callback`，转换失败返回带字段名的 `InvalidArgument`（PR #228）。
+- [x] MediaKey按001规则稳定编码tenant/app/stream：`crates/domain/cheetah-domain/src/media_key.rs` 实现 `MediaKey::encode` 为 `{tenant_id}/{app}/{stream_id}`（PR #228）。
+- [x] reserve_live/playback/talk只调度和创建reservation，不隐式执行协议步骤：`SchedulerMediaPort` 三个 `reserve_*` 方法仅调用 `scheduler.schedule`/`reserve` 返回 `MediaReservation`；启动协议步骤由 `media_service_start.rs` 在持久化 `MediaBinding` 后显式 `execute`（PR #228）。
+- [x] execute校验node/instance/owner/deadline后调用typed operation：`SchedulerMediaPort::execute` 先检查目标节点存在、`instance_epoch` 匹配、`owner_epoch` 非 0、deadline 未过期，再组装 `MediaControlRequest` 调用 `MediaControlClient`（PR #228）。
+- [x] release重复调用安全；结果不存在视为已释放但记录对账：`SchedulerMediaPort::release` 对 `SchedulerError::ReservationNotFound` 返回 `Ok(())` 并记录诊断日志（PR #228）。
+- [x] list_sessions严格tenant分页，畸形返回项导致节点contract violation而非静默跳过：`SchedulerMediaPort::list_sessions` 把 `map_proto_session_ref` 的失败从 `warn!`+跳过改为 `?` 立即向上传播，`map_proto_session_ref` 对空/畸形 `media_session_id`、`device_id`、`channel_id` 返回带字段名的 `InvalidArgument` 错误（PR #228）。
 
 ## 7. MED-R-006：Event consumer
 
