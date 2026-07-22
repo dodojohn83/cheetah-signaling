@@ -43,8 +43,8 @@
 
 `GB4-ACC-001..005`、`GB4-CMD-001..003`、`GB4-EVT-001..002`、`GB4-MED-001..008` 与 `GB4-COMP-001..004` 已在仓库实现单设备/NVR 控制面闭环，并随 CI 运行：
 
-- `cheetah-gb-system-tests/tests/gb4_sys_001_edge.rs`：SQLite + fake media 单节点 edge 纵向测试，覆盖 REGISTER digest、keepalive、catalog、alarm、PTZ/command、live INVITE/200/ACK/BYE。
-- `cheetah-gb-system-tests/tests/gb4_sys_002_cluster.rs`：PostgreSQL/NATS + fake media 集群纵向测试，覆盖跨节点 owner epoch、消息派分和 Operation 终态。
+- `crates/testing/cheetah-gb-system-tests/tests/gb4_sys_001_edge.rs`：SQLite + fake media 单节点 edge 纵向测试，覆盖 REGISTER digest、keepalive、catalog、alarm、PTZ/command、live INVITE/200/ACK/BYE。
+- `crates/testing/cheetah-gb-system-tests/tests/gb4_sys_002_cluster.rs`：PostgreSQL/NATS + fake media 集群纵向测试，覆盖跨节点 owner epoch、消息派分和 Operation 终态。
 - `tools/gb28181-simulator`：fixed-shard deterministic simulator，可模拟设备注册、目录上报、告警、媒体协商和故障场景，用于预互操作冒烟与容量画像。
 - `testdata/gb28181/profiles/`：厂商兼容性 profile（海康/大华/NVR 等 quirks）已建立，真实设备验证时可直接匹配。
 
