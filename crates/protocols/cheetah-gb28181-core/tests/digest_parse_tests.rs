@@ -60,6 +60,24 @@ fn parse_digest_response_with_qop() -> Result<(), DigestError> {
 }
 
 #[test]
+fn parse_rejects_md5_sess_algorithm() {
+    let value = r#"Digest username="alice", realm="example.com", nonce="abc", uri="sip:bob@example.com", response="resp", algorithm="MD5-sess""#;
+    assert!(matches!(
+        DigestResponse::parse(value),
+        Err(DigestError::UnknownAlgorithm)
+    ));
+}
+
+#[test]
+fn parse_rejects_unknown_algorithm() {
+    let value = r#"Digest username="alice", realm="example.com", nonce="abc", uri="sip:bob@example.com", response="resp", algorithm="whirlpool""#;
+    assert!(matches!(
+        DigestResponse::parse(value),
+        Err(DigestError::UnknownAlgorithm)
+    ));
+}
+
+#[test]
 fn parse_digest_response_without_qop() -> Result<(), DigestError> {
     let value = r#"username="alice", realm="example.com", nonce="abc", uri="sip:bob@example.com", response="resp", algorithm="MD5""#;
     let parsed = DigestResponse::parse(value)?;

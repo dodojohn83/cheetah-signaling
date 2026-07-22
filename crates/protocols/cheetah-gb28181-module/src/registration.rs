@@ -2,6 +2,7 @@
 
 use crate::error::AccessError;
 use crate::types::DeviceId;
+use cheetah_gb28181_core::EndpointRoute;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 
@@ -9,8 +10,12 @@ use std::net::SocketAddr;
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
 pub(crate) struct Registration {
-    /// Source address of the most recent register/keepalive.
-    pub source: SocketAddr,
+    /// Typed endpoint route established by the authenticated REGISTER.
+    ///
+    /// The route (observed source, Via `received`/`rport`, Contact and
+    /// advertised endpoint) is only rewritten by another authenticated
+    /// REGISTER; keepalive/MESSAGE packets never move it.
+    pub route: EndpointRoute,
     /// Contact endpoint string returned at registration.
     pub contact: String,
     /// Monotonic time when the registration was created or refreshed.
@@ -23,6 +28,26 @@ pub(crate) struct Registration {
     pub offline: bool,
     /// Raw User-Agent header from registration, if present.
     pub user_agent: Option<String>,
+}
+
+impl Registration {
+    /// The authoritative source address for events and downlink routing: the
+    /// send target resolved from the endpoint route established at
+    /// registration, not the source of the most recent packet.
+    pub fn source(&self) -> SocketAddr {
+        self.route.send_target()
+    }
+}
+
+/// Outcome of a keepalive/MESSAGE touch on a registered device.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct TouchOutcome {
+    /// Whether the device was offline before this touch.
+    pub was_offline: bool,
+    /// Whether the packet arrived from a source that differs from the
+    /// established route (a potential source hijack). The stored route is
+    /// never changed by a touch regardless of this flag.
+    pub source_drift: bool,
 }
 
 /// Simple in-memory registration table keyed by device ID.
@@ -43,13 +68,17 @@ impl RegistrationTable {
     /// Inserts or replaces a registration. Returns the previous registration,
     /// if any.
     ///
+    /// This is only called from an authenticated (or accepted challenge-optional)
+    /// REGISTER path, so replacing the endpoint route here is the sanctioned way
+    /// to move a device's send route.
+    ///
     /// Rejects the insertion if the table is already at capacity and the
     /// device is not already registered. Capacity violations are reported as
     /// `AccessError::RegistrationTableFull`.
     pub fn upsert(
         &mut self,
         device_id: DeviceId,
-        source: SocketAddr,
+        route: EndpointRoute,
         contact: String,
         expires: u32,
         now: u64,
@@ -61,7 +90,7 @@ impl RegistrationTable {
         }
 
         let registration = Registration {
-            source,
+            route,
             contact,
             registered_at: now,
             expires,
@@ -72,20 +101,43 @@ impl RegistrationTable {
         Ok(self.table.insert(device_id, registration))
     }
 
-    /// Marks a registered device as still alive. Returns `Some` with the
-    /// previous offline flag when the device exists.
-    pub fn touch(&mut self, device_id: &DeviceId, source: SocketAddr, now: u64) -> Option<bool> {
+    /// Marks a registered device as still alive without mutating its endpoint
+    /// route.
+    ///
+    /// The `source` of the keepalive/MESSAGE packet is used only to detect
+    /// drift (source hijack); it never overwrites the stored route, which can
+    /// only change through an authenticated REGISTER. Returns `None` when the
+    /// device is not registered.
+    pub fn touch(
+        &mut self,
+        device_id: &DeviceId,
+        source: SocketAddr,
+        now: u64,
+    ) -> Option<TouchOutcome> {
         let reg = self.table.get_mut(device_id)?;
-        reg.source = source;
         reg.last_seen = now;
         let was_offline = reg.offline;
         reg.offline = false;
-        Some(was_offline)
+        let source_drift = reg.route.is_unauthenticated_drift(source);
+        Some(TouchOutcome {
+            was_offline,
+            source_drift,
+        })
     }
 
     /// Removes a registration and returns it, if present.
     pub fn remove(&mut self, device_id: &DeviceId) -> Option<Registration> {
         self.table.remove(device_id)
+    }
+
+    /// Returns the resolved send target for a registered device, if any.
+    pub fn send_target(&self, device_id: &DeviceId) -> Option<SocketAddr> {
+        self.table.get(device_id).map(|reg| reg.route.send_target())
+    }
+
+    /// Returns a clone of the endpoint route for a registered device, if any.
+    pub fn route(&self, device_id: &DeviceId) -> Option<EndpointRoute> {
+        self.table.get(device_id).map(|reg| reg.route.clone())
     }
 
     /// Iterates over all registrations mutably.

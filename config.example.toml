@@ -121,7 +121,9 @@ digest_secret_ref = "gb28181.digest"
 # Optional secret reference template for per-device passwords. {device_id} is replaced.
 # device_password_ref = "gb28181.devices.{device_id}.password"
 # Development-only: accept REGISTER without successful digest (default: false).
-# Production must keep this false so AuthPolicy::Required is enforced.
+# Only permitted when system.profile = "edge" is set explicitly; the cluster
+# profile and an inferred profile both reject challenge_optional = true at
+# startup so AuthPolicy::Required is always enforced in production.
 # challenge_optional = false
 # Optional default tenant UUID for incoming GB28181 devices.
 # When omitted, events that cannot be mapped to a tenant are dropped.

@@ -322,6 +322,83 @@ fn md5_disallowed_by_policy() -> Result<(), DigestError> {
 }
 
 #[test]
+fn algorithm_downgrade_to_md5_is_rejected() -> Result<(), DigestError> {
+    // The server offers SHA-256 but also tolerates MD5 for legacy devices
+    // (allow_md5). A response that answers with MD5 anyway is a downgrade from
+    // the advertised algorithm and must be rejected even though MD5 is
+    // individually permitted.
+    let ctx = DigestContext::new("example.com", SERVER_SECRET)?
+        .allow_md5(true)
+        .preferred_algorithm(DigestAlgorithm::Sha256);
+    let challenge = ctx.generate_challenge(1000)?;
+
+    let resp = make_response(
+        "alice",
+        "secret",
+        "example.com",
+        &challenge.nonce,
+        "sip:registrar@example.com",
+        &Method::Register,
+        1,
+        "clientnonce",
+        Some(DigestQop::Auth),
+        DigestAlgorithm::Md5,
+    );
+
+    let mut cache = DigestReplayCache::new(64);
+    let Err(err) = ctx.validate(
+        &resp,
+        &Method::Register,
+        "sip:registrar@example.com",
+        &SecretString::from("secret"),
+        &mut cache,
+        1000,
+    ) else {
+        panic!("expected algorithm downgrade rejection");
+    };
+    assert!(matches!(err, DigestError::AlgorithmDowngrade));
+    Ok(())
+}
+
+#[test]
+fn unspecified_algorithm_against_sha256_is_rejected() -> Result<(), DigestError> {
+    // An omitted `algorithm` parameter means MD5 per RFC 2617. Against a
+    // SHA-256 challenge that is a downgrade and must be rejected.
+    let ctx = DigestContext::new("example.com", SERVER_SECRET)?
+        .allow_md5(true)
+        .preferred_algorithm(DigestAlgorithm::Sha256);
+    let challenge = ctx.generate_challenge(1000)?;
+
+    let mut resp = make_response(
+        "alice",
+        "secret",
+        "example.com",
+        &challenge.nonce,
+        "sip:registrar@example.com",
+        &Method::Register,
+        1,
+        "clientnonce",
+        Some(DigestQop::Auth),
+        DigestAlgorithm::Md5,
+    );
+    resp.algorithm = None;
+
+    let mut cache = DigestReplayCache::new(64);
+    let Err(err) = ctx.validate(
+        &resp,
+        &Method::Register,
+        "sip:registrar@example.com",
+        &SecretString::from("secret"),
+        &mut cache,
+        1000,
+    ) else {
+        panic!("expected algorithm downgrade rejection");
+    };
+    assert!(matches!(err, DigestError::AlgorithmDowngrade));
+    Ok(())
+}
+
+#[test]
 fn auth_int_qop_is_rejected() -> Result<(), DigestError> {
     let ctx = ctx_md5();
     let challenge = ctx.generate_challenge(1000)?;

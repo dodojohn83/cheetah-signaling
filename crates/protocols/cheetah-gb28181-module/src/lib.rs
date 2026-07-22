@@ -20,8 +20,10 @@ pub mod cascade;
 pub mod config;
 pub mod error;
 pub mod events;
+pub mod ingress;
 pub mod media;
 pub mod ports;
+pub mod profile;
 mod registration;
 pub mod session;
 pub mod types;
@@ -40,11 +42,16 @@ pub use cheetah_gb28181_core::{AccessInput, AccessOutput, GbAccessMachine};
 pub use config::{AuthPolicy, CharsetPolicy, Gb28181DomainConfig};
 pub use error::AccessError;
 pub use events::{DevicePresence, Gb28181Event};
+pub use ingress::{
+    AccessIngress, DeviceBinding, IngressConfigError, IngressError, IngressMethod, ListenerBinding,
+    NetworkZone, RequestIdentity,
+};
 pub use media::{
     Gb28181Media, MediaCommand, MediaConfig, MediaError, MediaInput, MediaOutput, MediaTransport,
     PlaybackAction,
 };
 pub use ports::{CredentialError, CredentialProvider};
+pub use profile::{ProfileResolveError, ProfileResolver};
 pub use session::{
     ProtocolSessionLink, RegisterOutcome, RegisterParams, SessionContext, SessionLinkError,
 };
