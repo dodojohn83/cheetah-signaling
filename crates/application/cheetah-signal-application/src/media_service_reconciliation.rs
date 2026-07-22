@@ -158,15 +158,27 @@ impl MediaService {
         // SQLite write lock is not held across network RPCs.
         uow.commit().await?;
 
-        let nodes = self
+        let nodes: BTreeMap<NodeId, MediaNode> = self
             .media_port
             .list_nodes(tenant_id, self.clock.as_ref())
-            .await?;
-        report.nodes_scanned = nodes.len() as u64;
+            .await?
+            .into_iter()
+            .map(|n| (n.node_id, n))
+            .collect();
         let now = self.clock.now_wall();
 
-        for node in nodes {
-            let node_id = node.node_id;
+        // Only query media nodes that actually host this tenant's active bindings.
+        // This avoids O(media_nodes) RPC fan-out per tenant on every reconcile tick
+        // while still checking every binding that matters. Orphan detection for nodes
+        // without local bindings is left to targeted reconciles.
+        let node_ids: Vec<NodeId> = active_by_node.keys().copied().collect();
+        for node_id in node_ids {
+            let Some(node) = nodes.get(&node_id) else {
+                // Node is no longer reported as active; the second pass below
+                // will classify it as gone or still in a protection window.
+                continue;
+            };
+            report.nodes_scanned += 1;
 
             // A deregistered node still within its protection lease is kept in
             // the active list so the reconciler sees its bindings, but we must
@@ -175,7 +187,6 @@ impl MediaService {
                 && let Some(lease) = node.lease_until
                 && now < lease
             {
-                let _ = active_by_node.remove(&node_id);
                 continue;
             }
 
