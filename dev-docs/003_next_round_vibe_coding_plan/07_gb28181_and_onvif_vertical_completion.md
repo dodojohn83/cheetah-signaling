@@ -6,47 +6,47 @@
 
 ## 2. GB-001：接入事件落库
 
-- [ ] 将driver的REGISTER、keepalive、catalog、alarm、status、mobile position转换为typed application command/event。
-- [ ] 每条输入先验证tenant/domain和body DeviceID一致性，再更新device/protocol session。
-- [ ] 注册刷新幂等，不重复创建设备；下线/过期使用注入Clock和timer wheel。
-- [ ] 大目录分页/合并受限，重复/乱序SN有确定行为。
-- [ ] transaction同时提交aggregate和outbox。
+- [x] 将driver的REGISTER、keepalive、catalog、alarm、status、mobile position转换为typed application command/event。（GB4-ACC-001..005、GB4-EVT-001..002，见 `dev-docs/004_gb28181-improve/reports/`）
+- [x] 每条输入先验证tenant/domain和body DeviceID一致性，再更新device/protocol session。（GB4-ACC-002/003，见 `reports/gb4-acc-002.md`、`gb4-acc-003.md`）
+- [x] 注册刷新幂等，不重复创建设备；下线/过期使用注入Clock和timer wheel。（GB4-ACC-001/005，见 `reports/gb4-acc-001.md`、`gb4-acc-005.md`）
+- [x] 大目录分页/合并受限，重复/乱序SN有确定行为。（GB4-ACC-005，见 `reports/gb4-acc-005.md`）
+- [x] transaction同时提交aggregate和outbox。（GB4-EVT-001..002、GB4-ACC，见 `reports/gb4-evt-001.md`、`gb4-evt-002.md`）
 
 ## 3. GB-002：认证与凭据
 
-- [ ] 按tenant/domain/device从SecretProvider取digest凭据。
-- [ ] nonce、stale、algorithm、qop、重放窗口和失败rate limit遵循core语义。
+- [x] 按tenant/domain/device从SecretProvider取digest凭据。（GB4-SIP-004..006、GB4-SEC-001/002，见 `reports/gb4-sip-004.md`、`gb4-sec-001.md`、`gb4-sec-002.md`）
+- [x] nonce、stale、algorithm、qop、重放窗口和失败rate limit遵循core语义。（GB4-SIP-004..006、GB4-SEC-002，见 `reports/gb4-sip-004.md`、`gb4-sec-002.md`）
 - [x] challenge-optional仅允许显式开发profile，生产默认不启用。（`gb28181.challenge_optional`，默认 false；见 assembly + config.example.toml）
-- [ ] Authorization、nonce material和原始SIP body不写日志。
+- [x] Authorization、nonce material和原始SIP body不写日志。（GB4-SEC-004，见 `reports/gb4-sec-004.md`）
 
 ## 4. GB-003：命令路由
 
-- [ ] PTZ、device control、catalog/status/query和媒体命令由application创建Command。
-- [ ] dispatcher解析当前owner和protocol session，通过owner epoch路由。
-- [ ] SIP transaction result映射OperationStep，不创建Command生命周期。
-- [ ] 设备响应无法确认时返回UnknownOutcome，不盲目重试危险PTZ/控制。
+- [x] PTZ、device control、catalog/status/query和媒体命令由application创建Command。（GB4-CMD-001，见 `reports/gb4-cmd-001.md`）
+- [x] dispatcher解析当前owner和protocol session，通过owner epoch路由。（GB4-CMD-002/003、GB4-EVT-002，见 `reports/gb4-cmd-002.md`、`gb4-cmd-003.md`、`gb4-evt-002.md`）
+- [x] SIP transaction result映射OperationStep，不创建Command生命周期。（GB4-CMD-003，见 `reports/gb4-cmd-003.md`）
+- [x] 设备响应无法确认时返回UnknownOutcome，不盲目重试危险PTZ/控制。（GB4-CMD-003，见 `reports/gb4-cmd-003.md`）
 
 ## 5. GB-004：媒体会话
 
-- [ ] live执行OpenRtpReceiver → INVITE → 200/SDP验证 → ACK → UpdateRtp → StreamOnline。
-- [ ] 支持UDP、TCP active/passive、SSRC与payload type协商，quirk通过vendor profile启用。
-- [ ] playback/download的时间、scale、seek/control与MediaSession隔离。
-- [ ] talk执行RTP sender/talk capability与INVITE/dialog双侧补偿。
-- [ ] CANCEL/BYE、设备先发媒体、late 200和重复响应有状态机测试。
+- [x] live执行OpenRtpReceiver → INVITE → 200/SDP验证 → ACK → UpdateRtp → StreamOnline。（GB4-MED-001..004，见 `reports/gb4-med-001-004.md`）
+- [x] 支持UDP、TCP active/passive、SSRC与payload type协商，quirk通过vendor profile启用。（GB4-MED-001..008、GB4-COMP-003/004，见 `reports/gb4-med-001-004.md`、`gb4-med-005-008.md`、`gb4-comp-003-004.md`）
+- [x] playback/download的时间、scale、seek/control与MediaSession隔离。（GB4-MED-005..008，见 `reports/gb4-med-005-008.md`）
+- [x] talk执行RTP sender/talk capability与INVITE/dialog双侧补偿。（GB4-MED-005..008，见 `reports/gb4-med-005-008.md`）
+- [x] CANCEL/BYE、设备先发媒体、late 200和重复响应有状态机测试。（GB4-MED-005..008、GB4-TST-002，见 `reports/gb4-med-005-008.md`、`gb4-tst-002.md`）
 
 ## 6. GB-005：级联
 
-- [ ] 上下级注册、保活、目录、订阅/通知、点播和回放进入生产配置。
-- [ ] 每个平台具有独立external identity、credential、owner和限流。
-- [ ] 目录映射保持tenant隔离和稳定ID，不把上级ID覆盖设备ID。
-- [ ] 控制命令禁止上下游双写；灰度切换保持唯一owner。
+- [x] 上下级注册、保活、目录、订阅/通知、点播和回放进入生产配置。（GB4-CAS-001..006，见 `reports/gb4-cas-001-006.md`）
+- [x] 每个平台具有独立external identity、credential、owner和限流。（GB4-CAS-001/006，见 `reports/gb4-cas-001-006.md`）
+- [x] 目录映射保持tenant隔离和稳定ID，不把上级ID覆盖设备ID。（GB4-CAS-003/006，见 `reports/gb4-cas-001-006.md`）
+- [x] 控制命令禁止上下游双写；灰度切换保持唯一owner。（GB4-CAS-006，见 `reports/gb4-cas-001-006.md`）
 
 ## 7. GB-006：兼容与互操作
 
-- [ ] 海康/大华/NVR quirks使用vendor/model/firmware profile。
-- [ ] 每个workaround包含脱敏fixture、匹配条件、风险和回归测试。
-- [ ] fixture记录来源类别、许可证、标准版本和脱敏说明。
-- [ ] 与至少两类设备和一个上下级平台完成真实interop报告。
+- [x] 海康/大华/NVR quirks使用vendor/model/firmware profile。（GB4-COMP-001..004，见 `reports/gb4-comp-001.md`、`gb4-comp-002.md`、`gb4-comp-003-004.md`）
+- [x] 每个workaround包含脱敏fixture、匹配条件、风险和回归测试。（GB4-COMP-003/004、GB4-REF-001/004，见 `reports/gb4-comp-003-004.md`、`gb4-ref-001.md`、`gb4-ref-004.md`）
+- [x] fixture记录来源类别、许可证、标准版本和脱敏说明。（GB4-REF-001/003、GB4-TST-001，见 `reports/gb4-ref-001.md`、`gb4-tst-001.md`）
+- [ ] 与至少两类设备和一个上下级平台完成真实interop报告。当前 `Blocked`，见 `dev-docs/004_gb28181-improve/reports/gb4-sys-003.md`（`GB4-SYS-004` 级联互操作报告待外部平台接入后补充，已提交 PR #211）。
 
 ## 8. GB-007：验收
 
@@ -55,6 +55,8 @@
 - live/playback/download/talk逐step失败与补偿。
 - media/signaling/device任一方重启后的收敛。
 - 信令抓包不含RTP/RTCP payload。
+
+> **状态**：上述验收场景已由 `GB4-TST-001..004`、`GB4-SYS-001..002`、`GB4-SYS-005..008` 和 `GB4-SEC` 覆盖（见 `dev-docs/004_gb28181-improve/reports/`），仅剩 `GB4-SYS-003/004` 真实设备/平台互操作证据待外部对端接入后补充。
 
 ## 9. ONVIF-001：Discovery 与 endpoint
 
