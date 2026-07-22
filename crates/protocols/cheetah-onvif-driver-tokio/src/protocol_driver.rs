@@ -125,10 +125,7 @@ impl OnvifTokioDriverFactory {
 #[async_trait]
 impl ProtocolDriverFactory for OnvifTokioDriverFactory {
     fn name(&self) -> PluginName {
-        match PluginName::new("cheetah/onvif") {
-            Ok(name) => name,
-            Err(e) => panic!("static plugin name 'cheetah/onvif' is invalid: {e}"),
-        }
+        PluginName::from_static_unchecked("cheetah/onvif")
     }
 
     fn capabilities(&self) -> Vec<ProtocolCapability> {
