@@ -262,6 +262,18 @@ impl SignalConfig {
                 "media.default_invite_timeout_ms must be greater than zero",
             ));
         }
+        if self.media.periodic_reconcile_interval_ms.as_millis() <= 0 {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                "media.periodic_reconcile_interval_ms must be greater than zero",
+            ));
+        }
+        if self.media.needs_verification_grace_ms.as_millis() <= 0 {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                "media.needs_verification_grace_ms must be greater than zero",
+            ));
+        }
         let inferred = self.infer_deployment_profile()?;
         match inferred {
             DeploymentProfile::Edge => {
@@ -638,6 +650,11 @@ pub struct MediaConfig {
     pub max_sessions_per_device: u32,
     /// Default timeout for media invitations.
     pub default_invite_timeout_ms: DurationMs,
+    /// Interval between periodic media reconciliations.
+    pub periodic_reconcile_interval_ms: DurationMs,
+    /// Grace period before a NeedsVerification binding is escalated to migration
+    /// or failure (milliseconds).
+    pub needs_verification_grace_ms: DurationMs,
     /// Whether readiness requires an alive media node.
     pub readiness_policy: MediaReadinessPolicy,
 }
@@ -648,6 +665,8 @@ impl Default for MediaConfig {
             default_media_node_selector: "round-robin".to_string(),
             max_sessions_per_device: 4,
             default_invite_timeout_ms: DurationMs::from_seconds(30),
+            periodic_reconcile_interval_ms: DurationMs::from_seconds(30),
+            needs_verification_grace_ms: DurationMs::from_seconds(60),
             readiness_policy: MediaReadinessPolicy::Optional,
         }
     }

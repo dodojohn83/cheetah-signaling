@@ -8,7 +8,7 @@ use crate::GbPlatformLink;
 use crate::{
     Channel, ChannelRepository, ChannelStatus, Command, CommandBus, CommandPayload, DeliveryStatus,
     Device, DeviceLifecycle, DeviceRepository, DomainError, DomainEvent, EventPublisher,
-    MediaBinding, MediaBindingRepository, MediaNodeCommand, MediaNodeCommandResult,
+    MediaBinding, MediaBindingRepository, MediaNode, MediaNodeCommand, MediaNodeCommandResult,
     MediaNodeSessionRef, MediaPurpose, MediaReservation, MediaSession, MediaSessionRepository,
     MediaSessionState, Operation, OperationRepository, OperationStatus, Outbox, OutboxEntry,
     OwnerInfo, PlatformDirection, PlatformLinkRepository, ProcessedMessageRecord,
@@ -1178,6 +1178,8 @@ impl crate::DeviceOwnerResolver for InMemoryDeviceOwnerResolver {
 
 type MediaNodeSessionMap = BTreeMap<(TenantId, NodeId), Vec<MediaNodeSessionRef>>;
 
+type MediaNodeMap = BTreeMap<(TenantId, NodeId), MediaNode>;
+
 /// In-memory media port.
 #[derive(Clone)]
 pub struct InMemoryMediaPort {
@@ -1190,6 +1192,10 @@ pub struct InMemoryMediaPort {
     /// Scripted reservation errors consumed one-per-call by the `reserve_*`
     /// methods, used to exercise reservation failure and compensation paths.
     scripted_reserve_errors: Arc<Mutex<VecDeque<DomainError>>>,
+    /// Scripted media nodes returned by [`InMemoryMediaPort::get_node`] and
+    /// included in [`InMemoryMediaPort::list_nodes`]. Used to exercise reconcile
+    /// paths that depend on node status, health and lease state.
+    scripted_nodes: Arc<Mutex<MediaNodeMap>>,
 }
 
 impl std::fmt::Debug for InMemoryMediaPort {
@@ -1210,6 +1216,7 @@ impl InMemoryMediaPort {
             id_generator,
             scripted_execute: Arc::new(Mutex::new(VecDeque::new())),
             scripted_reserve_errors: Arc::new(Mutex::new(VecDeque::new())),
+            scripted_nodes: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
 
@@ -1223,6 +1230,25 @@ impl InMemoryMediaPort {
     /// Queues an error to be returned by the next `reserve_*` call.
     pub fn script_reserve_error(&self, error: DomainError) {
         lock_mutex(&self.scripted_reserve_errors).push_back(error);
+    }
+
+    /// Configures the media node metadata returned by `get_node` for the given
+    /// tenant. This lets tests drive reconcile paths that depend on node status,
+    /// health and lease state without a real scheduler registry. Note that these
+    /// scripted nodes are not returned by `list_nodes`, which is driven by
+    /// `set_node_sessions`.
+    pub fn set_node(&self, tenant_id: TenantId, node: MediaNode) {
+        lock_mutex(&self.scripted_nodes).insert((tenant_id, node.node_id), node);
+    }
+
+    /// Removes a scripted media node for the given tenant.
+    pub fn remove_node(&self, tenant_id: TenantId, node_id: NodeId) {
+        lock_mutex(&self.scripted_nodes).remove(&(tenant_id, node_id));
+    }
+
+    /// Clears all scripted media nodes.
+    pub fn clear_nodes(&self) {
+        lock_mutex(&self.scripted_nodes).clear();
     }
 
     /// Configures the sessions reported by a media node for reconciliation tests.
@@ -1393,13 +1419,26 @@ impl crate::MediaPort for InMemoryMediaPort {
     ) -> crate::Result<Vec<crate::MediaNode>> {
         let node_sessions = lock_mutex(&self.node_sessions);
         Ok(node_sessions
-            .keys()
-            .filter(|(t, _)| *t == tenant_id)
-            .map(|(_, node_id)| crate::MediaNode {
+            .iter()
+            .filter(|((t, _), _)| *t == tenant_id)
+            .map(|((_, node_id), refs)| crate::MediaNode {
                 node_id: *node_id,
+                session_count: refs.len() as u64,
                 ..crate::MediaNode::default()
             })
             .collect())
+    }
+
+    async fn get_node(
+        &self,
+        node_id: NodeId,
+        _clock: &dyn Clock,
+    ) -> crate::Result<Option<crate::MediaNode>> {
+        let scripted_nodes = lock_mutex(&self.scripted_nodes);
+        Ok(scripted_nodes
+            .values()
+            .find(|node| node.node_id == node_id)
+            .cloned())
     }
 
     async fn list_sessions(
@@ -1432,7 +1471,7 @@ impl crate::MediaPort for InMemoryMediaPort {
         Ok(Page {
             items,
             next_cursor,
-            total: None,
+            total: Some(all_items.len() as u64),
         })
     }
 }

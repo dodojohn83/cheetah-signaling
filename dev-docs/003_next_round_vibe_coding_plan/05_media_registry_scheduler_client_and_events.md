@@ -11,7 +11,7 @@
 - [x] 返回lease ID、TTL、heartbeat interval、cluster time和accepted contract version：`proto/cheetah/media/v1/media.proto` `MediaNodeInfo` 新增 `lease_id`、`lease_ttl_ms`、`heartbeat_interval_ms`、`cluster_time`、`accepted_contract_version`；`to_media_node_info` 在 register/heartbeat/drain/deregister 响应中填充这些字段。
 - [x] Heartbeat带lease、instance epoch、load：`proto/cheetah/media/v1/media.proto` `MediaNodeHeartbeat` 新增 `lease_id` 与 `instance_epoch`；`MediaNodeRegistry::heartbeat` 扩展为接收 lease_id 与 instance_epoch 并在 `InMemory`/`Persistent` 实现中做 fencing；`load` 与 `session_count` 已存在。capacity 与 capability generation 的心跳携带将在后续调度任务中补充。
 - [x] Drain禁止新reservation但允许query/stop；Deregister保留保护窗口用于对账：`MediaNodeRegistry::reserve` 在 in-memory 与 persistent 实现中均拒绝 `draining`/`NodeStatus::Draining` 节点并返回 `SchedulerError::NodeDraining`；`deregister` 设置 `lease_until = now + deregister_protection_ttl_ms`，`is_active` 让 Left 节点在保护期内仍被 `list_nodes` 看到但不可被调度；`MediaEventConsumer` 不订阅 Left 节点；`MediaService::reconcile` 跳过保护期内 Left 节点，不立即迁移其 binding。
-- [ ] lease过期立即移出候选，已有binding标记`NeedsVerification`。
+- [x] lease过期立即移出候选，已有binding标记`NeedsVerification`：`reconcile` 主循环对 lease 过期/unhealthy 节点调用 `mark_binding_needs_verification`，binding 进入 `NeedsVerification`，session 保持 Active；下一周期若节点仍未恢复且 grace window 已过期则升级为 `migrate_or_fail`（PR #236）。
 
 ## 3. MED-R-002：MediaNode repository
 
@@ -67,11 +67,11 @@
 
 ## 8. MED-R-007：Scheduler/registry reconciler
 
-- [ ] lease过期检查所有绑定，不立即伪造session停止。
-- [ ] draining节点按desired state迁移或有界等待自然结束。
-- [ ] 媒体有资源、信令无binding：保护窗口后按idempotency/metadata复核再清理。
-- [ ] 信令Active、媒体无资源：创建新binding或按policy失败，绝不复活旧终态binding。
-- [ ] 同generation最多一个有效binding，数据库约束和application检查同时保证。
+- [x] lease过期检查所有绑定，不立即伪造session停止：`MediaBindingState::NeedsVerification` 新增；`MediaService::reconcile` 在节点 lease 过期/unhealthy 时把 Active binding 标记为 `NeedsVerification`，session 保持 Active；回调恢复后 `verified()` 回到 Active，不重建 binding（PR #236）。
+- [x] draining节点按desired state迁移或有界等待自然结束：`reconcile` 主循环对 `node.draining` 调用 `migrate_or_fail`，先按 device/channel 与 reservation 创建新 binding 并发送 Start 命令，迁移失败再 `fail_session`；draining 但 lease 仍有效时仍出现在 active list 中并触发迁移（PR #236）。
+- [x] 媒体有资源、信令无binding：保护窗口后按idempotency/metadata复核再清理：`reconcile` 的 orphan 扫描分支对本地无 binding 的活跃节点查询 `list_sessions`，对每个 orphan `MediaNodeSessionRef` 调用 `stop_orphan_session` 下发 `StopMediaSession` 命令；新增 `ReconciliationReport::orphans_stopped` 和对应的系统测试（PR #236）。
+- [x] 信令Active、媒体无资源：创建新binding或按policy失败，绝不复活旧终态binding：`reconcile` 主循环对 missing session 调用 `migrate_or_fail`，`dispatch_reconnect_command` 先 `failed()` 旧 binding 再创建新 binding；若 reservation 失败则 `fail_session`，不会把旧终态 binding 重新激活（PR #236）。
+- [x] 同generation最多一个有效binding，数据库约束和application检查同时保证：`media_bindings` 表 `(tenant_id, media_session_id)` partial unique index `state NOT IN ('released','failed')`；`dispatch_reconnect_command` 在 `MediaBinding::new` 前先把旧 binding 置为 `Failed` 并保存，`migrate_or_fail` 失败路径也先 `fail_session` 再释放 reservation；`get_by_media_session` 只返回非终态 binding（PR #236）。
 
 ## 9. MED-R-008：观测和管理
 

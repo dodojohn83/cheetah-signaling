@@ -685,8 +685,12 @@ pub struct ReconciliationReport {
     pub migrations_succeeded: u64,
     /// Number of migration attempts that failed.
     pub migrations_failed: u64,
+    /// Number of bindings marked as needing verification instead of failing.
+    pub needs_verification: u64,
     /// Number of orphan sessions detected but not yet cleaned.
     pub orphans_detected: u64,
+    /// Number of orphan sessions that were stopped on the media node.
+    pub orphans_stopped: u64,
 }
 
 /// Result of an operation reconciliation pass.

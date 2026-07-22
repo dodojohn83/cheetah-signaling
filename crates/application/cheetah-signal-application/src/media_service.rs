@@ -20,9 +20,15 @@ pub struct MediaService {
     pub(crate) owner_resolver: std::sync::Arc<dyn DeviceOwnerResolver>,
     pub(crate) media_port: std::sync::Arc<dyn MediaPort>,
     pub(crate) source_node_id: NodeId,
+    /// Grace period after a binding is marked `NeedsVerification` before the
+    /// reconciler escalates to `migrate_or_fail` (milliseconds).
+    pub(crate) needs_verification_grace_ms: u64,
 }
 
 impl MediaService {
+    /// Default grace period for `NeedsVerification` escalation.
+    pub const DEFAULT_NEEDS_VERIFICATION_GRACE_MS: u64 = 60_000;
+
     /// Creates a new media service.
     pub fn new(
         clock: std::sync::Arc<dyn Clock>,
@@ -37,7 +43,14 @@ impl MediaService {
             owner_resolver,
             media_port,
             source_node_id,
+            needs_verification_grace_ms: Self::DEFAULT_NEEDS_VERIFICATION_GRACE_MS,
         }
+    }
+
+    /// Sets the grace period before a `NeedsVerification` binding is escalated to
+    /// migration or failure.
+    pub fn set_needs_verification_grace_ms(&mut self, ms: u64) {
+        self.needs_verification_grace_ms = ms.max(1_000);
     }
 
     /// Lists media nodes reachable through the configured media port.

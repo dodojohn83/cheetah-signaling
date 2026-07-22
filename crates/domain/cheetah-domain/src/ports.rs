@@ -541,6 +541,13 @@ pub trait MediaPort: Send + Sync {
         clock: &dyn Clock,
     ) -> Result<MediaNodeCommandResult>;
 
+    /// Returns the media node with the given ID, if known to the port.
+    async fn get_node(
+        &self,
+        node_id: NodeId,
+        clock: &dyn Clock,
+    ) -> Result<Option<crate::MediaNode>>;
+
     /// Lists the media nodes that are reachable through this port.
     async fn list_nodes(
         &self,

@@ -193,9 +193,12 @@ impl MediaService {
                     uow.media_session_repository().save(&session).await?;
                 }
 
-                if binding.state() == MediaBindingState::Active
-                    || binding.state() == MediaBindingState::Reserved
-                {
+                if matches!(
+                    binding.state(),
+                    MediaBindingState::Active
+                        | MediaBindingState::Reserved
+                        | MediaBindingState::NeedsVerification
+                ) {
                     let ev = binding
                         .release(self.clock.as_ref())
                         .map_err(crate::SignalError::from)?;

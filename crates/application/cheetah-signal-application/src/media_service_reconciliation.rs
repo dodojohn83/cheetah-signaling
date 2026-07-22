@@ -2,12 +2,16 @@
 
 use crate::dto::ReconciliationReport;
 use crate::media_service::*;
+use crate::media_service_helpers::*;
+use crate::media_service_reconciliation_support::*;
 use cheetah_domain::{
-    DomainError, MediaBinding, MediaBindingError, MediaBindingState, MediaNodeSessionRef,
-    MediaPurpose, MediaReservation, MediaSession, MediaSessionDesiredState, MediaSessionError,
-    MediaSessionState, NodeStatus, UnitOfWork,
+    DomainError, MediaBinding, MediaBindingError, MediaBindingState, MediaNode,
+    MediaNodeSessionRef, MediaPurpose, MediaReservation, MediaSession, MediaSessionDesiredState,
+    MediaSessionError, MediaSessionState, NodeStatus, UnitOfWork,
 };
-use cheetah_signal_types::{MediaBindingId, MediaSessionId, NodeId, PageRequest, RequestContext};
+use cheetah_signal_types::{
+    DurationMs, MediaBindingId, MediaSessionId, NodeId, PageRequest, RequestContext,
+};
 use std::collections::{BTreeMap, BTreeSet};
 
 impl MediaService {
@@ -155,15 +159,27 @@ impl MediaService {
         // SQLite write lock is not held across network RPCs.
         uow.commit().await?;
 
-        let nodes = self
+        let nodes: BTreeMap<NodeId, MediaNode> = self
             .media_port
             .list_nodes(tenant_id, self.clock.as_ref())
-            .await?;
-        report.nodes_scanned = nodes.len() as u64;
+            .await?
+            .into_iter()
+            .map(|n| (n.node_id, n))
+            .collect();
         let now = self.clock.now_wall();
 
-        for node in nodes {
-            let node_id = node.node_id;
+        // Only query media nodes that actually host this tenant's active bindings.
+        // This avoids O(media_nodes) RPC fan-out per tenant on every reconcile tick
+        // while still checking every binding that matters.
+        let local_node_ids: BTreeSet<NodeId> = active_by_node.keys().copied().collect();
+        let node_ids: Vec<NodeId> = local_node_ids.iter().copied().collect();
+        for node_id in node_ids {
+            let Some(node) = nodes.get(&node_id) else {
+                // Node is no longer reported as active; the second pass below
+                // will classify it as gone or still in a protection window.
+                continue;
+            };
+            report.nodes_scanned += 1;
 
             // A deregistered node still within its protection lease is kept in
             // the active list so the reconciler sees its bindings, but we must
@@ -172,7 +188,6 @@ impl MediaService {
                 && let Some(lease) = node.lease_until
                 && now < lease
             {
-                let _ = active_by_node.remove(&node_id);
                 continue;
             }
 
@@ -253,15 +268,36 @@ impl MediaService {
                 }
             }
 
+            // Any session reported by a node that we have a local binding on, but
+            // that has no matching local binding, is an orphan. Stop it while we are
+            // already reconciling that node. We intentionally do not scan nodes on
+            // which this tenant holds no binding: doing so would fan out to every
+            // busy media node for every tenant on every reconcile tick. Cluster-wide
+            // orphan sweeps for nodes with no local binding require per-tenant
+            // session counts from the media node and are left to a future enhancement.
             for id in reported.keys() {
-                if !local_ids.contains(id) {
-                    report.orphans_detected += 1;
-                    tracing::warn!(
-                        tenant_id = %tenant_id,
-                        node_id = %node_id,
-                        media_session_id = %id,
-                        "orphan media session reported by node"
-                    );
+                if local_ids.contains(id) {
+                    continue;
+                }
+                let Some(orphan) = reported.get(id) else {
+                    continue;
+                };
+                report.orphans_detected += 1;
+                match self
+                    .stop_orphan_session(tenant_id, node_id, node, orphan)
+                    .await
+                {
+                    Ok(()) => {
+                        report.orphans_stopped += 1;
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            tenant_id = %tenant_id,
+                            node_id = %node_id,
+                            media_session_id = %id,
+                            "failed to stop orphan media session: {e}"
+                        );
+                    }
                 }
             }
             // Persist per-node state before the next media-node query.
@@ -270,19 +306,95 @@ impl MediaService {
 
         // Any sessions still in active_by_node are bound to media nodes that are
         // no longer active in the cluster (crashed, deregistered, or expired).
-        for (_node_id, sessions) in active_by_node {
-            for (mut session, mut binding) in sessions {
-                self.migrate_or_fail(
-                    context,
-                    uow,
-                    &mut session,
-                    &mut binding,
-                    "node_unavailable",
-                    "media node no longer active",
-                    &mut report,
-                )
+        for (node_id, sessions) in active_by_node {
+            let node = self
+                .media_port
+                .get_node(node_id, self.clock.as_ref())
                 .await?;
+            let now = self.clock.now_wall();
+            let (gone, needs_verification) = classify_inactive_node(node.as_ref(), now);
+
+            if !gone && !needs_verification {
+                // The node is still in a protection window (Left but lease valid).
+                // Leave the binding/session alone until the window expires.
+                tracing::info!(
+                    tenant_id = %tenant_id,
+                    node_id = %node_id,
+                    "skipping reconciliation for protected media node"
+                );
+                continue;
             }
+
+            for (mut session, mut binding) in sessions {
+                let session_active = session.state() == MediaSessionState::Active;
+                let binding_state = binding.state();
+                let binding_active = binding_state == MediaBindingState::Active;
+                let binding_needs_verification =
+                    binding_state == MediaBindingState::NeedsVerification;
+
+                if gone {
+                    // Node has deregistered or is unknown. Migrate to a healthy node or fail.
+                    self.migrate_or_fail(
+                        context,
+                        uow,
+                        &mut session,
+                        &mut binding,
+                        "node_unavailable",
+                        "media node no longer active",
+                        &mut report,
+                    )
+                    .await?;
+                } else if needs_verification {
+                    if session_active && binding_active {
+                        self.mark_binding_needs_verification(
+                            context,
+                            uow,
+                            &mut session,
+                            &mut binding,
+                            "node_lease_expired",
+                            "media node lease expired or is unhealthy; binding needs verification",
+                            &mut report,
+                        )
+                        .await?;
+                    } else if session_active && binding_needs_verification {
+                        // Already verifying. Escalate to migrate/fail once the grace window
+                        // expires so a crashed-but-not-deregistered node cannot leave
+                        // sessions stuck indefinitely.
+                        let grace_deadline = binding.updated_at().checked_add(
+                            DurationMs::from_millis(self.needs_verification_grace_ms as i64),
+                        );
+                        if grace_deadline.is_some_and(|deadline| now >= deadline) {
+                            self.migrate_or_fail(
+                                context,
+                                uow,
+                                &mut session,
+                                &mut binding,
+                                "node_verification_grace_expired",
+                                "media node remained unhealthy beyond needs-verification grace period",
+                                &mut report,
+                            )
+                            .await?;
+                        }
+                    } else {
+                        // Setup-phase sessions cannot wait in NeedsVerification;
+                        // attempt to migrate to a healthy node or fail.
+                        self.migrate_or_fail(
+                            context,
+                            uow,
+                            &mut session,
+                            &mut binding,
+                            "node_unavailable_setup",
+                            "media node unhealthy during setup",
+                            &mut report,
+                        )
+                        .await?;
+                    }
+                } else {
+                    // Node is in a protection window; nothing to do.
+                }
+            }
+            // Persist per-node state before the next inactive-node lookup.
+            uow.commit().await?;
         }
         // Persist migrations/failures before releasing scheduler reservations.
         uow.commit().await?;
@@ -307,11 +419,12 @@ impl MediaService {
             report.nodes_scanned,
             report
                 .missing_released
-                .saturating_add(report.migrations_succeeded),
+                .saturating_add(report.migrations_succeeded)
+                .saturating_add(report.needs_verification),
             report
                 .missing_failed
                 .saturating_add(report.migrations_failed),
-            report.orphans_detected,
+            report.orphans_stopped,
         );
 
         Ok(report)
@@ -573,97 +686,4 @@ impl MediaService {
 
         Ok(())
     }
-
-    pub(crate) async fn converge_active(
-        &self,
-        context: &RequestContext,
-        uow: &mut dyn UnitOfWork,
-        session: &mut MediaSession,
-        binding: &mut MediaBinding,
-    ) -> crate::Result<()> {
-        match session.state() {
-            MediaSessionState::Requested => {
-                let ev = session.allocating(self.clock.as_ref())?;
-                append_session_event(self, context, uow, session, ev).await?;
-                uow.media_session_repository().save(session).await?;
-                let ev = session.inviting(self.clock.as_ref())?;
-                append_session_event(self, context, uow, session, ev).await?;
-                uow.media_session_repository().save(session).await?;
-                let ev = session.active(self.clock.as_ref())?;
-                append_session_event(self, context, uow, session, ev).await?;
-                uow.media_session_repository().save(session).await?;
-            }
-            MediaSessionState::Allocating => {
-                let ev = session.inviting(self.clock.as_ref())?;
-                append_session_event(self, context, uow, session, ev).await?;
-                uow.media_session_repository().save(session).await?;
-                let ev = session.active(self.clock.as_ref())?;
-                append_session_event(self, context, uow, session, ev).await?;
-                uow.media_session_repository().save(session).await?;
-            }
-            MediaSessionState::Inviting => {
-                let ev = session.active(self.clock.as_ref())?;
-                append_session_event(self, context, uow, session, ev).await?;
-                uow.media_session_repository().save(session).await?;
-            }
-            MediaSessionState::Active => {}
-            _ => {
-                return Err(crate::SignalError::from(DomainError::invalid_transition(
-                    "MediaSession",
-                    format!("{:?}", session.state()),
-                    "Active",
-                )));
-            }
-        }
-
-        if binding.state() == MediaBindingState::Reserved {
-            let ev = binding.activate(self.clock.as_ref())?;
-            append_binding_event(self, context, uow, binding, ev).await?;
-            uow.media_binding_repository().save(binding).await?;
-        }
-
-        Ok(())
-    }
-}
-
-async fn append_session_event(
-    service: &MediaService,
-    context: &RequestContext,
-    uow: &mut dyn UnitOfWork,
-    session: &MediaSession,
-    event: cheetah_domain::DomainEvent,
-) -> crate::Result<()> {
-    uow.outbox()
-        .append(wrap_event(
-            service.id_generator.as_ref(),
-            service.clock.as_ref(),
-            context,
-            context.tenant_id,
-            media_session_resource_ref(context.tenant_id, session.media_session_id()),
-            session.revision().0,
-            event,
-        ))
-        .await?;
-    Ok(())
-}
-
-async fn append_binding_event(
-    service: &MediaService,
-    context: &RequestContext,
-    uow: &mut dyn UnitOfWork,
-    binding: &MediaBinding,
-    event: cheetah_domain::DomainEvent,
-) -> crate::Result<()> {
-    uow.outbox()
-        .append(wrap_event(
-            service.id_generator.as_ref(),
-            service.clock.as_ref(),
-            context,
-            context.tenant_id,
-            media_binding_resource_ref(context.tenant_id, binding.media_binding_id()),
-            binding.revision().0,
-            event,
-        ))
-        .await?;
-    Ok(())
 }
