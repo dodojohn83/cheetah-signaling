@@ -75,10 +75,13 @@ impl DigestQop {
 pub enum DigestError {
     /// Header value could not be parsed.
     Malformed(String),
-    /// Algorithm is not implemented.
+    /// Algorithm is not implemented (e.g. `MD5-sess` or an unknown token).
     UnknownAlgorithm,
     /// MD5 was used but is not allowed by policy.
     AlgorithmNotAllowed,
+    /// The response algorithm does not match the algorithm the server offered
+    /// in its challenge. Treated as a downgrade attempt and always rejected.
+    AlgorithmDowngrade,
     /// `qop` value is unsupported or inconsistent with `nc`/`cnonce`.
     InvalidQop,
     /// Nonce signature could not be verified.
@@ -103,6 +106,7 @@ impl fmt::Display for DigestError {
             Self::Malformed(s) => write!(f, "malformed digest header: {s}"),
             Self::UnknownAlgorithm => f.write_str("unknown digest algorithm"),
             Self::AlgorithmNotAllowed => f.write_str("MD5 not allowed by policy"),
+            Self::AlgorithmDowngrade => f.write_str("digest algorithm downgrade rejected"),
             Self::InvalidQop => f.write_str("invalid or unsupported qop"),
             Self::InvalidNonce => f.write_str("nonce signature verification failed"),
             Self::WeakSecret => f.write_str("server secret is too short"),

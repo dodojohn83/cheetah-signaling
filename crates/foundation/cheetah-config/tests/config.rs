@@ -164,6 +164,84 @@ mtls_client_ca_ref = "certs/grpc-client-ca.crt"
 }
 
 #[test]
+fn challenge_optional_allowed_with_explicit_edge_profile() -> Result<(), SignalError> {
+    let path = temp_config_path("challenge-optional-edge");
+    let content = r#"
+[system]
+profile = "edge"
+
+[gb28181]
+challenge_optional = true
+"#;
+    fs::write(&path, content).map_err(|e| {
+        SignalError::new(
+            cheetah_signal_types::SignalErrorKind::Internal,
+            "failed to write temp file",
+        )
+        .with_source(e)
+    })?;
+
+    let source = LayeredConfigSource::new().with_config_path(&path);
+    let config = source.snapshot()?;
+    assert!(config.gb28181.challenge_optional);
+
+    let _ = fs::remove_file(&path);
+    Ok(())
+}
+
+#[test]
+fn challenge_optional_requires_explicit_edge_profile() {
+    // Backends infer the edge profile, but the profile is not set explicitly,
+    // so challenge_optional must be rejected at startup.
+    let path = temp_config_path("challenge-optional-inferred");
+    let content = r#"
+[gb28181]
+challenge_optional = true
+"#;
+    let _ = fs::write(&path, content);
+
+    let source = LayeredConfigSource::new().with_config_path(&path);
+    let result = source.snapshot();
+    assert!(result.is_err());
+
+    let _ = fs::remove_file(&path);
+}
+
+#[test]
+fn challenge_optional_rejected_in_cluster_profile() {
+    let path = temp_config_path("challenge-optional-cluster");
+    let content = r#"
+[system]
+profile = "cluster"
+
+[storage]
+backend = "postgres"
+postgres_url = "postgres://u:p@localhost/cheetah"
+
+[messaging]
+backend = "nats"
+
+[cluster]
+enabled = true
+
+[grpc]
+tls_cert_ref = "certs/grpc.crt"
+tls_key_ref = "certs/grpc.key"
+mtls_client_ca_ref = "certs/grpc-client-ca.crt"
+
+[gb28181]
+challenge_optional = true
+"#;
+    let _ = fs::write(&path, content);
+
+    let source = LayeredConfigSource::new().with_config_path(&path);
+    let result = source.snapshot();
+    assert!(result.is_err());
+
+    let _ = fs::remove_file(&path);
+}
+
+#[test]
 fn edge_profile_rejects_postgres_backend() {
     let path = temp_config_path("edge-postgres");
     let content = r#"

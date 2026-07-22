@@ -134,9 +134,21 @@ impl DigestContext {
         replay_cache: &mut DigestReplayCache,
         now: u64,
     ) -> Result<(), DigestError> {
+        // An absent `algorithm` parameter means MD5 per RFC 2617; make that
+        // explicit so the whitelist and downgrade checks below apply uniformly.
         let algorithm = response.algorithm.unwrap_or(DigestAlgorithm::Md5);
         if algorithm == DigestAlgorithm::Md5 && !self.allow_md5 {
             return Err(DigestError::AlgorithmNotAllowed);
+        }
+        // Anti-downgrade: the client must answer with exactly the algorithm the
+        // server advertised in its challenge. A compliant client always echoes
+        // the offered algorithm (see `DigestClient::authorize`), so any other
+        // value — including a weaker algorithm that happens to be individually
+        // permitted — indicates a challenge/response tampering or downgrade
+        // attempt and is rejected. This also rejects an omitted algorithm
+        // (implicit MD5) against a SHA-256/SHA-512 challenge.
+        if algorithm != self.preferred_algorithm {
+            return Err(DigestError::AlgorithmDowngrade);
         }
 
         if response.realm != self.realm {

@@ -299,6 +299,40 @@ impl SignalConfig {
                 }
             }
         }
+        self.validate_gb28181_challenge_optional_policy(&inferred)?;
+        Ok(())
+    }
+
+    /// Enforces the GB28181 insecure-startup policy for `challenge_optional`.
+    ///
+    /// Accepting REGISTER without a successful digest exchange disables the
+    /// primary device authentication control, so it must never be enabled
+    /// implicitly. It is permitted only when the operator has explicitly
+    /// selected the development/edge profile (`system.profile = "edge"`):
+    ///
+    /// - the cluster/production profile rejects it outright;
+    /// - an inferred (unset) profile rejects it, forcing an explicit opt-in.
+    fn validate_gb28181_challenge_optional_policy(
+        &self,
+        inferred: &DeploymentProfile,
+    ) -> Result<()> {
+        if !self.gb28181.challenge_optional_requested() {
+            return Ok(());
+        }
+        if *inferred == DeploymentProfile::Cluster {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                "gb28181 challenge_optional=true is not permitted in the cluster \
+                 profile; every REGISTER must complete digest authentication",
+            ));
+        }
+        if self.system.profile != Some(DeploymentProfile::Edge) {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                "gb28181 challenge_optional=true requires system.profile = \"edge\" \
+                 to be set explicitly; it must not be enabled under an inferred profile",
+            ));
+        }
         Ok(())
     }
 
@@ -745,6 +779,15 @@ impl Gb28181Config {
             || self.device_password_ref.is_some()
             || self.default_tenant_id.is_some()
             || self.challenge_optional
+    }
+
+    /// Returns true when the insecure `challenge_optional` policy is requested
+    /// by the legacy single-listener field or by any explicit listener.
+    ///
+    /// This is the trigger for the startup profile policy: unauthenticated
+    /// REGISTER is only permitted under an explicit development/edge profile.
+    pub fn challenge_optional_requested(&self) -> bool {
+        self.challenge_optional || self.listeners.iter().any(|l| l.challenge_optional)
     }
 
     /// Validates GB28181 listener configuration.

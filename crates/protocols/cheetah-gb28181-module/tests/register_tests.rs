@@ -1787,6 +1787,38 @@ fn successful_auth_clears_rate_limit_failures() {
 }
 
 #[test]
+fn register_rejects_md5_downgrade_against_sha256_challenge_with_401() {
+    // The default policy advertises SHA-256. A device that answers with MD5 —
+    // even with an otherwise well-formed Authorization header — is attempting a
+    // downgrade and must be rejected rather than authenticated.
+    let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec()).unwrap();
+    let mut access = Gb28181Access::new(config, known_password_provider()).unwrap();
+
+    let nonce = obtain_challenge_nonce(&mut access);
+    let mut request = make_request(2, false);
+    // Response value is irrelevant: the downgrade is caught before the digest
+    // is recomputed.
+    let value = format!(
+        r##"Digest username="{DEVICE_ID}", realm="{REALM}", nonce="{nonce}", uri="sip:{DEVICE_ID}@{REALM}", response="00000000000000000000000000000000", cnonce="clientnonce", nc="00000001", qop="auth", algorithm="MD5""##
+    );
+    request
+        .headers_mut()
+        .append(HeaderName::Authorization, HeaderValue::new(value));
+
+    let outputs = access
+        .process(AccessInput {
+            source: "203.0.113.20:5060".parse().unwrap(),
+            now: 1000,
+            message: request,
+        })
+        .unwrap();
+    let SipMessage::Response { line, .. } = find_response(&outputs) else {
+        panic!("expected response");
+    };
+    assert_eq!(line.code, 401);
+}
+
+#[test]
 fn message_missing_device_id_returns_400() {
     let (mut access, now) = make_registered_access();
 
