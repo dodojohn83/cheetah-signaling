@@ -4,6 +4,7 @@ use super::error::{SipError, SipErrorKind};
 use super::headers::{HeaderName, HeaderValue, SipHeaders};
 use super::message::{Body, Method, RequestLine, SipMessage, StatusLine};
 use super::uri::SipUri;
+use crate::{CompatibilityCapability, CompatibilityProfile};
 
 /// Limits and behavior of the SIP parser.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -61,6 +62,7 @@ enum ParserState {
 #[derive(Clone, Debug)]
 pub struct SipParser {
     config: SipParserConfig,
+    profile: Option<CompatibilityProfile>,
     state: ParserState,
     buffer: Vec<u8>,
 }
@@ -68,8 +70,18 @@ pub struct SipParser {
 impl SipParser {
     /// Creates a parser with the given limits.
     pub fn new(config: SipParserConfig) -> Self {
+        Self::new_with_profile(config, None)
+    }
+
+    /// Creates a parser with the given limits and an optional compatibility
+    /// profile that gates non-ambiguous header normalization.
+    pub fn new_with_profile(
+        config: SipParserConfig,
+        profile: Option<CompatibilityProfile>,
+    ) -> Self {
         Self {
             config,
+            profile,
             state: ParserState::default(),
             buffer: Vec::new(),
         }
@@ -80,12 +92,22 @@ impl SipParser {
     /// # Errors
     ///
     /// Returns `SipError` for malformed or oversized messages.
-    pub fn parse_datagram(
+    pub fn parse_datagram(data: &[u8], config: SipParserConfig) -> Result<SipMessage, SipError> {
+        Self::parse_datagram_with_profile(data, config, None)
+    }
+
+    /// Parses a complete UDP datagram with a compatibility profile.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SipError` for malformed or oversized messages.
+    pub fn parse_datagram_with_profile(
         data: &[u8],
         mut config: SipParserConfig,
+        profile: Option<&CompatibilityProfile>,
     ) -> Result<SipMessage, SipError> {
         config.datagram_mode = true;
-        let mut parser = Self::new(config);
+        let mut parser = Self::new_with_profile(config, profile.cloned());
         parser.feed(data)?;
         match parser.pop_message() {
             Some(Ok(message)) => {
@@ -195,7 +217,13 @@ impl SipParser {
                     return None;
                 }
                 let body = self.buffer[..content_length].to_vec();
-                let result = build_message(&start_line, &headers, body, content_length);
+                let result = build_message(
+                    &start_line,
+                    &headers,
+                    body,
+                    content_length,
+                    self.profile.as_ref(),
+                );
                 self.buffer.drain(..content_length);
                 self.state = ParserState::StartLine;
                 Some(result)
@@ -268,6 +296,25 @@ impl SipParser {
                 return None;
             }
             if self.buffer[consumed] == b'\r' && self.buffer.get(consumed + 1) == Some(&b'\n') {
+                // With HeaderNormalization, an empty line inside the header block
+                // may be followed by more headers; only treat it as the terminator
+                // when the next non-empty line does not look like a header. If the
+                // buffer does not yet contain the full next line, ask the caller to
+                // wait for more bytes before deciding, otherwise TCP framing can
+                // terminate the header block too early.
+                if profile_has(
+                    self.profile.as_ref(),
+                    CompatibilityCapability::HeaderNormalization,
+                ) {
+                    match self.looks_like_header_after_blank(consumed) {
+                        Some(true) => {
+                            consumed += 2;
+                            continue;
+                        }
+                        None => return None,
+                        Some(false) => {}
+                    }
+                }
                 // End of headers
                 consumed += 2;
                 let content_length = match headers.get(&HeaderName::ContentLength) {
@@ -358,7 +405,15 @@ impl SipParser {
                     }
                 };
                 let name = HeaderName::parse(name.trim());
-                let value = HeaderValue::new(value.trim());
+                let mut value = HeaderValue::new(value.trim());
+                if name == HeaderName::CSeq
+                    && profile_has(
+                        self.profile.as_ref(),
+                        CompatibilityCapability::HeaderNormalization,
+                    )
+                {
+                    value = normalize_cseq_value(value);
+                }
                 headers.append(name, value);
 
                 header_count += 1;
@@ -375,6 +430,67 @@ impl SipParser {
         (start..self.buffer.len().saturating_sub(1))
             .find(|&i| self.buffer[i] == b'\r' && self.buffer.get(i + 1) == Some(&b'\n'))
     }
+
+    /// Returns true if the line immediately after a blank line (at `consumed`)
+    /// looks like a SIP header (non-empty token, a colon, and no leading
+    /// whitespace). Used by `HeaderNormalization` to skip intra-header blank
+    /// lines without treating them as the body separator.
+    fn looks_like_header_after_blank(&self, consumed: usize) -> Option<bool> {
+        let start = consumed + 2; // skip the leading CRLF
+        if start >= self.buffer.len() {
+            // In datagram mode the whole message is present, so a blank line
+            // followed by nothing is the header terminator. In stream mode we
+            // need more bytes to decide.
+            return if self.config.datagram_mode {
+                Some(false)
+            } else {
+                None
+            };
+        }
+        let end = match self.find_crlf(start) {
+            Some(end) => end,
+            // Same logic: only treat an unterminated trailing line as the body
+            // when we already have the complete datagram; otherwise wait.
+            None => {
+                return if self.config.datagram_mode {
+                    Some(false)
+                } else {
+                    None
+                };
+            }
+        };
+        let line = &self.buffer[start..end];
+        // Must not be empty or continuation.
+        if line.is_empty() || line[0].is_ascii_whitespace() {
+            return Some(false);
+        }
+        let Some(colon) = line.iter().position(|&b| b == b':') else {
+            return Some(false);
+        };
+        let name = &line[..colon];
+        if name.is_empty() {
+            return Some(false);
+        }
+        // Header name must be a single token (no spaces or non-printable chars).
+        Some(
+            name.iter()
+                .all(|&b| b.is_ascii_alphanumeric() || b"-._!%$*&+^`{|}~".contains(&b)),
+        )
+    }
+}
+
+fn profile_has(profile: Option<&CompatibilityProfile>, cap: CompatibilityCapability) -> bool {
+    profile.is_some_and(|p| p.has(cap))
+}
+
+fn normalize_cseq_value(value: HeaderValue) -> HeaderValue {
+    let raw = value.as_str();
+    let trimmed = raw.trim();
+    let (num, method) = match trimmed.split_once(char::is_whitespace) {
+        Some((num, method)) => (num, method.trim_start()),
+        None => return value,
+    };
+    HeaderValue::new(format!("{} {}", num, method.to_ascii_uppercase()))
 }
 
 fn build_message(
@@ -382,6 +498,7 @@ fn build_message(
     headers: &SipHeaders,
     body: Body,
     content_length: usize,
+    profile: Option<&CompatibilityProfile>,
 ) -> Result<SipMessage, SipError> {
     if body.len() != content_length {
         return Err(SipError::new(
@@ -418,7 +535,12 @@ fn build_message(
         let _version = parts.next().ok_or_else(|| {
             SipError::new(SipErrorKind::InvalidStartLine, None, "missing version")
         })?;
-        let method = Method::parse(method_str)?;
+        let method_str = if profile_has(profile, CompatibilityCapability::HeaderNormalization) {
+            method_str.to_ascii_uppercase()
+        } else {
+            method_str.to_string()
+        };
+        let method = Method::parse(&method_str)?;
         let uri = SipUri::parse(uri_str)?;
         Ok(SipMessage::Request {
             line: RequestLine::new(method, uri),
@@ -497,5 +619,87 @@ mod tests {
         let err = SipParser::parse_datagram(raw.as_bytes(), config)
             .expect_err("too many headers must be rejected");
         assert_eq!(err.kind, SipErrorKind::TooManyHeaders);
+    }
+
+    #[test]
+    fn lower_case_method_rejected_without_profile() {
+        let raw = "register sip:registrar SIP/2.0\r\n\
+                   Via: SIP/2.0/UDP 192.0.2.1:5060;branch=z9hG4bKabc\r\n\
+                   CSeq: 1 register\r\n\
+                   Content-Length: 0\r\n\r\n";
+        assert!(SipParser::parse_datagram(raw.as_bytes(), SipParserConfig::default()).is_err());
+    }
+
+    #[test]
+    fn header_normalization_uppercases_method_and_cseq() {
+        let profile = CompatibilityProfile {
+            capabilities: vec![CompatibilityCapability::HeaderNormalization],
+            ..Default::default()
+        };
+        let raw = "register sip:registrar SIP/2.0\r\n\
+                   Via: SIP/2.0/UDP 192.0.2.1:5060;branch=z9hG4bKabc\r\n\
+                   CSeq: 1 register\r\n\
+                   Content-Length: 0\r\n\r\n";
+        let msg = SipParser::parse_datagram_with_profile(
+            raw.as_bytes(),
+            SipParserConfig::default(),
+            Some(&profile),
+        )
+        .expect("normalize request line and cseq");
+        let SipMessage::Request { line, headers, .. } = msg else {
+            panic!("expected request");
+        };
+        assert_eq!(line.method, Method::Register);
+        assert_eq!(
+            headers.get(&HeaderName::CSeq).unwrap().as_str(),
+            "1 REGISTER"
+        );
+    }
+
+    #[test]
+    fn header_normalization_skips_intra_header_blank_line() {
+        let profile = CompatibilityProfile {
+            capabilities: vec![CompatibilityCapability::HeaderNormalization],
+            ..Default::default()
+        };
+        let body_bytes = br#"<?xml version="1.0"?><Notify><CmdType>Keepalive</CmdType><SN>1</SN><DeviceID>34020000001320000001</DeviceID><Status>OK</Status></Notify>"#;
+        let raw = format!(
+            "MESSAGE sip:34020000002000000001@example.com SIP/2.0\r\n\
+Via: SIP/2.0/UDP 192.0.2.1:5060;branch=z9hG4bKabc\r\n\
+From: <sip:a@example.com>;tag=1\r\n\
+To: <sip:a@example.com>\r\n\
+Call-ID: call-1@example.com\r\n\
+CSeq: 1 message\r\n\
+\r\n\
+Content-Type: application/manscdp+xml\r\n\
+Content-Length: {}\r\n\r\n",
+            body_bytes.len()
+        );
+        let mut raw = raw.into_bytes();
+        raw.extend_from_slice(body_bytes);
+        let msg = SipParser::parse_datagram_with_profile(
+            &raw,
+            SipParserConfig::default(),
+            Some(&profile),
+        )
+        .expect("skip intra-header blank line");
+        let SipMessage::Request {
+            line,
+            headers,
+            body,
+        } = msg
+        else {
+            panic!("expected request");
+        };
+        assert_eq!(line.method, Method::Message);
+        assert_eq!(
+            headers.get(&HeaderName::CSeq).unwrap().as_str(),
+            "1 MESSAGE"
+        );
+        assert_eq!(
+            headers.get(&HeaderName::ContentType).unwrap().as_str(),
+            "application/manscdp+xml"
+        );
+        assert_eq!(body, body_bytes);
     }
 }

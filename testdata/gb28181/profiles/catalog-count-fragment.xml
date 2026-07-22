@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<Response>
+    <CmdType>Catalog</CmdType>
+    <SN>3</SN>
+    <DeviceID>34020000001320000001</DeviceID>
+    <SumNum>3</SumNum>
+    <DeviceList Num="5">
+        <Item><DeviceID>34020000001320000001</DeviceID><Name>Cam1</Name><Status>ON</Status></Item>
+        <Item><DeviceID>34020000001320000002</DeviceID><Name>Cam2</Name><Status>ON</Status></Item>
+        <Item><DeviceID>34020000001320000003</DeviceID><Name>Cam3</Name><Status>ON</Status></Item>
+    </DeviceList>
+</Response>

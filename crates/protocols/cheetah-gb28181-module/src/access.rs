@@ -7,13 +7,14 @@
 use crate::config::{AuthPolicy, Gb28181DomainConfig};
 use crate::error::AccessError;
 use crate::events::{DevicePresence, Gb28181Event};
+use crate::mime::{ContentType, resolve_vendor_content_type};
 use crate::ports::CredentialProvider;
 use crate::registration::RegistrationTable;
 use crate::types::DeviceId;
 use crate::xml::{
-    XmlLimits, extract_alarm, extract_catalog, extract_device_control_response,
+    XmlLimits, extract_alarm, extract_catalog_with_profile, extract_device_control_response,
     extract_device_info, extract_device_status, extract_keepalive, extract_mobile_position,
-    extract_record_info, parse_xml,
+    extract_record_info, parse_xml_with_profile,
 };
 use cheetah_gb28181_core::{
     AccessInput, AccessOutput, AuthRateLimiter, DigestContext, DigestQop, DigestReplayCache,
@@ -346,9 +347,13 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                 .get_all(&HeaderName::Via)
                 .next()
                 .map(|v| v.as_str());
-            let route =
-                EndpointRoute::from_registration(source, top_via, Some(contact_uri.clone()));
-            if let Err(e) = self.registrations.upsert(
+            let route = EndpointRoute::from_registration_with_profile(
+                source,
+                top_via,
+                Some(contact_uri.clone()),
+                Some(self.config.compatibility()),
+            );
+            let registration = match self.registrations.upsert(
                 device_id.clone(),
                 route,
                 contact.clone(),
@@ -356,17 +361,17 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                 now,
                 user_agent.clone(),
             ) {
-                return if matches!(e, AccessError::RegistrationTableFull) {
-                    Ok(vec![AccessOutput::SendResponse(build_error_response(
+                Ok(registration) => registration,
+                Err(AccessError::RegistrationTableFull) => {
+                    return Ok(vec![AccessOutput::SendResponse(build_error_response(
                         message,
                         503,
                         "Service Unavailable",
                         self.next_tag(),
-                    ))])
-                } else {
-                    Err(e)
-                };
-            }
+                    ))]);
+                }
+                Err(e) => return Err(e),
+            };
             let response = build_success_response(message, contact_uri, expires, self.next_tag());
             Ok(vec![
                 AccessOutput::SendResponse(response),
@@ -377,6 +382,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                     contact,
                     expires,
                     user_agent,
+                    registration_sequence: registration.registration_sequence,
                 }),
             ])
         }
@@ -401,7 +407,8 @@ impl<P: CredentialProvider> Gb28181Access<P> {
             Err(
                 AccessError::InvalidDeviceId
                 | AccessError::InvalidXml(_)
-                | AccessError::UnsupportedCmdType(_),
+                | AccessError::UnsupportedCmdType(_)
+                | AccessError::UnsupportedContentType(_),
             ) => Ok(vec![AccessOutput::SendResponse(build_error_response(
                 request,
                 400,
@@ -425,6 +432,15 @@ impl<P: CredentialProvider> Gb28181Access<P> {
             return Err(AccessError::Internal("expected request".to_string()));
         };
 
+        let content_type_header = headers.get(&HeaderName::ContentType).map(|v| v.as_str());
+        let content_type =
+            resolve_vendor_content_type(content_type_header, self.config.compatibility())?;
+        if content_type == ContentType::Mansrtsp {
+            return Err(AccessError::UnsupportedContentType(
+                "MANSRTSP not accepted on MESSAGE".to_string(),
+            ));
+        }
+
         let from = headers
             .get(&HeaderName::From)
             .map(|v| v.as_str())
@@ -432,7 +448,8 @@ impl<P: CredentialProvider> Gb28181Access<P> {
         let from_device_id =
             parse::device_from_address(from).ok_or(AccessError::InvalidDeviceId)?;
 
-        let root = parse_xml(body, &XmlLimits::default())?;
+        let root =
+            parse_xml_with_profile(body, &XmlLimits::default(), self.config.compatibility())?;
         let cmd_type = root
             .child_text("CmdType")
             .ok_or_else(|| AccessError::InvalidXml("missing CmdType".to_string()))?;
@@ -467,7 +484,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                 }
             }
             "Catalog" => {
-                let catalog = extract_catalog(&root)?;
+                let catalog = extract_catalog_with_profile(&root, self.config.compatibility())?;
                 Gb28181Event::CatalogReceived {
                     domain_id: domain_id.clone(),
                     device_id: device_id.clone(),

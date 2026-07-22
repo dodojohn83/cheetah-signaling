@@ -1,0 +1,6 @@
+source = "synthetic"
+standard = "GB/T 28181-2016"
+profile = "gb4-comp-002-catalog-count-fragment"
+expected = "Catalog fragment with Num > item count and Num > SumNum is accepted when CatalogCountFragment is enabled"
+desensitization = "Device IDs and names replaced with synthetic dummy values"
+license = "CC0-1.0"

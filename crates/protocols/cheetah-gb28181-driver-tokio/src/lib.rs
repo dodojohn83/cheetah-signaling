@@ -104,6 +104,7 @@ impl<M: GbAccessMachine + Send + 'static> Gb28181UdpDriver<M> {
             access,
             sink,
             config.parser_config,
+            config.compatibility_profile,
             config.max_datagram_size,
             config.tcp_read_chunk_bytes,
             config.tcp_idle_timeout,

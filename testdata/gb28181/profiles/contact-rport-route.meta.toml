@@ -1,0 +1,6 @@
+source = "synthetic"
+standard = "GB/T 28181-2016"
+profile = "gb4-comp-002-contact-rport-route"
+expected = "Via received= is used as the send target even when rport is absent if ContactRportRoute is enabled"
+desensitization = "Device IDs, IP addresses, Call-IDs and branch values replaced with synthetic dummy values"
+license = "CC0-1.0"

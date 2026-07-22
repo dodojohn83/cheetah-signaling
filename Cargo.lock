@@ -592,6 +592,7 @@ name = "cheetah-gb28181-core"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "cheetah-domain",
  "hex",
  "hmac",
  "md5",
@@ -644,12 +645,13 @@ dependencies = [
  "cheetah-gb28181-core",
  "cheetah-gb28181-module",
  "clap",
- "futures",
  "rand 0.8.7",
  "secrecy",
  "serde",
+ "serde_json",
+ "sha2",
  "thiserror",
- "tokio",
+ "toml 0.8.23",
  "tracing",
  "tracing-subscriber",
 ]
@@ -1074,6 +1076,7 @@ dependencies = [
  "cheetah-cluster-registry",
  "cheetah-config",
  "cheetah-domain",
+ "cheetah-gb28181-core",
  "cheetah-gb28181-driver-tokio",
  "cheetah-gb28181-module",
  "cheetah-http-api",

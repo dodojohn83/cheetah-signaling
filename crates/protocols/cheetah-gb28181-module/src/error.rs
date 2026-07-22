@@ -28,6 +28,8 @@ pub enum AccessError {
     RegistrationTableFull,
     #[error("malformed or disallowed XML body: {0}")]
     InvalidXml(String),
+    #[error("unsupported content type: {0}")]
+    UnsupportedContentType(String),
     #[error("internal module error: {0}")]
     Internal(String),
 }

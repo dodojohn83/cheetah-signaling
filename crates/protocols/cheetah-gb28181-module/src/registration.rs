@@ -28,6 +28,10 @@ pub(crate) struct Registration {
     pub offline: bool,
     /// Raw User-Agent header from registration, if present.
     pub user_agent: Option<String>,
+    /// Monotonic sequence number for this registration session, allocated on a
+    /// new or recovered registration. Used by downstream consumers such as
+    /// bootstrap operation idempotency keys.
+    pub registration_sequence: u64,
 }
 
 impl Registration {
@@ -55,6 +59,7 @@ pub(crate) struct TouchOutcome {
 pub(crate) struct RegistrationTable {
     table: HashMap<DeviceId, Registration>,
     max_registrations: usize,
+    next_sequence: u64,
 }
 
 impl RegistrationTable {
@@ -62,15 +67,21 @@ impl RegistrationTable {
         Self {
             table: HashMap::new(),
             max_registrations,
+            next_sequence: 0,
         }
     }
 
-    /// Inserts or replaces a registration. Returns the previous registration,
-    /// if any.
+    /// Inserts or replaces a registration. Returns the inserted or updated
+    /// registration.
     ///
     /// This is only called from an authenticated (or accepted challenge-optional)
     /// REGISTER path, so replacing the endpoint route here is the sanctioned way
     /// to move a device's send route.
+    ///
+    /// A new registration sequence is allocated when the device was not
+    /// previously registered or the previous registration was marked offline,
+    /// which gives downstream consumers a stable per-session generation they can
+    /// embed in idempotency keys.
     ///
     /// Rejects the insertion if the table is already at capacity and the
     /// device is not already registered. Capacity violations are reported as
@@ -83,11 +94,26 @@ impl RegistrationTable {
         expires: u32,
         now: u64,
         user_agent: Option<String>,
-    ) -> Result<Option<Registration>, AccessError> {
+    ) -> Result<Registration, AccessError> {
         let is_new = !self.table.contains_key(&device_id);
         if is_new && self.table.len() >= self.max_registrations {
             return Err(AccessError::RegistrationTableFull);
         }
+
+        let previous = self.table.get(&device_id);
+        let previous_sequence = previous.as_ref().and_then(|r| {
+            if r.offline {
+                None
+            } else {
+                Some(r.registration_sequence)
+            }
+        });
+        let registration_sequence = if let Some(seq) = previous_sequence {
+            seq
+        } else {
+            self.next_sequence = self.next_sequence.wrapping_add(1);
+            self.next_sequence
+        };
 
         let registration = Registration {
             route,
@@ -97,8 +123,10 @@ impl RegistrationTable {
             last_seen: now,
             offline: false,
             user_agent,
+            registration_sequence,
         };
-        Ok(self.table.insert(device_id, registration))
+        self.table.insert(device_id, registration.clone());
+        Ok(registration)
     }
 
     /// Marks a registered device as still alive without mutating its endpoint

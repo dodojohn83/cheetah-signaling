@@ -100,6 +100,18 @@ impl SignalConfig {
                 "gb28181.catalog_fragment_max_items must be greater than zero",
             ));
         }
+        if self.gb28181.record_fragment_max_entries == 0 {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                "gb28181.record_fragment_max_entries must be greater than zero",
+            ));
+        }
+        if self.gb28181.record_fragment_max_items == 0 {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                "gb28181.record_fragment_max_items must be greater than zero",
+            ));
+        }
         if self.gb28181.session_reaper_batch_size == 0
             || self.gb28181.session_reaper_batch_size > crate::MAX_PAGE_SIZE
         {
@@ -686,6 +698,13 @@ pub struct Gb28181Config {
     /// Maximum number of catalog items that may be accumulated for a single
     /// (tenant, device, sequence number) before the partial assembly is dropped.
     pub catalog_fragment_max_items: u32,
+    /// Maximum number of concurrent record-info fragment assemblies to keep in
+    /// memory. Each assembly is keyed by the SIP sequence number of a record-info
+    /// query response.
+    pub record_fragment_max_entries: u32,
+    /// Maximum number of record items that may be accumulated for a single
+    /// (tenant, device, sequence number) before the partial assembly is dropped.
+    pub record_fragment_max_items: u32,
     /// When true, accept REGISTER without successful digest authentication
     /// after issuing a challenge. Production deployments must leave this
     /// `false` (the default). Development profiles may enable it explicitly.
@@ -727,6 +746,8 @@ impl Default for Gb28181Config {
             default_tenant_id: None,
             catalog_fragment_max_entries: 1024,
             catalog_fragment_max_items: 8192,
+            record_fragment_max_entries: 1024,
+            record_fragment_max_items: 8192,
             challenge_optional: false,
             session_reaper_interval_ms: DurationMs::from_millis(30_000),
             session_reaper_batch_size: 256,

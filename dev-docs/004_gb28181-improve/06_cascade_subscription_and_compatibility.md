@@ -159,7 +159,7 @@ profile 匹配优先级固定为 exact firmware → model → manufacturer → s
 - [ ] `GB4-CAS-005`：完成 live/playback bridge Saga、CANCEL/BYE/INFO、media binding 和双侧补偿。
 - [ ] `GB4-CAS-006`：完成多上级、下级接入、ACL、loop/hop 和唯一 control owner 测试。
 - [x] `GB4-COMP-001`：实现 profile schema、exact match、revision pinning、capability 和配置校验。见 [reports/gb4-comp-001.md](reports/gb4-comp-001.md)。
-- [ ] `GB4-COMP-002`：实现 charset/MIME/header/endpoint/catalog 首批受控 override。
+- [x] `GB4-COMP-002`：实现 charset/MIME/header/endpoint/catalog 首批受控 override。见 [reports/gb4-comp-002.md](reports/gb4-comp-002.md)。
 - [ ] `GB4-COMP-003`：实现 SDP/Broadcast/MediaStatus 受控 override，并保持 MediaPort 网络边界。
 - [ ] `GB4-COMP-004`：为每个 workaround 增加 provenance fixture、risk、regression 和 removal criteria。
 

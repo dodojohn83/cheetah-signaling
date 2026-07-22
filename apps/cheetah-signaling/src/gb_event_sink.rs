@@ -9,21 +9,21 @@ use cheetah_domain::{Connectivity, Device, Protocol};
 use cheetah_gb28181_driver_tokio::sink::EventSink;
 use cheetah_gb28181_module::DeviceId as GbDeviceId;
 use cheetah_gb28181_module::Gb28181Event;
+use cheetah_gb28181_module::bootstrap;
 use cheetah_gb28181_module::xml::CatalogItem as GbCatalogItem;
 use cheetah_http_api::metrics::RequestMetrics;
 use cheetah_http_api::state::ApiState;
 use cheetah_signal_application::{
     ChannelDescriptor, MarkDeviceOfflineRequest, MarkDeviceOnlineRequest, RegisterDeviceRequest,
-    ReplaceChannelCatalogRequest, UpdateDeviceCapabilitiesRequest,
+    ReplaceChannelCatalogRequest, SubmitOperationRequest, UpdateDeviceCapabilitiesRequest,
 };
 use cheetah_signal_types::{
-    ChannelId, CorrelationId, DeviceId, GbCommandMethod, GbCommandOutcome, GbMetricsRecorder,
-    MessageId, NodeId, Principal, PrincipalKind, ProtocolIdentity, RequestContext, SignalError,
-    SignalErrorKind, TenantId,
+    CorrelationId, Deadline, DeviceId, DurationMs, GbCommandMethod, GbCommandOutcome,
+    GbMetricsRecorder, MessageId, NodeId, OwnerEpoch, Principal, PrincipalKind, ProtocolIdentity,
+    RequestContext, ResourceId, ResourceKind, ResourceRef, SignalError, SignalErrorKind, TenantId,
 };
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -56,6 +56,8 @@ pub fn spawn(
     queue_depth: usize,
     catalog_max_entries: usize,
     catalog_max_items: usize,
+    record_max_entries: usize,
+    record_max_items: usize,
     gb_metrics: Arc<dyn GbMetricsRecorder>,
     cancel: tokio_util::sync::CancellationToken,
 ) -> (
@@ -67,6 +69,7 @@ pub fn spawn(
     let metrics = state.metrics.clone();
     let sink = Arc::new(GbApplicationEventSink { tx, metrics }) as Arc<dyn EventSink<Gb28181Event>>;
     let mut catalog_buffer = CatalogBuffer::new(catalog_max_entries, catalog_max_items);
+    let mut record_buffer = RecordInfoBuffer::new(record_max_entries, record_max_items);
     let mut cleanup = tokio::time::interval(CATALOG_CLEANUP_INTERVAL);
     cleanup.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let handle = tokio::spawn(async move {
@@ -75,11 +78,12 @@ pub fn spawn(
                 _ = cancel.cancelled() => break,
                 _ = cleanup.tick() => {
                     catalog_buffer.evict();
+                    record_buffer.evict();
                     continue;
                 }
                 maybe_event = rx.recv() => {
                     match maybe_event {
-                        Some(event) => process_event(&state, node_id, tenant_id, event, &mut catalog_buffer, gb_metrics.as_ref()).await,
+                        Some(event) => process_event(&state, node_id, tenant_id, event, &mut catalog_buffer, &mut record_buffer, gb_metrics.as_ref()).await,
                         None => break,
                     }
                 }
@@ -96,6 +100,7 @@ async fn process_event(
     tenant_id: Option<TenantId>,
     event: Gb28181Event,
     catalog_buffer: &mut CatalogBuffer,
+    record_buffer: &mut RecordInfoBuffer,
     gb_metrics: &dyn GbMetricsRecorder,
 ) {
     let tenant_id = match tenant_id {
@@ -109,9 +114,24 @@ async fn process_event(
     let context = build_context(state, node_id, tenant_id, &event);
 
     let result = match event {
-        Gb28181Event::DeviceRegistered { device_id, .. } => {
-            ensure_online(state, &context, tenant_id, &device_id, true).await
-        }
+        Gb28181Event::DeviceRegistered {
+            device_id,
+            registration_sequence,
+            ..
+        } => match ensure_online(state, &context, tenant_id, &device_id, true).await {
+            Ok(Some(internal_id)) => {
+                submit_bootstrap_queries(
+                    state,
+                    &context,
+                    tenant_id,
+                    internal_id,
+                    registration_sequence,
+                )
+                .await
+            }
+            Ok(None) => Ok(()),
+            Err(e) => Err(e),
+        },
         Gb28181Event::DeviceUnregistered { device_id, .. } => {
             mark_offline(state, &context, tenant_id, &device_id).await
         }
@@ -121,14 +141,18 @@ async fn process_event(
             ..
         } => match presence {
             cheetah_gb28181_module::DevicePresence::Online => {
-                ensure_online(state, &context, tenant_id, &device_id, true).await
+                ensure_online(state, &context, tenant_id, &device_id, true)
+                    .await
+                    .map(|_| ())
             }
             cheetah_gb28181_module::DevicePresence::Offline => {
                 mark_offline(state, &context, tenant_id, &device_id).await
             }
         },
         Gb28181Event::Keepalive { device_id, .. } => {
-            ensure_online(state, &context, tenant_id, &device_id, false).await
+            ensure_online(state, &context, tenant_id, &device_id, false)
+                .await
+                .map(|_| ())
         }
         Gb28181Event::CatalogReceived {
             device_id,
@@ -242,8 +266,20 @@ async fn process_event(
             info!(%media_session_id, %device_id, %channel_id, %reason, "gb28181 media session failed; no application handler wired yet");
             Ok(())
         }
-        Gb28181Event::RecordInfoReceived { device_id, .. } => {
-            info!(%device_id, "gb28181 record info received; no application handler wired yet");
+        Gb28181Event::RecordInfoReceived {
+            device_id,
+            sn,
+            num,
+            sum_num,
+            items,
+            ..
+        } => {
+            if let Some(records) =
+                record_buffer.accumulate(tenant_id, &device_id, &sn, sum_num, num, items)
+            {
+                info!(%device_id, %sn, record_count = records.len(), "gb28181 record info aggregation complete");
+                // TODO(GB4-ACC-005): persist records through a RecordInfoService once available.
+            }
             Ok(())
         }
         Gb28181Event::CascadePlatformConnected { platform_id, .. } => {
@@ -313,238 +349,7 @@ fn event_source(event: &Gb28181Event) -> Option<&std::net::SocketAddr> {
     }
 }
 
-/// Creates a stable key for a catalog fragment from the sorted set of channel
-/// external ids it contains. Retransmissions of the same fragment will share
-/// the same key and therefore contribute their declared `Num` only once.
-fn fragment_key(batch: &HashMap<String, GbCatalogItem>) -> String {
-    if batch.is_empty() {
-        return "empty".to_string();
-    }
-    let mut ids: Vec<_> = batch.keys().map(String::as_str).collect();
-    ids.sort();
-    ids.join(",")
-}
-
-const CATALOG_FRAGMENT_TTL: Duration = Duration::from_secs(60);
-const CATALOG_CLEANUP_INTERVAL: Duration = Duration::from_secs(30);
-
-/// In-memory accumulator for paginated GB28181 catalog fragments.
-///
-/// Devices may split a catalog response across multiple SIP MESSAGE bodies.
-/// Fragments are keyed by (tenant, device, sequence number) and merged into a
-/// single `replace_channel_catalog` call once `sum_num` distinct channel ids
-/// have been seen. Items are de-duplicated by their channel `device_id`.
-///
-/// To avoid stalling when a camera drops malformed items, completion also falls
-/// back to the sum of declared `Num` values for each *unique* fragment content
-/// (retransmissions are ignored). If the unique fragment count equals `sum_num`
-/// but fewer distinct channels were collected, the partial catalog is emitted as
-/// a best-effort replacement and a warning is logged. Overlapping fragments that
-/// would push the unique declared count above `sum_num` are not used to trigger
-/// completion. Partial transfers expire after `CATALOG_FRAGMENT_TTL` and are
-/// evicted by the background worker cleanup tick.
-struct CatalogBuffer {
-    entries: HashMap<CatalogKey, PartialCatalog>,
-    max_entries: usize,
-    max_items_per_entry: usize,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
-struct CatalogKey {
-    tenant_id: TenantId,
-    device_id: String,
-    sn: String,
-}
-
-struct PartialCatalog {
-    /// Accumulated catalog items keyed by channel external id (`device_id`).
-    items: HashMap<String, GbCatalogItem>,
-    /// Declared total number of items across all fragments (`SumNum`).
-    expected: u32,
-    /// Declared `Num` values keyed by a digest of the fragment's channel ids.
-    ///
-    /// Retransmissions of the same fragment share the same key and do not
-    /// contribute multiple times. For each unique fragment the largest `Num`
-    /// value observed is kept.
-    fragments: HashMap<String, u32>,
-    last_seen: Instant,
-}
-
-impl PartialCatalog {
-    /// Sum of declared `Num` values for unique fragments received so far.
-    fn received_num(&self) -> u32 {
-        self.fragments
-            .values()
-            .copied()
-            .fold(0u32, |acc, v| acc.saturating_add(v))
-    }
-
-    fn is_complete(&self) -> bool {
-        let distinct = self.items.len();
-        if distinct >= self.expected as usize {
-            if distinct > self.expected as usize {
-                warn!(
-                    expected = self.expected,
-                    distinct, "gb28181 catalog has more distinct channels than declared"
-                );
-            }
-            return true;
-        }
-
-        let received = self.received_num();
-        if received == self.expected {
-            warn!(
-                expected = self.expected,
-                distinct,
-                received,
-                "gb28181 catalog unique fragment count reached sum_num with fewer distinct channels; some items may have been malformed or dropped"
-            );
-            return true;
-        }
-
-        if received > self.expected {
-            warn!(
-                expected = self.expected,
-                distinct,
-                received,
-                "gb28181 catalog fragments overlap or repeat declared counts; waiting for distinct channel ids"
-            );
-        }
-
-        false
-    }
-}
-
-impl CatalogBuffer {
-    fn new(max_entries: usize, max_items_per_entry: usize) -> Self {
-        Self {
-            entries: HashMap::new(),
-            max_entries,
-            max_items_per_entry,
-        }
-    }
-
-    fn accumulate(
-        &mut self,
-        tenant_id: TenantId,
-        device_id: &GbDeviceId,
-        sn: &str,
-        expected: u32,
-        num: u32,
-        items: Vec<GbCatalogItem>,
-    ) -> Option<Vec<GbCatalogItem>> {
-        // De-duplicate within the incoming fragment before any size checks.
-        let mut batch = HashMap::with_capacity(items.len());
-        for item in items {
-            batch.insert(item.device_id.clone(), item);
-        }
-
-        if expected == 0 {
-            return Some(batch.into_values().collect());
-        }
-
-        let expected_usize = expected as usize;
-        if expected_usize > self.max_items_per_entry {
-            warn!(
-                %device_id,
-                sn,
-                expected,
-                max_items_per_entry = self.max_items_per_entry,
-                "gb28181 catalog fragment declares more items than allowed; dropping"
-            );
-            return None;
-        }
-
-        let key = CatalogKey {
-            tenant_id,
-            device_id: device_id.as_ref().to_string(),
-            sn: sn.to_string(),
-        };
-
-        if !self.entries.contains_key(&key) && self.entries.len() >= self.max_entries {
-            warn!(
-                sn,
-                max_entries = self.max_entries,
-                "gb28181 catalog fragment buffer full; dropping new fragment"
-            );
-            return None;
-        }
-
-        if let Some(partial) = self.entries.get_mut(&key) {
-            let new_distinct = batch
-                .keys()
-                .filter(|k| !partial.items.contains_key(*k))
-                .count();
-            let total = partial.items.len().saturating_add(new_distinct);
-            if total > self.max_items_per_entry {
-                warn!(
-                    %device_id,
-                    sn,
-                    accumulated = total,
-                    max_items_per_entry = self.max_items_per_entry,
-                    "gb28181 catalog fragment exceeded per-entry item limit; dropping partial"
-                );
-                self.entries.remove(&key);
-                return None;
-            }
-            partial
-                .fragments
-                .entry(fragment_key(&batch))
-                .and_modify(|v| *v = num.max(*v))
-                .or_insert(num);
-            partial.items.extend(batch);
-            partial.last_seen = Instant::now();
-            if partial.is_complete() {
-                return self
-                    .entries
-                    .remove(&key)
-                    .map(|complete| complete.items.into_values().collect());
-            }
-            return None;
-        }
-
-        if batch.len() > self.max_items_per_entry {
-            warn!(
-                %device_id,
-                sn,
-                accumulated = batch.len(),
-                max_items_per_entry = self.max_items_per_entry,
-                "gb28181 catalog fragment exceeded per-entry item limit; dropping"
-            );
-            return None;
-        }
-
-        let mut fragments = HashMap::new();
-        if num > 0 || !batch.is_empty() {
-            fragments.insert(fragment_key(&batch), num);
-        }
-        let partial = PartialCatalog {
-            items: batch,
-            expected,
-            fragments,
-            last_seen: Instant::now(),
-        };
-        if partial.is_complete() {
-            return Some(partial.items.into_values().collect());
-        }
-        self.entries.insert(key, partial);
-        None
-    }
-
-    fn evict(&mut self) {
-        let now = Instant::now();
-        let before = self.entries.len();
-        self.entries
-            .retain(|_, partial| now.duration_since(partial.last_seen) <= CATALOG_FRAGMENT_TTL);
-        let dropped = before.saturating_sub(self.entries.len());
-        if dropped > 0 {
-            warn!(
-                dropped,
-                "gb28181 catalog fragment buffer evicted stale entries"
-            );
-        }
-    }
-}
+use crate::gb_catalog_buffer::{CATALOG_CLEANUP_INTERVAL, CatalogBuffer, RecordInfoBuffer};
 
 /// Maps a GB28181 DeviceControl response result string to a bounded outcome.
 fn control_outcome(result: &Option<String>) -> GbCommandOutcome {
@@ -610,28 +415,29 @@ async fn ensure_online(
     tenant_id: TenantId,
     device_id: &GbDeviceId,
     force: bool,
-) -> Result<(), SignalError> {
+) -> Result<Option<DeviceId>, SignalError> {
     let external_id = device_id.as_ref();
     if let Some(device) = resolve_device(state, tenant_id, external_id).await {
-        if force || !matches!(device.connectivity(), Connectivity::Online) {
+        let internal_id = device.device_id();
+        if !matches!(device.connectivity(), Connectivity::Online) {
             let mut uow = state.storage.begin().await.map_err(storage_error)?;
             let _ = state
                 .device_service
                 .mark_device_online(
                     context,
                     &mut *uow,
-                    device.device_id(),
+                    internal_id,
                     MarkDeviceOnlineRequest {
                         reason: Some("gb28181 online".to_string()),
                     },
                 )
                 .await?;
         }
-        return Ok(());
+        return Ok(Some(internal_id));
     }
 
     if !force {
-        return Ok(());
+        return Ok(None);
     }
 
     let mut uow = state.storage.begin().await.map_err(storage_error)?;
@@ -652,19 +458,20 @@ async fn ensure_online(
         )
         .await?;
 
+    let internal_id = result.device.device_id;
     let mut uow = state.storage.begin().await.map_err(storage_error)?;
     let _ = state
         .device_service
         .mark_device_online(
             context,
             &mut *uow,
-            result.device.device_id,
+            internal_id,
             MarkDeviceOnlineRequest {
                 reason: Some("gb28181 registered".to_string()),
             },
         )
         .await?;
-    Ok(())
+    Ok(Some(internal_id))
 }
 
 async fn mark_offline(
@@ -684,6 +491,69 @@ async fn mark_offline(
                 internal_id,
                 MarkDeviceOfflineRequest {
                     reason: "gb28181 offline".to_string(),
+                },
+            )
+            .await?;
+    }
+    Ok(())
+}
+
+/// Submits Catalog / DeviceInfo / DeviceStatus bootstrap query Operations for a
+/// freshly registered/online GB28181 device.
+///
+/// Each query uses a tenant-scoped, owner-epoch-qualified and
+/// registration-sequence-qualified idempotency key so that the same
+/// registration does not create duplicate operations while a new owner or a new
+/// registration still spawns fresh queries.
+async fn submit_bootstrap_queries(
+    state: &ApiState,
+    context: &RequestContext,
+    tenant_id: TenantId,
+    device_id: DeviceId,
+    registration_sequence: u64,
+) -> Result<(), SignalError> {
+    let owner = state
+        .owner_resolver
+        .resolve(tenant_id, device_id)
+        .await
+        .map_err(SignalError::from)?;
+    // A newly acquired owner always starts at epoch 1; defaulting to 0 would
+    // cause any later owner-recovered operation to fail the epoch fence.
+    let owner_epoch = owner.map(|o| o.owner_epoch).unwrap_or(OwnerEpoch(1));
+
+    let deadline = Deadline::from_now(state.clock.now_wall(), DurationMs::from_seconds(30))
+        .or_else(|| {
+            warn!("bootstrap query deadline overflowed; proceeding without deadline");
+            None
+        });
+    let target = ResourceRef {
+        tenant_id,
+        kind: ResourceKind::Device,
+        id: ResourceId::Device(device_id),
+    };
+
+    for kind in bootstrap::bootstrap_query_kinds() {
+        let payload = bootstrap::bootstrap_query_payload(*kind);
+        let idempotency_key = bootstrap::bootstrap_idempotency_key(
+            tenant_id,
+            device_id,
+            owner_epoch,
+            registration_sequence,
+            *kind,
+        );
+        let mut uow = state.storage.begin().await.map_err(storage_error)?;
+        let _ = state
+            .operation_service
+            .submit_operation(
+                context,
+                &mut *uow,
+                SubmitOperationRequest {
+                    device_id,
+                    target: target.clone(),
+                    payload,
+                    idempotency_key,
+                    deadline,
+                    expected_owner_epoch: owner_epoch,
                 },
             )
             .await?;
@@ -741,7 +611,11 @@ async fn replace_catalog(
 
     let mut channels = Vec::with_capacity(items.len());
     for item in items {
-        let channel_id = catalog_channel_id(tenant_id, external_id, &item.device_id);
+        let channel_id = cheetah_domain::channel::map_gb28181_channel_id(
+            tenant_id,
+            external_id,
+            &item.device_id,
+        );
         let mut metadata = BTreeMap::new();
         if let Some(v) = &item.manufacturer {
             metadata.insert("manufacturer".to_string(), v.clone());
@@ -803,17 +677,4 @@ async fn replace_catalog(
         )
         .await?;
     Ok(())
-}
-
-fn catalog_channel_id(
-    tenant_id: TenantId,
-    device_external_id: &str,
-    channel_external_id: &str,
-) -> ChannelId {
-    let namespace = Uuid::NAMESPACE_OID;
-    let name = format!(
-        "gb28181/{}/{}/{}",
-        tenant_id, device_external_id, channel_external_id
-    );
-    ChannelId::from_uuid(Uuid::new_v5(&namespace, name.as_bytes()))
 }

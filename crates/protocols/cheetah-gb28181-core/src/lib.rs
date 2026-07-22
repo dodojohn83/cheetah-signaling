@@ -4,8 +4,14 @@
 //! SIP parser/encoder and a limited SDP parser/encoder. It does not perform
 //! any network I/O; transport drivers are implemented in
 //! `cheetah-gb28181-driver-tokio`.
+//!
+//! Re-exported [`CompatibilityProfile`] and [`CompatibilityCapability`] live in
+//! the domain crate so that protocol drivers can pass profile hints to the
+//! Sans-I/O parser/encoder without taking a direct dependency on the domain.
 
 #![warn(missing_docs)]
+
+pub use cheetah_domain::{CompatibilityCapability, CompatibilityProfile};
 
 pub mod access;
 pub mod sdp;

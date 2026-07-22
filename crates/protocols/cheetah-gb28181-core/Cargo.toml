@@ -9,6 +9,7 @@ repository.workspace = true
 description = "Sans-I/O GB28181 SIP core: message model, parser and encoder."
 
 [dependencies]
+cheetah-domain = { path = "../../domain/cheetah-domain" }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 bytes = { workspace = true }

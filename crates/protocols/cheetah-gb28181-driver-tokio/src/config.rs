@@ -1,6 +1,6 @@
 //! Driver configuration.
 
-use cheetah_gb28181_core::{ManagerConfig, SipParserConfig};
+use cheetah_gb28181_core::{CompatibilityProfile, ManagerConfig, SipParserConfig};
 use std::net::SocketAddr;
 use std::time::Duration;
 
@@ -52,6 +52,9 @@ pub struct DriverConfig {
     /// Bounds (per-role capacity and TTL) and timer configuration for the SIP
     /// transaction tables.
     pub manager_config: ManagerConfig,
+    /// Optional compatibility profile applied to incoming and outgoing SIP
+    /// parsing/encoding for this listener.
+    pub compatibility_profile: Option<CompatibilityProfile>,
 }
 
 impl DriverConfig {
@@ -73,6 +76,7 @@ impl DriverConfig {
             tick_interval: DEFAULT_TICK_INTERVAL,
             shutdown_drain: DEFAULT_SHUTDOWN_DRAIN,
             manager_config: ManagerConfig::default(),
+            compatibility_profile: None,
         }
     }
 
@@ -158,6 +162,12 @@ impl DriverConfig {
     /// Sets the transaction-table bounds and timer configuration.
     pub fn with_manager_config(mut self, config: ManagerConfig) -> Self {
         self.manager_config = config;
+        self
+    }
+
+    /// Sets the compatibility profile for SIP parser/encoder normalization.
+    pub fn with_compatibility_profile(mut self, profile: Option<CompatibilityProfile>) -> Self {
+        self.compatibility_profile = profile;
         self
     }
 }

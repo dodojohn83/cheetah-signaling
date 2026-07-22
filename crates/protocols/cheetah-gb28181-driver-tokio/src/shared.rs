@@ -9,9 +9,9 @@
 use crate::error::DriverError;
 use crate::sink::EventSink;
 use cheetah_gb28181_core::{
-    AccessInput, AccessOutput, DialogManager, DialogManagerConfig, DialogRouting, GbAccessMachine,
-    HeaderName, ManagerConfig, ManagerOutput, RequestOutcome, RequestRoute, SipMessage,
-    SipParserConfig, TransactionManager, TransportKind, route_request,
+    AccessInput, AccessOutput, CompatibilityProfile, DialogManager, DialogManagerConfig,
+    DialogRouting, GbAccessMachine, HeaderName, ManagerConfig, ManagerOutput, RequestOutcome,
+    RequestRoute, SipMessage, SipParserConfig, TransactionManager, TransportKind, route_request,
 };
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
@@ -41,6 +41,7 @@ pub(crate) struct Shared<M: GbAccessMachine> {
     access: Mutex<M>,
     sink: Arc<dyn EventSink<M::Event>>,
     parser_config: SipParserConfig,
+    compatibility_profile: Option<CompatibilityProfile>,
     max_datagram_size: usize,
     tcp_read_chunk_bytes: usize,
     tcp_idle_timeout: Duration,
@@ -64,6 +65,7 @@ impl<M: GbAccessMachine> Shared<M> {
         access: M,
         sink: Arc<dyn EventSink<M::Event>>,
         parser_config: SipParserConfig,
+        compatibility_profile: Option<CompatibilityProfile>,
         max_datagram_size: usize,
         tcp_read_chunk_bytes: usize,
         tcp_idle_timeout: Duration,
@@ -89,6 +91,7 @@ impl<M: GbAccessMachine> Shared<M> {
             access: Mutex::new(access),
             sink,
             parser_config,
+            compatibility_profile,
             max_datagram_size,
             tcp_read_chunk_bytes,
             tcp_idle_timeout,
@@ -108,6 +111,11 @@ impl<M: GbAccessMachine> Shared<M> {
     /// Parser limits used for both UDP datagrams and TCP streams.
     pub(crate) fn parser_config(&self) -> SipParserConfig {
         self.parser_config
+    }
+
+    /// Compatibility profile applied to SIP parsing/encoding for this listener.
+    pub(crate) fn compatibility_profile(&self) -> Option<&CompatibilityProfile> {
+        self.compatibility_profile.as_ref()
     }
 
     /// Maximum accepted UDP datagram size in bytes.

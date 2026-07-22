@@ -1,0 +1,10 @@
+REGISTER sip:34020000002000000001@example.com SIP/2.0
+Via: SIP/2.0/UDP 203.0.113.10:5060;received=198.51.100.5;branch=z9hG4bK0003
+From: <sip:34020000001320000001@example.com>;tag=3
+To: <sip:34020000001320000001@example.com>
+Call-ID: contact-rport-001@example.com
+CSeq: 1 REGISTER
+Contact: <sip:34020000001320000001@203.0.113.10:5060>
+Expires: 3600
+Content-Length: 0
+

@@ -1,6 +1,7 @@
 //! Cheetah Signaling application binary.
 
 mod assembly;
+mod gb_catalog_buffer;
 mod gb_event_sink;
 mod onvif_discovery;
 mod workers;

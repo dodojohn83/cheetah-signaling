@@ -56,7 +56,11 @@ async fn handle_datagram<M>(
 ) where
     M: GbAccessMachine + Send + 'static,
 {
-    let message = match SipParser::parse_datagram(data, shared.parser_config()) {
+    let message = match SipParser::parse_datagram_with_profile(
+        data,
+        shared.parser_config(),
+        shared.compatibility_profile(),
+    ) {
         Ok(message) => message,
         Err(e) => {
             warn!(error = %e, %source, "failed to parse UDP SIP datagram");

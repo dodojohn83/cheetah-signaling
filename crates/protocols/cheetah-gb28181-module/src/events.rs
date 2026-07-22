@@ -31,6 +31,10 @@ pub enum Gb28181Event {
         expires: u32,
         /// Raw User-Agent header, if present.
         user_agent: Option<String>,
+        /// Monotonic registration session sequence allocated by the access
+        /// state machine. A new or recovered registration receives a new
+        /// sequence, while a refresh keeps the same one.
+        registration_sequence: u64,
     },
     /// A device explicitly unregistered or its registration expired.
     DeviceUnregistered {
