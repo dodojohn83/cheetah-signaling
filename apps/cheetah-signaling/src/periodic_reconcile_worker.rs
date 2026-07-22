@@ -25,7 +25,10 @@ pub fn spawn(
     interval: Duration,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(interval);
+        // Delay the first tick so the process has time to start listeners and
+        // for media nodes to re-register before any heavy reconcile RPCs run.
+        let start = tokio::time::Instant::now() + interval;
+        let mut interval = tokio::time::interval_at(start, interval);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             tokio::select! {
