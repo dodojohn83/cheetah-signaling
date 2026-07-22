@@ -677,7 +677,7 @@ async fn ensure_online(
     let external_id = device_id.as_ref();
     if let Some(device) = resolve_device(state, tenant_id, external_id).await {
         let internal_id = device.device_id();
-        if force || !matches!(device.connectivity(), Connectivity::Online) {
+        if !matches!(device.connectivity(), Connectivity::Online) {
             let mut uow = state.storage.begin().await.map_err(storage_error)?;
             let _ = state
                 .device_service
@@ -875,9 +875,6 @@ async fn replace_catalog(
             &item.device_id,
         );
         let mut metadata = BTreeMap::new();
-        // Persist the GB28181 channel external ID so channel-scoped commands
-        // (PTZ, preset, device control, record info) can address the SIP target.
-        metadata.insert("external_id".to_string(), item.device_id.clone());
         if let Some(v) = &item.manufacturer {
             metadata.insert("manufacturer".to_string(), v.clone());
         }
@@ -981,10 +978,10 @@ async fn save_and_append_media_session_transition(
     Ok(())
 }
 
-/// Drives a [`MediaSession`] through the requested transition and appends each
-/// resulting `MediaSessionStateChanged` event with the revision captured at the
-/// moment the transition occurred. The `Gb28181EventReceived` envelope is appended
-/// in the same UnitOfWork.
+/// Drives a [`MediaSession`] through the requested transition, saving and
+/// appending each resulting `MediaSessionStateChanged` event one step at a time
+/// so the repository's optimistic-concurrency check succeeds. The
+/// `Gb28181EventReceived` envelope is always appended in the same UnitOfWork.
 #[allow(clippy::too_many_arguments)]
 async fn handle_media_session_event(
     state: &ApiState,
@@ -1154,7 +1151,7 @@ async fn handle_media_session_event(
                     .await?;
                 }
             }
-        }
+        };
     }
 
     // Always append the GB28181 envelope so the driver event is recorded even
