@@ -60,10 +60,10 @@
 
 ## 9. ONVIF-001：Discovery 与 endpoint
 
-- [ ] 多interface WS-Discovery进入bounded worker，按XAddr/device identity去重。
-- [ ] probe响应执行大小、XML、scope和endpoint URL校验。
-- [ ] 发现只生成候选；纳管必须经授权流程和tenant绑定。
-- [ ] endpoint、凭据引用、clock offset、capability revision持久化。
+- [x] 多interface WS-Discovery进入bounded worker，按XAddr/device identity去重：`apps/cheetah-signaling/src/onvif_discovery.rs` 使用 `Semaphore` 限制 `max_concurrent_probes`，按 `endpoint_reference` 去重并在同一设备多个 XAddr 顺序尝试。
+- [x] probe响应执行大小、XML、scope和endpoint URL校验：`crates/protocols/cheetah-onvif-driver-tokio/src/discovery.rs` 通过 `check_datagram_size` 校验大小、`parse_probe_matches` 解析并校验 ProbeMatch、`XAddrPolicy` 校验 endpoint URL scheme/网段/私有地址；`cheetah-onvif-core/src/discovery/parser.rs` 的 `LimitTracker` 限制 XML 深度/节点数。
+- [x] 发现只生成候选；纳管必须经授权流程和tenant绑定：`onvif_discovery.rs` 对发现的 endpoint 调用 `DeviceService::register_or_update_device`，生成候选后由 application 层执行 tenant 绑定与授权持久化。
+- [ ] endpoint、凭据引用、clock offset、capability revision持久化：endpoint 已作为设备 metadata 持久化；`OnvifConfig` 目前尚无 `credentials_ref` 字段，凭据引用、clock offset 和 capability revision 的持久化需 ONVIF-002/003 接入 `GetSystemDateAndTime`/`GetCapabilities` 后补充。
 
 ## 10. ONVIF-002：安全HTTP/SOAP
 
