@@ -47,6 +47,14 @@ cargo test --workspace --lib --bins --tests             # pass
 python3 scripts/audit_architecture.py                   # no new violations
 ```
 
+## Devin Review fixes
+
+- `handle_media_session_event` now persists each `MediaSession` transition separately via `save_and_append_media_session_transition`, keeping the repository's `Revision` optimistic-concurrency check valid when the `Start`/`Stop` paths advance the session through multiple states in one go.
+- `MultiListenerCommandBus` uses `try_send` so the inbox DB transaction is not held while waiting for a bounded driver channel.
+- `resolve_gb_command` propagates transient storage errors as retryable `SignalError` instead of swallowing them as terminal `Rejected`.
+- `ensure_online` restores the `force ||` condition so re-registration refreshes already-online devices.
+- TCP `HeaderNormalization` blank-line handling no longer stalls on body-less `REGISTER` messages in stream mode.
+
 ## Remaining work
 
 - Response/event correlation that resolves the `Unknown` `OperationStepOutcome` to `Succeeded`/`Failed`/`TimedOut` will be handled in subsequent command/event tasks (`GB4-CMD-*` / `GB4-EVT-*`).
