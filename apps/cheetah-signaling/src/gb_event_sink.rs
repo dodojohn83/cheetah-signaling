@@ -56,6 +56,8 @@ pub fn spawn(
     queue_depth: usize,
     catalog_max_entries: usize,
     catalog_max_items: usize,
+    record_max_entries: usize,
+    record_max_items: usize,
     gb_metrics: Arc<dyn GbMetricsRecorder>,
     cancel: tokio_util::sync::CancellationToken,
 ) -> (
@@ -67,6 +69,7 @@ pub fn spawn(
     let metrics = state.metrics.clone();
     let sink = Arc::new(GbApplicationEventSink { tx, metrics }) as Arc<dyn EventSink<Gb28181Event>>;
     let mut catalog_buffer = CatalogBuffer::new(catalog_max_entries, catalog_max_items);
+    let mut record_buffer = RecordInfoBuffer::new(record_max_entries, record_max_items);
     let mut cleanup = tokio::time::interval(CATALOG_CLEANUP_INTERVAL);
     cleanup.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let handle = tokio::spawn(async move {
@@ -75,11 +78,12 @@ pub fn spawn(
                 _ = cancel.cancelled() => break,
                 _ = cleanup.tick() => {
                     catalog_buffer.evict();
+                    record_buffer.evict();
                     continue;
                 }
                 maybe_event = rx.recv() => {
                     match maybe_event {
-                        Some(event) => process_event(&state, node_id, tenant_id, event, &mut catalog_buffer, gb_metrics.as_ref()).await,
+                        Some(event) => process_event(&state, node_id, tenant_id, event, &mut catalog_buffer, &mut record_buffer, gb_metrics.as_ref()).await,
                         None => break,
                     }
                 }
@@ -96,6 +100,7 @@ async fn process_event(
     tenant_id: Option<TenantId>,
     event: Gb28181Event,
     catalog_buffer: &mut CatalogBuffer,
+    record_buffer: &mut RecordInfoBuffer,
     gb_metrics: &dyn GbMetricsRecorder,
 ) {
     let tenant_id = match tenant_id {
@@ -261,8 +266,20 @@ async fn process_event(
             info!(%media_session_id, %device_id, %channel_id, %reason, "gb28181 media session failed; no application handler wired yet");
             Ok(())
         }
-        Gb28181Event::RecordInfoReceived { device_id, .. } => {
-            info!(%device_id, "gb28181 record info received; no application handler wired yet");
+        Gb28181Event::RecordInfoReceived {
+            device_id,
+            sn,
+            num,
+            sum_num,
+            items,
+            ..
+        } => {
+            if let Some(records) =
+                record_buffer.accumulate(tenant_id, &device_id, &sn, sum_num, num, items)
+            {
+                info!(%device_id, %sn, record_count = records.len(), "gb28181 record info aggregation complete");
+                // TODO(GB4-ACC-005): persist records through a RecordInfoService once available.
+            }
             Ok(())
         }
         Gb28181Event::CascadePlatformConnected { platform_id, .. } => {
@@ -332,7 +349,7 @@ fn event_source(event: &Gb28181Event) -> Option<&std::net::SocketAddr> {
     }
 }
 
-use crate::gb_catalog_buffer::{CATALOG_CLEANUP_INTERVAL, CatalogBuffer};
+use crate::gb_catalog_buffer::{CATALOG_CLEANUP_INTERVAL, CatalogBuffer, RecordInfoBuffer};
 
 /// Maps a GB28181 DeviceControl response result string to a bounded outcome.
 fn control_outcome(result: &Option<String>) -> GbCommandOutcome {

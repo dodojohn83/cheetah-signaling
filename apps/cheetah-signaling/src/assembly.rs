@@ -1007,6 +1007,8 @@ pub async fn start(
             config.runtime.queue_depth,
             config.gb28181.catalog_fragment_max_entries as usize,
             config.gb28181.catalog_fragment_max_items as usize,
+            config.gb28181.record_fragment_max_entries as usize,
+            config.gb28181.record_fragment_max_items as usize,
             gb_metrics.clone(),
             cancel.child_token(),
         );

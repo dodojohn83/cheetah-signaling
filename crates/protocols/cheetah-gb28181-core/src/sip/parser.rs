@@ -298,14 +298,22 @@ impl SipParser {
             if self.buffer[consumed] == b'\r' && self.buffer.get(consumed + 1) == Some(&b'\n') {
                 // With HeaderNormalization, an empty line inside the header block
                 // may be followed by more headers; only treat it as the terminator
-                // when the next non-empty line does not look like a header.
+                // when the next non-empty line does not look like a header. If the
+                // buffer does not yet contain the full next line, ask the caller to
+                // wait for more bytes before deciding, otherwise TCP framing can
+                // terminate the header block too early.
                 if profile_has(
                     self.profile.as_ref(),
                     CompatibilityCapability::HeaderNormalization,
-                ) && self.looks_like_header_after_blank(consumed)
-                {
-                    consumed += 2;
-                    continue;
+                ) {
+                    match self.looks_like_header_after_blank(consumed) {
+                        Some(true) => {
+                            consumed += 2;
+                            continue;
+                        }
+                        None => return None,
+                        Some(false) => {}
+                    }
                 }
                 // End of headers
                 consumed += 2;
@@ -427,29 +435,47 @@ impl SipParser {
     /// looks like a SIP header (non-empty token, a colon, and no leading
     /// whitespace). Used by `HeaderNormalization` to skip intra-header blank
     /// lines without treating them as the body separator.
-    fn looks_like_header_after_blank(&self, consumed: usize) -> bool {
+    fn looks_like_header_after_blank(&self, consumed: usize) -> Option<bool> {
         let start = consumed + 2; // skip the leading CRLF
         if start >= self.buffer.len() {
-            return false;
+            // In datagram mode the whole message is present, so a blank line
+            // followed by nothing is the header terminator. In stream mode we
+            // need more bytes to decide.
+            return if self.config.datagram_mode {
+                Some(false)
+            } else {
+                None
+            };
         }
-        let Some(end) = self.find_crlf(start) else {
-            return false;
+        let end = match self.find_crlf(start) {
+            Some(end) => end,
+            // Same logic: only treat an unterminated trailing line as the body
+            // when we already have the complete datagram; otherwise wait.
+            None => {
+                return if self.config.datagram_mode {
+                    Some(false)
+                } else {
+                    None
+                };
+            }
         };
         let line = &self.buffer[start..end];
         // Must not be empty or continuation.
         if line.is_empty() || line[0].is_ascii_whitespace() {
-            return false;
+            return Some(false);
         }
         let Some(colon) = line.iter().position(|&b| b == b':') else {
-            return false;
+            return Some(false);
         };
         let name = &line[..colon];
         if name.is_empty() {
-            return false;
+            return Some(false);
         }
         // Header name must be a single token (no spaces or non-printable chars).
-        name.iter()
-            .all(|&b| b.is_ascii_alphanumeric() || b"-._!%$*&+^`{|}~".contains(&b))
+        Some(
+            name.iter()
+                .all(|&b| b.is_ascii_alphanumeric() || b"-._!%$*&+^`{|}~".contains(&b)),
+        )
     }
 }
 
