@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<Notify>
+    <CmdType>Alarm</CmdType>
+    <SN>4</SN>
+    <DeviceID>34020000001320000001</DeviceID>
+    <AlarmPriority>1</AlarmPriority>
+    <AlarmMethod>5</AlarmMethod>
+    <AlarmTime>2026-07-21T00:00:00</AlarmTime>
+    <Info>
+        <AlarmType>1</AlarmType>
+    </Info>
+</Notify>

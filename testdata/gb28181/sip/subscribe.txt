@@ -1,0 +1,9 @@
+SUBSCRIBE sip:registrar.example.com SIP/2.0
+Via: SIP/2.0/UDP 192.168.1.1:5060;branch=z9hG4bKsubscribe
+From: <sip:alice@example.com>;tag=abc
+To: <sip:bob@example.com>
+Call-ID: call-4@example.com
+CSeq: 1 SUBSCRIBE
+Expires: 3600
+Content-Length: 0
+

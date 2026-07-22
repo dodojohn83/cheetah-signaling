@@ -148,7 +148,7 @@ Device/session/request ID 等高基数值不得成为 Prometheus label。指标 
 - [x] `GB4-OPS-002`：实现 GB runtime readiness/degraded、queue saturation 和 dependency health。参见 `dev-docs/004_gb28181-improve/reports/gb4-ops-001.md`。
 - [x] `GB4-OPS-003`：实现 admission、priority、coalescing、dead-letter 和 backlog recovery 策略。参见 `dev-docs/004_gb28181-improve/reports/gb4-ops-003.md`。
 - [x] `GB4-OPS-004`：实现有界 startup/shutdown/drain 和 crash recovery system test。参见 `dev-docs/004_gb28181-improve/reports/gb4-ops-003.md`。
-- [ ] `GB4-OPS-005`：编写 listener、tenant/profile、容量、故障和诊断采样 runbook。
+- [x] `GB4-OPS-005`：编写 listener、tenant/profile、容量、故障和诊断采样 runbook。见 [reports/gb4-ops-005.md](reports/gb4-ops-005.md)。
 
 ## 10. 测试与退出门禁
 

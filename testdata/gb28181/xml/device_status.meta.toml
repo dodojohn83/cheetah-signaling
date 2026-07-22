@@ -1,0 +1,6 @@
+source = "synthetic"
+standard = "GB/T 28181-2022"
+profile = "generic"
+expected = "DeviceStatus Notify with CmdType=DeviceStatus, SN=3, synthetic ONLINE status"
+desensitization = "All device IDs, coordinates, timestamps and record metadata are synthetic."
+license = "MIT-0"
