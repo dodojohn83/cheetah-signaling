@@ -19,7 +19,7 @@
 - [x] 明确 `protoc`、Buf版本和安装来源；版本必须锁定：`protoc` 固定为 `25.3`，`buf` 固定为 `1.50.0`，已写入 `proto/README.md`。
 - [x] CI与开发容器使用同一版本，不依赖开发者全局偶然安装：`ci.yml` 的 `arduino/setup-protoc@v3` 已固定 `version: "25.3"`，`buf` 通过 `BUF_VERSION: "1.50.0"` 统一。
 - [x] 若选择 vendored `protoc`，只在build tooling使用，不把平台二进制混入domain crate：无 vendored 二进制，`protoc`/`buf` 仅用于 build/CI，不会进入 domain crate。
-- [ ] codegen从空target可执行，生成物两次运行无diff：`build.rs` 生成到 `OUT_DIR`，`proto/README.md` 已给出两次运行验证步骤。
+- [x] codegen从空target可执行，生成物两次运行无diff：新增 `scripts/verify_proto_codegen_reproducible.py`，在临时 `CARGO_TARGET_DIR` 中两次干净构建 `cheetah-signal-contracts`，比较 `OUT_DIR` 下 7 个 `.rs` 文件完全一致，脚本返回 0。报告见 [`reports/bas-002-codegen-reproducibility.md`](reports/bas-002-codegen-reproducibility.md)。
 - [x] `buf format`、`buf lint`、descriptor生成和breaking基线均纳入CI：`ci.yml` 已包含 `proto` job（`buf format`/`lint`）和 `contract-baseline` job（`scripts/generate_contract_baseline.sh`）。
 
 验收：没有预装 `protoc` 的干净容器可以按README完成codegen，或给出明确的前置安装失败信息。
@@ -46,10 +46,10 @@ cargo deny check
 ## 5. BAS-004：架构与占位检查
 
 - [x] 用 `cargo metadata`/`cargo tree`验证AGENTS定义的六层依赖方向：`scripts/audit_architecture.py` 已运行，快照报告见 [`reports/bas-004-architecture-audit-32244e4.md`](reports/bas-004-architecture-audit-32244e4.md)。
-- [x] 扫描生产路径的 `todo!()`、`unimplemented!()`、固定成功、空provider和直接SQL/媒体实现引用：`scripts/audit_architecture.py` 扫描结果：生产路径无 `todo!`/`unimplemented!`，无固定成功，无直接 SQL/媒体实现引用；2 处生产 `panic!` 已修复（`cheetah-onvif-driver-tokio` 静态 plugin name 改为 `expect`；`cheetah-storage-api` 重复 backfill 改为 `assert!`），剩余架构依赖违规见报告。
-- [ ] 测试fake中的 `unimplemented!()`改为显式错误或完整fake，避免测试因意外调用panic。
-- [ ] 检查domain不依赖Tokio/SQLx/Tonic，protocol core不依赖I/O。
-- [ ] 检查信令workspace不引入RTP payload parser、codec、media engine。
+- [x] 扫描生产路径的 `todo!()`、`unimplemented!()`、固定成功、空provider和直接SQL/媒体实现引用：`scripts/audit_architecture.py` 扫描结果：生产路径无 `todo!`/`unimplemented!`，无固定成功，无直接 SQL/媒体实现引用；2 处生产 `panic!` 已修复（`cheetah-onvif-driver-tokio` 静态 plugin name 改为 `PluginName::from_static_unchecked`；`cheetah-storage-api` 重复 backfill 改为 `assert!`），剩余架构依赖违规见报告。
+- [x] 测试fake中的 `unimplemented!()`改为显式错误或完整fake，避免测试因意外调用panic：`scripts/audit_architecture.py` 扫描结果：测试 fake 中 `todo!`/`unimplemented!` 命中数为 0。
+- [x] 检查domain不依赖Tokio/SQLx/Tonic，protocol core不依赖I/O：`cheetah-architecture-test` 通过 `domain_crates_do_not_depend_on_runtime_or_adapters` 与 `protocol_core_crates_do_not_depend_on_runtime_or_io`。
+- [x] 检查信令workspace不引入RTP payload parser、codec、media engine：Cargo.toml 中无 `rtp`/`rtcp`/`mpegts`/`h264`/`h265`/`ffmpeg`/`gstreamer`/`vaapi` 等媒体 codec/payload parser 依赖；`payload`/`codec` 等词仅出现在 SDP/媒体协商字段名与接口中，不实现媒体负载解析或引擎。
 
 ## 6. BAS-005：存储与迁移基线
 
