@@ -133,6 +133,7 @@ fn requirements(operation: &str, session: Option<MediaSessionId>) -> MediaRequir
         tenant_constraints: Default::default(),
         required_constraints: Default::default(),
         media_session_id: session.map(|s| s.to_string()),
+        require_media_sender: operation == "talk" || operation == "broadcast",
     }
 }
 

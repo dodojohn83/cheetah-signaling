@@ -22,6 +22,7 @@ use cheetah_signal_types::{
     SignalErrorKind, TenantId, UtcTimestamp,
 };
 use cheetah_storage_api::{NodeRepository, OwnerRepository, Storage};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Mutex, mpsc};
@@ -79,25 +80,41 @@ pub trait Gb28181CommandBus: Send + Sync {
     async fn send(&self, command: Gb28181Command) -> cheetah_signal_types::Result<()>;
 }
 
-/// Command bus backed by the GB28181 driver's bounded `mpsc` sender.
-pub struct DriverCommandBus {
-    tx: mpsc::Sender<Gb28181Command>,
+/// Command bus that routes outbound GB28181 commands to the driver bound to
+/// the target device's listener.
+pub struct MultiListenerCommandBus {
+    buses: HashMap<String, mpsc::Sender<Gb28181Command>>,
 }
 
-impl DriverCommandBus {
-    /// Creates a bus that wraps the supplied driver sender.
-    pub fn new(tx: mpsc::Sender<Gb28181Command>) -> Self {
-        Self { tx }
+impl MultiListenerCommandBus {
+    /// Creates a bus from a map of listener id to driver command sender.
+    pub fn new(buses: HashMap<String, mpsc::Sender<Gb28181Command>>) -> Self {
+        Self { buses }
     }
 }
 
 #[async_trait]
-impl Gb28181CommandBus for DriverCommandBus {
+impl Gb28181CommandBus for MultiListenerCommandBus {
     async fn send(&self, command: Gb28181Command) -> cheetah_signal_types::Result<()> {
-        self.tx
-            .send(command)
-            .await
-            .map_err(|_| SignalError::new(SignalErrorKind::Internal, "gb28181 command bus closed"))
+        let tx = self.buses.get(&command.listener_id).ok_or_else(|| {
+            SignalError::new(
+                SignalErrorKind::Internal,
+                format!(
+                    "no gb28181 command bus for listener {}",
+                    command.listener_id
+                ),
+            )
+        })?;
+        // Use a bounded channel but do not await capacity while the inbox's
+        // database transaction is held open.
+        tx.try_send(command).map_err(|e| match e {
+            mpsc::error::TrySendError::Full(_) => {
+                SignalError::new(SignalErrorKind::Busy, "gb28181 command bus full")
+            }
+            mpsc::error::TrySendError::Closed(_) => {
+                SignalError::new(SignalErrorKind::Internal, "gb28181 command bus closed")
+            }
+        })
     }
 }
 
@@ -108,6 +125,7 @@ impl Gb28181CommandBus for DriverCommandBus {
 pub struct OwnerCommandHandler {
     plugin_host: Arc<Mutex<PluginHost>>,
     clock: Arc<dyn Clock>,
+    storage: Arc<dyn Storage>,
     gb_bus: Option<Arc<dyn Gb28181CommandBus>>,
 }
 
@@ -116,11 +134,13 @@ impl OwnerCommandHandler {
     pub fn new(
         plugin_host: Arc<Mutex<PluginHost>>,
         clock: Arc<dyn Clock>,
+        storage: Arc<dyn Storage>,
         gb_bus: Option<Arc<dyn Gb28181CommandBus>>,
     ) -> Self {
         Self {
             plugin_host,
             clock,
+            storage,
             gb_bus,
         }
     }
@@ -129,56 +149,65 @@ impl OwnerCommandHandler {
         &self,
         uow: &mut dyn UnitOfWork,
         command: &Command,
-    ) -> Option<Gb28181Command> {
+    ) -> cheetah_signal_types::Result<Option<Gb28181Command>> {
         let tenant_id = command.tenant_id();
         let device_id = command.device_id();
 
-        let device = match uow.device_repository().get(tenant_id, device_id).await {
-            Ok(Some(d)) => d,
-            Ok(None) => {
+        let device = match uow.device_repository().get(tenant_id, device_id).await? {
+            Some(d) => d,
+            None => {
                 warn!(tenant_id = %tenant_id, device_id = %device_id, "device not found for gb28181 command");
-                return None;
-            }
-            Err(e) => {
-                warn!(tenant_id = %tenant_id, device_id = %device_id, error = %e, "failed to load device for gb28181 command");
-                return None;
+                return Ok(None);
             }
         };
 
         if device.protocol() != Protocol::Gb28181 {
-            return None;
+            return Ok(None);
         }
 
-        let device_external_id =
-            cheetah_gb28181_module::types::DeviceId::new(device.external_id().as_ref())?;
+        let Some(device_external_id) =
+            cheetah_gb28181_module::types::DeviceId::new(device.external_id().as_ref())
+        else {
+            return Ok(None);
+        };
 
         let channel_external_id = match channel_id_from_payload(command.payload()) {
             Some(channel_id) => match uow
                 .channel_repository()
                 .get(tenant_id, device_id, channel_id)
-                .await
+                .await?
             {
-                Ok(Some(channel)) => channel
+                Some(channel) => channel
                     .metadata()
                     .get("external_id")
                     .and_then(cheetah_gb28181_module::types::DeviceId::new),
-                Ok(None) => {
+                None => {
                     warn!(tenant_id = %tenant_id, device_id = %device_id, channel_id = %channel_id, "channel not found for gb28181 command");
-                    None
-                }
-                Err(e) => {
-                    warn!(tenant_id = %tenant_id, device_id = %device_id, channel_id = %channel_id, error = %e, "failed to load channel for gb28181 command");
-                    None
+                    return Ok(None);
                 }
             },
             None => None,
         };
 
-        Some(Gb28181Command::new(
+        let listener_id = match self
+            .storage
+            .protocol_session_repository()
+            .get_by_device(tenant_id, Protocol::Gb28181, device_id)
+            .await?
+        {
+            Some(session) => session.local_identity().listener_id.clone(),
+            None => {
+                warn!(tenant_id = %tenant_id, device_id = %device_id, "no active gb28181 protocol session for command");
+                return Ok(None);
+            }
+        };
+
+        Ok(Some(Gb28181Command::new(
             command.clone(),
             device_external_id,
             channel_external_id,
-        ))
+            listener_id,
+        )))
     }
 
     async fn handle_gb28181_command(
@@ -193,10 +222,13 @@ impl OwnerCommandHandler {
             ));
         };
 
-        let Some(gb_command) = self.resolve_gb_command(uow, command).await else {
-            return Ok(CommandHandlerResult::rejected(
-                "unable to resolve gb28181 command target",
-            ));
+        let gb_command = match self.resolve_gb_command(uow, command).await? {
+            Some(cmd) => cmd,
+            None => {
+                return Ok(CommandHandlerResult::rejected(
+                    "unable to resolve gb28181 command target",
+                ));
+            }
         };
 
         match bus.send(gb_command).await {
@@ -207,6 +239,7 @@ impl OwnerCommandHandler {
             .with_payload(format!(
                 r#"{{"command_kind":"{kind}","protocol":"gb28181"}}"#
             ))),
+            Err(e) if e.is_retryable() => Err(e),
             Err(e) => Ok(CommandHandlerResult::accepted(
                 CommandDispatch::TransportFailed {
                     reason: e.to_string(),
@@ -726,4 +759,111 @@ pub fn builtin_plugin_ids(id_generator: &dyn IdGenerator) -> (PluginId, PluginId
 #[allow(dead_code)]
 fn _now(clock: &dyn Clock) -> UtcTimestamp {
     clock.now_wall()
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+    use cheetah_domain::in_memory::{InMemoryClock, InMemoryIdGenerator};
+    use cheetah_domain::{Operation, PtzDirection};
+    use cheetah_gb28181_module::types::DeviceId as GbDeviceId;
+    use cheetah_signal_types::{
+        OwnerEpoch, Principal, PrincipalKind, RequestContext, ResourceId, ResourceKind, ResourceRef,
+    };
+
+    const DEVICE_GB_ID: &str = "34020000001320000001";
+
+    fn gb_command(listener_id: &str) -> Gb28181Command {
+        let clock = InMemoryClock::new();
+        let ids = InMemoryIdGenerator::new();
+        let tenant_id = ids.generate_tenant_id();
+        let device_id = ids.generate_device_id();
+        let channel_id = ids.generate_channel_id();
+
+        let context = RequestContext {
+            tenant_id,
+            principal: Principal {
+                id: "tester".to_string(),
+                kind: PrincipalKind::Service,
+                scopes: vec!["write".to_string()],
+            },
+            message_id: ids.generate_message_id(),
+            correlation_id: ids.generate_correlation_id(),
+            traceparent: None,
+            tracestate: None,
+            deadline: None,
+            node_id: Some(ids.generate_node_id()),
+            source_ip: None,
+        };
+        let target = ResourceRef {
+            tenant_id,
+            kind: ResourceKind::Device,
+            id: ResourceId::Device(device_id),
+        };
+        let payload = CommandPayload::Ptz {
+            channel_id,
+            direction: PtzDirection::Up,
+            speed: 1.0,
+        };
+        let (operation, _event) = Operation::new(
+            &ids,
+            &clock,
+            &context,
+            "idem-ptz",
+            device_id,
+            target,
+            payload,
+            None,
+            OwnerEpoch(1),
+        )
+        .expect("operation");
+
+        Gb28181Command::new(
+            operation.command().clone(),
+            GbDeviceId::new(DEVICE_GB_ID).expect("valid gb id"),
+            None,
+            listener_id.to_string(),
+        )
+    }
+
+    /// A command must be routed to the bus of the listener that the device
+    /// registered on, and to no other listener. A device registered on the
+    /// second listener was previously unreachable because only the first
+    /// listener's bus was captured.
+    #[tokio::test]
+    async fn routes_command_to_owning_listener_only() {
+        let (tx_a, mut rx_a) = mpsc::channel(4);
+        let (tx_b, mut rx_b) = mpsc::channel(4);
+        let mut buses = HashMap::new();
+        buses.insert("listener-a".to_string(), tx_a);
+        buses.insert("listener-b".to_string(), tx_b);
+        let bus = MultiListenerCommandBus::new(buses);
+
+        bus.send(gb_command("listener-b")).await.expect("send");
+
+        let received = rx_b.try_recv().expect("second listener must receive it");
+        assert_eq!(received.device_external_id.as_ref(), DEVICE_GB_ID);
+        assert_eq!(received.listener_id, "listener-b");
+        assert!(
+            rx_a.try_recv().is_err(),
+            "first listener must not receive the command"
+        );
+    }
+
+    /// Routing to an unconfigured listener fails instead of silently dropping
+    /// the command.
+    #[tokio::test]
+    async fn unknown_listener_is_rejected() {
+        let (tx_a, _rx_a) = mpsc::channel(4);
+        let mut buses = HashMap::new();
+        buses.insert("listener-a".to_string(), tx_a);
+        let bus = MultiListenerCommandBus::new(buses);
+
+        let err = bus
+            .send(gb_command("listener-missing"))
+            .await
+            .expect_err("unknown listener must error");
+        assert_eq!(err.kind(), SignalErrorKind::Internal);
+    }
 }

@@ -142,6 +142,20 @@ fn protocol_core_crates_do_not_depend_on_runtime_or_io() {
     }
 }
 
+#[test]
+fn protocol_driver_crates_do_not_depend_on_business_storage() {
+    let metadata = load_metadata();
+    // Drivers own sockets and timers (tokio is expected) but must never reach a
+    // business repository, database adapter or the media client (AGENTS §2.2).
+    let forbidden: HashSet<&str> = ["sqlx", "cheetah-media-client"].into_iter().collect();
+
+    for package in workspace_members(&metadata) {
+        if package.name.ends_with("-driver-tokio") {
+            assert_not_depend(&metadata, &package.name, &forbidden);
+        }
+    }
+}
+
 fn visit<'a>(
     node: &'a str,
     graph: &BTreeMap<&'a str, BTreeSet<&'a str>>,

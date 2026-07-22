@@ -120,6 +120,19 @@ pub struct StartTalkRequest {
     pub deadline: Option<String>,
 }
 
+/// Request to start a one-way voice broadcast to a device.
+#[derive(Clone, Debug, serde::Deserialize)]
+pub struct StartBroadcastRequest {
+    /// Device that receives the broadcast.
+    pub device_id: String,
+    /// Channel to broadcast to.
+    pub channel_id: String,
+    /// Idempotency key for the operation.
+    pub idempotency_key: String,
+    /// Optional RFC 3339 deadline.
+    pub deadline: Option<String>,
+}
+
 /// Request to control an active playback session.
 #[derive(Clone, Debug, serde::Deserialize)]
 pub struct ControlPlaybackRequest {

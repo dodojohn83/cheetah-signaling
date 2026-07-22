@@ -24,12 +24,15 @@
    - `MediaSessionStarted`/`MediaSessionStopped`/`MediaSessionFailed`：先更新对应 `MediaSession` 状态，再写入 outbox；
    - `CascadePlatformConnected`/`CascadePlatformDisconnected`/`CascadePlayRequested`/`CascadePlayStopped`：将级联事件字段写入 outbox。
 
-3. `apps/cheetah-signaling/src/gb_event_sink.rs` 新增 `MediaSessionTransition` 与 `handle_media_session_event`：
+3. `apps/cheetah-signaling/src/gb_event_sink.rs` 新增 `MediaSessionTransition`、`handle_media_session_event` 与 `save_and_append_media_session_transition`：
    - 根据当前 `MediaSessionState` 合法推进到 `Active` 或 `Stopped`/`Failed`；
-   - 每次状态迁移后立刻捕获当时的 `session.revision().0`，确保多个 `MediaSessionStateChanged` 事件拥有单调递增的 `aggregate_sequence`；
+   - 每个状态迁移后立刻调用 `media_session_repository().save()` 并追加对应的 `MediaSessionStateChanged` 事件，保证仓储的 revision 乐观并发检查（每次只允许 +1）通过；
+   - 多个 `MediaSessionStateChanged` 事件拥有单调递增的 `aggregate_sequence`；
    - `Gb28181EventReceived` 信封与媒体状态变更事件在同一 UnitOfWork 中提交，避免状态持久化与事件丢失/重复之间的不一致。
+4. `crates/testing/cheetah-storage-tests/src/contract/media.rs` 新增 `multi_bump_save_is_rejected`：
+   - 验证 MediaSession 在内存中连续推进两个状态后未持久化中间状态时，单次保存会因 revision 跳变被拒绝，防止 handler 再次出现批量迁移后单次保存的回归。
 
-4. `apps/cheetah-signaling/src/gb_event_sink.rs` 新增通用 `build_gb_event`/`append_gb_event`：
+5. `apps/cheetah-signaling/src/gb_event_sink.rs` 新增通用 `build_gb_event`/`append_gb_event`：
    - 能识别内部 `DeviceId` 时将事件挂到设备聚合；否则挂到合成 `ResourceKind::Event` 聚合，确保所有 GB28181 事件进入 outbox；
    - 使用 `Event` 手动构造，保留 `correlation_id`、`causation_id`、trace context 与 source node；
    - `build_gb_event` 复用于 `handle_media_session_event`，保持信封构造逻辑单一。

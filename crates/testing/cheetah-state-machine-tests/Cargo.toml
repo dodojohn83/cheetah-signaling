@@ -1,0 +1,24 @@
+[package]
+name = "cheetah-state-machine-tests"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+description = "Deterministic state-machine transition-table tests (GB4-TST-002)."
+
+[dependencies]
+
+[dev-dependencies]
+cheetah-signal-types = { path = "../../foundation/cheetah-signal-types" }
+cheetah-domain = { path = "../../domain/cheetah-domain", features = ["test-util"] }
+cheetah-gb28181-core = { path = "../../protocols/cheetah-gb28181-core" }
+cheetah-gb28181-module = { path = "../../protocols/cheetah-gb28181-module" }
+uuid = { workspace = true }
+secrecy = { workspace = true }
+
+[lints]
+workspace = true

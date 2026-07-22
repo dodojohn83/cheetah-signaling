@@ -97,6 +97,11 @@ impl MediaService {
                 channel_id,
                 media_node_id: reservation.media_node_id,
             },
+            MediaPurpose::Broadcast => CommandPayload::StartBroadcast {
+                media_session_id,
+                channel_id,
+                media_node_id: reservation.media_node_id,
+            },
             _ => {
                 return Err(crate::SignalError::from(DomainError::invalid_argument(
                     "unknown media purpose",
@@ -255,6 +260,43 @@ impl MediaService {
                     {
                         tracing::warn!(
                             "failed to release media binding after reconnect post-execute error: {e2}"
+                        );
+                    }
+                    return Err(e);
+                }
+                uow.commit().await?;
+            }
+            // The media node could not confirm the reconnect outcome. Persist the
+            // new generation/binding progress but leave the operation running so
+            // a later reconcile pass confirms the actual media-node state instead
+            // of prematurely completing or failing the migration.
+            MediaNodeCommandResult::UnknownOutcome { code, message } => {
+                tracing::warn!(
+                    %tenant_id,
+                    %media_binding_id,
+                    code = %code,
+                    "reconnect command returned unknown outcome; deferring to reconciler: {message}"
+                );
+                let post_result: crate::Result<()> = async {
+                    self.converge_active(context, uow, session, &mut new_binding)
+                        .await?;
+                    Ok(())
+                }
+                .await;
+
+                if let Err(e) = post_result {
+                    if let Err(commit_err) = uow.commit().await {
+                        tracing::warn!(
+                            "failed to commit post-reconnect state before release: {commit_err}"
+                        );
+                    }
+                    if let Err(e2) = self
+                        .media_port
+                        .release(tenant_id, media_binding_id, self.clock.as_ref())
+                        .await
+                    {
+                        tracing::warn!(
+                            "failed to release media binding after reconnect unknown outcome: {e2}"
                         );
                     }
                     return Err(e);
