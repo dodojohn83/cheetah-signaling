@@ -239,6 +239,7 @@ impl OwnerCommandHandler {
             .with_payload(format!(
                 r#"{{"command_kind":"{kind}","protocol":"gb28181"}}"#
             ))),
+            Err(e) if e.is_retryable() => Err(e),
             Err(e) => Ok(CommandHandlerResult::accepted(
                 CommandDispatch::TransportFailed {
                     reason: e.to_string(),
