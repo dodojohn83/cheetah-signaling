@@ -137,7 +137,7 @@ jobs:
           toolchain: 1.96.1
       - uses: Swatinem/rust-cache@v2
         with:
-          key: v1-feature-matrix-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          key: v1-feature-matrix-${{ runner.os }}-${{ matrix.features }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
           cache-on-failure: false
       - uses: arduino/setup-protoc@v3
         with:
