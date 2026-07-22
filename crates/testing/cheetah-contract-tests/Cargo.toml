@@ -1,0 +1,23 @@
+[package]
+name = "cheetah-contract-tests"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+description = "Message-envelope and media-port contract tests (GB4-TST-003)."
+
+[dependencies]
+
+[dev-dependencies]
+cheetah-signal-types = { path = "../../foundation/cheetah-signal-types" }
+cheetah-domain = { path = "../../domain/cheetah-domain", features = ["test-util"] }
+cheetah-message-api = { path = "../../messaging/cheetah-message-api" }
+cheetah-message-local = { path = "../../messaging/cheetah-message-local" }
+tokio = { workspace = true, features = ["macros", "rt", "sync"] }
+
+[lints]
+workspace = true
