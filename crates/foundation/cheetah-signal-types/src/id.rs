@@ -131,6 +131,12 @@ uuid_id! {
 }
 
 uuid_id! {
+    /// Identifier for a GB28181 cascade platform link.
+    PlatformLinkId,
+    "Cascade platform link identifier."
+}
+
+uuid_id! {
     /// Identifier for a media session.
     MediaSessionId,
     "Media session identifier."

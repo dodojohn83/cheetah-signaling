@@ -39,7 +39,7 @@ pub use assembly::{
 };
 pub use cascade::{
     CascadeConfig, CascadeCredentialProvider, CascadeError, CascadeEvent, CascadeInput,
-    CascadeOutput, Gb28181Cascade,
+    CascadeManager, CascadeOutput, CascadeRoutingError, Gb28181Cascade,
 };
 pub use cheetah_gb28181_core::{AccessInput, AccessOutput, GbAccessMachine};
 pub use command::Gb28181Command;

@@ -406,6 +406,9 @@ mod tests {
         fn generate_protocol_session_id(&self) -> ProtocolSessionId {
             ProtocolSessionId::from_uuid(self.next_uuid())
         }
+        fn generate_platform_link_id(&self) -> cheetah_signal_types::PlatformLinkId {
+            cheetah_signal_types::PlatformLinkId::from_uuid(self.next_uuid())
+        }
         fn generate_media_session_id(&self) -> MediaSessionId {
             MediaSessionId::from_uuid(self.next_uuid())
         }

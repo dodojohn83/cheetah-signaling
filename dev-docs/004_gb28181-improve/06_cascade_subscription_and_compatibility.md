@@ -152,12 +152,12 @@ profile 匹配优先级固定为 exact firmware → model → manufacturer → s
 
 ## 10. 实施任务
 
-- [ ] `GB4-CAS-001`：实现 GbPlatformLink 持久化、双数据库 contract、owner/link generation 和配置加载。
-- [ ] `GB4-CAS-002`：将 cascade REGISTER/keepalive/deregister 接入统一 client transaction、transport 和 SecretStore。
-- [ ] `GB4-CAS-003`：完成 tenant-scoped external ID mapping、virtual directory、Catalog query/notify 和分页。
-- [ ] `GB4-CAS-004`：完成 SUBSCRIBE/NOTIFY persistence、capacity、refresh/expiry 和 owner takeover。
-- [ ] `GB4-CAS-005`：完成 live/playback bridge Saga、CANCEL/BYE/INFO、media binding 和双侧补偿。
-- [ ] `GB4-CAS-006`：完成多上级、下级接入、ACL、loop/hop 和唯一 control owner 测试。
+- [x] `GB4-CAS-001`：实现 GbPlatformLink 持久化、双数据库 contract、owner/link generation 和配置加载。见 [reports/gb4-cas-001-006.md](reports/gb4-cas-001-006.md)。
+- [x] `GB4-CAS-002`：将 cascade REGISTER/keepalive/deregister 接入统一 client transaction、transport 和 SecretStore（退避/间隔/凭据引用由 GbPlatformLink 映射进 CascadeConfig）。见 [reports/gb4-cas-001-006.md](reports/gb4-cas-001-006.md)。
+- [x] `GB4-CAS-003`：完成 tenant-scoped external ID mapping、virtual directory、Catalog query/notify 和分页（复用单链路状态机）。见 [reports/gb4-cas-001-006.md](reports/gb4-cas-001-006.md)。
+- [x] `GB4-CAS-004`：完成 SUBSCRIBE/NOTIFY persistence、capacity、refresh/expiry 和 owner takeover（复用单链路状态机 + 聚合订阅容量/owner fencing）。见 [reports/gb4-cas-001-006.md](reports/gb4-cas-001-006.md)。
+- [x] `GB4-CAS-005`：完成 live/playback bridge Saga、CANCEL/BYE/INFO、media binding 和双侧补偿（复用单链路状态机，桥接经 MediaPort）。见 [reports/gb4-cas-001-006.md](reports/gb4-cas-001-006.md)。
+- [x] `GB4-CAS-006`：完成多上级、下级接入、ACL、loop/hop 和唯一 control owner 测试。见 [reports/gb4-cas-001-006.md](reports/gb4-cas-001-006.md)。
 - [x] `GB4-COMP-001`：实现 profile schema、exact match、revision pinning、capability 和配置校验。见 [reports/gb4-comp-001.md](reports/gb4-comp-001.md)。
 - [x] `GB4-COMP-002`：实现 charset/MIME/header/endpoint/catalog 首批受控 override。见 [reports/gb4-comp-002.md](reports/gb4-comp-002.md)。
 - [x] `GB4-COMP-003`：实现 SDP/Broadcast/MediaStatus 受控 override，并保持 MediaPort 网络边界。见 [reports/gb4-comp-003-004.md](reports/gb4-comp-003-004.md)。
