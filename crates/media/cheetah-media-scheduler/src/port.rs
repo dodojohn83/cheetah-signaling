@@ -163,6 +163,10 @@ impl MediaPort for SchedulerMediaPort {
             ));
         }
 
+        if command.owner_epoch.0 == 0 {
+            return Err(DomainError::invalid_argument("owner_epoch is required"));
+        }
+
         if let Some(deadline) = command.deadline
             && deadline.is_elapsed(clock.now_wall())
         {
@@ -311,10 +315,7 @@ impl MediaPort for SchedulerMediaPort {
         let response = self.client.list_sessions(&endpoint, request).await;
         let duration = start.elapsed();
         let response = match response {
-            Ok(r) => {
-                self.metrics.record_rpc(duration, false);
-                r
-            }
+            Ok(r) => r,
             Err(e) => {
                 self.metrics.record_rpc(duration, true);
                 return Err(map_client_error(e));
@@ -323,17 +324,13 @@ impl MediaPort for SchedulerMediaPort {
 
         let mut items = Vec::with_capacity(response.sessions.len());
         for proto in response.sessions {
-            match map_proto_session_ref(tenant_id, media_node_id, &proto) {
-                Ok(session) => items.push(session),
-                Err(e) => {
-                    tracing::warn!(
-                        %tenant_id,
-                        %media_node_id,
-                        "media node returned malformed session ref; skipping: {e}"
-                    );
-                }
-            }
+            let session =
+                map_proto_session_ref(tenant_id, media_node_id, &proto).inspect_err(|_| {
+                    self.metrics.record_rpc(duration, true);
+                })?;
+            items.push(session);
         }
+        self.metrics.record_rpc(duration, false);
 
         let next_cursor = if response.next_page_token.is_empty() {
             None
