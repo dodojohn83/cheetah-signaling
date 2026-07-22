@@ -20,13 +20,17 @@ pub use protocol_driver::{OnvifTokioDriverFactory, OnvifTokioProtocolDriver};
 pub use soap_client::SoapClient;
 
 use cheetah_onvif_module::services::{
-    MediaDialect, MediaProfile, SnapshotUri, StreamUri, get_device_information_request,
-    get_profiles_request, get_snapshot_uri_request, get_stream_uri_request_media1,
-    get_stream_uri_request_media2, get_system_date_and_time_request,
+    MediaDialect, MediaProfile, SnapshotUri, StreamUri, get_capabilities_request,
+    get_device_information_request, get_profiles_request, get_services_request,
+    get_snapshot_uri_request, get_stream_uri_request_media1, get_stream_uri_request_media2,
+    get_system_date_and_time_request, parse_get_capabilities_response,
     parse_get_device_information_response, parse_get_profiles_response,
-    parse_get_snapshot_uri_response, parse_get_stream_uri_response,
+    parse_get_services_response, parse_get_snapshot_uri_response, parse_get_stream_uri_response,
 };
-use cheetah_onvif_module::{DeviceInformation, ParserLimits, XAddrPolicy};
+use cheetah_onvif_module::{
+    CapabilityKind, CapabilityProbeResult, DeviceInformation, ParserLimits, Service, XAddrPolicy,
+};
+use std::collections::HashMap;
 use std::time::Duration;
 use uuid::Uuid;
 
@@ -85,6 +89,53 @@ impl OnvifHttpDriver {
             )
             .await?;
         Ok(cheetah_onvif_module::services::parse_get_system_date_and_time_response(&body)?)
+    }
+
+    /// Fetches the ONVIF service list.
+    pub async fn get_services(
+        &self,
+        endpoint: &str,
+        include_capabilities: bool,
+        credentials: Option<&DeviceCredentials>,
+        timeout: Option<Duration>,
+    ) -> DriverResult<Vec<Service>> {
+        let msg_id = format!("urn:uuid:{}", Uuid::now_v7());
+        let req = get_services_request(include_capabilities, &msg_id)?;
+        let body = self
+            .post_with_optional_auth(
+                endpoint,
+                "http://www.onvif.org/ver10/device/wsdl/GetServices",
+                &req,
+                credentials,
+                timeout,
+            )
+            .await?;
+        Ok(parse_get_services_response(
+            &body,
+            &self.limits,
+            &self.policy,
+        )?)
+    }
+
+    /// Fetches the ONVIF capabilities map.
+    pub async fn get_capabilities(
+        &self,
+        endpoint: &str,
+        credentials: Option<&DeviceCredentials>,
+        timeout: Option<Duration>,
+    ) -> DriverResult<HashMap<CapabilityKind, CapabilityProbeResult>> {
+        let msg_id = format!("urn:uuid:{}", Uuid::now_v7());
+        let req = get_capabilities_request(&msg_id)?;
+        let body = self
+            .post_with_optional_auth(
+                endpoint,
+                "http://www.onvif.org/ver10/device/wsdl/GetCapabilities",
+                &req,
+                credentials,
+                timeout,
+            )
+            .await?;
+        Ok(parse_get_capabilities_response(&body, &self.limits)?)
     }
 
     /// Lists media profiles, preferring Media2 then falling back to Media1.

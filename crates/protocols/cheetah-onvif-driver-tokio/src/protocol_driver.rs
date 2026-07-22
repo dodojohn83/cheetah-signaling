@@ -7,6 +7,7 @@
 use crate::{DeviceCredentials, DriverConfig, DriverError, OnvifHttpDriver};
 use async_trait::async_trait;
 use cheetah_onvif_module::services::MediaDialect;
+use cheetah_onvif_module::{CapabilityKind, CapabilityProbeResult, Service};
 use cheetah_plugin_sdk::{
     CapabilityDescriptor, DriverCommand, DriverContext, HealthReport, HealthStatus, PluginError,
     PluginName, ProtocolCapability, ProtocolDirection, ProtocolDriver, ProtocolDriverFactory,
@@ -109,15 +110,57 @@ impl ProtocolDriver for OnvifTokioProtocolDriver {
         timeout: DurationMs,
     ) -> Result<CapabilityDescriptor, PluginError> {
         let driver = self.get_or_build_driver(ctx)?;
+        let config = onvif_config(ctx);
         let timeout = effective_timeout(timeout, &driver);
         driver
             .get_system_date_and_time(target, timeout)
             .await
             .map_err(plugin_error_from_driver_error)?;
+
+        let mut metadata = HashMap::new();
+        // Use configured default credentials, if any, to probe services and capabilities.
+        // Failures here are recorded in metadata but do not fail the probe so that
+        // reachable devices without credentials still report basic availability.
+        match resolve_credentials(ctx, &config, None, None, None, false, 0).await {
+            Ok(Some(credentials)) => {
+                match driver
+                    .get_services(target, false, Some(&credentials), timeout)
+                    .await
+                {
+                    Ok(services) => {
+                        metadata.insert("services".to_string(), services_to_json(&services));
+                    }
+                    Err(e) => {
+                        metadata.insert("services_error".to_string(), e.to_string());
+                    }
+                }
+                match driver
+                    .get_capabilities(target, Some(&credentials), timeout)
+                    .await
+                {
+                    Ok(caps) => {
+                        metadata.insert("capabilities".to_string(), capabilities_to_json(&caps));
+                    }
+                    Err(e) => {
+                        metadata.insert("capabilities_error".to_string(), e.to_string());
+                    }
+                }
+            }
+            Ok(None) => {
+                metadata.insert(
+                    "credentials_error".to_string(),
+                    "no credentials available".to_string(),
+                );
+            }
+            Err(e) => {
+                metadata.insert("credentials_error".to_string(), e.to_string());
+            }
+        }
+
         Ok(CapabilityDescriptor {
             protocol: PROTOCOL.to_string(),
             direction: ProtocolDirection::Outbound,
-            metadata: HashMap::new(),
+            metadata,
         })
     }
 
@@ -302,6 +345,29 @@ async fn dispatch_command(
                 .await
                 .map_err(plugin_error_from_driver_error)?;
         }
+        "get_services" => {
+            let cmd: EndpointCommand = parse_payload(&command.payload)?;
+            let timeout = cmd.command_timeout(timeout);
+            let credentials = cmd.resolve_credentials(ctx, config).await?;
+            driver
+                .get_services(
+                    &cmd.endpoint,
+                    cmd.include_capabilities,
+                    credentials.as_ref(),
+                    timeout,
+                )
+                .await
+                .map_err(plugin_error_from_driver_error)?;
+        }
+        "get_capabilities" => {
+            let cmd: EndpointCommand = parse_payload(&command.payload)?;
+            let timeout = cmd.command_timeout(timeout);
+            let credentials = cmd.resolve_credentials(ctx, config).await?;
+            driver
+                .get_capabilities(&cmd.endpoint, credentials.as_ref(), timeout)
+                .await
+                .map_err(plugin_error_from_driver_error)?;
+        }
         _ => {
             return Err(PluginError::Unsupported(format!(
                 "onvif command {} is not supported by the tokio driver",
@@ -351,6 +417,8 @@ struct EndpointCommand {
     password_text: bool,
     #[serde(default)]
     clock_offset_seconds: i64,
+    #[serde(default)]
+    include_capabilities: bool,
 }
 
 impl EndpointCommand {
@@ -609,6 +677,48 @@ fn command_timeout(timeout_ms: Option<u64>, default: Option<Duration>) -> Option
         .filter(|&ms| ms > 0)
         .map(Duration::from_millis)
         .or(default)
+}
+
+fn services_to_json(services: &[Service]) -> String {
+    let values: Vec<serde_json::Value> = services
+        .iter()
+        .map(|s| {
+            serde_json::json!({
+                "namespace": s.namespace,
+                "xaddr": s.xaddr,
+                "version": s.version,
+            })
+        })
+        .collect();
+    serde_json::to_string(&values).unwrap_or_default()
+}
+
+fn capabilities_to_json(
+    caps: &std::collections::HashMap<CapabilityKind, CapabilityProbeResult>,
+) -> String {
+    let mut map = serde_json::Map::new();
+    for (kind, result) in caps {
+        let value = match result {
+            CapabilityProbeResult::Supported {
+                namespace,
+                xaddr,
+                version,
+            } => serde_json::json!({
+                "status": "supported",
+                "namespace": namespace,
+                "xaddr": xaddr,
+                "version": version,
+            }),
+            CapabilityProbeResult::Unsupported => serde_json::json!({"status": "unsupported"}),
+            CapabilityProbeResult::Failed { reason, retryable } => serde_json::json!({
+                "status": "failed",
+                "reason": reason,
+                "retryable": retryable,
+            }),
+        };
+        map.insert(kind.to_string(), value);
+    }
+    serde_json::to_string(&serde_json::Value::Object(map)).unwrap_or_default()
 }
 
 #[cfg(test)]
