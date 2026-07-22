@@ -1,0 +1,17 @@
+INVITE sip:34020000001320000001@192.168.1.20:5061 SIP/2.0
+Via: SIP/2.0/UDP 192.168.1.10:5060;branch=z9hG4bKbroadcast1
+From: <sip:server@192.168.1.10:5060>;tag=tag-local
+To: <sip:34020000001320000001@192.168.1.20:5060>
+Call-ID: call-broadcast-1
+CSeq: 1 INVITE
+Content-Type: application/sdp
+Content-Length: 0
+
+v=0
+o=server 0 0 IN IP4 192.168.1.10
+s=Talk
+c=IN IP4 192.168.1.10
+t=0 0
+m=audio 7000 TCP/RTP/AVP 8
+a=rtpmap:8 PCMA/8000
+a=sendrecv

@@ -3,8 +3,9 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use cheetah_gb28181_core::{
-    DigestContext, DigestQop, GbAccessMachine, HeaderName, HeaderValue, Method, RequestLine,
-    SipHeaders, SipMessage, SipUri,
+    CompatibilityCapability, CompatibilityOverrides, CompatibilityProfile, DigestContext,
+    DigestQop, GbAccessMachine, HeaderName, HeaderValue, MediaStatusOutcome, MediaStatusOverride,
+    Method, RequestLine, SipHeaders, SipMessage, SipUri,
 };
 use cheetah_gb28181_module::{
     AccessInput, AccessOutput, AuthPolicy, CredentialError, CredentialProvider, DeviceId,
@@ -137,6 +138,122 @@ fn make_registered_access() -> (Gb28181Access<impl CredentialProvider>, u64) {
         .unwrap();
 
     (access, 1000)
+}
+
+fn make_registered_access_with(
+    profile: CompatibilityProfile,
+) -> (Gb28181Access<impl CredentialProvider>, u64) {
+    let config = Gb28181DomainConfig::new("domain-1", REALM, SERVER_SECRET.to_vec())
+        .unwrap()
+        .with_auth_policy(AuthPolicy::ChallengeOptional)
+        .with_compatibility(profile);
+    let provider =
+        |_device: &DeviceId| -> Result<Option<SecretString>, CredentialError> { Ok(None) };
+    let mut access = Gb28181Access::new(config, provider).unwrap();
+
+    let request = make_request(1, false);
+    access
+        .process(AccessInput {
+            source: "192.168.1.100:5060".parse().unwrap(),
+            now: 1000,
+            message: request,
+        })
+        .unwrap();
+
+    (access, 1000)
+}
+
+fn media_status_body(notify_type: &str) -> Vec<u8> {
+    format!(
+        r#"<?xml version="1.0"?>
+<Notify>
+    <CmdType>MediaStatus</CmdType>
+    <SN>3</SN>
+    <DeviceID>34020000001320000001</DeviceID>
+    <NotifyType>{notify_type}</NotifyType>
+</Notify>"#
+    )
+    .into_bytes()
+}
+
+#[test]
+fn media_status_rejected_without_capability() {
+    let (mut access, now) = make_registered_access();
+    let request = make_message_request(&media_status_body("121"));
+    let outputs = access
+        .process(AccessInput {
+            source: "192.168.1.100:5060".parse().unwrap(),
+            now: now + 1,
+            message: request,
+        })
+        .unwrap();
+
+    assert!(find_events(&outputs).next().is_none());
+    let SipMessage::Response { line, .. } = find_response(&outputs) else {
+        panic!("expected response");
+    };
+    assert_eq!(line.code, 400);
+}
+
+#[test]
+fn media_status_canonical_normalises_to_stopped_with_capability() {
+    let profile = CompatibilityProfile {
+        capabilities: vec![CompatibilityCapability::MediaStatus],
+        ..Default::default()
+    };
+    let (mut access, now) = make_registered_access_with(profile);
+    let request = make_message_request(&media_status_body("121"));
+    let outputs = access
+        .process(AccessInput {
+            source: "192.168.1.100:5060".parse().unwrap(),
+            now: now + 1,
+            message: request,
+        })
+        .unwrap();
+
+    let event = find_events(&outputs)
+        .find_map(|e| match e {
+            Gb28181Event::MediaStatusReceived {
+                notify_type,
+                outcome,
+                ..
+            } => Some((notify_type.clone(), *outcome)),
+            _ => None,
+        })
+        .expect("MediaStatusReceived event");
+    assert_eq!(event.0, "121");
+    assert_eq!(event.1, MediaStatusOutcome::Stopped);
+}
+
+#[test]
+fn media_status_vendor_code_normalises_to_stopped() {
+    let profile = CompatibilityProfile {
+        capabilities: vec![CompatibilityCapability::MediaStatus],
+        overrides: CompatibilityOverrides {
+            media_status: Some(MediaStatusOverride {
+                stopped_status_codes: vec!["99".to_string()],
+            }),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let (mut access, now) = make_registered_access_with(profile);
+    let request = make_message_request(&media_status_body("99"));
+    let outputs = access
+        .process(AccessInput {
+            source: "192.168.1.100:5060".parse().unwrap(),
+            now: now + 1,
+            message: request,
+        })
+        .unwrap();
+
+    let outcome = find_events(&outputs)
+        .find_map(|e| match e {
+            Gb28181Event::MediaStatusReceived { outcome, .. } => Some(*outcome),
+            _ => None,
+        })
+        .expect("MediaStatusReceived event");
+    assert_eq!(outcome, MediaStatusOutcome::Stopped);
 }
 
 fn add_authorization(request: &mut SipMessage, nonce: &str) {

@@ -1,0 +1,21 @@
+SIP/2.0 200 OK
+Via: SIP/2.0/UDP 192.168.1.10:5060;branch=z9hG4bK1234
+From: <sip:server@192.168.1.10:5060>;tag=tag-local
+To: <sip:34020000001320000001@192.168.1.20:5060>;tag=tag-remote
+Call-ID: call-sdp-override-1
+CSeq: 1 INVITE
+Contact: <sip:34020000001320000001@192.168.1.20:5061>
+Content-Type: application/sdp
+Content-Length: 0
+
+v=0
+o=- 0 0 IN IP4 0.0.0.0
+s=Play
+c=IN IP4 192.168.1.200
+t=0 0
+m=video 6000 TCP/RTP/AVP 34
+a=setup:active
+a=connection:new
+a=rtpmap:34 PS/90000
+a=vendorext:hik-private
+a=y:0200000001

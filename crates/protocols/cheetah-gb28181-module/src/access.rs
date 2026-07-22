@@ -14,12 +14,12 @@ use crate::registration::RegistrationTable;
 use crate::types::DeviceId;
 use crate::xml::{
     XmlLimits, extract_alarm, extract_catalog_with_profile, extract_device_control_response,
-    extract_device_info, extract_device_status, extract_keepalive, extract_mobile_position,
-    extract_record_info, parse_xml_with_profile,
+    extract_device_info, extract_device_status, extract_keepalive, extract_media_status,
+    extract_mobile_position, extract_record_info, parse_xml_with_profile,
 };
 use cheetah_gb28181_core::{
-    AccessInput, AccessOutput, AuthRateLimiter, DigestContext, DigestQop, DigestReplayCache,
-    EndpointRoute, GbAccessMachine, HeaderName, Method, SipMessage,
+    AccessInput, AccessOutput, AuthRateLimiter, CompatibilityCapability, DigestContext, DigestQop,
+    DigestReplayCache, EndpointRoute, GbAccessMachine, HeaderName, Method, SipMessage,
 };
 use secrecy::ExposeSecret;
 use std::net::SocketAddr;
@@ -583,6 +583,26 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                     source: route,
                     sn: resp.sn,
                     result: resp.result,
+                }
+            }
+            "MediaStatus"
+                if self
+                    .config
+                    .compatibility()
+                    .has(CompatibilityCapability::MediaStatus) =>
+            {
+                let status = extract_media_status(&root)?;
+                let outcome = self
+                    .config
+                    .compatibility()
+                    .media_status_outcome(&status.notify_type);
+                Gb28181Event::MediaStatusReceived {
+                    domain_id: domain_id.clone(),
+                    device_id: device_id.clone(),
+                    source: route,
+                    sn: status.sn,
+                    notify_type: status.notify_type,
+                    outcome,
                 }
             }
             other => return Err(AccessError::UnsupportedCmdType(other.to_string())),
