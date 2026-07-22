@@ -143,4 +143,4 @@ jobs:
         with:
           version: "25.3"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-      - run: cargo clippy -p cheetah-signaling ${{ matrix.features }} -- -D warnings
+      - run: cargo clippy -p cheetah-signaling ${{ matrix.features }} --all-targets -- -D warnings
