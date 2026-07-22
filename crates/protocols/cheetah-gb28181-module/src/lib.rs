@@ -56,8 +56,9 @@ pub use ingress::{
     NetworkZone, RequestIdentity,
 };
 pub use media::{
-    Gb28181Media, MediaCommand, MediaConfig, MediaError, MediaInput, MediaOutput, MediaTransport,
-    PlaybackAction,
+    Gb28181Media, GbMediaEndpoint, GbMediaPurpose, GbRecordWindow, GbSipRouting, GbStartRequest,
+    MediaCommand, MediaConfig, MediaError, MediaInput, MediaOutput, MediaTransport, PlaybackAction,
+    map_control, map_start,
 };
 pub use ports::{CredentialError, CredentialProvider};
 pub use profile::{ProfileResolveError, ProfileResolver};

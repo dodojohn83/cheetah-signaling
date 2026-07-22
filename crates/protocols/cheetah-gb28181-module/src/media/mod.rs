@@ -9,12 +9,17 @@ pub(crate) mod commands;
 pub(crate) mod control;
 pub(crate) mod handlers;
 pub(crate) mod invite;
+pub mod mapper;
 pub(crate) mod session;
 
 #[cfg(test)]
 mod tests;
 
 pub use control::PlaybackAction;
+pub use mapper::{
+    GbMediaEndpoint, GbMediaPurpose, GbRecordWindow, GbSipRouting, GbStartRequest, map_control,
+    map_start,
+};
 
 use crate::events::Gb28181Event;
 use crate::types::{DeviceId, DomainId};

@@ -231,6 +231,7 @@ fn start_broadcast(media_session_id: MediaSessionId, codec: &str) -> MediaComman
 
 mod bye_tests;
 mod invite_tests;
+mod mapper_tests;
 mod override_tests;
 mod playback_tests;
 mod sdp_tests;

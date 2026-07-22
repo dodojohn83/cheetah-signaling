@@ -1,0 +1,24 @@
+INVITE sip:34020000001320000001@192.168.1.20:5060 SIP/2.0
+Via: SIP/2.0/UDP 192.168.1.10:5060;branch=z9hG4bK1234
+From: <sip:server@192.168.1.10:5060>;tag=tag-local
+To: <sip:34020000001320000001@192.168.1.20:5060>
+Call-ID: call-1
+CSeq: 1 INVITE
+Contact: <sip:server@192.168.1.10:5060>
+Max-Forwards: 70
+Subject: 34020000001320000001:0200000000,server:34020000001320000001
+Content-Type: application/sdp
+Content-Length: 212
+
+v=0
+o=- 0 0 IN IP4 192.168.1.100
+s=Play
+c=IN IP4 192.168.1.100
+t=0 0
+m=video 5000 TCP/RTP/AVP 96
+c=IN IP4 192.168.1.100
+a=setup:passive
+a=recvonly
+a=connection:new
+a=rtpmap:96 PS/90000
+a=y:0200000000
