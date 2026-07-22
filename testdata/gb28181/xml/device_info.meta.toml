@@ -1,0 +1,6 @@
+source = "synthetic"
+standard = "GB/T 28181-2022"
+profile = "generic"
+expected = "DeviceInfo Response with CmdType=DeviceInfo, SN=2, synthetic manufacturer/model/firmware"
+desensitization = "All device IDs, coordinates, timestamps and record metadata are synthetic."
+license = "MIT-0"
