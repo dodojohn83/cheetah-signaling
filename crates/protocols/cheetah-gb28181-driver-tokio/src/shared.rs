@@ -11,7 +11,8 @@ use crate::sink::EventSink;
 use cheetah_gb28181_core::{
     AccessInput, AccessOutput, CompatibilityProfile, DialogManager, DialogManagerConfig,
     DialogRouting, GbAccessMachine, HeaderName, ManagerConfig, ManagerOutput, RequestOutcome,
-    RequestRoute, SipMessage, SipParserConfig, TransactionManager, TransportKind, route_request,
+    RequestRoute, SipMessage, SipParserConfig, TransactionManager, TransportKind, extract_tag,
+    route_request,
 };
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
@@ -498,11 +499,5 @@ fn is_success_response(message: &SipMessage) -> bool {
 /// Extracts the `tag` parameter from a response's `To` header, if present.
 fn response_to_tag(message: &SipMessage) -> Option<String> {
     let value = message.headers().get(&HeaderName::To)?.as_str();
-    let lower = value.to_ascii_lowercase();
-    let start = lower.find(";tag=")? + 5;
-    let rest = &value[start..];
-    let end = rest
-        .find(|c: char| c == ';' || c.is_whitespace())
-        .unwrap_or(rest.len());
-    Some(rest[..end].trim_matches('"').to_string())
+    extract_tag(value).map(|tag| tag.to_string())
 }

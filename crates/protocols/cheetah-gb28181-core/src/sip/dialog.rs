@@ -350,7 +350,7 @@ pub fn extract_tag(value: &str) -> Option<&str> {
     let start = find_case_insensitive(value, ";tag=")? + 5;
     let rest = &value[start..];
     let end = rest
-        .find(|c: char| c == ';' || c == '<' || c == '>' || c.is_whitespace())
+        .find(|c: char| c == ';' || c == '>' || c.is_whitespace())
         .unwrap_or(rest.len());
     let tag = &rest[..end];
     Some(tag.trim_matches('"'))

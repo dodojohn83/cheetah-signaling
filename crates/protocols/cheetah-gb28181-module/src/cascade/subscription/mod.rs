@@ -7,7 +7,7 @@
 //! upstream `From` tag, refreshed on `SUBSCRIBE` with matching dialog, and
 //! terminated by `Expires: 0` or by timer expiry.
 
-use cheetah_gb28181_core::{HeaderName, HeaderValue, SipMessage, SipUri};
+use cheetah_gb28181_core::{HeaderName, HeaderValue, SipMessage, SipUri, extract_tag};
 
 use super::catalog::{
     build_ok_response, build_response, parse_uri_from_header, request_from_matches_upstream,
@@ -110,7 +110,7 @@ pub(crate) fn handle_subscribe<P: CascadeCredentialProvider>(
             Vec::new(),
         ))];
     };
-    let remote_tag = extract_tag(from);
+    let remote_tag = extract_remote_tag(from);
     if remote_tag
         .as_ref()
         .is_some_and(|t| validate_token(t).is_err())
@@ -190,7 +190,7 @@ pub(crate) fn handle_subscribe<P: CascadeCredentialProvider>(
     };
 
     let key = subscription_key(&call_id, &remote_tag);
-    let to_tag = headers.get(&HeaderName::To).and_then(extract_tag);
+    let to_tag = headers.get(&HeaderName::To).and_then(extract_remote_tag);
     if to_tag.as_ref().is_some_and(|t| validate_token(t).is_err()) {
         return vec![CascadeOutput::SendResponse(build_response(
             &msg,
@@ -456,25 +456,17 @@ fn subscription_key(call_id: &str, remote_tag: &str) -> String {
     format!("{call_id}:{remote_tag}")
 }
 
-fn extract_tag(header: &HeaderValue) -> Option<String> {
-    header
-        .as_str()
-        .split(';')
-        .find_map(|param| {
-            let param = param.trim();
-            param
-                .strip_prefix("tag=")
-                .map(|v| v.trim().trim_matches('"').to_string())
-        })
-        .filter(|t| !t.is_empty())
+fn extract_remote_tag(header: &HeaderValue) -> Option<String> {
+    extract_tag(header.as_str())
+        .filter(|tag| !tag.is_empty())
+        .map(|tag| tag.to_string())
 }
 
 fn canonical_event_package(raw: &str) -> Option<String> {
     let base = raw.split(';').next().unwrap_or("").trim();
-    let lower = base.to_ascii_lowercase();
     SUPPORTED_PACKAGES
         .iter()
-        .find(|p| p.to_ascii_lowercase() == lower)
+        .find(|p| p.eq_ignore_ascii_case(base))
         .copied()
         .map(String::from)
 }
