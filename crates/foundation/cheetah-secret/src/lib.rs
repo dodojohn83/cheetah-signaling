@@ -16,6 +16,10 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
+/// Maximum bytes read from a single secret file.  128 KiB covers PEM certificate
+/// chains and API keys while preventing a misconfigured mount from causing OOM.
+const MAX_SECRET_FILE_BYTES: usize = 128 * 1024;
+
 /// In-memory secret store for tests and development.
 #[derive(Clone, Debug)]
 pub struct InMemorySecretStore {
@@ -197,35 +201,17 @@ impl FileSecretStore {
 impl SecretStore for FileSecretStore {
     fn get(&self, key: &str) -> Result<SecretString> {
         let path = self.secret_path(key)?;
-        #[cfg(unix)]
-        {
-            match read_secret_file(&path) {
-                Ok(value) => Ok(SecretString::from(value)),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(SignalError::new(
-                    SignalErrorKind::NotFound,
-                    format!("secret {key} not found"),
-                )),
-                Err(e) => Err(SignalError::new(
-                    SignalErrorKind::Internal,
-                    format!("failed to read secret {key}"),
-                )
-                .with_source(e)),
-            }
-        }
-        #[cfg(not(unix))]
-        {
-            match std::fs::read_to_string(&path) {
-                Ok(value) => Ok(SecretString::from(value)),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(SignalError::new(
-                    SignalErrorKind::NotFound,
-                    format!("secret {key} not found"),
-                )),
-                Err(e) => Err(SignalError::new(
-                    SignalErrorKind::Internal,
-                    format!("failed to read secret {key}"),
-                )
-                .with_source(e)),
-            }
+        match read_secret_file(&path) {
+            Ok(value) => Ok(SecretString::from(value)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(SignalError::new(
+                SignalErrorKind::NotFound,
+                format!("secret {key} not found"),
+            )),
+            Err(e) => Err(SignalError::new(
+                SignalErrorKind::Internal,
+                format!("failed to read secret {key}"),
+            )
+            .with_source(e)),
         }
     }
 
@@ -486,19 +472,39 @@ fn create_secret_dir(dir: &Path) -> std::io::Result<()> {
     }
 }
 
-/// Reads `path` without following symlinks.
-#[cfg(unix)]
+/// Reads `path` without following symlinks and enforces [`MAX_SECRET_FILE_BYTES`].
 fn read_secret_file(path: &Path) -> std::io::Result<String> {
-    use std::io::Read;
-    use std::os::unix::fs::OpenOptionsExt;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
 
-    let mut file = std::fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(path)?;
-    let mut value = String::new();
-    file.read_to_string(&mut value)?;
-    Ok(value)
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(path)?;
+        read_limited(file)
+    }
+    #[cfg(not(unix))]
+    {
+        let file = std::fs::File::open(path)?;
+        read_limited(file)
+    }
+}
+
+/// Reads at most [`MAX_SECRET_FILE_BYTES`] from `reader` and returns its UTF-8 contents.
+fn read_limited<R: std::io::Read>(reader: R) -> std::io::Result<String> {
+    use std::io::{Error, ErrorKind, Read};
+
+    let mut reader = reader.take((MAX_SECRET_FILE_BYTES as u64) + 1);
+    let mut buf = Vec::with_capacity(MAX_SECRET_FILE_BYTES);
+    reader.read_to_end(&mut buf)?;
+    if buf.len() > MAX_SECRET_FILE_BYTES {
+        return Err(Error::new(
+            ErrorKind::InvalidData,
+            format!("secret file exceeds {MAX_SECRET_FILE_BYTES} bytes"),
+        ));
+    }
+    String::from_utf8(buf).map_err(|e| Error::new(ErrorKind::InvalidData, e.utf8_error()))
 }
 
 /// Writes `contents` to `path` with owner-only permissions and without following symlinks.
@@ -549,6 +555,22 @@ mod tests {
         assert_ne!(rotated.expose_secret(), "old");
 
         store.delete("k")?;
+        assert!(store.get("k").is_err());
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn file_store_rejects_oversized_secret() -> Result<()> {
+        let dir = tempfile::tempdir().map_err(|e| {
+            SignalError::new(SignalErrorKind::Internal, "failed to create temp dir").with_source(e)
+        })?;
+        let store = FileSecretStore::new(dir.path());
+        let path = dir.path().join("k");
+        let oversized = vec![b'x'; MAX_SECRET_FILE_BYTES + 1];
+        std::fs::write(&path, &oversized).map_err(|e| {
+            SignalError::new(SignalErrorKind::Internal, "failed to write temp file").with_source(e)
+        })?;
         assert!(store.get("k").is_err());
         Ok(())
     }
