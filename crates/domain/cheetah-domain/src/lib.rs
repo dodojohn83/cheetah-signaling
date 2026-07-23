@@ -14,6 +14,7 @@ pub mod error;
 pub mod event;
 pub mod media_binding;
 pub mod media_callback;
+pub mod media_client;
 pub mod media_event_handler;
 pub mod media_key;
 pub mod media_node;
@@ -49,7 +50,10 @@ pub use device::{
 pub use error::DomainError;
 pub use event::DomainEvent;
 pub use media_binding::{MediaBinding, MediaBindingError, MediaBindingState};
-pub use media_callback::{MediaNodeCallback, MediaNodeCallbackKind, MediaNodeSessionRef};
+pub use media_callback::{
+    MediaNodeCallback, MediaNodeCallbackKind, MediaNodeEvent, MediaNodeSessionRef,
+};
+pub use media_client::{MediaClient, MediaSubscriptionRequest};
 pub use media_event_handler::MediaEventHandler;
 pub use media_key::MediaKey;
 pub use media_node::{MediaCapability, MediaNode, MediaNodeCapacity, MediaNodeHealth, NodeStatus};

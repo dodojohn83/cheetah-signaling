@@ -20,6 +20,7 @@
 
 use std::sync::Arc;
 
+use cheetah_domain::MediaClient;
 use cheetah_domain::media_contract::run_media_port_contract;
 use cheetah_media_client::{MediaClientConfig, MediaControlClient};
 use cheetah_media_scheduler::config::{MediaRegistryConfig, SchedulerConfig};
@@ -112,7 +113,7 @@ async fn real_media_node_satisfies_media_port_contract() {
         allow_internal_endpoints: true,
         ..MediaClientConfig::default()
     };
-    let client = MediaControlClient::new(client_config);
+    let client: Arc<dyn MediaClient> = Arc::new(MediaControlClient::new(client_config));
 
     let port = SchedulerMediaPort::new(scheduler, client, MediaMetrics::arc());
 
