@@ -10,6 +10,14 @@ use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
+/// Maximum outbound webhook request timeout; larger values overflow
+/// `tokio::time` deadlines used by `reqwest`.
+const MAX_WEBHOOK_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
+
+fn clamp_webhook_timeout(timeout_ms: u64) -> Duration {
+    Duration::from_millis(timeout_ms).min(MAX_WEBHOOK_TIMEOUT)
+}
+
 /// Outbound webhook HTTP client backed by `reqwest` with DNS-based SSRF checks.
 #[derive(Clone, Debug)]
 pub struct ReqwestWebhookClient {
@@ -69,7 +77,7 @@ impl WebhookHttpClient for ReqwestWebhookClient {
             .map(|d| d.as_millis())
             .unwrap_or(30_000)
             .max(0) as u64;
-        let timeout = Duration::from_millis(timeout_ms);
+        let timeout = clamp_webhook_timeout(timeout_ms);
 
         let mut reqwest_headers = reqwest::header::HeaderMap::new();
         for (name, value) in request.headers {
@@ -193,5 +201,16 @@ pub async fn run_delivery_worker(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clamp_webhook_timeout_saturates_at_max() {
+        assert_eq!(clamp_webhook_timeout(1_000), Duration::from_millis(1_000));
+        assert_eq!(clamp_webhook_timeout(u64::MAX), MAX_WEBHOOK_TIMEOUT);
     }
 }
