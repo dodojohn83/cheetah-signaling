@@ -46,6 +46,18 @@ fn clamp_backoff_ms(delay_ms: u64) -> Duration {
     Duration::from_millis(delay_ms).min(MAX_BACKOFF)
 }
 
+fn clamp_cooldown_ms(cooldown_ms: u64) -> Duration {
+    Duration::from_millis(cooldown_ms).min(MAX_COOLDOWN_INSTANT)
+}
+
+/// Minimum concurrency permits per node. A zero-permit semaphore would block
+/// every request forever, so the value is clamped to at least 1.
+const MIN_PER_NODE_CONCURRENCY: usize = 1;
+
+/// Minimum circuit-breaker threshold. A threshold of zero would open the
+/// breaker on the first failure, which is almost always a misconfiguration.
+const MIN_CIRCUIT_BREAKER_THRESHOLD: u32 = 1;
+
 /// Returns the earliest `Instant` at which an open circuit breaker may close.
 ///
 /// If `cooldown` overflows the representable `Instant` range, the deadline is
@@ -432,13 +444,20 @@ impl MediaControlClient {
         let channel = self.connect(endpoint).await?;
         let entry = Arc::new(ChannelEntry {
             channel,
-            semaphore: Arc::new(Semaphore::new(self.config.per_node_concurrency)),
+            semaphore: Arc::new(Semaphore::new(
+                self.config
+                    .per_node_concurrency
+                    .max(MIN_PER_NODE_CONCURRENCY),
+            )),
             circuit: Mutex::new(CircuitState::Closed {
                 consecutive_failures: 0,
             }),
             last_used: Mutex::new(Instant::now()),
-            cooldown: Duration::from_millis(self.config.circuit_breaker_cooldown_ms),
-            threshold: self.config.circuit_breaker_threshold,
+            cooldown: clamp_cooldown_ms(self.config.circuit_breaker_cooldown_ms),
+            threshold: self
+                .config
+                .circuit_breaker_threshold
+                .max(MIN_CIRCUIT_BREAKER_THRESHOLD),
         });
 
         let mut pool = self.pool.lock().map_err(|_| {
@@ -860,5 +879,11 @@ mod tests {
         assert_eq!(clamp_backoff_ms(0), Duration::ZERO);
         assert_eq!(clamp_backoff_ms(5_000), Duration::from_millis(5_000));
         assert_eq!(clamp_backoff_ms(u64::MAX), MAX_BACKOFF);
+    }
+
+    #[test]
+    fn clamp_cooldown_ms_saturates_at_max_cooldown() {
+        assert_eq!(clamp_cooldown_ms(1_000), Duration::from_millis(1_000));
+        assert_eq!(clamp_cooldown_ms(u64::MAX), MAX_COOLDOWN_INSTANT);
     }
 }
