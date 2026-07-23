@@ -37,22 +37,32 @@ pub(crate) fn resolve_vendor_content_type(
         return Ok(ContentType::Manscdp);
     }
     let without_params = raw.split(';').next().unwrap_or(raw).trim();
-    let lower = without_params.to_ascii_lowercase();
-    match lower.as_str() {
-        "application/manscdp+xml" | "application/xml" | "text/xml" => Ok(ContentType::Manscdp),
-        "application/mansrtsp+xml" => Ok(ContentType::Mansrtsp),
-        _ => {
-            if profile.has(CompatibilityCapability::MimeAlias) {
-                if MANSCDP_ALIASES.contains(&lower.as_str()) {
-                    return Ok(ContentType::Manscdp);
-                }
-                if MANSRTSP_ALIASES.contains(&lower.as_str()) {
-                    return Ok(ContentType::Mansrtsp);
-                }
-            }
-            Err(AccessError::UnsupportedContentType(lower))
+    if without_params.eq_ignore_ascii_case("application/manscdp+xml")
+        || without_params.eq_ignore_ascii_case("application/xml")
+        || without_params.eq_ignore_ascii_case("text/xml")
+    {
+        return Ok(ContentType::Manscdp);
+    }
+    if without_params.eq_ignore_ascii_case("application/mansrtsp+xml") {
+        return Ok(ContentType::Mansrtsp);
+    }
+    if profile.has(CompatibilityCapability::MimeAlias) {
+        if MANSCDP_ALIASES
+            .iter()
+            .any(|alias| without_params.eq_ignore_ascii_case(alias))
+        {
+            return Ok(ContentType::Manscdp);
+        }
+        if MANSRTSP_ALIASES
+            .iter()
+            .any(|alias| without_params.eq_ignore_ascii_case(alias))
+        {
+            return Ok(ContentType::Mansrtsp);
         }
     }
+    Err(AccessError::UnsupportedContentType(
+        without_params.chars().take(128).collect(),
+    ))
 }
 
 #[cfg(test)]
@@ -102,5 +112,17 @@ mod tests {
             resolve_vendor_content_type(Some("application/ksptz+xml"), &profile).unwrap(),
             ContentType::Mansrtsp
         );
+    }
+
+    #[test]
+    fn canonical_content_type_is_case_insensitive_and_rejects_oversized() {
+        let default = CompatibilityProfile::default();
+        assert_eq!(
+            resolve_vendor_content_type(Some("Application/MANSCDP+XML"), &default).unwrap(),
+            ContentType::Manscdp
+        );
+
+        let huge = "application/".to_string() + &"x".repeat(4096) + "+xml";
+        assert!(resolve_vendor_content_type(Some(&huge), &default).is_err());
     }
 }
