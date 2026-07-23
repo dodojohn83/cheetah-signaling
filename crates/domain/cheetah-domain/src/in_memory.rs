@@ -131,7 +131,7 @@ impl InMemoryClock {
 
     /// Advances the clock by the given duration.
     pub fn advance(&self, duration: DurationMs) {
-        let ms = duration.as_millis() as u64;
+        let ms = duration.as_millis().max(0) as u64;
         self.wall_ms.fetch_add(ms, Ordering::SeqCst);
         self.mono_ms.fetch_add(ms, Ordering::SeqCst);
     }
@@ -1881,6 +1881,14 @@ pub fn media_session_resource_ref(
 mod tests {
     use super::*;
     use crate::MediaPort;
+
+    #[test]
+    fn advance_rejects_negative_duration() {
+        let clock = InMemoryClock::new();
+        clock.advance(DurationMs::from_millis(-500));
+        let mono = clock.now_monotonic().as_millis();
+        assert_eq!(mono, 0, "negative advances must not wrap to u64::MAX");
+    }
 
     #[test]
     fn list_sessions_rejects_invalid_cursor() {

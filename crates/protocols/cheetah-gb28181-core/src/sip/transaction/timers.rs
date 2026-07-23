@@ -88,10 +88,12 @@ impl TransactionConfig {
             return Duration::ZERO;
         }
         let factor = 1u64.saturating_mul(2u64.saturating_pow(n));
-        let cap = self.t2.as_millis() as u64 / std::cmp::max(self.t1.as_millis() as u64, 1);
+        let t1_ms = millis_u64(self.t1);
+        let t2_ms = millis_u64(self.t2);
+        let cap = t2_ms / std::cmp::max(t1_ms, 1);
         let capped = std::cmp::min(factor, cap);
         let capped = std::cmp::max(capped, 1);
-        self.t1 * capped as u32
+        scale_duration(self.t1, capped)
     }
 
     /// Timer B (INVITE timeout) = 64 * T1.
@@ -119,10 +121,12 @@ impl TransactionConfig {
             return Duration::ZERO;
         }
         let factor = 1u64.saturating_mul(2u64.saturating_pow(n));
-        let cap = self.t2.as_millis() as u64 / std::cmp::max(self.t1.as_millis() as u64, 1);
+        let t1_ms = millis_u64(self.t1);
+        let t2_ms = millis_u64(self.t2);
+        let cap = t2_ms / std::cmp::max(t1_ms, 1);
         let capped = std::cmp::min(factor, cap);
         let capped = std::cmp::max(capped, 1);
-        self.t1 * capped as u32
+        scale_duration(self.t1, capped)
     }
 
     /// Timer F (non-INVITE timeout) = 64 * T1.
@@ -206,6 +210,20 @@ impl TimerSet {
     }
 }
 
+/// Returns the duration in whole milliseconds, clamped to `u64::MAX`.
+fn millis_u64(d: Duration) -> u64 {
+    d.as_millis().min(u64::MAX as u128) as u64
+}
+
+/// Multiplies `d` by `multiplier` without overflowing the `u32` `Mul` bound on `Duration`.
+fn scale_duration(d: Duration, multiplier: u64) -> Duration {
+    let nanos = d
+        .as_nanos()
+        .saturating_mul(multiplier as u128)
+        .min(u64::MAX as u128);
+    Duration::from_nanos(nanos as u64)
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
@@ -240,5 +258,16 @@ mod tests {
             ..TransactionConfig::default()
         };
         let _ = cfg.timer_a(0);
+    }
+
+    #[test]
+    fn timer_a_does_not_panic_with_huge_t1_and_large_n() {
+        let cfg = TransactionConfig {
+            t1: Duration::from_secs(u64::MAX),
+            t2: Duration::from_secs(u64::MAX),
+            ..TransactionConfig::default()
+        };
+        let value = cfg.timer_a(u32::MAX);
+        assert!(value > Duration::ZERO, "huge timers must remain positive");
     }
 }
