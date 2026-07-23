@@ -169,4 +169,9 @@ impl SoapClient {
     pub fn is_request_queue_saturated(&self) -> bool {
         self.permits.available_permits() == 0
     }
+
+    /// Returns the default HTTP request timeout.
+    pub fn request_timeout(&self) -> Duration {
+        self.request_timeout
+    }
 }
