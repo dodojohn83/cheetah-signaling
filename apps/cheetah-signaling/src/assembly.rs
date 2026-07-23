@@ -1069,7 +1069,11 @@ pub async fn start(
     // Shared application state is constructed before protocol adapters so that
     // inbound protocol events can be routed through application services.
     let audit: Arc<dyn cheetah_signal_types::AuditLog> = Arc::new(TracingAuditLog);
-    let api_config = ApiConfig::from(&config);
+    let mut api_config = ApiConfig::from(&config);
+    // Use the resolved/persisted node identity so the HTTP API, audit logs and
+    // rate-limit keys agree with the rest of the process even when system.node_id
+    // is omitted from configuration.
+    api_config.node_id = node_id;
     // GB28181 runtime/application metrics aggregator. It is exposed on the
     // `/metrics` endpoint and drives runtime readiness/degraded reporting on
     // `/readyz`. Series cardinality is fixed by the shard count and the bounded
