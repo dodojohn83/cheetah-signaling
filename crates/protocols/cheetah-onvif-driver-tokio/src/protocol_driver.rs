@@ -368,6 +368,22 @@ async fn dispatch_command(
                 .await
                 .map_err(plugin_error_from_driver_error)?;
         }
+        // Imaging v1 write commands are explicitly rejected; they are not part of
+        // the signaling control plane and would require media-node coordination.
+        "set_imaging_settings"
+        | "set_focus_configuration"
+        | "set_exposure"
+        | "set_white_balance"
+        | "set_backlight_compensation"
+        | "set_wide_dynamic_range"
+        | "set_defog"
+        | "set_iris_filter"
+        | "set_focus" => {
+            return Err(PluginError::Unsupported(format!(
+                "onvif imaging write command {} is not supported",
+                command.command_type
+            )));
+        }
         _ => {
             return Err(PluginError::Unsupported(format!(
                 "onvif command {} is not supported by the tokio driver",
@@ -953,6 +969,37 @@ mod tests {
             _address: &str,
         ) -> Result<String, PluginError> {
             unimplemented!()
+        }
+    }
+
+    #[tokio::test]
+    async fn imaging_write_commands_return_unsupported() {
+        use cheetah_signal_types::UtcTimestamp;
+
+        let driver = OnvifTokioProtocolDriver::new();
+        let ctx = FakeDriverContext::with_secret("onvif.default.password", "secret");
+        let deadline = UtcTimestamp::parse_rfc3339("9999-12-31T23:59:59Z").unwrap();
+
+        for command_type in [
+            "set_imaging_settings",
+            "set_focus_configuration",
+            "set_exposure",
+            "set_white_balance",
+            "set_focus",
+        ] {
+            let command = DriverCommand {
+                command_type: command_type.to_string(),
+                payload: serde_json::json!({}),
+                idempotency_key: format!("test-{command_type}"),
+                deadline,
+            };
+            let result = driver
+                .handle_command(&ctx, command, DurationMs::from_millis(1_000))
+                .await;
+            assert!(
+                matches!(result, Err(PluginError::Unsupported(_))),
+                "{command_type} should be unsupported, got {result:?}"
+            );
         }
     }
 }
