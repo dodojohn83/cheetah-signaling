@@ -10,13 +10,11 @@ use cheetah_signal_types::{
     CorrelationId, Deadline, DurationMs, MessageId, PageRequest, RequestContext, SignalError,
     SignalErrorKind, TenantId, validate_traceparent, validate_tracestate,
 };
+use std::net::SocketAddr;
+use std::sync::Arc;
 
 /// Maximum byte length of an `Idempotency-Key` header value.
 const MAX_IDEMPOTENCY_KEY_BYTES: usize = 256;
-/// Maximum byte length of an arbitrary list-query filter string.
-const MAX_FILTER_STRING_BYTES: usize = 256;
-use std::net::SocketAddr;
-use std::sync::Arc;
 
 /// Request context resolved from auth and headers.
 #[derive(Clone, Debug)]
@@ -209,6 +207,15 @@ fn parse_message_or_correlation_id(
         .map_err(|e| HttpError::Unauthenticated(format!("invalid {name}: {e}")))
 }
 
+/// Maximum byte length of a list `name_prefix` filter.
+const MAX_LIST_NAME_PREFIX_BYTES: usize = 256;
+/// Maximum byte length of a list enum/string filter (`protocol`, `status`, `purpose`, `event_type`).
+const MAX_LIST_FILTER_BYTES: usize = 128;
+/// Maximum byte length of a list `updated_after` RFC 3339 timestamp filter.
+const MAX_LIST_UPDATED_AFTER_BYTES: usize = 64;
+/// Maximum byte length of a list `device_id` filter.
+const MAX_LIST_DEVICE_ID_BYTES: usize = 64;
+
 /// Query parameters for list endpoints.
 #[derive(Clone, Debug, serde::Deserialize)]
 #[serde(default, rename_all = "snake_case")]
@@ -253,8 +260,57 @@ impl Default for ListQuery {
 }
 
 impl ListQuery {
-    /// Converts to a validated `PageRequest` after checking filter string lengths.
+    /// Validates optional filter fields so a malformed query cannot force the
+    /// server to allocate or pass unbounded strings to the repository layer.
+    fn validate(&self) -> Result<(), HttpError> {
+        let err = |field: &'static str| {
+            HttpError::Signal(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                format!("{field} query parameter exceeds maximum length"),
+            ))
+        };
+
+        if let Some(s) = &self.protocol
+            && s.len() > MAX_LIST_FILTER_BYTES
+        {
+            return Err(err("protocol"));
+        }
+        if let Some(s) = &self.status
+            && s.len() > MAX_LIST_FILTER_BYTES
+        {
+            return Err(err("status"));
+        }
+        if let Some(s) = &self.purpose
+            && s.len() > MAX_LIST_FILTER_BYTES
+        {
+            return Err(err("purpose"));
+        }
+        if let Some(s) = &self.event_type
+            && s.len() > MAX_LIST_FILTER_BYTES
+        {
+            return Err(err("event_type"));
+        }
+        if let Some(s) = &self.name_prefix
+            && s.len() > MAX_LIST_NAME_PREFIX_BYTES
+        {
+            return Err(err("name_prefix"));
+        }
+        if let Some(s) = &self.updated_after
+            && s.len() > MAX_LIST_UPDATED_AFTER_BYTES
+        {
+            return Err(err("updated_after"));
+        }
+        if let Some(s) = &self.device_id
+            && s.len() > MAX_LIST_DEVICE_ID_BYTES
+        {
+            return Err(err("device_id"));
+        }
+        Ok(())
+    }
+
+    /// Converts to a validated `PageRequest`.
     pub fn page_request(&self) -> Result<PageRequest, HttpError> {
+        self.validate()?;
         let mut req = PageRequest::new(self.page_size).map_err(HttpError::Signal)?;
         if let Some(cursor) = &self.cursor {
             if cursor.len() > cheetah_signal_types::MAX_CURSOR_BYTES {
@@ -265,26 +321,8 @@ impl ListQuery {
             }
             req = req.with_cursor(cursor);
         }
-        validate_filter(&self.protocol, "protocol")?;
-        validate_filter(&self.status, "status")?;
-        validate_filter(&self.name_prefix, "name_prefix")?;
-        validate_filter(&self.updated_after, "updated_after")?;
-        validate_filter(&self.purpose, "purpose")?;
-        validate_filter(&self.event_type, "event_type")?;
         Ok(req)
     }
-}
-
-fn validate_filter(value: &Option<String>, name: &str) -> Result<(), HttpError> {
-    if let Some(v) = value
-        && v.len() > MAX_FILTER_STRING_BYTES
-    {
-        return Err(HttpError::Signal(SignalError::new(
-            SignalErrorKind::InvalidArgument,
-            format!("{name} exceeds maximum length"),
-        )));
-    }
-    Ok(())
 }
 
 /// Extractor for the required `Idempotency-Key` header on mutating write paths.
@@ -540,5 +578,87 @@ mod tests {
         };
         let err = resolve_tenant_id(&parts, &auth).expect_err("missing scope");
         assert_eq!(err.status(), axum::http::StatusCode::FORBIDDEN);
+    }
+
+    #[test]
+    fn list_query_rejects_oversized_filters() {
+        assert!(
+            ListQuery {
+                protocol: Some("x".repeat(MAX_LIST_FILTER_BYTES + 1)),
+                ..Default::default()
+            }
+            .page_request()
+            .is_err()
+        );
+
+        assert!(
+            ListQuery {
+                status: Some("x".repeat(MAX_LIST_FILTER_BYTES + 1)),
+                ..Default::default()
+            }
+            .page_request()
+            .is_err()
+        );
+
+        assert!(
+            ListQuery {
+                purpose: Some("x".repeat(MAX_LIST_FILTER_BYTES + 1)),
+                ..Default::default()
+            }
+            .page_request()
+            .is_err()
+        );
+
+        assert!(
+            ListQuery {
+                event_type: Some("x".repeat(MAX_LIST_FILTER_BYTES + 1)),
+                ..Default::default()
+            }
+            .page_request()
+            .is_err()
+        );
+
+        assert!(
+            ListQuery {
+                name_prefix: Some("x".repeat(MAX_LIST_NAME_PREFIX_BYTES + 1)),
+                ..Default::default()
+            }
+            .page_request()
+            .is_err()
+        );
+
+        assert!(
+            ListQuery {
+                updated_after: Some("x".repeat(MAX_LIST_UPDATED_AFTER_BYTES + 1)),
+                ..Default::default()
+            }
+            .page_request()
+            .is_err()
+        );
+
+        assert!(
+            ListQuery {
+                device_id: Some("x".repeat(MAX_LIST_DEVICE_ID_BYTES + 1)),
+                ..Default::default()
+            }
+            .page_request()
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn list_query_accepts_at_limit_filters() {
+        assert!(
+            ListQuery {
+                name_prefix: Some("x".repeat(MAX_LIST_NAME_PREFIX_BYTES)),
+                protocol: Some("x".repeat(MAX_LIST_FILTER_BYTES)),
+                status: Some("x".repeat(MAX_LIST_FILTER_BYTES)),
+                updated_after: Some("x".repeat(MAX_LIST_UPDATED_AFTER_BYTES)),
+                device_id: Some("x".repeat(MAX_LIST_DEVICE_ID_BYTES)),
+                ..Default::default()
+            }
+            .page_request()
+            .is_ok()
+        );
     }
 }
