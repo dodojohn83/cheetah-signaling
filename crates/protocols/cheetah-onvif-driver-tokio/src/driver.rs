@@ -359,6 +359,7 @@ impl OnvifHttpDriver {
             MediaDialect::Media1 => [MediaDialect::Media1, MediaDialect::Media2],
         };
         let mut last_err = None;
+        let mut last_empty: Option<(MediaDialect, Vec<MediaProfile>)> = None;
         for dialect in order {
             match self
                 .get_profiles_dialect(
@@ -370,9 +371,14 @@ impl OnvifHttpDriver {
                 .await
             {
                 Ok(profiles) if !profiles.is_empty() => return Ok((dialect, profiles)),
-                Ok(profiles) => return Ok((dialect, profiles)),
+                Ok(profiles) => {
+                    last_empty = Some((dialect, profiles));
+                }
                 Err(e) => last_err = Some(e),
             }
+        }
+        if let Some(result) = last_empty {
+            return Ok(result);
         }
         Err(last_err.unwrap_or_else(|| DriverError::Config("no media dialect succeeded".into())))
     }
