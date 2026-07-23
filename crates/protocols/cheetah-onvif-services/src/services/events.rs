@@ -293,16 +293,44 @@ pub fn parse_pull_messages_response(
     Ok(messages)
 }
 
+/// Returns true when `haystack` contains `needle` ignoring ASCII case.
+///
+/// `needle` must be ASCII; this does not allocate and works on the raw UTF-8
+/// bytes without copying the haystack.
+fn ascii_contains_ignore_case(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    let needle = needle.as_bytes();
+    let n = needle.len();
+    if n > haystack.len() {
+        return false;
+    }
+    for window in haystack.as_bytes().windows(n) {
+        if window
+            .iter()
+            .enumerate()
+            .all(|(i, b)| b.to_ascii_lowercase() == needle[i])
+        {
+            return true;
+        }
+    }
+    false
+}
+
 /// Maps a known ONVIF topic to a stable northbound event type, or vendor fallback.
 pub fn normalize_topic(topic: &str) -> String {
-    let lower = topic.to_ascii_lowercase();
-    if lower.contains("motion") || lower.contains("cellmotion") {
+    if ascii_contains_ignore_case(topic, "motion")
+        || ascii_contains_ignore_case(topic, "cellmotion")
+    {
         "device.motion_detected".into()
-    } else if lower.contains("digitalinput") || lower.contains("tns1:device/trigger/digitalinput") {
+    } else if ascii_contains_ignore_case(topic, "digitalinput")
+        || ascii_contains_ignore_case(topic, "tns1:device/trigger/digitalinput")
+    {
         "device.digital_input".into()
-    } else if lower.contains("globalscenechange")
-        || lower.contains("videoloss")
-        || lower.contains("videosource")
+    } else if ascii_contains_ignore_case(topic, "globalscenechange")
+        || ascii_contains_ignore_case(topic, "videoloss")
+        || ascii_contains_ignore_case(topic, "videosource")
     {
         "device.video_loss".into()
     } else {
@@ -338,7 +366,15 @@ mod tests {
             normalize_topic("tns1:RuleEngine/CellMotionDetector/Motion"),
             "device.motion_detected"
         );
+        assert_eq!(
+            normalize_topic("TNS1:RuleEngine/CellMotionDetector/MOTION"),
+            "device.motion_detected"
+        );
         assert!(normalize_topic("tns1:Vendor/Custom").starts_with("vendor.onvif:"));
+
+        let huge = "A".repeat(100_000);
+        let result = normalize_topic(&format!("tns1:Vendor/{huge}"));
+        assert!(result.starts_with("vendor.onvif:"));
     }
 
     #[test]
