@@ -9,9 +9,13 @@ repository.workspace = true
 description = "Media control gRPC client with connection pooling, retries, and circuit breaker."
 
 [dependencies]
+cheetah-domain = { path = "../../domain/cheetah-domain" }
 cheetah-signal-grpc = { path = "../../transport/cheetah-signal-grpc" }
 cheetah-signal-types = { path = "../../foundation/cheetah-signal-types" }
 
+async-trait = { workspace = true }
+futures = { workspace = true }
+serde_json = { workspace = true }
 tonic = { workspace = true, features = ["tls-native-roots"] }
 tokio = { workspace = true, features = ["sync", "time"] }
 time = { workspace = true }

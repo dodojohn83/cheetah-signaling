@@ -651,7 +651,7 @@ impl std::fmt::Debug for MediaControlClient {
 }
 
 /// Validates endpoint and fencing identifiers before establishing a connection.
-fn validate_media_target(
+pub(crate) fn validate_media_target(
     endpoint: &str,
     media_node_id: NodeId,
     instance_epoch: MediaNodeInstanceEpoch,

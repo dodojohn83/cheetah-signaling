@@ -2,7 +2,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use cheetah_domain::{CommandPayload, MediaNodeCommand, MediaPort};
+use cheetah_domain::{CommandPayload, MediaClient, MediaNodeCommand, MediaPort};
 use cheetah_media_client::MediaControlClient;
 use cheetah_media_scheduler::config::{MediaRegistryConfig, SchedulerConfig};
 use cheetah_media_scheduler::model::{
@@ -105,7 +105,7 @@ async fn scheduler_port_rejects_orphan_stop_with_zero_owner_epoch() {
         registry,
         SchedulerConfig::default(),
     ));
-    let client = MediaControlClient::new(Default::default());
+    let client: Arc<dyn MediaClient> = Arc::new(MediaControlClient::new(Default::default()));
     let port = SchedulerMediaPort::new(scheduler, client, Arc::new(MediaMetrics::new()));
 
     let err = port
@@ -129,7 +129,7 @@ async fn scheduler_port_accepts_orphan_stop_with_non_zero_owner_epoch() {
         registry,
         SchedulerConfig::default(),
     ));
-    let client = MediaControlClient::new(Default::default());
+    let client: Arc<dyn MediaClient> = Arc::new(MediaControlClient::new(Default::default()));
     let port = SchedulerMediaPort::new(scheduler, client, Arc::new(MediaMetrics::new()));
 
     // With a non-zero owner epoch the command passes local validation and is

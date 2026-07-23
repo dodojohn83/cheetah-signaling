@@ -1,5 +1,7 @@
 //! Media client errors.
 
+use cheetah_domain::DomainError;
+
 /// Errors returned by the media control client.
 #[derive(Debug, thiserror::Error)]
 pub enum MediaClientError {
@@ -38,4 +40,34 @@ pub enum MediaClientError {
     /// TLS configuration is invalid.
     #[error("TLS configuration failed: {0}")]
     TlsConfig(String),
+}
+
+impl From<MediaClientError> for DomainError {
+    fn from(err: MediaClientError) -> Self {
+        match err {
+            MediaClientError::InvalidEndpoint(_)
+            | MediaClientError::InsecureEndpoint(_)
+            | MediaClientError::InternalEndpoint(_)
+            | MediaClientError::MissingIdentifier { .. }
+            | MediaClientError::InvalidDeadline(_) => {
+                DomainError::invalid_argument(err.to_string())
+            }
+            MediaClientError::Grpc(ref status) => match status.code() {
+                tonic::Code::InvalidArgument => {
+                    DomainError::invalid_argument(status.message().to_string())
+                }
+                tonic::Code::NotFound => {
+                    DomainError::not_found("media", status.message().to_string())
+                }
+                tonic::Code::AlreadyExists => {
+                    DomainError::invalid_argument(status.message().to_string())
+                }
+                _ => DomainError::unavailable(err.to_string()),
+            },
+            MediaClientError::Transport(_)
+            | MediaClientError::CircuitOpen(_)
+            | MediaClientError::PoolExhausted(_)
+            | MediaClientError::TlsConfig(_) => DomainError::unavailable(err.to_string()),
+        }
+    }
 }

@@ -738,11 +738,14 @@ name = "cheetah-media-client"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "cheetah-domain",
  "cheetah-signal-grpc",
  "cheetah-signal-types",
  "fastrand",
+ "futures",
  "prost-types",
  "secrecy",
+ "serde_json",
  "thiserror",
  "time",
  "tokio",
@@ -782,7 +785,7 @@ dependencies = [
  "cheetah-signal-types",
  "cheetah-storage-api",
  "fastrand",
- "prost-types",
+ "futures",
  "serde",
  "serde_json",
  "thiserror",

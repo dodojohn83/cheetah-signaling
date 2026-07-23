@@ -9,20 +9,19 @@
 use crate::config::MediaEventConsumerConfig;
 use crate::error::SchedulerError;
 use crate::event_consumer_support::*;
-use crate::mapper::map_media_event_to_callback;
 use crate::metrics::MediaMetrics;
 use crate::registry::MediaNodeRegistry;
 use cheetah_domain::{
-    DomainError, MediaEventHandler, MediaNode, MediaNodeCallback, NodeStatus,
-    ProcessedMessageRecord, ProcessedMessageStatus, UnitOfWork,
+    DomainError, MediaClient, MediaEventHandler, MediaNode, MediaNodeCallback, MediaNodeEvent,
+    MediaSubscriptionRequest, NodeStatus, ProcessedMessageRecord, ProcessedMessageStatus,
+    UnitOfWork,
 };
-use cheetah_media_client::MediaControlClient;
-use cheetah_signal_contracts::cheetah::media::v1::MediaEvent;
 use cheetah_signal_types::{
-    Clock, CorrelationId, DurationMs, MessageId, NodeId, Principal, PrincipalKind, RequestContext,
-    TenantId, UtcTimestamp,
+    Clock, CorrelationId, DurationMs, MediaNodeInstanceEpoch, MessageId, NodeId, Principal,
+    PrincipalKind, RequestContext, TenantId,
 };
 use cheetah_storage_api::Storage;
+use futures::StreamExt;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
@@ -35,7 +34,7 @@ pub use crate::event_consumer_support::{NoopReconciliationHandler, Reconciliatio
 #[derive(Clone)]
 pub struct MediaEventConsumer {
     node_registry: Arc<dyn MediaNodeRegistry>,
-    stream_client: MediaControlClient,
+    stream_client: Arc<dyn MediaClient>,
     event_handler: Arc<dyn MediaEventHandler>,
     storage: Arc<dyn Storage>,
     clock: Arc<dyn Clock>,
@@ -63,7 +62,7 @@ impl MediaEventConsumer {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         node_registry: Arc<dyn MediaNodeRegistry>,
-        stream_client: MediaControlClient,
+        stream_client: Arc<dyn MediaClient>,
         event_handler: Arc<dyn MediaEventHandler>,
         storage: Arc<dyn Storage>,
         clock: Arc<dyn Clock>,
@@ -240,13 +239,20 @@ impl MediaEventConsumer {
         self.load_cursor(&node).await?;
 
         let last = self.cursors.last_sequence(node.node_id);
-        let cursor_string = last.to_string();
         let cursor = if last == 0 {
-            ""
+            String::new()
         } else {
-            cursor_string.as_str()
+            last.to_string()
         };
-        let request = build_subscribe_request(&node, cursor, &self.config, self.source_node_id);
+        let request = MediaSubscriptionRequest {
+            media_node_id: node.node_id,
+            media_node_instance_epoch: MediaNodeInstanceEpoch(node.instance_epoch),
+            source_node_id: self.source_node_id,
+            resume_cursor: cursor,
+            max_batch_size: self.config.max_batch_size,
+            contract_version: node.contract_version,
+            tenant_id: None,
+        };
         let endpoint = &node.control_endpoint;
 
         let mut stream = self
@@ -258,14 +264,14 @@ impl MediaEventConsumer {
         loop {
             tokio::select! {
                 _ = cancel.cancelled() => return Ok(()),
-                msg = stream.message() => match msg {
-                    Ok(None) => return Ok(()),
-                    Ok(Some(event)) => {
+                msg = stream.next() => match msg {
+                    None => return Ok(()),
+                    Some(Ok(event)) => {
                         if let Err(e) = self.process_event(event, &node).await {
                             tracing::warn!(node_id = %node.node_id, "failed to process media event: {e}");
                         }
                     }
-                    Err(e) => return Err(SchedulerError::EventStream(format!("{e}"))),
+                    Some(Err(e)) => return Err(SchedulerError::EventStream(format!("{e}"))),
                 },
             }
         }
@@ -295,19 +301,31 @@ impl MediaEventConsumer {
 
     async fn process_event(
         &self,
-        event: MediaEvent,
+        event: MediaNodeEvent,
         node: &MediaNode,
     ) -> Result<(), SchedulerError> {
         let event_id = event.event_id.clone();
         let sequence = event.sequence;
-        let gap_tenant: TenantId = event
-            .tenant_id
-            .parse::<TenantId>()
-            .unwrap_or(TenantId::default());
+        let tenant_id = event.tenant_id;
 
-        if let Some(ts) = event.occurred_at.as_ref()
-            && let Some(occurred) = UtcTimestamp::from_prost_timestamp(ts)
-        {
+        if event_id.is_empty() || tenant_id.as_uuid().is_nil() {
+            if self.diagnostic_log_limiter.check(
+                node.node_id,
+                self.config.max_diagnostic_logs_per_second,
+                self.clock.now_wall(),
+            ) {
+                tracing::info!(
+                    %node.node_id,
+                    sequence,
+                    "media event missing event_id or tenant_id; treating as diagnostic"
+                );
+            }
+            self.detect_sequence_gap(node, tenant_id, sequence).await;
+            self.cursors.update_sequence(node.node_id, sequence);
+            return Ok(());
+        }
+
+        if let Some(occurred) = event.occurred_at {
             let lag =
                 (self.clock.now_wall().as_offset() - occurred.as_offset()).whole_milliseconds();
             if lag >= 0 {
@@ -315,9 +333,9 @@ impl MediaEventConsumer {
             }
         }
 
-        let (tenant_id, callback) = match map_media_event_to_callback(&event) {
-            Ok(v) => v,
-            Err(e) => {
+        let callback = match event.callback {
+            Some(cb) => cb,
+            None => {
                 if self.diagnostic_log_limiter.check(
                     node.node_id,
                     self.config.max_diagnostic_logs_per_second,
@@ -325,11 +343,12 @@ impl MediaEventConsumer {
                 ) {
                     tracing::info!(
                         %event_id,
+                        %tenant_id,
                         sequence,
-                        "media event mapping failed; treating as diagnostic: {e}"
+                        "media event callback could not be parsed; treating as diagnostic"
                     );
                 }
-                self.detect_sequence_gap(node, gap_tenant, sequence).await;
+                self.detect_sequence_gap(node, tenant_id, sequence).await;
                 self.cursors.update_sequence(node.node_id, sequence);
                 return Ok(());
             }
@@ -416,7 +435,12 @@ impl MediaEventConsumer {
             return Ok(());
         }
 
-        let context = self.build_request_context(tenant_id, &event);
+        let context = self.build_request_context(
+            tenant_id,
+            event.traceparent.as_deref(),
+            event.tracestate.as_deref(),
+            &event.correlation_id,
+        );
         let result = self
             .event_handler
             .handle_media_event(&context, &mut *uow, callback)
@@ -624,11 +648,17 @@ impl MediaEventConsumer {
         Ok(())
     }
 
-    fn build_request_context(&self, tenant_id: TenantId, event: &MediaEvent) -> RequestContext {
-        let correlation_id = if event.correlation_id.is_empty() {
+    fn build_request_context(
+        &self,
+        tenant_id: TenantId,
+        traceparent: Option<&str>,
+        tracestate: Option<&str>,
+        correlation_id: &str,
+    ) -> RequestContext {
+        let correlation_id = if correlation_id.is_empty() {
             CorrelationId::generate()
         } else {
-            std::str::FromStr::from_str(&event.correlation_id)
+            std::str::FromStr::from_str(correlation_id)
                 .unwrap_or_else(|_| CorrelationId::generate())
         };
 
@@ -641,16 +671,8 @@ impl MediaEventConsumer {
             },
             message_id: MessageId::generate(),
             correlation_id,
-            traceparent: if event.traceparent.is_empty() {
-                None
-            } else {
-                Some(event.traceparent.clone())
-            },
-            tracestate: if event.tracestate.is_empty() {
-                None
-            } else {
-                Some(event.tracestate.clone())
-            },
+            traceparent: traceparent.map(|s| s.to_string()),
+            tracestate: tracestate.map(|s| s.to_string()),
             deadline: None,
             node_id: Some(self.source_node_id),
             source_ip: None,
