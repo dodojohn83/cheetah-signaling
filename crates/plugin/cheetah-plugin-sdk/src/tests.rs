@@ -90,6 +90,112 @@ mod manifest_tests {
         assert!(negotiate_sdk_version(&req, &host).is_err());
         Ok(())
     }
+
+    #[test]
+    fn plugin_version_rejects_oversized_value() {
+        assert!(PluginVersion::new("1.".repeat(65)).is_err());
+    }
+
+    #[test]
+    fn sdk_version_req_rejects_oversized_value() {
+        assert!(SdkVersionReq::new(">=".repeat(65)).is_err());
+    }
+
+    #[test]
+    fn manifest_validate_rejects_too_many_protocols() -> Result<(), PluginError> {
+        let mut manifest = valid_manifest()?;
+        manifest.protocols = (0..33)
+            .map(|i| ProtocolCapability {
+                protocol: format!("proto-{i}"),
+                direction: ProtocolDirection::Bidirectional,
+                media_transport: None,
+            })
+            .collect();
+        assert!(manifest.validate().is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn manifest_validate_rejects_oversized_protocol_name() -> Result<(), PluginError> {
+        let mut manifest = valid_manifest()?;
+        manifest.protocols[0].protocol = "x".repeat(65);
+        assert!(manifest.validate().is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn manifest_validate_rejects_oversized_media_transport() -> Result<(), PluginError> {
+        let mut manifest = valid_manifest()?;
+        manifest.protocols[0].media_transport = Some("x".repeat(65));
+        assert!(manifest.validate().is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn manifest_validate_rejects_too_many_permissions() -> Result<(), PluginError> {
+        let mut manifest = valid_manifest()?;
+        manifest.permissions = (0..33).map(|_| PluginPermission::PublishEvents).collect();
+        assert!(manifest.validate().is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn manifest_validate_rejects_oversized_entry_path() -> Result<(), PluginError> {
+        let mut manifest = valid_manifest()?;
+        manifest.entry = PluginEntry::BuiltIn {
+            path: "x".repeat(1025),
+        };
+        assert!(manifest.validate().is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn manifest_validate_rejects_oversized_checksum() -> Result<(), PluginError> {
+        let mut manifest = valid_manifest()?;
+        manifest.checksum = Some(crate::manifest::PluginChecksum {
+            algorithm: "sha256".to_string(),
+            digest: "x".repeat(257),
+        });
+        assert!(manifest.validate().is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn manifest_validate_rejects_too_many_metadata_keys() -> Result<(), PluginError> {
+        let mut manifest = valid_manifest()?;
+        manifest.metadata = (0..65)
+            .map(|i| (format!("key-{i}"), "value".to_string()))
+            .collect();
+        assert!(manifest.validate().is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn manifest_validate_rejects_oversized_metadata() -> Result<(), PluginError> {
+        let mut manifest = valid_manifest()?;
+        manifest.metadata = std::collections::HashMap::from([
+            ("x".repeat(129), "value".to_string()),
+            ("key".to_string(), "x".repeat(1025)),
+        ]);
+        assert!(manifest.validate().is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn manifest_validate_rejects_too_many_required_fields() -> Result<(), PluginError> {
+        let mut manifest = valid_manifest()?;
+        manifest.config_schema.required = (0..129).map(|i| format!("field-{i}")).collect();
+        assert!(manifest.validate().is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn manifest_validate_rejects_oversized_required_field() -> Result<(), PluginError> {
+        let mut manifest = valid_manifest()?;
+        manifest.config_schema.required = vec!["x".repeat(129)];
+        assert!(manifest.validate().is_err());
+        Ok(())
+    }
 }
 
 #[cfg(test)]
