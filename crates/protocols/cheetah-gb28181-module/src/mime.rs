@@ -23,6 +23,38 @@ const MANSCDP_ALIASES: &[&str] = &[
 
 const MANSRTSP_ALIASES: &[&str] = &["application/ksptz+xml"];
 
+/// Maximum byte length of a Content-Type media type before its parameters are stripped.
+const MAX_CONTENT_TYPE_BYTES: usize = 256;
+
+/// Maximum characters from an unrecognized Content-Type to include in an error message.
+const MAX_CONTENT_TYPE_ERROR_CHARS: usize = 64;
+
+fn is_manscdp(without_params: &str) -> bool {
+    without_params.eq_ignore_ascii_case(MANSCDP_CANONICAL)
+        || without_params.eq_ignore_ascii_case("application/xml")
+        || without_params.eq_ignore_ascii_case("text/xml")
+}
+
+fn is_mansrtsp(without_params: &str) -> bool {
+    without_params.eq_ignore_ascii_case("application/mansrtsp+xml")
+}
+
+fn is_manscdp_alias(without_params: &str) -> bool {
+    MANSCDP_ALIASES
+        .iter()
+        .any(|alias| alias.eq_ignore_ascii_case(without_params))
+}
+
+fn is_mansrtsp_alias(without_params: &str) -> bool {
+    MANSRTSP_ALIASES
+        .iter()
+        .any(|alias| alias.eq_ignore_ascii_case(without_params))
+}
+
+fn truncate_content_type_error(s: &str) -> String {
+    s.chars().take(MAX_CONTENT_TYPE_ERROR_CHARS).collect()
+}
+
 /// Resolves a raw Content-Type header value to a canonical content family.
 ///
 /// Missing or empty values default to MANSCDP. Vendor aliases are only accepted
@@ -37,22 +69,31 @@ pub(crate) fn resolve_vendor_content_type(
         return Ok(ContentType::Manscdp);
     }
     let without_params = raw.split(';').next().unwrap_or(raw).trim();
-    let lower = without_params.to_ascii_lowercase();
-    match lower.as_str() {
-        "application/manscdp+xml" | "application/xml" | "text/xml" => Ok(ContentType::Manscdp),
-        "application/mansrtsp+xml" => Ok(ContentType::Mansrtsp),
-        _ => {
-            if profile.has(CompatibilityCapability::MimeAlias) {
-                if MANSCDP_ALIASES.contains(&lower.as_str()) {
-                    return Ok(ContentType::Manscdp);
-                }
-                if MANSRTSP_ALIASES.contains(&lower.as_str()) {
-                    return Ok(ContentType::Mansrtsp);
-                }
-            }
-            Err(AccessError::UnsupportedContentType(lower))
+    if without_params.len() > MAX_CONTENT_TYPE_BYTES {
+        return Err(AccessError::UnsupportedContentType(
+            truncate_content_type_error(without_params),
+        ));
+    }
+
+    if is_manscdp(without_params) {
+        return Ok(ContentType::Manscdp);
+    }
+    if is_mansrtsp(without_params) {
+        return Ok(ContentType::Mansrtsp);
+    }
+
+    if profile.has(CompatibilityCapability::MimeAlias) {
+        if is_manscdp_alias(without_params) {
+            return Ok(ContentType::Manscdp);
+        }
+        if is_mansrtsp_alias(without_params) {
+            return Ok(ContentType::Mansrtsp);
         }
     }
+
+    Err(AccessError::UnsupportedContentType(
+        truncate_content_type_error(without_params),
+    ))
 }
 
 #[cfg(test)]
@@ -102,5 +143,39 @@ mod tests {
             resolve_vendor_content_type(Some("application/ksptz+xml"), &profile).unwrap(),
             ContentType::Mansrtsp
         );
+    }
+
+    #[test]
+    fn content_type_resolution_is_case_insensitive() {
+        let default = CompatibilityProfile::default();
+        assert_eq!(
+            resolve_vendor_content_type(Some("APPLICATION/MANSCDP+XML"), &default).unwrap(),
+            ContentType::Manscdp
+        );
+        assert_eq!(
+            resolve_vendor_content_type(Some("Application/Xml; charset=GBK"), &default).unwrap(),
+            ContentType::Manscdp
+        );
+        assert_eq!(
+            resolve_vendor_content_type(Some("APPLICATION/MANSRTSP+XML"), &default).unwrap(),
+            ContentType::Mansrtsp
+        );
+    }
+
+    #[test]
+    fn oversized_content_type_is_rejected() {
+        let default = CompatibilityProfile::default();
+        let long = "x".repeat(MAX_CONTENT_TYPE_BYTES + 1);
+        let ct = format!("{long}/xml");
+        let err = resolve_vendor_content_type(Some(&ct), &default).unwrap_err();
+        match err {
+            AccessError::UnsupportedContentType(msg) => {
+                assert!(
+                    msg.len() <= MAX_CONTENT_TYPE_ERROR_CHARS,
+                    "error message should be bounded"
+                );
+            }
+            other => panic!("expected UnsupportedContentType, got {other:?}"),
+        }
     }
 }
