@@ -416,7 +416,7 @@ fn do_control_playback(
     let branch = format!(
         "{}-{}-info-{next_cseq}",
         session.branch,
-        action.method().to_lowercase()
+        action.method_lower()
     );
     let target = session.remote_target.as_ref().unwrap_or(&session.target);
     let info = build_info_mansrtsp(
