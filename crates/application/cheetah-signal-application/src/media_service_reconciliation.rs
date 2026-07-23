@@ -360,9 +360,10 @@ impl MediaService {
                         // Already verifying. Escalate to migrate/fail once the grace window
                         // expires so a crashed-but-not-deregistered node cannot leave
                         // sessions stuck indefinitely.
-                        let grace_deadline = binding.updated_at().checked_add(
-                            DurationMs::from_millis(self.needs_verification_grace_ms as i64),
-                        );
+                        let grace_deadline =
+                            binding.updated_at().checked_add(DurationMs::from_millis(
+                                i64::try_from(self.needs_verification_grace_ms).unwrap_or(i64::MAX),
+                            ));
                         if grace_deadline.is_some_and(|deadline| now >= deadline) {
                             self.migrate_or_fail(
                                 context,

@@ -32,7 +32,7 @@ pub fn inject_username_token(
     let created_seconds = now_unix_seconds.unwrap_or_else(|| {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
+            .map(|d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
             .unwrap_or(0)
     });
 
@@ -112,5 +112,20 @@ mod tests {
             .find("</s:Header>")
             .expect("</s:Header> close tag should be present");
         assert!(security_pos < header_close_pos);
+    }
+
+    #[test]
+    fn injects_with_far_future_created_time() {
+        let envelope = r#"<?xml version="1.0"?><s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Header><a:Action>x</a:Action></s:Header><s:Body/></s:Envelope>"#;
+        let creds = DeviceCredentials {
+            username: "admin".into(),
+            password: SecretString::from("secret".to_string()),
+            password_text: false,
+            clock_offset_seconds: 0,
+        };
+        let out = inject_username_token(envelope, &creds, Some(i64::MAX))
+            .expect("username token injection should accept i64::MAX created time");
+        assert!(out.contains("wsse:UsernameToken"));
+        assert!(out.contains("admin"));
     }
 }
