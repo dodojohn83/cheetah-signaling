@@ -92,20 +92,29 @@ impl SoapClient {
         })?;
         self.policy.validate(&url).map_err(DriverError::Onvif)?;
 
-        let wait_timeout = timeout.unwrap_or(self.request_timeout);
-        let _permit = tokio::time::timeout(wait_timeout, self.permits.acquire())
+        let overall_timeout = timeout.unwrap_or(self.request_timeout);
+        let start = std::time::Instant::now();
+        let _permit = tokio::time::timeout(overall_timeout, self.permits.acquire())
             .await
             .map_err(|_| DriverError::Timeout("request permit wait timed out".into()))?
             .map_err(|_| DriverError::Config("request semaphore closed".into()))?;
+        let elapsed = start.elapsed();
 
-        let timeout = timeout.unwrap_or(self.request_timeout);
+        let request_timeout = timeout
+            .map(|t| t.saturating_sub(elapsed))
+            .unwrap_or_else(|| self.request_timeout.saturating_sub(elapsed));
+        if request_timeout.is_zero() {
+            return Err(DriverError::Timeout(
+                "deadline exceeded after permit wait".into(),
+            ));
+        }
         let request = self
             .client
             .post(url.clone())
             .header("Content-Type", "application/soap+xml; charset=utf-8")
             .header("SOAPAction", format!("\"{soap_action}\""))
             .body(envelope_xml.to_string())
-            .timeout(timeout);
+            .timeout(request_timeout);
 
         let response = request.send().await.map_err(|e| {
             if e.is_timeout() {
