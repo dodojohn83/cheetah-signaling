@@ -5,15 +5,13 @@ use cheetah_signal_types::{ListCursor, NodeId, NodeInstanceId, Page, PageRequest
 use cheetah_storage_api::{NodeRepository, StorageError};
 use sqlx::types::Json;
 use sqlx::{FromRow, SqlitePool};
-use time::{Duration, OffsetDateTime};
-
 fn to_millis(ts: UtcTimestamp) -> i64 {
     let offset = ts.as_offset();
     offset.unix_timestamp() * 1000 + i64::from(offset.nanosecond()) / 1_000_000
 }
 
 fn from_millis(ms: i64) -> UtcTimestamp {
-    UtcTimestamp::from_offset(OffsetDateTime::UNIX_EPOCH + Duration::milliseconds(ms))
+    UtcTimestamp::from_epoch_millis_saturating(ms)
 }
 
 #[derive(FromRow)]
