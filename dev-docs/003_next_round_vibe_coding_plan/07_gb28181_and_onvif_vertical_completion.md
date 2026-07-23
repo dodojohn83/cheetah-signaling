@@ -106,7 +106,7 @@
 
 - [ ] 在线流优先TakeSnapshot，无在线流使用restricted Fetch。
 - [ ] PTZ能力、range和timeout先校验；危险连续移动具有明确Stop与超时。
-- [ ] v1不支持的imaging写操作保持稳定Unsupported且不产生Operation副作用。
+- [x] v1不支持的imaging写操作保持稳定Unsupported且不产生Operation副作用：`OnvifTokioProtocolDriver::handle_command` 显式拒绝 `set_imaging_settings`/`set_focus_configuration`/`set_exposure`/`set_white_balance`/`set_backlight_compensation`/`set_wide_dynamic_range`/`set_defog`/`set_iris_filter`/`set_focus` 等 imaging 写命令，返回稳定 `PluginError::Unsupported`，不访问设备、不产生 Operation 副作用；已添加单元测试覆盖。
 - [ ] 若v1包含ONVIF Events，必须使用bounded subscription/pull-point和renew；否则capability明确不声明。
 
 ## 15. ONVIF-007：互操作验收
