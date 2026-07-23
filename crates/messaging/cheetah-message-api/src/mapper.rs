@@ -35,6 +35,7 @@ fn resource_ref_to_proto(value: &ResourceRef) -> proto::ResourceRef {
         ResourceId::Plugin(id) => id.to_string(),
         ResourceId::Node(id) => id.to_string(),
         ResourceId::MediaBinding(id) => id.to_string(),
+        ResourceId::MediaNode(id) => id.to_string(),
         _ => String::new(),
     };
     let kind = match value.kind {
@@ -55,6 +56,7 @@ fn resource_ref_to_proto(value: &ResourceRef) -> proto::ResourceRef {
         cheetah_signal_types::ResourceKind::MediaBinding => {
             proto::ResourceKind::MediaBinding as i32
         }
+        cheetah_signal_types::ResourceKind::MediaNode => proto::ResourceKind::MediaNode as i32,
         _ => proto::ResourceKind::Unspecified as i32,
     };
 

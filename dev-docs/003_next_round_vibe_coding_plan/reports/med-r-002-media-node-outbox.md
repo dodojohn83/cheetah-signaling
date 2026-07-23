@@ -24,6 +24,14 @@
   `crates/testing/cheetah-storage-tests/src/contract/media_node.rs` with
   `node_updated_event` and `assert_media_node_outbox_event`, verifying that each
   mutating operation produces a correctly-sequenced outbox event.
+- Added `RESOURCE_KIND_MEDIA_NODE` to `proto/cheetah/common/v1/common.proto` and
+  mapped `ResourceId::MediaNode`/`ResourceKind::MediaNode` in
+  `crates/messaging/cheetah-message-api/src/mapper.rs` so the proto
+  `EventEnvelope.aggregate` field is populated correctly for published media-node
+  events.
+- Recomputed `MediaNode::health` in `PersistentMediaNodeRegistry::heartbeat` before
+  building the `MediaNodeUpdated` outbox event, so the emitted notification
+  reflects the latest load/session_count.
 
 ## Environment
 

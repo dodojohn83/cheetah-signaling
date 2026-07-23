@@ -237,6 +237,7 @@ impl MediaNodeRegistry for PersistentMediaNodeRegistry {
         event_node.session_count = session_count;
         event_node.last_heartbeat_at = Some(now);
         event_node.lease_until = Some(lease);
+        event_node.recalc_health();
         let event = self.make_event(clock, &event_node);
 
         let persisted = self
