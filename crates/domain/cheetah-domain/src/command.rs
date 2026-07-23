@@ -15,6 +15,26 @@ const MAX_QUERY_CONFIG_TYPE_BYTES: usize = 128;
 /// Maximum byte length of a `DeviceControlCommand.param` value.
 const MAX_DEVICE_CONTROL_PARAM_BYTES: usize = 1024;
 
+/// Validates that a PTZ speed factor is finite and non-negative.
+fn validate_speed(speed: f64) -> crate::Result<()> {
+    if !speed.is_finite() || speed < 0.0 {
+        return Err(DomainError::invalid_argument(
+            "speed must be a non-negative finite number",
+        ));
+    }
+    Ok(())
+}
+
+/// Validates that a playback scale multiplier is finite and non-negative.
+fn validate_scale(scale: f64) -> crate::Result<()> {
+    if !scale.is_finite() || scale < 0.0 {
+        return Err(DomainError::invalid_argument(
+            "scale must be a non-negative finite number",
+        ));
+    }
+    Ok(())
+}
+
 /// Scope used to deduplicate operations and media sessions.
 #[derive(Clone, Debug, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct IdempotencyScope {
@@ -328,6 +348,9 @@ impl CommandPayload {
     /// Validates payload-specific length and value constraints.
     pub fn validate(&self) -> crate::Result<()> {
         match self {
+            Self::StartPlayback { scale, .. } => validate_scale(*scale),
+            Self::ControlPlayback { command, .. } => command.validate(),
+            Self::Ptz { speed, .. } => validate_speed(*speed),
             Self::Query { query } => query.validate(),
             Self::DeviceControl { control } => control.validate(),
             _ => Ok(()),
@@ -418,7 +441,20 @@ impl QueryCommand {
                 "config_type must not exceed 128 bytes",
             ));
         }
+        if let Some(scale) = self.scale {
+            validate_scale(scale)?;
+        }
         Ok(())
+    }
+}
+
+impl MediaControl {
+    /// Validates playback control value constraints.
+    pub fn validate(&self) -> crate::Result<()> {
+        match self {
+            Self::Scale { value } => validate_scale(*value),
+            _ => Ok(()),
+        }
     }
 }
 
@@ -577,6 +613,74 @@ mod tests {
         };
         assert!(matches!(
             control.validate(),
+            Err(DomainError::InvalidArgument { .. })
+        ));
+    }
+
+    #[test]
+    fn ptz_payload_rejects_non_finite_speed() {
+        let payload = CommandPayload::Ptz {
+            channel_id: InMemoryIdGenerator::new().generate_channel_id(),
+            direction: PtzDirection::Up,
+            speed: f64::NAN,
+        };
+        assert!(matches!(
+            payload.validate(),
+            Err(DomainError::InvalidArgument { .. })
+        ));
+
+        let payload = CommandPayload::Ptz {
+            channel_id: InMemoryIdGenerator::new().generate_channel_id(),
+            direction: PtzDirection::Up,
+            speed: f64::NEG_INFINITY,
+        };
+        assert!(matches!(
+            payload.validate(),
+            Err(DomainError::InvalidArgument { .. })
+        ));
+
+        let payload = CommandPayload::Ptz {
+            channel_id: InMemoryIdGenerator::new().generate_channel_id(),
+            direction: PtzDirection::Up,
+            speed: -1.0,
+        };
+        assert!(matches!(
+            payload.validate(),
+            Err(DomainError::InvalidArgument { .. })
+        ));
+    }
+
+    #[test]
+    fn playback_scale_rejects_non_finite_and_negative() {
+        let payload = CommandPayload::StartPlayback {
+            media_session_id: InMemoryIdGenerator::new().generate_media_session_id(),
+            channel_id: InMemoryIdGenerator::new().generate_channel_id(),
+            media_node_id: InMemoryIdGenerator::new().generate_node_id(),
+            start_time: UtcTimestamp::from_epoch_millis_saturating(0),
+            end_time: UtcTimestamp::from_epoch_millis_saturating(1),
+            scale: f64::INFINITY,
+        };
+        assert!(matches!(
+            payload.validate(),
+            Err(DomainError::InvalidArgument { .. })
+        ));
+
+        let control = MediaControl::Scale { value: f64::NAN };
+        assert!(matches!(
+            control.validate(),
+            Err(DomainError::InvalidArgument { .. })
+        ));
+
+        let query = QueryCommand {
+            kind: QueryKind::RecordInfo,
+            channel_id: None,
+            start_time: None,
+            end_time: None,
+            config_type: None,
+            scale: Some(-0.5),
+        };
+        assert!(matches!(
+            query.validate(),
             Err(DomainError::InvalidArgument { .. })
         ));
     }
