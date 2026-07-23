@@ -369,10 +369,9 @@ impl MediaEventConsumer {
             status: ProcessedMessageStatus::Pending,
             result_payload: None,
             processed_at: self.clock.now_wall(),
-            expires_at: self
-                .clock
-                .now_wall()
-                .checked_add(DurationMs::from_millis(self.config.record_ttl_ms as i64)),
+            expires_at: self.clock.now_wall().checked_add(DurationMs::from_millis(
+                i64::try_from(self.config.record_ttl_ms).unwrap_or(i64::MAX),
+            )),
         };
 
         let existing = uow
@@ -472,10 +471,9 @@ impl MediaEventConsumer {
                     status: ProcessedMessageStatus::Pending,
                     result_payload: None,
                     processed_at: self.clock.now_wall(),
-                    expires_at: self
-                        .clock
-                        .now_wall()
-                        .checked_add(DurationMs::from_millis(self.config.record_ttl_ms as i64)),
+                    expires_at: self.clock.now_wall().checked_add(DurationMs::from_millis(
+                        i64::try_from(self.config.record_ttl_ms).unwrap_or(i64::MAX),
+                    )),
                 };
                 uow.processed_message_repository()
                     .get_or_insert(record)
@@ -602,7 +600,9 @@ impl MediaEventConsumer {
             status: ProcessedMessageStatus::Pending,
             result_payload: None,
             processed_at: now,
-            expires_at: now.checked_add(DurationMs::from_millis(self.config.record_ttl_ms as i64)),
+            expires_at: now.checked_add(DurationMs::from_millis(
+                i64::try_from(self.config.record_ttl_ms).unwrap_or(i64::MAX),
+            )),
         };
 
         uow.processed_message_repository()

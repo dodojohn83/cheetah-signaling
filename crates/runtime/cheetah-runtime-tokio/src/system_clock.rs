@@ -25,6 +25,7 @@ impl Clock for SystemClock {
     }
 
     fn now_monotonic(&self) -> DurationMs {
-        DurationMs::from_millis(self.start.elapsed().as_millis() as i64)
+        let ms = i64::try_from(self.start.elapsed().as_millis()).unwrap_or(i64::MAX);
+        DurationMs::from_millis(ms)
     }
 }
