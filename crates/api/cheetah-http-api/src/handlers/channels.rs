@@ -2,7 +2,7 @@
 
 #![allow(missing_docs)]
 
-use crate::{ApiRequestContext, ApiState, HttpError, ListQuery};
+use crate::{ApiRequestContext, ApiState, HttpError, JsonBody, ListQuery};
 use axum::{
     Json,
     extract::{Path, Query, State},
@@ -49,7 +49,7 @@ pub async fn replace_catalog(
     Path(device_id): Path<String>,
     State(state): State<Arc<ApiState>>,
     ctx: ApiRequestContext,
-    Json(request): Json<ReplaceChannelCatalogRequest>,
+    JsonBody(request): JsonBody<ReplaceChannelCatalogRequest>,
 ) -> Result<impl IntoResponse, HttpError> {
     ctx.require_scope("operator")?;
     let device_id = device_id.parse::<DeviceId>().map_err(HttpError::from)?;
