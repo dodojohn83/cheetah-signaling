@@ -6,6 +6,11 @@ use cheetah_signal_types::{
     TenantId, UtcTimestamp,
 };
 
+/// Maximum byte length of a media session error code.
+const MAX_MEDIA_SESSION_ERROR_CODE_BYTES: usize = 128;
+/// Maximum byte length of a media session error message.
+const MAX_MEDIA_SESSION_ERROR_MESSAGE_BYTES: usize = 2048;
+
 /// Desired state of a media session.
 #[derive(
     Clone, Copy, Debug, Default, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize,
@@ -195,6 +200,21 @@ impl MediaSessionError {
     /// Human readable message.
     pub fn message(&self) -> &str {
         &self.message
+    }
+
+    /// Validates the error code and message length.
+    pub fn validate(&self) -> crate::Result<()> {
+        if self.code.len() > MAX_MEDIA_SESSION_ERROR_CODE_BYTES {
+            return Err(DomainError::invalid_argument(
+                "media session error code must not exceed 128 bytes",
+            ));
+        }
+        if self.message.len() > MAX_MEDIA_SESSION_ERROR_MESSAGE_BYTES {
+            return Err(DomainError::invalid_argument(
+                "media session error message must not exceed 2048 bytes",
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -404,6 +424,9 @@ impl MediaSession {
                 format!("{:?}", new_state),
             ));
         }
+        if let Some(ref error) = error {
+            error.validate()?;
+        }
         let previous = self.state;
         self.state = new_state;
         if error.is_some() {
@@ -591,5 +614,70 @@ impl MediaSession {
     /// Whether the session is terminal.
     pub fn is_terminal(&self) -> bool {
         self.state.is_terminal()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::in_memory::{InMemoryClock, InMemoryIdGenerator};
+    use cheetah_signal_types::{IdGenerator, ResourceId, ResourceKind};
+
+    #[test]
+    fn media_session_error_rejects_oversized_code_and_message() {
+        let error = MediaSessionError::new("x".repeat(129), "msg");
+        assert!(matches!(
+            error.validate(),
+            Err(DomainError::InvalidArgument { .. })
+        ));
+
+        let error = MediaSessionError::new("code", "x".repeat(2049));
+        assert!(matches!(
+            error.validate(),
+            Err(DomainError::InvalidArgument { .. })
+        ));
+    }
+
+    #[test]
+    fn media_session_failed_rejects_oversized_error() {
+        let clock = InMemoryClock::new();
+        let ids = InMemoryIdGenerator::new();
+        let tenant_id = ids.generate_tenant_id();
+        let device_id = ids.generate_device_id();
+        let channel_id = ids.generate_channel_id();
+        let operation_id = ids.generate_operation_id();
+        let media_session_id = ids.generate_media_session_id();
+        let scope = match crate::IdempotencyScope::new(
+            tenant_id,
+            "u",
+            cheetah_signal_types::ResourceRef {
+                tenant_id,
+                kind: ResourceKind::Device,
+                id: ResourceId::Device(device_id),
+            },
+            "key",
+        ) {
+            Ok(s) => s,
+            Err(e) => panic!("{e}"),
+        };
+        let mut session = match MediaSession::new(
+            &clock,
+            media_session_id,
+            tenant_id,
+            device_id,
+            channel_id,
+            MediaPurpose::Live,
+            MediaSessionDesiredState::Active,
+            OwnerEpoch::default(),
+            operation_id,
+            scope,
+            None,
+        ) {
+            Ok((s, _)) => s,
+            Err(e) => panic!("{e}"),
+        };
+
+        let result = session.failed(MediaSessionError::new("code", "x".repeat(2049)), &clock);
+        assert!(matches!(result, Err(DomainError::InvalidArgument { .. })));
     }
 }
