@@ -88,3 +88,43 @@ async fn non_utf8_x_api_key_returns_401() {
         .expect("send request");
     assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
 }
+
+#[tokio::test]
+async fn oversized_authorization_header_returns_401() {
+    let server = common::TestServer::new().await;
+    let oversized = format!("Bearer {}", "x".repeat(16_384));
+    let response = server
+        .request_unauthenticated(reqwest::Method::GET, "/api/v1/devices")
+        .header("Authorization", oversized)
+        .send()
+        .await
+        .expect("send request");
+    assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn oversized_x_api_key_header_returns_401() {
+    let server = common::TestServer::new().await;
+    let oversized = "x".repeat(4_097);
+    let response = server
+        .request_unauthenticated(reqwest::Method::GET, "/api/v1/devices")
+        .header("x-api-key", oversized)
+        .send()
+        .await
+        .expect("send request");
+    assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn oversized_x_tenant_id_header_returns_400() {
+    let server = common::TestServer::new().await;
+    let oversized = "x".repeat(129);
+    let response = server
+        .request_unauthenticated(reqwest::Method::GET, "/api/v1/devices")
+        .header("x-api-key", server.api_key())
+        .header("x-tenant-id", oversized)
+        .send()
+        .await
+        .expect("send request");
+    assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+}
