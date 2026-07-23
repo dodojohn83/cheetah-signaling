@@ -59,6 +59,23 @@
 
 这些实现通过 `cargo test`、`cargo clippy`、架构审查和 fixture 校验；真实上下级平台互操作证据仍需外部平台接入后补充。
 
-## 6. 阻塞原因
+## 6. 验收 checklist 与本地预验证映射
+
+以下映射说明 checklist 中每项已在本地控制面通过哪些 `GB4-*` 任务、系统测试或 simulator 预验证；真实上下级平台证据仍需在获得外部对端后补充。
+
+| Checklist | 本地预验证 | 证据位置 |
+| --- | --- | --- |
+| 下级平台成功向上级 REGISTER，并周期 keepalive | `GB4-CAS-001..006` 级联平台模型；`CascadeManager` 多上级隔离、下级接入、平台身份校验；`cheetah-state-machine-tests/tests/cascade.rs` 状态机单测 | `crates/protocols/cheetah-gb28181-module/src/cascade/`、`src/cascade/tests.rs`；`crates/testing/cheetah-state-machine-tests/tests/cascade.rs` |
+| 上级目录查询（`Catalog`）下级设备/通道，分片完整聚合 | `GB4-ACC-005` bounded catalog aggregation；`GB4-CAS-001..006` catalog filter/whitelist/tenant 隔离；`cheetah-state-machine-tests/tests/catalog.rs` | `apps/cheetah-signaling/src/gb_catalog_buffer.rs`；`crates/protocols/cheetah-gb28181-module/src/cascade/catalog.rs`、`src/cascade/tests/catalog.rs`；`crates/testing/cheetah-state-machine-tests/tests/catalog.rs` |
+| 上级订阅下级 alarm、status、mobile position，NOTIFY 正常到达并解析 | `GB4-CAS-001..006` subscription/notify 状态机；`GB4-EVT-001` 事件落库；`cheetah-gb28181-module/src/cascade/tests/subscription.rs` | `crates/protocols/cheetah-gb28181-module/src/cascade/subscription/mod.rs`、`src/cascade/tests/subscription.rs` |
+| 上级发起桥接 live/playback/download/talk INVITE，下级 200 OK SDP 协商成功 | `GB4-MED-001..008` live/playback/talk/stop 媒体 Saga；`GB4-CAS-001..006` 桥接 saga；`cheetah-state-machine-tests/tests/media.rs`、`tests/cascade.rs` | `crates/protocols/cheetah-gb28181-module/src/cascade/tests/bridge.rs`；`crates/testing/cheetah-state-machine-tests/tests/media.rs`、`tests/cascade.rs`；`crates/testing/cheetah-gb-system-tests/tests/gb4_sys_002_cluster.rs` |
+| 桥接媒体由 `MediaPort` 控制，信令层不处理 RTP/RTCP/PS/TS/ES | `GB4-MED-001..008` `MediaPort` contract；`MediaSession`/`MediaBinding`/`Operation` 四模型；`GB4-SYS-001/002` edge/cluster 全纵向测试 | `crates/media/cheetah-media-scheduler/`；`crates/protocols/cheetah-gb28181-module/src/media/session.rs`；`crates/testing/cheetah-gb-system-tests/tests/gb4_sys_002_cluster.rs` |
+| CANCEL/BYE 后桥接会话正确终止 | `GB4-CAS-001..006` 桥接状态机；`GB4-MED-001..008` stop/release 与 stop saga | `crates/protocols/cheetah-gb28181-module/src/cascade/tests/bridge.rs`；`crates/protocols/cheetah-gb28181-module/src/media/tests/bye_tests.rs`；`crates/testing/cheetah-state-machine-tests/tests/media.rs` |
+| 多上级同时注册时互不影响，目录/control owner 隔离 | `GB4-CAS-001..006` `PlatformLink` tenant/owner/ACL；`CascadeManager` 多上级隔离；`cheetah-state-machine-tests/tests/cascade.rs` | `crates/protocols/cheetah-gb28181-module/src/cascade/tests.rs`；`crates/testing/cheetah-state-machine-tests/tests/cascade.rs` |
+| loop/hop 检测拒绝自环或超 hop 路由 | `GB4-CAS-001..006` `detect_loop`、`MAX_CASCADE_HOPS`；`EndpointPolicy` zone 校验 | `crates/protocols/cheetah-gb28181-module/src/cascade/tests.rs` |
+| ACL 正确拒绝未授权 catalog/bridge/control | `GB4-CAS-001..006` `CatalogFilter` tenant/whitelist/tag/org-prefix；`PlatformLink` 平台 ACL | `crates/protocols/cheetah-gb28181-module/src/cascade/tests/catalog_security.rs`、`src/cascade/tests/catalog.rs` |
+| 断网/重启/重复响应后状态恢复 | `GB4-SYS-006` chaos/rolling upgrade；`GB4-TST-004` deterministic fault DSL；`owner epoch`、`link generation`、`revision` 与 reconcile | `crates/testing/cheetah-gb-system-tests/tests/gb4_sys_006_chaos.rs`、`gb4_sys_002_cluster.rs`；`tools/gb28181-simulator` |
+
+## 7. 阻塞原因
 
 当前环境未接入真实的 GB28181 上级或下级平台；报告将在获得真实平台对端后补充。
