@@ -1449,12 +1449,15 @@ impl<'de> Deserialize<'de> for LogFormat {
             where
                 E: serde::de::Error,
             {
-                let normalized = value.trim().to_ascii_lowercase();
-                match normalized.as_str() {
-                    "" | "json" => Ok(LogFormat::Json),
-                    "compact" => Ok(LogFormat::Compact),
-                    other => Err(E::unknown_variant(other, &["json", "compact"])),
+                let value = value.trim();
+                if value.is_empty() || value.eq_ignore_ascii_case("json") {
+                    return Ok(LogFormat::Json);
                 }
+                if value.eq_ignore_ascii_case("compact") {
+                    return Ok(LogFormat::Compact);
+                }
+                let other = value.chars().take(64).collect::<String>();
+                Err(E::unknown_variant(&other, &["json", "compact"]))
             }
         }
 

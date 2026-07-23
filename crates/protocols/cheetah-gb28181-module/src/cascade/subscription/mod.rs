@@ -457,24 +457,14 @@ fn subscription_key(call_id: &str, remote_tag: &str) -> String {
 }
 
 fn extract_tag(header: &HeaderValue) -> Option<String> {
-    header
-        .as_str()
-        .split(';')
-        .find_map(|param| {
-            let param = param.trim();
-            param
-                .strip_prefix("tag=")
-                .map(|v| v.trim().trim_matches('"').to_string())
-        })
-        .filter(|t| !t.is_empty())
+    cheetah_gb28181_core::sip::dialog::extract_tag(header.as_str()).map(str::to_string)
 }
 
 fn canonical_event_package(raw: &str) -> Option<String> {
     let base = raw.split(';').next().unwrap_or("").trim();
-    let lower = base.to_ascii_lowercase();
     SUPPORTED_PACKAGES
         .iter()
-        .find(|p| p.to_ascii_lowercase() == lower)
+        .find(|p| p.eq_ignore_ascii_case(base))
         .copied()
         .map(String::from)
 }

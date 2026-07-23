@@ -496,20 +496,28 @@ fn parse_fmtp(value: &str) -> Result<(String, String), SdpError> {
 }
 
 fn parse_setup(value: &str) -> Result<SdpSetup, SdpError> {
-    match value.to_ascii_lowercase().as_str() {
-        "active" => Ok(SdpSetup::Active),
-        "passive" => Ok(SdpSetup::Passive),
-        "actpass" => Ok(SdpSetup::Actpass),
-        "none" => Ok(SdpSetup::None),
-        other => Err(SdpError::Unsupported(format!("setup={other}"))),
+    if value.eq_ignore_ascii_case("active") {
+        Ok(SdpSetup::Active)
+    } else if value.eq_ignore_ascii_case("passive") {
+        Ok(SdpSetup::Passive)
+    } else if value.eq_ignore_ascii_case("actpass") {
+        Ok(SdpSetup::Actpass)
+    } else if value.eq_ignore_ascii_case("none") {
+        Ok(SdpSetup::None)
+    } else {
+        let display = value.chars().take(64).collect::<String>();
+        Err(SdpError::Unsupported(format!("setup={display}")))
     }
 }
 
 fn parse_connection_attr(value: &str) -> Result<SdpConnectionType, SdpError> {
-    match value.to_ascii_lowercase().as_str() {
-        "new" => Ok(SdpConnectionType::New),
-        "existing" => Ok(SdpConnectionType::Existing),
-        other => Err(SdpError::Unsupported(format!("connection={other}"))),
+    if value.eq_ignore_ascii_case("new") {
+        Ok(SdpConnectionType::New)
+    } else if value.eq_ignore_ascii_case("existing") {
+        Ok(SdpConnectionType::Existing)
+    } else {
+        let display = value.chars().take(64).collect::<String>();
+        Err(SdpError::Unsupported(format!("connection={display}")))
     }
 }
 

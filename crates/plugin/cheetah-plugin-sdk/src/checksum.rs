@@ -33,13 +33,14 @@ pub fn verify_manifest_checksum(
             hex::encode(mac.finalize().into_bytes())
         }
         other => {
+            let display = other.chars().take(64).collect::<String>();
             return Err(PluginError::InvalidManifest(format!(
-                "unsupported checksum algorithm: {other}"
+                "unsupported checksum algorithm: {display}"
             )));
         }
     };
 
-    if constant_time_eq(&computed, &expected_digest_hex.to_ascii_lowercase()) {
+    if constant_time_eq(&computed, expected_digest_hex) {
         Ok(())
     } else {
         Err(PluginError::InvalidChecksum)
@@ -52,7 +53,7 @@ fn constant_time_eq(a: &str, b: &str) -> bool {
     }
     let mut diff = 0u8;
     for (x, y) in a.bytes().zip(b.bytes()) {
-        diff |= x ^ y;
+        diff |= x.to_ascii_lowercase() ^ y.to_ascii_lowercase();
     }
     diff == 0
 }

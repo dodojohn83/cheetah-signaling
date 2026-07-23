@@ -421,14 +421,8 @@ pub fn first_contact_uri(msg: &SipMessage) -> Result<SipUri, super::MediaError> 
 
 /// Extracts a `tag` parameter from a header value.
 pub fn tag_from_header(msg: &SipMessage, name: &HeaderName) -> Option<String> {
-    msg.headers().get(name).and_then(|v| {
-        let value = v.as_str();
-        let lower = value.to_ascii_lowercase();
-        let start = lower.find(";tag=")? + 5;
-        let rest = &value[start..];
-        let end = rest
-            .find(|c: char| c == ';' || c == '<' || c == '>' || c.is_whitespace())
-            .unwrap_or(rest.len());
-        Some(rest[..end].trim_matches('"').to_string())
-    })
+    msg.headers()
+        .get(name)
+        .and_then(|v| cheetah_gb28181_core::sip::dialog::extract_tag(v.as_str()))
+        .map(str::to_string)
 }

@@ -26,6 +26,19 @@ fn clamp_timeout(timeout: Duration) -> Duration {
     timeout.min(MAX_TIMEOUT).max(Duration::from_millis(1))
 }
 
+/// Returns a prefix of `s` with at most `max` bytes, never splitting a multi-byte
+/// character. Used to keep error messages bounded.
+fn truncate(s: &str, max: usize) -> &str {
+    if s.len() <= max {
+        return s;
+    }
+    s.char_indices()
+        .take_while(|(i, _)| *i < max)
+        .last()
+        .map(|(i, c)| &s[..i + c.len_utf8()])
+        .unwrap_or(s)
+}
+
 fn nats_error_to_bus(err: impl std::fmt::Display) -> BusError {
     BusError::Unavailable(err.to_string())
 }
@@ -74,11 +87,22 @@ impl NatsBus {
         connect_timeout: Duration,
         operation_timeout: Duration,
     ) -> Result<Self, BusError> {
+        const MAX_SCHEME_BYTES: usize = 32;
+        const MAX_URL_DISPLAY_BYTES: usize = 128;
+
         let url = url.into();
-        let scheme = url.split("://").next().unwrap_or(&url).to_lowercase();
-        if !matches!(scheme.as_str(), "tls" | "wss") {
+        let Some(scheme) = url.split("://").next() else {
             return Err(nats_error_to_bus(format!(
-                "NATS URL must use tls:// or wss:// scheme, got: {url}"
+                "NATS URL missing scheme: {}",
+                truncate(&url, MAX_URL_DISPLAY_BYTES)
+            )));
+        };
+        if scheme.len() > MAX_SCHEME_BYTES
+            || (!scheme.eq_ignore_ascii_case("tls") && !scheme.eq_ignore_ascii_case("wss"))
+        {
+            return Err(nats_error_to_bus(format!(
+                "NATS URL must use tls:// or wss:// scheme, got: {}",
+                truncate(&url, MAX_URL_DISPLAY_BYTES)
             )));
         }
 

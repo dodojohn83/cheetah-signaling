@@ -149,27 +149,44 @@ impl HeaderName {
     }
 
     fn from_cow(name: Cow<'_, str>) -> Self {
-        let lower = name.to_ascii_lowercase();
-        match lower.as_str() {
-            "via" | "v" => HeaderName::Via,
-            "from" | "f" => HeaderName::From,
-            "to" | "t" => HeaderName::To,
-            "call-id" | "i" => HeaderName::CallId,
-            "cseq" => HeaderName::CSeq,
-            "contact" | "m" => HeaderName::Contact,
-            "max-forwards" => HeaderName::MaxForwards,
-            "user-agent" => HeaderName::UserAgent,
-            "content-type" | "c" => HeaderName::ContentType,
-            "content-length" | "l" => HeaderName::ContentLength,
-            "expires" => HeaderName::Expires,
-            "route" => HeaderName::Route,
-            "record-route" => HeaderName::RecordRoute,
-            "authorization" => HeaderName::Authorization,
-            "www-authenticate" => HeaderName::WwwAuthenticate,
-            "proxy-authenticate" => HeaderName::ProxyAuthenticate,
-            "proxy-authorization" => HeaderName::ProxyAuthorization,
-            "subject" | "s" => HeaderName::Subject,
-            _ => HeaderName::Other(name.into_owned()),
+        if name.eq_ignore_ascii_case("via") || name.eq_ignore_ascii_case("v") {
+            HeaderName::Via
+        } else if name.eq_ignore_ascii_case("from") || name.eq_ignore_ascii_case("f") {
+            HeaderName::From
+        } else if name.eq_ignore_ascii_case("to") || name.eq_ignore_ascii_case("t") {
+            HeaderName::To
+        } else if name.eq_ignore_ascii_case("call-id") || name.eq_ignore_ascii_case("i") {
+            HeaderName::CallId
+        } else if name.eq_ignore_ascii_case("cseq") {
+            HeaderName::CSeq
+        } else if name.eq_ignore_ascii_case("contact") || name.eq_ignore_ascii_case("m") {
+            HeaderName::Contact
+        } else if name.eq_ignore_ascii_case("max-forwards") {
+            HeaderName::MaxForwards
+        } else if name.eq_ignore_ascii_case("user-agent") {
+            HeaderName::UserAgent
+        } else if name.eq_ignore_ascii_case("content-type") || name.eq_ignore_ascii_case("c") {
+            HeaderName::ContentType
+        } else if name.eq_ignore_ascii_case("content-length") || name.eq_ignore_ascii_case("l") {
+            HeaderName::ContentLength
+        } else if name.eq_ignore_ascii_case("expires") {
+            HeaderName::Expires
+        } else if name.eq_ignore_ascii_case("route") {
+            HeaderName::Route
+        } else if name.eq_ignore_ascii_case("record-route") {
+            HeaderName::RecordRoute
+        } else if name.eq_ignore_ascii_case("authorization") {
+            HeaderName::Authorization
+        } else if name.eq_ignore_ascii_case("www-authenticate") {
+            HeaderName::WwwAuthenticate
+        } else if name.eq_ignore_ascii_case("proxy-authenticate") {
+            HeaderName::ProxyAuthenticate
+        } else if name.eq_ignore_ascii_case("proxy-authorization") {
+            HeaderName::ProxyAuthorization
+        } else if name.eq_ignore_ascii_case("subject") || name.eq_ignore_ascii_case("s") {
+            HeaderName::Subject
+        } else {
+            HeaderName::Other(name.into_owned())
         }
     }
 
@@ -249,7 +266,9 @@ impl std::hash::Hash for HeaderName {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.discriminant().hash(state);
         if let HeaderName::Other(s) = self {
-            s.to_ascii_lowercase().hash(state);
+            for b in s.as_bytes() {
+                state.write_u8(b.to_ascii_lowercase());
+            }
         }
     }
 }
