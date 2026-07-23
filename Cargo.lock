@@ -539,6 +539,7 @@ dependencies = [
  "cheetah-domain",
  "cheetah-signal-types",
  "cheetah-storage-api",
+ "futures",
  "semver",
  "thiserror",
  "tokio",

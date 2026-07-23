@@ -5,9 +5,9 @@ use crate::error::NodeLeaseError;
 use cheetah_domain::{Clock, ClusterNode, NodeCapacity, NodeLoad};
 use cheetah_signal_types::{DurationMs, IdGenerator, NodeId, NodeInstanceId};
 use cheetah_storage_api::NodeRepository;
+use futures::lock::Mutex;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tracing::{info, warn};
 
 /// Manages the cluster node registration and lease for this process.
@@ -182,18 +182,18 @@ mod tests {
     use cheetah_signal_types::{Page, PageRequest, UtcTimestamp};
     use cheetah_storage_api::StorageError;
     use std::collections::HashMap;
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, Mutex as SyncMutex};
 
     type TestResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
     struct InMemoryNodeRepository {
-        nodes: Mutex<HashMap<NodeId, ClusterNode>>,
+        nodes: SyncMutex<HashMap<NodeId, ClusterNode>>,
     }
 
     impl InMemoryNodeRepository {
         fn new() -> Self {
             Self {
-                nodes: Mutex::new(HashMap::new()),
+                nodes: SyncMutex::new(HashMap::new()),
             }
         }
 
@@ -320,11 +320,11 @@ mod tests {
         NodeLeaseService,
         Arc<InMemoryClock>,
         Arc<InMemoryIdGenerator>,
-        Arc<tokio::sync::Mutex<InMemoryNodeRepository>>,
+        Arc<Mutex<InMemoryNodeRepository>>,
     ) {
         let clock = Arc::new(InMemoryClock::new());
         let id_gen = Arc::new(InMemoryIdGenerator::new());
-        let repo = Arc::new(tokio::sync::Mutex::new(InMemoryNodeRepository::new()));
+        let repo = Arc::new(Mutex::new(InMemoryNodeRepository::new()));
         let node_id = id_gen.generate_node_id();
         let service = NodeLeaseService::new(
             repo.clone(),
@@ -425,7 +425,7 @@ mod tests {
     async fn register_rejects_incompatible_version() -> TestResult<()> {
         let clock = Arc::new(InMemoryClock::new());
         let id_gen = Arc::new(InMemoryIdGenerator::new());
-        let repo = Arc::new(tokio::sync::Mutex::new(InMemoryNodeRepository::new()));
+        let repo = Arc::new(Mutex::new(InMemoryNodeRepository::new()));
         let node_id = id_gen.generate_node_id();
 
         let matrix = crate::compatibility::CompatibilityMatrix::new(
@@ -455,7 +455,7 @@ mod tests {
     async fn register_accepts_compatible_version() -> TestResult<()> {
         let clock = Arc::new(InMemoryClock::new());
         let id_gen = Arc::new(InMemoryIdGenerator::new());
-        let repo = Arc::new(tokio::sync::Mutex::new(InMemoryNodeRepository::new()));
+        let repo = Arc::new(Mutex::new(InMemoryNodeRepository::new()));
         let node_id = id_gen.generate_node_id();
 
         let mut contracts = HashMap::new();
