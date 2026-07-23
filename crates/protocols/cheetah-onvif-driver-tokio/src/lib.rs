@@ -6,6 +6,7 @@
 #![warn(missing_docs)]
 
 pub mod auth;
+pub mod capability_cache;
 pub mod config;
 pub mod discovery;
 pub mod error;
@@ -19,6 +20,7 @@ pub use error::{DriverError, DriverResult};
 pub use protocol_driver::{OnvifTokioDriverFactory, OnvifTokioProtocolDriver};
 pub use soap_client::SoapClient;
 
+use crate::capability_cache::CapabilityCache;
 use cheetah_onvif_module::services::{
     MediaDialect, MediaProfile, SnapshotUri, StreamUri, get_capabilities_request,
     get_device_information_request, get_profiles_request, get_services_request,
@@ -32,6 +34,7 @@ use cheetah_onvif_module::{
 };
 use std::collections::HashMap;
 use std::time::Duration;
+use tracing::warn;
 use uuid::Uuid;
 
 /// High-level helper that pairs a SOAP client with parser limits.
@@ -40,6 +43,8 @@ pub struct OnvifHttpDriver {
     client: SoapClient,
     limits: ParserLimits,
     policy: XAddrPolicy,
+    capability_cache: CapabilityCache,
+    capability_ttl: Duration,
 }
 
 impl OnvifHttpDriver {
@@ -49,6 +54,8 @@ impl OnvifHttpDriver {
             client: SoapClient::new(config)?,
             limits: ParserLimits::default(),
             policy: config.xaddr_policy.clone(),
+            capability_cache: CapabilityCache::new(config.capability_cache_capacity),
+            capability_ttl: config.capability_ttl,
         })
     }
 
@@ -91,17 +98,32 @@ impl OnvifHttpDriver {
         Ok(cheetah_onvif_module::services::parse_get_system_date_and_time_response(&body)?)
     }
 
-    /// Fetches the ONVIF service list.
+    /// Fetches the ONVIF service list, using a per-tenant/endpoint cache and TTL.
+    ///
+    /// If the cache has a non-expired entry for the same `tenant_id` and
+    /// `credentials` it is returned directly. When a refresh fails, the previous
+    /// entry is still returned so callers do not lose the last known service list.
     pub async fn get_services(
         &self,
         endpoint: &str,
+        tenant_id: Option<&str>,
         include_capabilities: bool,
         credentials: Option<&DeviceCredentials>,
         timeout: Option<Duration>,
     ) -> DriverResult<Vec<Service>> {
+        let key = cache_key(endpoint, tenant_id, credentials);
+
+        if !self.capability_ttl.is_zero()
+            && let Some(services) = self
+                .capability_cache
+                .get_services(&key, self.capability_ttl)
+        {
+            return Ok(services);
+        }
+
         let msg_id = format!("urn:uuid:{}", Uuid::now_v7());
         let req = get_services_request(include_capabilities, &msg_id)?;
-        let body = self
+        match self
             .post_with_optional_auth(
                 endpoint,
                 "http://www.onvif.org/ver10/device/wsdl/GetServices",
@@ -109,24 +131,62 @@ impl OnvifHttpDriver {
                 credentials,
                 timeout,
             )
-            .await?;
-        Ok(parse_get_services_response(
-            &body,
-            &self.limits,
-            &self.policy,
-        )?)
+            .await
+        {
+            Ok(body) => match parse_get_services_response(&body, &self.limits, &self.policy) {
+                Ok(services) => {
+                    if !self.capability_ttl.is_zero() {
+                        self.capability_cache.set_services(
+                            &key,
+                            services.clone(),
+                            self.capability_ttl,
+                        );
+                    }
+                    Ok(services)
+                }
+                Err(e) => {
+                    if let Some(stale) = self.capability_cache.stale_services(&key) {
+                        warn!("returning stale ONVIF services after parse failure");
+                        return Ok(stale);
+                    }
+                    Err(e.into())
+                }
+            },
+            Err(e) => {
+                if let Some(stale) = self.capability_cache.stale_services(&key) {
+                    warn!("returning stale ONVIF services after refresh failure");
+                    return Ok(stale);
+                }
+                Err(e)
+            }
+        }
     }
 
-    /// Fetches the ONVIF capabilities map.
+    /// Fetches the ONVIF capabilities map, using a per-tenant/endpoint cache and TTL.
+    ///
+    /// If the cache has a non-expired entry for the same `tenant_id` and
+    /// `credentials` it is returned directly. When a refresh fails, the previous
+    /// entry is still returned so callers do not lose the last known capabilities.
     pub async fn get_capabilities(
         &self,
         endpoint: &str,
+        tenant_id: Option<&str>,
         credentials: Option<&DeviceCredentials>,
         timeout: Option<Duration>,
     ) -> DriverResult<HashMap<CapabilityKind, CapabilityProbeResult>> {
+        let key = cache_key(endpoint, tenant_id, credentials);
+
+        if !self.capability_ttl.is_zero()
+            && let Some(caps) = self
+                .capability_cache
+                .get_capabilities(&key, self.capability_ttl)
+        {
+            return Ok(caps);
+        }
+
         let msg_id = format!("urn:uuid:{}", Uuid::now_v7());
         let req = get_capabilities_request(&msg_id)?;
-        let body = self
+        match self
             .post_with_optional_auth(
                 endpoint,
                 "http://www.onvif.org/ver10/device/wsdl/GetCapabilities",
@@ -134,8 +194,35 @@ impl OnvifHttpDriver {
                 credentials,
                 timeout,
             )
-            .await?;
-        Ok(parse_get_capabilities_response(&body, &self.limits)?)
+            .await
+        {
+            Ok(body) => match parse_get_capabilities_response(&body, &self.limits) {
+                Ok(caps) => {
+                    if !self.capability_ttl.is_zero() {
+                        self.capability_cache.set_capabilities(
+                            &key,
+                            caps.clone(),
+                            self.capability_ttl,
+                        );
+                    }
+                    Ok(caps)
+                }
+                Err(e) => {
+                    if let Some(stale) = self.capability_cache.stale_capabilities(&key) {
+                        warn!("returning stale ONVIF capabilities after parse failure");
+                        return Ok(stale);
+                    }
+                    Err(e.into())
+                }
+            },
+            Err(e) => {
+                if let Some(stale) = self.capability_cache.stale_capabilities(&key) {
+                    warn!("returning stale ONVIF capabilities after refresh failure");
+                    return Ok(stale);
+                }
+                Err(e)
+            }
+        }
     }
 
     /// Lists media profiles, preferring Media2 then falling back to Media1.
@@ -270,4 +357,27 @@ impl OnvifHttpDriver {
     pub fn is_request_queue_saturated(&self) -> bool {
         self.client.is_request_queue_saturated()
     }
+}
+
+fn cache_key(
+    endpoint: &str,
+    tenant_id: Option<&str>,
+    credentials: Option<&DeviceCredentials>,
+) -> String {
+    // The cache is scoped by tenant and a stable credential digest so callers with
+    // different tenants or credentials (including the same username but a
+    // different password) cannot reuse each other's cached results.
+    let credential_id = credentials
+        .map(|c| {
+            use secrecy::ExposeSecret;
+            use sha2::{Digest, Sha256};
+            let password = c.password.expose_secret();
+            let mut hasher = Sha256::new();
+            hasher.update(password.as_bytes());
+            let digest = hex::encode(hasher.finalize());
+            format!("{}:{digest}", c.username)
+        })
+        .unwrap_or_else(|| "anonymous".to_string());
+    let tenant = tenant_id.unwrap_or("default");
+    format!("{tenant}#{credential_id}#{endpoint}")
 }
