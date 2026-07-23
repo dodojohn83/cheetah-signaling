@@ -9,6 +9,7 @@ use quick_xml::{Reader, Writer};
 use std::io::Cursor;
 
 const PTZ_NS: &str = "http://www.onvif.org/ver20/ptz/wsdl";
+const TT_NS: &str = "http://www.onvif.org/ver10/schema";
 const CONTINUOUS_MOVE_ACTION: &str = "http://www.onvif.org/ver20/ptz/wsdl/ContinuousMove";
 const RELATIVE_MOVE_ACTION: &str = "http://www.onvif.org/ver20/ptz/wsdl/RelativeMove";
 const ABSOLUTE_MOVE_ACTION: &str = "http://www.onvif.org/ver20/ptz/wsdl/AbsoluteMove";
@@ -80,6 +81,7 @@ pub fn continuous_move_request(
 
     let mut body = BytesStart::new("tptz:ContinuousMove");
     body.push_attribute(("xmlns:tptz", PTZ_NS));
+    body.push_attribute(("xmlns:tt", TT_NS));
     writer.write_event(Event::Start(body))?;
     write_profile_token(&mut writer, profile_token)?;
 
@@ -162,6 +164,7 @@ fn move_with_vector(
 
     let mut body = BytesStart::new(&body_name);
     body.push_attribute(("xmlns:tptz", PTZ_NS));
+    body.push_attribute(("xmlns:tt", TT_NS));
     writer.write_event(Event::Start(body))?;
     write_profile_token(&mut writer, profile_token)?;
     writer.write_event(Event::Start(BytesStart::new(&vector_el)))?;
@@ -367,6 +370,7 @@ mod tests {
         assert!(xml.contains("ContinuousMove"));
         assert!(xml.contains("0.5"));
         assert!(xml.contains("PT3S"));
+        assert!(xml.contains("xmlns:tt=\"http://www.onvif.org/ver10/schema\""));
     }
 
     #[test]

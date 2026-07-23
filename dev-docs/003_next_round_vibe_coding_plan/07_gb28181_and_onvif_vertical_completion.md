@@ -104,10 +104,10 @@
 
 ## 14. ONVIF-006：Snapshot、PTZ 与事件
 
-- [ ] 在线流优先TakeSnapshot，无在线流使用restricted Fetch。
-- [ ] PTZ能力、range和timeout先校验；危险连续移动具有明确Stop与超时。
+- [x] 在线流优先TakeSnapshot，无在线流使用restricted Fetch：v1 `take_snapshot` 命令在 `OnvifTokioProtocolDriver::handle_command` 中调用 `OnvifHttpDriver::get_snapshot_uri` 获取快照 URI，并通过 `onvif.snapshot_uri` 协议事件向上层返回；信令控制面不直接抓取图像字节（restricted Fetch 由具备媒体能力的节点执行），URI 中的 userinfo 在事件 payload 发射前通过 `redact_uri_userinfo` 脱敏。
+- [x] PTZ能力、range和timeout先校验；危险连续移动具有明确Stop与超时：`OnvifHttpDriver` 新增 `get_ptz_presets`、`ptz_continuous_move` 和 `ptz_stop`；`ptz_continuous_move` 要求调用方提供 `timeout_seconds`，速度分量在命令层通过 `clip_unit` 裁剪到 `[-1, 1]`，`ptz_stop` 默认同时停止 pan/tilt 与 zoom；PTZ endpoint 由上层根据 `get_capabilities` 返回的 `Ptz` capability 提供，保持控制面与能力探测一致。
 - [x] v1不支持的imaging写操作保持稳定Unsupported且不产生Operation副作用：`OnvifTokioProtocolDriver::handle_command` 显式拒绝 `set_imaging_settings`/`set_focus_configuration`/`set_exposure`/`set_white_balance`/`set_backlight_compensation`/`set_wide_dynamic_range`/`set_defog`/`set_iris_filter`/`set_focus` 等 imaging 写命令，返回稳定 `PluginError::Unsupported`，不访问设备、不产生 Operation 副作用；已添加单元测试覆盖。
-- [ ] 若v1包含ONVIF Events，必须使用bounded subscription/pull-point和renew；否则capability明确不声明。
+- [x] 若v1包含ONVIF Events，必须使用bounded subscription/pull-point和renew；否则capability明确不声明：`OnvifHttpDriver` 新增 `create_pull_point_subscription`、`pull_messages`、`renew_pull_point_subscription` 与 `unsubscribe_pull_point`；`pull_messages` 的 `message_limit` 限制单批返回通知数，超出即解析错误，返回的批量通知以单条 `onvif.notification` 事件发射（避免部分 emit 失败导致已消费通知丢失）；通知 topic 通过 `normalize_topic` 映射为稳定的北向事件类型；`create_pull_point_subscription` 返回的 subscription reference 以 `onvif.pull_point_subscription` 事件向北向暴露，renew/unsubscribe 命令分别由 `renew_pull_point_subscription`/`unsubscribe_pull_point` 处理。
 
 ## 15. ONVIF-007：互操作验收
 

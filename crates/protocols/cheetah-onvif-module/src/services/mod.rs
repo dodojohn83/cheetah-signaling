@@ -15,9 +15,9 @@ pub use device::{
     parse_get_system_date_and_time_response,
 };
 pub use events::{
-    OnvifNotification, PullPointSubscription, create_pull_point_subscription_request,
-    normalize_topic, parse_create_pull_point_response, parse_pull_messages_response,
-    pull_messages_request, renew_request, unsubscribe_request,
+    OnvifNotification, PullPointSubscription, RENEW_ACTION, UNSUBSCRIBE_ACTION,
+    create_pull_point_subscription_request, normalize_topic, parse_create_pull_point_response,
+    parse_pull_messages_response, pull_messages_request, renew_request, unsubscribe_request,
 };
 pub use imaging::{
     ImagingSettings, get_imaging_options_request, get_imaging_settings_request,
