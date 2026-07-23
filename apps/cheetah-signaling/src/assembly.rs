@@ -79,6 +79,13 @@ use tracing::{info, warn};
 use uuid::Uuid;
 use x509_parser::prelude::{FromDer, X509Certificate};
 
+/// Maximum background worker interval; larger values overflow `tokio::time` deadlines.
+const MAX_WORKER_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
+
+fn clamp_interval_ms(ms: u64) -> Duration {
+    Duration::from_millis(ms).min(MAX_WORKER_INTERVAL)
+}
+
 /// Health status of a single runtime component.
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
@@ -1026,9 +1033,8 @@ pub async fn start(
 
     // Owner lease renew for devices currently owned by this node.
     {
-        let renew_interval = Duration::from_millis(
-            u64::try_from(lease_ttl.as_millis().max(1_000) / 3).unwrap_or(3_000),
-        );
+        let renew_interval =
+            clamp_interval_ms(u64::try_from(lease_ttl.as_millis().max(1_000) / 3).unwrap_or(3_000));
         workers.push(spawn_owner_lease_renew_worker(
             owner_lease.clone(),
             owner_repo_arc.clone(),
@@ -1062,7 +1068,7 @@ pub async fn start(
         );
         workers.push(spawn_node_lease_worker(
             node_lease,
-            Duration::from_millis(u64::try_from(heartbeat_ms).unwrap_or(3_000)),
+            clamp_interval_ms(u64::try_from(heartbeat_ms).unwrap_or(3_000)),
             cancel.child_token(),
         ));
         info!("node lease/heartbeat worker started");
@@ -1104,7 +1110,7 @@ pub async fn start(
 
     // Periodic media reconciliation: recover missed media state changes when
     // event-driven gap reconciliation drops or is delayed.
-    let reconcile_interval = Duration::from_millis(
+    let reconcile_interval = clamp_interval_ms(
         u64::try_from(config.media.periodic_reconcile_interval_ms.as_millis()).unwrap_or(30_000),
     );
     workers.push(periodic_reconcile_worker::spawn(
@@ -1407,8 +1413,7 @@ pub async fn start(
     if !gb_listeners.is_empty() {
         let reaper_interval_ms = config.gb28181.session_reaper_interval_ms.as_millis();
         if reaper_interval_ms > 0 {
-            let interval =
-                Duration::from_millis(u64::try_from(reaper_interval_ms).unwrap_or(30_000));
+            let interval = clamp_interval_ms(u64::try_from(reaper_interval_ms).unwrap_or(30_000));
             workers.push(spawn_protocol_session_reaper_worker(
                 state.storage.clone(),
                 state.clock.clone(),
@@ -1728,4 +1733,15 @@ fn build_compatibility_overrides(
         broadcast,
         media_status,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clamp_interval_ms_saturates_at_max() {
+        assert_eq!(clamp_interval_ms(1_000), Duration::from_millis(1_000));
+        assert_eq!(clamp_interval_ms(u64::MAX), MAX_WORKER_INTERVAL);
+    }
 }
