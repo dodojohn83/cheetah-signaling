@@ -31,7 +31,10 @@ const MAX_READ_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
 
 /// Maximum byte length of an incoming `x-request-id` header value.
 /// Values longer than this are ignored and replaced with a freshly generated UUID.
-const MAX_REQUEST_ID_BYTES: usize = 128;
+pub(crate) const MAX_REQUEST_ID_BYTES: usize = 128;
+/// Maximum byte length of an incoming `x-correlation-id` header value.
+/// Values longer than this are ignored when constructing a correlation id.
+pub(crate) const MAX_CORRELATION_ID_BYTES: usize = 128;
 
 fn clamp_read_timeout(ms: u64) -> Duration {
     Duration::from_millis(ms).min(MAX_READ_TIMEOUT)

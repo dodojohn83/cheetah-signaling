@@ -1,6 +1,7 @@
 //! Axum extractors for request context and pagination.
 
 use crate::rate_limit::RateKey;
+use crate::router::{MAX_CORRELATION_ID_BYTES, RequestId};
 use crate::{ApiState, AuthContext, HttpError};
 use axum::{
     extract::{ConnectInfo, FromRequestParts},
@@ -60,18 +61,8 @@ impl FromRequestParts<Arc<ApiState>> for ApiRequestContext {
 
         let tenant_id = resolve_tenant_id(parts, &auth)?;
 
-        let message_id: MessageId = if let Some(header) = parts.headers.get("x-request-id") {
-            parse_message_or_correlation_id(header, "x-request-id")?.into()
-        } else {
-            state.id_generator.generate_message_id()
-        };
-
-        let correlation_id: CorrelationId =
-            if let Some(header) = parts.headers.get("x-correlation-id") {
-                parse_message_or_correlation_id(header, "x-correlation-id")?.into()
-            } else {
-                state.id_generator.generate_correlation_id()
-            };
+        let message_id = message_id_from_parts(parts, state);
+        let correlation_id = correlation_id_from_parts(parts, state);
 
         let traceparent = parts
             .headers
@@ -183,15 +174,25 @@ fn resolve_tenant_id(parts: &Parts, auth: &AuthContext) -> Result<TenantId, Http
     Ok(header)
 }
 
-fn parse_message_or_correlation_id(
-    header: &axum::http::HeaderValue,
-    name: &str,
-) -> Result<uuid::Uuid, HttpError> {
-    let text = header
-        .to_str()
-        .map_err(|_| HttpError::Unauthenticated(format!("{name} header is not valid UTF-8")))?;
-    text.parse::<uuid::Uuid>()
-        .map_err(|e| HttpError::Unauthenticated(format!("invalid {name}: {e}")))
+fn message_id_from_parts(parts: &Parts, state: &ApiState) -> MessageId {
+    if let Some(request_id) = parts.extensions.get::<RequestId>()
+        && let Ok(uuid) = request_id.0.parse::<uuid::Uuid>()
+    {
+        return uuid.into();
+    }
+    state.id_generator.generate_message_id()
+}
+
+fn correlation_id_from_parts(parts: &Parts, state: &ApiState) -> CorrelationId {
+    if let Some(value) = parts.headers.get("x-correlation-id")
+        && let Ok(text) = value.to_str()
+        && !text.is_empty()
+        && text.len() <= MAX_CORRELATION_ID_BYTES
+        && let Ok(uuid) = text.parse::<uuid::Uuid>()
+    {
+        return uuid.into();
+    }
+    state.id_generator.generate_correlation_id()
 }
 
 /// Query parameters for list endpoints.

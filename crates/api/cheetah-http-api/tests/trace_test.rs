@@ -112,3 +112,40 @@ async fn oversized_request_id_is_replaced_with_generated_id() {
     assert_ne!(echoed, oversized_request_id);
     assert!(echoed.len() <= MAX_REQUEST_ID_BYTES);
 }
+
+#[tokio::test]
+async fn non_uuid_request_id_allowed_on_protected_endpoint() {
+    let server = common::TestServer::new().await;
+    let request_id = "abc-123";
+
+    let response = server
+        .request(reqwest::Method::GET, "/api/v1/devices")
+        .header("x-request-id", request_id)
+        .send()
+        .await
+        .expect("send request");
+
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get("x-request-id")
+            .expect("x-request-id header"),
+        request_id
+    );
+}
+
+#[tokio::test]
+async fn oversized_correlation_id_is_ignored_on_protected_endpoint() {
+    let server = common::TestServer::new().await;
+    let oversized_correlation_id = "x".repeat(MAX_REQUEST_ID_BYTES + 1);
+
+    let response = server
+        .request(reqwest::Method::GET, "/api/v1/devices")
+        .header("x-correlation-id", &oversized_correlation_id)
+        .send()
+        .await
+        .expect("send request");
+
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+}
