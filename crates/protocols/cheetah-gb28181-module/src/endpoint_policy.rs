@@ -107,11 +107,14 @@ pub enum EndpointTransport {
 impl EndpointTransport {
     /// Parses a SIP `transport=` parameter value (case-insensitive).
     pub fn parse(value: &str) -> Option<Self> {
-        match value.to_ascii_lowercase().as_str() {
-            "udp" => Some(Self::Udp),
-            "tcp" => Some(Self::Tcp),
-            "tls" => Some(Self::Tls),
-            _ => None,
+        if value.eq_ignore_ascii_case("udp") {
+            Some(Self::Udp)
+        } else if value.eq_ignore_ascii_case("tcp") {
+            Some(Self::Tcp)
+        } else if value.eq_ignore_ascii_case("tls") {
+            Some(Self::Tls)
+        } else {
+            None
         }
     }
 }
@@ -696,5 +699,22 @@ mod tests {
             require_explicit_advertised_host("::"),
             Err(EndpointPolicyError::AdvertisedAddressNotExplicit)
         );
+    }
+
+    #[test]
+    fn endpoint_transport_parse_is_case_insensitive_and_handles_huge_input() {
+        assert_eq!(
+            EndpointTransport::parse("UDP"),
+            Some(EndpointTransport::Udp)
+        );
+        assert_eq!(
+            EndpointTransport::parse("Tcp"),
+            Some(EndpointTransport::Tcp)
+        );
+        assert_eq!(
+            EndpointTransport::parse("TLS"),
+            Some(EndpointTransport::Tls)
+        );
+        assert_eq!(EndpointTransport::parse("x".repeat(4096).as_str()), None);
     }
 }
