@@ -67,6 +67,23 @@ impl Default for PageRequest {
     }
 }
 
+impl PageRequest {
+    /// Returns the page size clamped to a valid, positive range.
+    pub fn clamped_page_size(&self) -> u32 {
+        self.page_size.clamp(1, MAX_PAGE_SIZE)
+    }
+
+    /// Returns `clamped_page_size + 1` as `i64` for SQL `LIMIT` clauses.
+    pub fn limit_plus_one(&self) -> i64 {
+        i64::from(self.clamped_page_size()).saturating_add(1)
+    }
+
+    /// Returns the clamped page size as `usize` for in-memory slicing.
+    pub fn page_size_as_usize_clamped(&self) -> usize {
+        self.clamped_page_size() as usize
+    }
+}
+
 /// A page of results.
 #[derive(Clone, Debug, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Page<T> {
@@ -255,5 +272,24 @@ mod tests {
         let encoded = cursor.encode().unwrap();
         let err = ListCursor::decode(&encoded).unwrap_err();
         assert_eq!(err.kind(), SignalErrorKind::CursorExpired);
+    }
+
+    #[test]
+    fn clamped_page_size_handles_zero_and_overflow() {
+        let zero = PageRequest {
+            cursor: None,
+            page_size: 0,
+        };
+        assert_eq!(zero.clamped_page_size(), 1);
+        assert_eq!(zero.page_size_as_usize_clamped(), 1);
+        assert_eq!(zero.limit_plus_one(), 2);
+
+        let huge = PageRequest {
+            cursor: None,
+            page_size: u32::MAX,
+        };
+        assert_eq!(huge.clamped_page_size(), MAX_PAGE_SIZE);
+        assert_eq!(huge.page_size_as_usize_clamped(), MAX_PAGE_SIZE as usize);
+        assert_eq!(huge.limit_plus_one(), i64::from(MAX_PAGE_SIZE) + 1);
     }
 }

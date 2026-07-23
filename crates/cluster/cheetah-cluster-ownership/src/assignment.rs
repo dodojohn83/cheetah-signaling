@@ -651,7 +651,7 @@ mod tests {
                 .collect();
             matches.sort_by_key(|a| a.0.1.as_uuid());
 
-            let page_size = page.page_size.max(1) as usize;
+            let page_size = page.page_size_as_usize_clamped();
             let start = match &page.cursor {
                 None => 0,
                 Some(value) => {

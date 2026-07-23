@@ -234,7 +234,7 @@ impl OwnerRepository for PostgresOwnerRepository {
         node_id: cheetah_signal_types::NodeId,
         page: PageRequest,
     ) -> Result<Page<OwnedDevice>, StorageError> {
-        let page_size = page.page_size.max(1) as i64;
+        let page_size = page.clamped_page_size();
         let cursor = match &page.cursor {
             None => None,
             Some(value) => {
@@ -257,7 +257,7 @@ impl OwnerRepository for PostgresOwnerRepository {
                      LIMIT $2",
             )
             .bind(node_id.as_uuid())
-            .bind(page_size + 1)
+            .bind(i64::from(page_size).saturating_add(1))
             .fetch_all(&self.read_pool)
             .await,
             Some((updated_at, device_id)) => sqlx::query_as::<sqlx::Postgres, OwnedDeviceRow>(
@@ -271,15 +271,16 @@ impl OwnerRepository for PostgresOwnerRepository {
             .bind(node_id.as_uuid())
             .bind(updated_at.as_offset())
             .bind(device_id)
-            .bind(page_size + 1)
+            .bind(i64::from(page_size).saturating_add(1))
             .fetch_all(&self.read_pool)
             .await,
         }
         .map_err(|e| StorageError::backend(e.to_string()))?;
 
-        let has_more = rows.len() > page_size as usize;
+        let page_size = page_size as usize;
+        let has_more = rows.len() > page_size;
         let next_cursor = if has_more {
-            let last = &rows[page_size as usize - 1];
+            let last = &rows[page_size - 1];
             Some(
                 ListCursor::new(UtcTimestamp::from_offset(last.updated_at), last.device_id)
                     .map_err(|e| StorageError::internal(format!("failed to encode cursor: {e}")))?
@@ -292,7 +293,7 @@ impl OwnerRepository for PostgresOwnerRepository {
 
         let items: Vec<OwnedDevice> = rows
             .into_iter()
-            .take(page_size as usize)
+            .take(page_size)
             .map(|r| OwnedDevice {
                 tenant_id: r.tenant_id.into(),
                 device_id: r.device_id.into(),

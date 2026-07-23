@@ -177,8 +177,9 @@ impl NodeRepository for PostgresNodeRepository {
             qb.push(")");
         }
 
+        let page_size = page.page_size_as_usize_clamped();
         qb.push(" ORDER BY updated_at, node_id LIMIT ");
-        qb.push_bind((page.page_size + 1) as i64);
+        qb.push_bind(page.limit_plus_one());
 
         let rows: Vec<NodeRow> = qb
             .build_query_as::<NodeRow>()
@@ -187,9 +188,9 @@ impl NodeRepository for PostgresNodeRepository {
             .map_err(|e| StorageError::backend(e.to_string()))?;
 
         let mut nodes: Vec<ClusterNode> = rows.into_iter().map(Into::into).collect();
-        let has_more = nodes.len() > page.page_size as usize;
+        let has_more = nodes.len() > page_size;
         if has_more {
-            nodes.truncate(page.page_size as usize);
+            nodes.truncate(page_size);
         }
 
         let next_cursor = if has_more {

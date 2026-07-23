@@ -122,8 +122,9 @@ impl TenantRepository for SqliteTenantRepository {
             qb.push(")");
         }
 
+        let page_size = page.page_size_as_usize_clamped();
         qb.push(" ORDER BY updated_at, tenant_id LIMIT ");
-        qb.push_bind((page.page_size + 1) as i64);
+        qb.push_bind(page.limit_plus_one());
 
         let rows: Vec<TenantRow> = qb
             .build_query_as::<TenantRow>()
@@ -135,9 +136,9 @@ impl TenantRepository for SqliteTenantRepository {
             .into_iter()
             .map(TryInto::try_into)
             .collect::<Result<Vec<_>, _>>()?;
-        let has_more = tenants.len() > page.page_size as usize;
+        let has_more = tenants.len() > page_size;
         if has_more {
-            tenants.truncate(page.page_size as usize);
+            tenants.truncate(page_size);
         }
 
         let next_cursor = if has_more {

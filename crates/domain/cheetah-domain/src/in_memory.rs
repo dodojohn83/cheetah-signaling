@@ -92,7 +92,7 @@ fn to_page<T>(
     page: PageRequest,
     id_of: fn(&T) -> uuid::Uuid,
 ) -> crate::Result<Page<T>> {
-    let page_size = page.page_size as usize;
+    let page_size = page.page_size_as_usize_clamped();
     let next_cursor = if items.len() > page_size {
         let last = &items[page_size - 1];
         // In-memory timestamps are not part of the cursor; use a fixed epoch for encoding.
@@ -1457,7 +1457,7 @@ impl crate::MediaPort for InMemoryMediaPort {
             .get(&(tenant_id, media_node_id))
             .cloned()
             .unwrap_or_default();
-        let page_size = page.page_size as usize;
+        let page_size = page.page_size_as_usize_clamped();
         let start = match &page.cursor {
             None => 0,
             Some(value) => value
@@ -1465,7 +1465,7 @@ impl crate::MediaPort for InMemoryMediaPort {
                 .map_err(|_| DomainError::invalid_argument("invalid page cursor"))?,
         };
         let start = start.min(all_items.len());
-        let end = (start + page_size).min(all_items.len());
+        let end = start.saturating_add(page_size).min(all_items.len());
         let items = all_items[start..end].to_vec();
         let next_cursor = if end < all_items.len() {
             Some(end.to_string())
@@ -1655,7 +1655,7 @@ impl ProtocolSessionRepository for InMemoryProtocolSessionRepository {
             items.retain(|s| (s.updated_at(), s.protocol_session_id().as_uuid()) > (ts, id));
         }
 
-        let page_size = page.page_size_as_usize();
+        let page_size = page.page_size_as_usize_clamped();
         let has_more = items.len() > page_size;
         let next_cursor = if has_more {
             let last = items
@@ -1813,7 +1813,7 @@ impl PlatformLinkRepository for InMemoryPlatformLinkRepository {
             items.retain(|l| (l.updated_at(), l.platform_link_id().as_uuid()) > (ts, id));
         }
 
-        let page_size = page.page_size_as_usize();
+        let page_size = page.page_size_as_usize_clamped();
         let has_more = items.len() > page_size;
         let next_cursor = if has_more {
             let last = items

@@ -19,8 +19,7 @@ struct ListRow<T> {
     data: Json<T>,
 }
 
-fn to_page<T>(rows: Vec<ListRow<T>>, page_size: u32) -> Result<Page<T>> {
-    let page_size = page_size as usize;
+fn to_page<T>(rows: Vec<ListRow<T>>, page_size: usize) -> Result<Page<T>> {
     let next_cursor = if rows.len() > page_size {
         let last = &rows[page_size - 1];
         let ts = UtcTimestamp::from_offset(last.updated_at);
@@ -128,7 +127,7 @@ pub(crate) async fn devices(
     push_cursor_filter(&mut qb, "device_id", cursor);
 
     qb.push(" ORDER BY device_id LIMIT ");
-    qb.push_bind((page.page_size + 1) as i64);
+    qb.push_bind(page.limit_plus_one());
 
     let rows: Vec<ListRow<Device>> = qb
         .build_query_as::<ListRow<Device>>()
@@ -136,7 +135,7 @@ pub(crate) async fn devices(
         .await
         .map_err(crate::error::sqlx_to_domain)?;
 
-    to_page(rows, page.page_size)
+    to_page(rows, page.page_size_as_usize_clamped())
 }
 
 pub(crate) async fn channels(
@@ -164,7 +163,7 @@ pub(crate) async fn channels(
     push_cursor_filter(&mut qb, "channel_id", cursor);
 
     qb.push(" ORDER BY channel_id LIMIT ");
-    qb.push_bind((page.page_size + 1) as i64);
+    qb.push_bind(page.limit_plus_one());
 
     let rows: Vec<ListRow<Channel>> = qb
         .build_query_as::<ListRow<Channel>>()
@@ -172,7 +171,7 @@ pub(crate) async fn channels(
         .await
         .map_err(crate::error::sqlx_to_domain)?;
 
-    to_page(rows, page.page_size)
+    to_page(rows, page.page_size_as_usize_clamped())
 }
 
 pub(crate) async fn operations(
@@ -199,7 +198,7 @@ pub(crate) async fn operations(
     push_cursor_filter(&mut qb, "operation_id", cursor);
 
     qb.push(" ORDER BY operation_id LIMIT ");
-    qb.push_bind((page.page_size + 1) as i64);
+    qb.push_bind(page.limit_plus_one());
 
     let rows: Vec<ListRow<Operation>> = qb
         .build_query_as::<ListRow<Operation>>()
@@ -207,7 +206,7 @@ pub(crate) async fn operations(
         .await
         .map_err(crate::error::sqlx_to_domain)?;
 
-    to_page(rows, page.page_size)
+    to_page(rows, page.page_size_as_usize_clamped())
 }
 
 pub(crate) async fn media_sessions(
@@ -236,7 +235,7 @@ pub(crate) async fn media_sessions(
     push_cursor_filter(&mut qb, "media_session_id", cursor);
 
     qb.push(" ORDER BY media_session_id LIMIT ");
-    qb.push_bind((page.page_size + 1) as i64);
+    qb.push_bind(page.limit_plus_one());
 
     let rows: Vec<ListRow<MediaSession>> = qb
         .build_query_as::<ListRow<MediaSession>>()
@@ -244,5 +243,5 @@ pub(crate) async fn media_sessions(
         .await
         .map_err(crate::error::sqlx_to_domain)?;
 
-    to_page(rows, page.page_size)
+    to_page(rows, page.page_size_as_usize_clamped())
 }
