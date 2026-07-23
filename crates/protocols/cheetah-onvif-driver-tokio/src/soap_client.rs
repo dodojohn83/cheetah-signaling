@@ -3,8 +3,10 @@
 use crate::auth::{DeviceCredentials, inject_username_token};
 use crate::config::DriverConfig;
 use crate::error::{DriverError, DriverResult};
+use bytes::BytesMut;
 use cheetah_onvif_core::discovery::XAddrPolicy;
 use cheetah_onvif_core::soap;
+use futures::StreamExt;
 use reqwest::{Client, StatusCode};
 use std::sync::Arc;
 use std::time::Duration;
@@ -92,20 +94,29 @@ impl SoapClient {
         })?;
         self.policy.validate(&url).map_err(DriverError::Onvif)?;
 
-        let _permit = self
-            .permits
-            .acquire()
+        let overall_timeout = timeout.unwrap_or(self.request_timeout);
+        let start = std::time::Instant::now();
+        let _permit = tokio::time::timeout(overall_timeout, self.permits.acquire())
             .await
+            .map_err(|_| DriverError::Timeout("request permit wait timed out".into()))?
             .map_err(|_| DriverError::Config("request semaphore closed".into()))?;
+        let elapsed = start.elapsed();
 
-        let timeout = timeout.unwrap_or(self.request_timeout);
+        let request_timeout = timeout
+            .map(|t| t.saturating_sub(elapsed))
+            .unwrap_or_else(|| self.request_timeout.saturating_sub(elapsed));
+        if request_timeout.is_zero() {
+            return Err(DriverError::Timeout(
+                "deadline exceeded after permit wait".into(),
+            ));
+        }
         let request = self
             .client
             .post(url.clone())
             .header("Content-Type", "application/soap+xml; charset=utf-8")
             .header("SOAPAction", format!("\"{soap_action}\""))
             .body(envelope_xml.to_string())
-            .timeout(timeout);
+            .timeout(request_timeout);
 
         let response = request.send().await.map_err(|e| {
             if e.is_timeout() {
@@ -126,16 +137,21 @@ impl SoapClient {
         }
 
         let status = response.status();
-        let bytes = response
-            .bytes()
-            .await
-            .map_err(|e| DriverError::Http(e.to_string()))?;
-        if bytes.len() > self.max_response_bytes {
-            return Err(DriverError::BodyLimit {
-                limit: self.max_response_bytes,
-            });
+
+        // Enforce the configured response-size bound while streaming so a
+        // misbehaving peer cannot make us allocate an unbounded buffer.
+        let mut body_bytes = BytesMut::new();
+        let mut stream = response.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| DriverError::Http(e.to_string()))?;
+            if body_bytes.len() + chunk.len() > self.max_response_bytes {
+                return Err(DriverError::BodyLimit {
+                    limit: self.max_response_bytes,
+                });
+            }
+            body_bytes.extend_from_slice(&chunk);
         }
-        let body = String::from_utf8_lossy(&bytes).into_owned();
+        let body = String::from_utf8_lossy(&body_bytes).into_owned();
 
         if !status.is_success() {
             // SOAP Faults may still arrive with HTTP 500; surface both.

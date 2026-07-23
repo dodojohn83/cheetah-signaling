@@ -38,6 +38,9 @@ pub enum DriverError {
     /// Invalid configuration.
     #[error("config error: {0}")]
     Config(String),
+    /// Driver capacity/overload (e.g. too many concurrent device endpoints).
+    #[error("overloaded: {0}")]
+    Overloaded(String),
 }
 
 /// Result alias for the driver.
