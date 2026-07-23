@@ -760,6 +760,9 @@ mod tests {
         // Values beyond u32::MAX must not wrap the exponent back to a tiny delay.
         let huge = (u32::MAX as usize).saturating_add(1);
         let value = backoff(1, u64::MAX, huge);
-        assert!(value > 0, "huge retry attempts must still produce a non-zero backoff");
+        assert!(
+            value > 0,
+            "huge retry attempts must still produce a non-zero backoff"
+        );
     }
 }
