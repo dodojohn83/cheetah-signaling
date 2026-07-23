@@ -14,7 +14,15 @@ use secrecy::SecretString;
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::time::timeout;
+
+/// Maximum plugin-host RPC timeout; larger values overflow `tokio::time` deadlines.
+const MAX_DRIVER_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
+
+fn clamp_driver_timeout(timeout: DurationMs) -> Duration {
+    Duration::from_millis(timeout.as_millis().max(0) as u64).min(MAX_DRIVER_TIMEOUT)
+}
 
 /// Source for tenant-scoped secrets referenced by drivers.
 #[async_trait]
@@ -542,10 +550,23 @@ async fn with_timeout<F, T>(deadline: DurationMs, fut: F) -> Result<T, PluginHos
 where
     F: std::future::Future<Output = Result<T, PluginError>> + Send,
 {
-    let millis = effective_timeout(deadline).as_millis();
-    let std_duration = std::time::Duration::from_millis(millis as u64);
+    let std_duration = clamp_driver_timeout(effective_timeout(deadline));
     timeout(std_duration, fut)
         .await
         .map_err(|_| PluginHostError::Timeout)?
         .map_err(Into::into)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clamp_driver_timeout_saturates_at_max() {
+        let normal = DurationMs::from_millis(1_000);
+        assert_eq!(clamp_driver_timeout(normal), Duration::from_millis(1_000));
+
+        let huge = DurationMs::from_millis(i64::MAX);
+        assert_eq!(clamp_driver_timeout(huge), MAX_DRIVER_TIMEOUT);
+    }
 }
