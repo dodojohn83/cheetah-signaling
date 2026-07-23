@@ -49,6 +49,11 @@ impl PersistentMediaNodeRegistry {
         }
     }
 
+    /// Builds a `MediaNodeUpdated` outbox event for the given node.
+    ///
+    /// The payload's `node` fields are provisional; the storage layer overwrites
+    /// them with the persisted row inside the same transaction, so callers only
+    /// need to supply a node with the correct `node_id`.
     fn make_event(&self, clock: &dyn Clock, node: &MediaNode) -> Event<DomainEvent> {
         let message_id = self.id_generator.generate_message_id();
         let correlation_id = self.id_generator.generate_correlation_id();
@@ -131,7 +136,7 @@ impl MediaNodeRegistry for PersistentMediaNodeRegistry {
         let now = clock.now_wall();
         let lease = lease_until(clock, lease_ttl_ms);
 
-        let (mut updated, reported, reserved) = if let Some(existing) = nodes.get(&node.node_id) {
+        let (updated, reported, reserved) = if let Some(existing) = nodes.get(&node.node_id) {
             if existing.instance_id == node.instance_id {
                 let mut updated = node;
                 updated.generation = existing.node.generation;
@@ -169,8 +174,6 @@ impl MediaNodeRegistry for PersistentMediaNodeRegistry {
             updated.revision = 0;
             (updated, 0, BTreeMap::new())
         };
-
-        updated.recalc_health();
 
         let event = self.make_event(clock, &updated);
         let persisted = self
@@ -232,13 +235,7 @@ impl MediaNodeRegistry for PersistentMediaNodeRegistry {
         let lease = lease_until(clock, self.config.default_lease_ttl_ms)
             .ok_or_else(|| SchedulerError::Backend("lease timestamp overflow".to_string()))?;
 
-        let mut event_node = entry.node.clone();
-        event_node.load = load;
-        event_node.session_count = session_count;
-        event_node.last_heartbeat_at = Some(now);
-        event_node.lease_until = Some(lease);
-        event_node.recalc_health();
-        let event = self.make_event(clock, &event_node);
+        let event = self.make_event(clock, &entry.node);
 
         let persisted = self
             .repo
@@ -281,14 +278,7 @@ impl MediaNodeRegistry for PersistentMediaNodeRegistry {
         let now = clock.now_wall();
         let instance_id = entry.instance_id.clone();
 
-        let mut event_node = entry.node.clone();
-        event_node.draining = drain;
-        event_node.status = if drain {
-            NodeStatus::Draining
-        } else {
-            NodeStatus::Active
-        };
-        let event = self.make_event(clock, &event_node);
+        let event = self.make_event(clock, &entry.node);
 
         let persisted = self
             .repo
@@ -320,10 +310,7 @@ impl MediaNodeRegistry for PersistentMediaNodeRegistry {
         let instance_id = entry.instance_id.clone();
         let protection_lease = lease_until(clock, self.config.deregister_protection_ttl_ms);
 
-        let mut event_node = entry.node.clone();
-        event_node.status = NodeStatus::Left;
-        event_node.lease_until = protection_lease;
-        let event = self.make_event(clock, &event_node);
+        let event = self.make_event(clock, &entry.node);
 
         let persisted = self
             .repo

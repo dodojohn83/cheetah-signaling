@@ -20,8 +20,10 @@
   to the repository.
 - `append_outbox_events` now overwrites the entire `MediaNodeUpdated` payload
   with the persisted row read back from the database, so the outbox event always
-  matches the committed state and cannot diverge from the registry-computed
-  snapshot.
+  matches the committed state. `PersistentMediaNodeRegistry` no longer builds
+  throwaway event-node snapshots for `heartbeat`/`drain`/`deregister`; it passes
+  the in-memory node to `make_event` and relies on the storage layer to patch
+  the payload.
 - Updated `apps/cheetah-signaling/src/assembly.rs` to inject the
   `id_generator` and `node_id` into `PersistentMediaNodeRegistry::new`.
 - Expanded the shared SQLite/PostgreSQL storage contract tests in
