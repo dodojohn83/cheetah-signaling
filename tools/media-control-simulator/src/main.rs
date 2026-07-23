@@ -42,6 +42,13 @@ use tokio_stream::wrappers::BroadcastStream;
 use tonic::{Request, Response, Status};
 use tracing::{info, warn};
 
+/// Maximum simulated latency; larger values overflow `tokio::time` deadlines.
+const MAX_LATENCY: Duration = Duration::from_secs(24 * 60 * 60);
+
+fn clamp_latency(latency_ms: u64) -> Duration {
+    Duration::from_millis(latency_ms).min(MAX_LATENCY)
+}
+
 /// Runtime configuration.
 #[derive(Clone, Debug, Parser)]
 #[command(name = "media-control-simulator")]
@@ -185,7 +192,7 @@ impl State {
 
     async fn maybe_sleep(&self) {
         if self.config.latency_ms > 0 {
-            time::sleep(Duration::from_millis(self.config.latency_ms)).await;
+            time::sleep(clamp_latency(self.config.latency_ms)).await;
         }
     }
 
@@ -612,4 +619,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clamp_latency_saturates_at_max() {
+        assert_eq!(clamp_latency(100), Duration::from_millis(100));
+        assert_eq!(clamp_latency(u64::MAX), MAX_LATENCY);
+    }
 }
