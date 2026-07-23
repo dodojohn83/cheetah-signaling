@@ -21,6 +21,12 @@ const MAX_JWT_SUB_BYTES: usize = 256;
 const MAX_JWT_SCOPES: usize = 64;
 /// Maximum byte length of an individual JWT scope/role string.
 const MAX_JWT_SCOPE_BYTES: usize = 64;
+/// Maximum byte length of a bearer token passed to `jsonwebtoken::decode`.
+///
+/// JWTs with RS256 are normally well under a few kilobytes; extremely long
+/// tokens waste memory on base64 decoding and can be used to amplify request
+/// processing before signature validation.
+const MAX_JWT_TOKEN_BYTES: usize = 8_192;
 
 /// Authenticated actor and optional tenant claim.
 #[derive(Clone, Debug)]
@@ -185,6 +191,11 @@ async fn authenticate_bearer(
             "JWT authentication not configured".to_string(),
         ));
     }
+    if token.len() > MAX_JWT_TOKEN_BYTES {
+        return Err(HttpError::Unauthenticated(
+            "JWT token exceeds maximum length".to_string(),
+        ));
+    }
 
     // The validation algorithm is fixed to RS256 and not read from the untrusted
     // token header to prevent algorithm confusion attacks.
@@ -341,6 +352,8 @@ fn record_auth_audit(parts: &Parts, state: &ApiState, result: &Result<AuthContex
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cheetah_signal_types::config::SecurityConfig;
+    use secrecy::SecretString;
 
     fn valid_claims() -> JwtClaims {
         JwtClaims {
@@ -418,5 +431,39 @@ mod tests {
         claims.roles = vec!["x".repeat(MAX_JWT_SCOPE_BYTES + 1)];
         claims.scope.clear();
         assert!(principal_from_jwt_claims(claims).is_err());
+    }
+
+    #[tokio::test]
+    async fn authenticate_bearer_rejects_oversized_token() {
+        let config = SecurityConfig {
+            jwt_public_key_ref: SecretString::from("not-a-key".to_string()),
+            ..Default::default()
+        };
+        let token = "x".repeat(MAX_JWT_TOKEN_BYTES + 1);
+        let result = authenticate_bearer(&config, &token).await;
+        assert!(
+            matches!(
+                result,
+                Err(HttpError::Unauthenticated(ref msg))
+                    if msg == "JWT token exceeds maximum length"
+            ),
+            "expected token length rejection, got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn authenticate_bearer_accepts_token_at_limit() {
+        let config = SecurityConfig {
+            jwt_public_key_ref: SecretString::from("not-a-key".to_string()),
+            ..Default::default()
+        };
+        let token = "x".repeat(MAX_JWT_TOKEN_BYTES);
+        let result = authenticate_bearer(&config, &token).await;
+        // Token is at the limit, so it passes the length check and fails on
+        // the invalid public key configuration rather than on length.
+        assert!(
+            matches!(result, Err(HttpError::Internal(_))),
+            "expected key parsing failure after length check, got {result:?}"
+        );
     }
 }
