@@ -1,11 +1,11 @@
-//! Errors returned by the ONVIF protocol module.
+//! Errors returned by the ONVIF service layer.
 
 use cheetah_onvif_core::OnvifError;
 use thiserror::Error;
 
 /// An error produced by the ONVIF module.
 #[derive(Debug, Error)]
-pub enum OnvifModuleError {
+pub enum OnvifServiceError {
     /// Underlying ONVIF wire error.
     #[error("onvif: {0}")]
     Onvif(#[from] OnvifError),
@@ -28,31 +28,31 @@ pub enum OnvifModuleError {
     Policy(String),
 }
 
-impl From<std::io::Error> for OnvifModuleError {
+impl From<std::io::Error> for OnvifServiceError {
     fn from(value: std::io::Error) -> Self {
         Self::Onvif(OnvifError::from(value))
     }
 }
 
-impl From<quick_xml::Error> for OnvifModuleError {
+impl From<quick_xml::Error> for OnvifServiceError {
     fn from(value: quick_xml::Error) -> Self {
         Self::Onvif(OnvifError::from(value))
     }
 }
 
-impl From<std::string::FromUtf8Error> for OnvifModuleError {
+impl From<std::string::FromUtf8Error> for OnvifServiceError {
     fn from(value: std::string::FromUtf8Error) -> Self {
         Self::Onvif(OnvifError::from(value))
     }
 }
 
-impl From<url::ParseError> for OnvifModuleError {
+impl From<url::ParseError> for OnvifServiceError {
     fn from(value: url::ParseError) -> Self {
         Self::Onvif(OnvifError::from(value))
     }
 }
 
-impl OnvifModuleError {
+impl OnvifServiceError {
     /// Creates an invalid value error.
     pub fn invalid_value(field: impl Into<String>, message: impl Into<String>) -> Self {
         Self::InvalidValue {

@@ -1,7 +1,7 @@
 //! ONVIF Device service request builders and response parsers.
 
 use crate::config::ParserLimits;
-use crate::error::OnvifModuleError;
+use crate::error::OnvifServiceError;
 use crate::types::{CapabilityKind, CapabilityProbeResult, DeviceInformation, Service};
 use cheetah_onvif_core::OnvifError;
 use cheetah_onvif_core::discovery::XAddrPolicy;
@@ -25,8 +25,8 @@ fn local_name(name: &quick_xml::name::QName<'_>) -> String {
     String::from_utf8_lossy(name.local_name().as_ref()).to_string()
 }
 
-fn limit_error(message: impl Into<String>) -> OnvifModuleError {
-    OnvifModuleError::Onvif(OnvifError::LimitExceeded(message.into()))
+fn limit_error(message: impl Into<String>) -> OnvifServiceError {
+    OnvifServiceError::Onvif(OnvifError::LimitExceeded(message.into()))
 }
 
 /// Tracks parser limits while scanning an ONVIF response.
@@ -38,7 +38,7 @@ struct ParseContext<'a> {
 }
 
 impl<'a> ParseContext<'a> {
-    fn new(limits: &'a ParserLimits, input: &str) -> Result<Self, OnvifModuleError> {
+    fn new(limits: &'a ParserLimits, input: &str) -> Result<Self, OnvifServiceError> {
         if input.len() > limits.max_input_bytes {
             return Err(limit_error(format!(
                 "response exceeds {} bytes",
@@ -53,7 +53,7 @@ impl<'a> ParseContext<'a> {
         })
     }
 
-    fn on_start(&mut self, name: String) -> Result<(), OnvifModuleError> {
+    fn on_start(&mut self, name: String) -> Result<(), OnvifServiceError> {
         self.node_count += 1;
         if self.node_count > self.limits.max_nodes {
             return Err(limit_error(format!(
@@ -72,7 +72,7 @@ impl<'a> ParseContext<'a> {
         Ok(())
     }
 
-    fn on_empty(&mut self) -> Result<(), OnvifModuleError> {
+    fn on_empty(&mut self) -> Result<(), OnvifServiceError> {
         self.node_count += 1;
         if self.node_count > self.limits.max_nodes {
             return Err(limit_error(format!(
@@ -89,7 +89,7 @@ impl<'a> ParseContext<'a> {
         Ok(())
     }
 
-    fn append_text(&mut self, s: &str) -> Result<(), OnvifModuleError> {
+    fn append_text(&mut self, s: &str) -> Result<(), OnvifServiceError> {
         if self.text.len() + s.len() > self.limits.max_text_bytes {
             return Err(limit_error(format!(
                 "response text exceeds {} bytes",
@@ -118,34 +118,34 @@ impl<'a> ParseContext<'a> {
     }
 }
 
-fn empty_body(name: &str) -> Result<String, OnvifModuleError> {
+fn empty_body(name: &str) -> Result<String, OnvifServiceError> {
     let mut cursor = Cursor::new(Vec::new());
     let mut writer = Writer::new(&mut cursor);
     let mut element = BytesStart::new(name);
     element.push_attribute(("xmlns:tds", DEVICE_NS));
     writer.write_event(Event::Empty(element))?;
     String::from_utf8(cursor.into_inner())
-        .map_err(|e| OnvifModuleError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string())))
+        .map_err(|e| OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string())))
 }
 
 /// Builds an unauthenticated `GetDeviceInformation` request.
 pub fn get_device_information_request(
     message_id: impl Into<String>,
-) -> Result<String, OnvifModuleError> {
+) -> Result<String, OnvifServiceError> {
     Envelope::new(
         GET_DEVICE_INFO_ACTION,
         empty_body("tds:GetDeviceInformation")?,
     )
     .with_message_id(message_id)
     .build()
-    .map_err(OnvifModuleError::Onvif)
+    .map_err(OnvifServiceError::Onvif)
 }
 
 /// Parses a `GetDeviceInformationResponse`.
 pub fn parse_get_device_information_response(
     xml: &str,
     limits: &ParserLimits,
-) -> Result<DeviceInformation, OnvifModuleError> {
+) -> Result<DeviceInformation, OnvifServiceError> {
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(true);
 
@@ -193,7 +193,7 @@ pub fn parse_get_device_information_response(
             }
             Ok(Event::Eof) => break,
             Err(e) => {
-                return Err(OnvifModuleError::Onvif(
+                return Err(OnvifServiceError::Onvif(
                     cheetah_onvif_core::OnvifError::Xml(e.to_string()),
                 ));
             }
@@ -202,7 +202,7 @@ pub fn parse_get_device_information_response(
     }
 
     if info.manufacturer.is_empty() {
-        return Err(OnvifModuleError::MissingField("Manufacturer".to_string()));
+        return Err(OnvifServiceError::MissingField("Manufacturer".to_string()));
     }
 
     Ok(info)
@@ -211,8 +211,8 @@ pub fn parse_get_device_information_response(
 /// Builds a `GetSystemDateAndTime` request.
 pub fn get_system_date_and_time_request(
     message_id: impl Into<String>,
-) -> Result<String, OnvifModuleError> {
-    system_date_time::build_get_system_date_and_time(message_id).map_err(OnvifModuleError::Onvif)
+) -> Result<String, OnvifServiceError> {
+    system_date_time::build_get_system_date_and_time(message_id).map_err(OnvifServiceError::Onvif)
 }
 
 /// Re-export of the core `SystemDateAndTime` parser.
@@ -224,7 +224,7 @@ pub use cheetah_onvif_core::services::system_date_time::{
 pub fn get_services_request(
     include_capabilities: bool,
     message_id: impl Into<String>,
-) -> Result<String, OnvifModuleError> {
+) -> Result<String, OnvifServiceError> {
     let mut cursor = Cursor::new(Vec::new());
     let mut writer = Writer::new(&mut cursor);
 
@@ -254,7 +254,7 @@ pub fn get_services_request(
     Envelope::new(GET_SERVICES_ACTION, body)
         .with_message_id(message_id)
         .build()
-        .map_err(OnvifModuleError::Onvif)
+        .map_err(OnvifServiceError::Onvif)
 }
 
 /// Parses a `GetServicesResponse` and validates each service XAddr against `policy`.
@@ -262,7 +262,7 @@ pub fn parse_get_services_response(
     xml: &str,
     limits: &ParserLimits,
     xaddr_policy: &XAddrPolicy,
-) -> Result<Vec<Service>, OnvifModuleError> {
+) -> Result<Vec<Service>, OnvifServiceError> {
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(true);
 
@@ -326,7 +326,7 @@ pub fn parse_get_services_response(
             }
             Ok(Event::Eof) => break,
             Err(e) => {
-                return Err(OnvifModuleError::Onvif(
+                return Err(OnvifServiceError::Onvif(
                     cheetah_onvif_core::OnvifError::Xml(e.to_string()),
                 ));
             }
@@ -355,12 +355,12 @@ impl ServiceBuilder {
         }
     }
 
-    fn build(self, xaddr_policy: &XAddrPolicy) -> Result<Service, OnvifModuleError> {
+    fn build(self, xaddr_policy: &XAddrPolicy) -> Result<Service, OnvifServiceError> {
         if self.namespace.is_empty() {
-            return Err(OnvifModuleError::MissingField("Namespace".to_string()));
+            return Err(OnvifServiceError::MissingField("Namespace".to_string()));
         }
         if self.xaddr.is_empty() {
-            return Err(OnvifModuleError::MissingField("XAddr".to_string()));
+            return Err(OnvifServiceError::MissingField("XAddr".to_string()));
         }
         let url = url::Url::parse(&self.xaddr)?;
         xaddr_policy.validate(&url)?;
@@ -374,18 +374,20 @@ impl ServiceBuilder {
 }
 
 /// Builds a `GetCapabilities` request.
-pub fn get_capabilities_request(message_id: impl Into<String>) -> Result<String, OnvifModuleError> {
+pub fn get_capabilities_request(
+    message_id: impl Into<String>,
+) -> Result<String, OnvifServiceError> {
     Envelope::new(GET_CAPABILITIES_ACTION, empty_body("tds:GetCapabilities")?)
         .with_message_id(message_id)
         .build()
-        .map_err(OnvifModuleError::Onvif)
+        .map_err(OnvifServiceError::Onvif)
 }
 
 /// Parses a `GetCapabilitiesResponse` into high-level capability results.
 pub fn parse_get_capabilities_response(
     xml: &str,
     limits: &ParserLimits,
-) -> Result<HashMap<CapabilityKind, CapabilityProbeResult>, OnvifModuleError> {
+) -> Result<HashMap<CapabilityKind, CapabilityProbeResult>, OnvifServiceError> {
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(true);
 
@@ -410,7 +412,7 @@ pub fn parse_get_capabilities_response(
             }
             Ok(Event::Eof) => break,
             Err(e) => {
-                return Err(OnvifModuleError::Onvif(
+                return Err(OnvifServiceError::Onvif(
                     cheetah_onvif_core::OnvifError::Xml(e.to_string()),
                 ));
             }
@@ -458,24 +460,24 @@ fn namespace_for_kind(kind: CapabilityKind) -> &'static str {
 }
 
 /// Builds a `GetHostname` request.
-pub fn get_hostname_request(message_id: impl Into<String>) -> Result<String, OnvifModuleError> {
+pub fn get_hostname_request(message_id: impl Into<String>) -> Result<String, OnvifServiceError> {
     Envelope::new(GET_HOSTNAME_ACTION, empty_body("tds:GetHostname")?)
         .with_message_id(message_id)
         .build()
-        .map_err(OnvifModuleError::Onvif)
+        .map_err(OnvifServiceError::Onvif)
 }
 
 /// Builds a `GetNetworkInterfaces` request.
 pub fn get_network_interfaces_request(
     message_id: impl Into<String>,
-) -> Result<String, OnvifModuleError> {
+) -> Result<String, OnvifServiceError> {
     Envelope::new(
         GET_NETWORK_INTERFACES_ACTION,
         empty_body("tds:GetNetworkInterfaces")?,
     )
     .with_message_id(message_id)
     .build()
-    .map_err(OnvifModuleError::Onvif)
+    .map_err(OnvifServiceError::Onvif)
 }
 
 #[cfg(test)]
@@ -498,7 +500,7 @@ mod tests {
     }
 
     #[test]
-    fn get_device_information_request_contains_action() -> Result<(), OnvifModuleError> {
+    fn get_device_information_request_contains_action() -> Result<(), OnvifServiceError> {
         let xml = get_device_information_request("urn:uuid:1")?;
         assert!(xml.contains(GET_DEVICE_INFO_ACTION));
         assert!(xml.contains("GetDeviceInformation"));
@@ -508,7 +510,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_device_information_response() -> Result<(), OnvifModuleError> {
+    fn parses_device_information_response() -> Result<(), OnvifServiceError> {
         let xml = r#"<?xml version="1.0"?>
 <s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">
   <s:Body>
@@ -531,7 +533,7 @@ mod tests {
     }
 
     #[test]
-    fn get_services_request_contains_include_capability() -> Result<(), OnvifModuleError> {
+    fn get_services_request_contains_include_capability() -> Result<(), OnvifServiceError> {
         let xml = get_services_request(true, "urn:uuid:2")?;
         assert!(xml.contains(GET_SERVICES_ACTION));
         assert!(xml.contains("GetServices"));
@@ -541,7 +543,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_services_response() -> Result<(), OnvifModuleError> {
+    fn parses_services_response() -> Result<(), OnvifServiceError> {
         let xml = r#"<?xml version="1.0"?>
 <s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">
   <s:Body>
@@ -570,7 +572,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_services_response_with_major_minor_version() -> Result<(), OnvifModuleError> {
+    fn parses_services_response_with_major_minor_version() -> Result<(), OnvifServiceError> {
         let xml = r#"<?xml version="1.0"?>
 <s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">
   <s:Body>
@@ -610,7 +612,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_capabilities_response() -> Result<(), OnvifModuleError> {
+    fn parses_capabilities_response() -> Result<(), OnvifServiceError> {
         let xml = r#"<?xml version="1.0"?>
 <s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">
   <s:Body>

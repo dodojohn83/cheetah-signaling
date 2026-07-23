@@ -902,7 +902,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "cheetah-onvif-core",
- "cheetah-onvif-module",
+ "cheetah-onvif-services",
  "cheetah-plugin-sdk",
  "cheetah-signal-types",
  "futures",
@@ -927,6 +927,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "cheetah-onvif-core",
+ "cheetah-onvif-services",
  "cheetah-plugin-sdk",
  "cheetah-signal-types",
  "quick-xml",
@@ -936,6 +937,17 @@ dependencies = [
  "tokio",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "cheetah-onvif-services"
+version = "0.1.0"
+dependencies = [
+ "cheetah-onvif-core",
+ "cheetah-signal-types",
+ "quick-xml",
+ "thiserror",
+ "url",
 ]
 
 [[package]]

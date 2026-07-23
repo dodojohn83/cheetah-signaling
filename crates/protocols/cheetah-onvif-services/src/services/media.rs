@@ -5,7 +5,7 @@
 //! callers must redact userinfo before logging or northbound responses.
 
 use crate::config::ParserLimits;
-use crate::error::OnvifModuleError;
+use crate::error::OnvifServiceError;
 use crate::services::parse::{ParseContext, local_name};
 use cheetah_onvif_core::discovery::XAddrPolicy;
 use cheetah_onvif_core::soap::Envelope;
@@ -85,7 +85,7 @@ pub struct SnapshotUri {
     pub timeout: Option<String>,
 }
 
-fn empty_body(dialect: MediaDialect, local: &str) -> Result<String, OnvifModuleError> {
+fn empty_body(dialect: MediaDialect, local: &str) -> Result<String, OnvifServiceError> {
     let mut cursor = Cursor::new(Vec::new());
     let mut writer = Writer::new(&mut cursor);
     let name = format!("{}:{local}", dialect.prefix());
@@ -94,7 +94,7 @@ fn empty_body(dialect: MediaDialect, local: &str) -> Result<String, OnvifModuleE
     element.push_attribute((xmlns.as_str(), dialect.ns()));
     writer.write_event(Event::Empty(element))?;
     String::from_utf8(cursor.into_inner())
-        .map_err(|e| OnvifModuleError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string())))
+        .map_err(|e| OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string())))
 }
 
 fn token_body(
@@ -102,7 +102,7 @@ fn token_body(
     local: &str,
     token_element: &str,
     token: &str,
-) -> Result<String, OnvifModuleError> {
+) -> Result<String, OnvifServiceError> {
     let mut cursor = Cursor::new(Vec::new());
     let mut writer = Writer::new(&mut cursor);
     let body_name = format!("{}:{local}", dialect.prefix());
@@ -118,14 +118,14 @@ fn token_body(
     writer.write_event(Event::End(BytesEnd::new(&body_name)))?;
 
     String::from_utf8(cursor.into_inner())
-        .map_err(|e| OnvifModuleError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string())))
+        .map_err(|e| OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string())))
 }
 
 /// Builds a `GetProfiles` request for Media1 or Media2.
 pub fn get_profiles_request(
     dialect: MediaDialect,
     message_id: impl Into<String>,
-) -> Result<String, OnvifModuleError> {
+) -> Result<String, OnvifServiceError> {
     let action = match dialect {
         MediaDialect::Media1 => GET_PROFILES_ACTION_M1,
         MediaDialect::Media2 => GET_PROFILES_ACTION_M2,
@@ -133,7 +133,7 @@ pub fn get_profiles_request(
     Envelope::new(action, empty_body(dialect, "GetProfiles")?)
         .with_message_id(message_id)
         .build()
-        .map_err(OnvifModuleError::Onvif)
+        .map_err(OnvifServiceError::Onvif)
 }
 
 /// Builds a Media1-style `GetStreamUri` request.
@@ -142,7 +142,7 @@ pub fn get_stream_uri_request_media1(
     stream: &str,
     protocol: &str,
     message_id: impl Into<String>,
-) -> Result<String, OnvifModuleError> {
+) -> Result<String, OnvifServiceError> {
     let mut cursor = Cursor::new(Vec::new());
     let mut writer = Writer::new(&mut cursor);
 
@@ -167,12 +167,13 @@ pub fn get_stream_uri_request_media1(
 
     writer.write_event(Event::End(BytesEnd::new("trt:GetStreamUri")))?;
 
-    let body = String::from_utf8(cursor.into_inner())
-        .map_err(|e| OnvifModuleError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string())))?;
+    let body = String::from_utf8(cursor.into_inner()).map_err(|e| {
+        OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string()))
+    })?;
     Envelope::new(GET_STREAM_URI_ACTION_M1, body)
         .with_message_id(message_id)
         .build()
-        .map_err(OnvifModuleError::Onvif)
+        .map_err(OnvifServiceError::Onvif)
 }
 
 /// Builds a Media2 `GetStreamUri` request (protocol + profile token).
@@ -180,7 +181,7 @@ pub fn get_stream_uri_request_media2(
     profile_token: &str,
     protocol: &str,
     message_id: impl Into<String>,
-) -> Result<String, OnvifModuleError> {
+) -> Result<String, OnvifServiceError> {
     let mut cursor = Cursor::new(Vec::new());
     let mut writer = Writer::new(&mut cursor);
 
@@ -195,12 +196,13 @@ pub fn get_stream_uri_request_media2(
     writer.write_event(Event::End(BytesEnd::new("tr2:ProfileToken")))?;
     writer.write_event(Event::End(BytesEnd::new("tr2:GetStreamUri")))?;
 
-    let body = String::from_utf8(cursor.into_inner())
-        .map_err(|e| OnvifModuleError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string())))?;
+    let body = String::from_utf8(cursor.into_inner()).map_err(|e| {
+        OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string()))
+    })?;
     Envelope::new(GET_STREAM_URI_ACTION_M2, body)
         .with_message_id(message_id)
         .build()
-        .map_err(OnvifModuleError::Onvif)
+        .map_err(OnvifServiceError::Onvif)
 }
 
 /// Builds a `GetSnapshotUri` request for Media1 or Media2.
@@ -208,7 +210,7 @@ pub fn get_snapshot_uri_request(
     dialect: MediaDialect,
     profile_token: &str,
     message_id: impl Into<String>,
-) -> Result<String, OnvifModuleError> {
+) -> Result<String, OnvifServiceError> {
     let action = match dialect {
         MediaDialect::Media1 => GET_SNAPSHOT_URI_ACTION_M1,
         MediaDialect::Media2 => GET_SNAPSHOT_URI_ACTION_M2,
@@ -219,7 +221,7 @@ pub fn get_snapshot_uri_request(
     )
     .with_message_id(message_id)
     .build()
-    .map_err(OnvifModuleError::Onvif)
+    .map_err(OnvifServiceError::Onvif)
 }
 
 fn parse_bool(text: &str) -> Option<bool> {
@@ -234,7 +236,7 @@ fn parse_bool(text: &str) -> Option<bool> {
 pub fn parse_get_profiles_response(
     xml: &str,
     limits: &ParserLimits,
-) -> Result<Vec<MediaProfile>, OnvifModuleError> {
+) -> Result<Vec<MediaProfile>, OnvifServiceError> {
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(true);
     let mut profiles = Vec::new();
@@ -298,7 +300,7 @@ pub fn parse_get_profiles_response(
                     && let Some(mut profile) = current.take()
                 {
                     if profile.token.is_empty() {
-                        return Err(OnvifModuleError::MissingField("Profile/@token".into()));
+                        return Err(OnvifServiceError::MissingField("Profile/@token".into()));
                     }
                     if profile.name.is_empty() {
                         profile.name = profile.token.clone();
@@ -323,7 +325,7 @@ pub fn parse_get_profiles_response(
             }
             Ok(Event::Eof) => break,
             Err(e) => {
-                return Err(OnvifModuleError::Onvif(
+                return Err(OnvifServiceError::Onvif(
                     cheetah_onvif_core::OnvifError::Xml(e.to_string()),
                 ));
             }
@@ -339,7 +341,7 @@ fn parse_media_uri(
     limits: &ParserLimits,
     uri_parent: &str,
     policy: &XAddrPolicy,
-) -> Result<StreamUri, OnvifModuleError> {
+) -> Result<StreamUri, OnvifServiceError> {
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(true);
     let mut ctx = ParseContext::new(limits, xml)?;
@@ -377,7 +379,7 @@ fn parse_media_uri(
             }
             Ok(Event::Eof) => break,
             Err(e) => {
-                return Err(OnvifModuleError::Onvif(
+                return Err(OnvifServiceError::Onvif(
                     cheetah_onvif_core::OnvifError::Xml(e.to_string()),
                 ));
             }
@@ -386,7 +388,7 @@ fn parse_media_uri(
     }
 
     if uri.uri.is_empty() {
-        return Err(OnvifModuleError::MissingField("Uri".into()));
+        return Err(OnvifServiceError::MissingField("Uri".into()));
     }
     validate_media_uri(&uri.uri, policy)?;
     Ok(uri)
@@ -397,9 +399,9 @@ fn parse_media_uri(
 /// Userinfo is stripped before host checks so device credentials in the URI do
 /// not trigger the XAddr userinfo rejection; credentials must still be redacted
 /// before logging or northbound emission via [`redact_uri_userinfo`].
-pub fn validate_media_uri(uri: &str, base: &XAddrPolicy) -> Result<(), OnvifModuleError> {
+pub fn validate_media_uri(uri: &str, base: &XAddrPolicy) -> Result<(), OnvifServiceError> {
     let parsed = url::Url::parse(uri).map_err(|e| {
-        OnvifModuleError::Onvif(cheetah_onvif_core::OnvifError::InvalidXAddr(e.to_string()))
+        OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::InvalidXAddr(e.to_string()))
     })?;
     let mut policy = base.clone();
     for scheme in ["rtsp", "rtsps", "http", "https"] {
@@ -415,7 +417,9 @@ pub fn validate_media_uri(uri: &str, base: &XAddrPolicy) -> Result<(), OnvifModu
     let mut sanitized = parsed;
     let _ = sanitized.set_username("");
     let _ = sanitized.set_password(None);
-    policy.validate(&sanitized).map_err(OnvifModuleError::Onvif)
+    policy
+        .validate(&sanitized)
+        .map_err(OnvifServiceError::Onvif)
 }
 
 /// Parses `GetStreamUriResponse`.
@@ -423,7 +427,7 @@ pub fn parse_get_stream_uri_response(
     xml: &str,
     limits: &ParserLimits,
     policy: &XAddrPolicy,
-) -> Result<StreamUri, OnvifModuleError> {
+) -> Result<StreamUri, OnvifServiceError> {
     parse_media_uri(xml, limits, "MediaUri", policy)
 }
 
@@ -432,7 +436,7 @@ pub fn parse_get_snapshot_uri_response(
     xml: &str,
     limits: &ParserLimits,
     policy: &XAddrPolicy,
-) -> Result<SnapshotUri, OnvifModuleError> {
+) -> Result<SnapshotUri, OnvifServiceError> {
     let stream = parse_media_uri(xml, limits, "MediaUri", policy)?;
     Ok(SnapshotUri {
         uri: stream.uri,

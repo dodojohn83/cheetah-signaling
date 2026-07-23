@@ -1,7 +1,7 @@
 //! ONVIF PTZ request builders and response parsers.
 
 use crate::config::ParserLimits;
-use crate::error::OnvifModuleError;
+use crate::error::OnvifServiceError;
 use crate::services::parse::{ParseContext, local_name};
 use cheetah_onvif_core::soap::Envelope;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
@@ -51,7 +51,7 @@ pub struct PtzPreset {
 fn write_profile_token<W: std::io::Write>(
     writer: &mut Writer<W>,
     token: &str,
-) -> Result<(), OnvifModuleError> {
+) -> Result<(), OnvifServiceError> {
     writer.write_event(Event::Start(BytesStart::new("tptz:ProfileToken")))?;
     writer.write_event(Event::Text(BytesText::new(token)))?;
     writer.write_event(Event::End(BytesEnd::new("tptz:ProfileToken")))?;
@@ -75,7 +75,7 @@ pub fn continuous_move_request(
     velocity: PtzVelocity,
     timeout_seconds: Option<u64>,
     message_id: impl Into<String>,
-) -> Result<String, OnvifModuleError> {
+) -> Result<String, OnvifServiceError> {
     let mut cursor = Cursor::new(Vec::new());
     let mut writer = Writer::new(&mut cursor);
 
@@ -109,12 +109,13 @@ pub fn continuous_move_request(
     }
 
     writer.write_event(Event::End(BytesEnd::new("tptz:ContinuousMove")))?;
-    let body = String::from_utf8(cursor.into_inner())
-        .map_err(|e| OnvifModuleError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string())))?;
+    let body = String::from_utf8(cursor.into_inner()).map_err(|e| {
+        OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string()))
+    })?;
     Envelope::new(CONTINUOUS_MOVE_ACTION, body)
         .with_message_id(message_id)
         .build()
-        .map_err(OnvifModuleError::Onvif)
+        .map_err(OnvifServiceError::Onvif)
 }
 
 /// Builds a RelativeMove request.
@@ -122,7 +123,7 @@ pub fn relative_move_request(
     profile_token: &str,
     translation: PtzVector,
     message_id: impl Into<String>,
-) -> Result<String, OnvifModuleError> {
+) -> Result<String, OnvifServiceError> {
     move_with_vector(
         "RelativeMove",
         RELATIVE_MOVE_ACTION,
@@ -138,7 +139,7 @@ pub fn absolute_move_request(
     profile_token: &str,
     position: PtzVector,
     message_id: impl Into<String>,
-) -> Result<String, OnvifModuleError> {
+) -> Result<String, OnvifServiceError> {
     move_with_vector(
         "AbsoluteMove",
         ABSOLUTE_MOVE_ACTION,
@@ -156,7 +157,7 @@ fn move_with_vector(
     profile_token: &str,
     vector: PtzVector,
     message_id: impl Into<String>,
-) -> Result<String, OnvifModuleError> {
+) -> Result<String, OnvifServiceError> {
     let mut cursor = Cursor::new(Vec::new());
     let mut writer = Writer::new(&mut cursor);
     let body_name = format!("tptz:{local}");
@@ -184,12 +185,13 @@ fn move_with_vector(
     writer.write_event(Event::End(BytesEnd::new(&vector_el)))?;
     writer.write_event(Event::End(BytesEnd::new(&body_name)))?;
 
-    let body = String::from_utf8(cursor.into_inner())
-        .map_err(|e| OnvifModuleError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string())))?;
+    let body = String::from_utf8(cursor.into_inner()).map_err(|e| {
+        OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string()))
+    })?;
     Envelope::new(action, body)
         .with_message_id(message_id)
         .build()
-        .map_err(OnvifModuleError::Onvif)
+        .map_err(OnvifServiceError::Onvif)
 }
 
 /// Builds a Stop request. Defaults to stopping both pan/tilt and zoom.
@@ -198,7 +200,7 @@ pub fn stop_request(
     pan_tilt: bool,
     zoom: bool,
     message_id: impl Into<String>,
-) -> Result<String, OnvifModuleError> {
+) -> Result<String, OnvifServiceError> {
     let mut cursor = Cursor::new(Vec::new());
     let mut writer = Writer::new(&mut cursor);
     let mut body = BytesStart::new("tptz:Stop");
@@ -221,19 +223,20 @@ pub fn stop_request(
     writer.write_event(Event::End(BytesEnd::new("tptz:Zoom")))?;
     writer.write_event(Event::End(BytesEnd::new("tptz:Stop")))?;
 
-    let body = String::from_utf8(cursor.into_inner())
-        .map_err(|e| OnvifModuleError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string())))?;
+    let body = String::from_utf8(cursor.into_inner()).map_err(|e| {
+        OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string()))
+    })?;
     Envelope::new(STOP_ACTION, body)
         .with_message_id(message_id)
         .build()
-        .map_err(OnvifModuleError::Onvif)
+        .map_err(OnvifServiceError::Onvif)
 }
 
 /// Builds a GetPresets request.
 pub fn get_presets_request(
     profile_token: &str,
     message_id: impl Into<String>,
-) -> Result<String, OnvifModuleError> {
+) -> Result<String, OnvifServiceError> {
     let mut cursor = Cursor::new(Vec::new());
     let mut writer = Writer::new(&mut cursor);
     let mut body = BytesStart::new("tptz:GetPresets");
@@ -241,12 +244,13 @@ pub fn get_presets_request(
     writer.write_event(Event::Start(body))?;
     write_profile_token(&mut writer, profile_token)?;
     writer.write_event(Event::End(BytesEnd::new("tptz:GetPresets")))?;
-    let body = String::from_utf8(cursor.into_inner())
-        .map_err(|e| OnvifModuleError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string())))?;
+    let body = String::from_utf8(cursor.into_inner()).map_err(|e| {
+        OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string()))
+    })?;
     Envelope::new(GET_PRESETS_ACTION, body)
         .with_message_id(message_id)
         .build()
-        .map_err(OnvifModuleError::Onvif)
+        .map_err(OnvifServiceError::Onvif)
 }
 
 /// Builds a GotoPreset request.
@@ -254,7 +258,7 @@ pub fn goto_preset_request(
     profile_token: &str,
     preset_token: &str,
     message_id: impl Into<String>,
-) -> Result<String, OnvifModuleError> {
+) -> Result<String, OnvifServiceError> {
     let mut cursor = Cursor::new(Vec::new());
     let mut writer = Writer::new(&mut cursor);
     let mut body = BytesStart::new("tptz:GotoPreset");
@@ -265,19 +269,20 @@ pub fn goto_preset_request(
     writer.write_event(Event::Text(BytesText::new(preset_token)))?;
     writer.write_event(Event::End(BytesEnd::new("tptz:PresetToken")))?;
     writer.write_event(Event::End(BytesEnd::new("tptz:GotoPreset")))?;
-    let body = String::from_utf8(cursor.into_inner())
-        .map_err(|e| OnvifModuleError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string())))?;
+    let body = String::from_utf8(cursor.into_inner()).map_err(|e| {
+        OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string()))
+    })?;
     Envelope::new(GOTO_PRESET_ACTION, body)
         .with_message_id(message_id)
         .build()
-        .map_err(OnvifModuleError::Onvif)
+        .map_err(OnvifServiceError::Onvif)
 }
 
 /// Parses GetPresetsResponse into opaque presets.
 pub fn parse_get_presets_response(
     xml: &str,
     limits: &ParserLimits,
-) -> Result<Vec<PtzPreset>, OnvifModuleError> {
+) -> Result<Vec<PtzPreset>, OnvifServiceError> {
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(true);
     let mut presets = Vec::new();
@@ -315,7 +320,7 @@ pub fn parse_get_presets_response(
                 if name == "Preset" {
                     if let Some(mut preset) = current.take() {
                         if preset.token.is_empty() {
-                            return Err(OnvifModuleError::MissingField("Preset/@token".into()));
+                            return Err(OnvifServiceError::MissingField("Preset/@token".into()));
                         }
                         if preset.name.is_empty() {
                             preset.name = preset.token.clone();
@@ -332,7 +337,7 @@ pub fn parse_get_presets_response(
             }
             Ok(Event::Eof) => break,
             Err(e) => {
-                return Err(OnvifModuleError::Onvif(
+                return Err(OnvifServiceError::Onvif(
                     cheetah_onvif_core::OnvifError::Xml(e.to_string()),
                 ));
             }

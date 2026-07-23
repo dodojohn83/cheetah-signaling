@@ -2,7 +2,7 @@ use crate::capability_cache::CapabilityCache;
 use crate::{
     DeviceCredentials, DriverConfig, DriverError, DriverResult, SoapClient, validate_endpoint,
 };
-use cheetah_onvif_module::services::{
+use cheetah_onvif_services::services::{
     MediaDialect, MediaProfile, OnvifNotification, PtzPreset, PtzVelocity, PullPointSubscription,
     RENEW_ACTION, SnapshotUri, StreamUri, UNSUBSCRIBE_ACTION, continuous_move_request,
     create_pull_point_subscription_request, get_capabilities_request,
@@ -15,7 +15,7 @@ use cheetah_onvif_module::services::{
     parse_pull_messages_response, pull_messages_request, renew_request, stop_request,
     unsubscribe_request,
 };
-use cheetah_onvif_module::{
+use cheetah_onvif_services::{
     CapabilityKind, CapabilityProbeResult, DeviceInformation, ParserLimits, Service, XAddrPolicy,
 };
 use std::collections::HashMap;
@@ -148,7 +148,7 @@ impl OnvifHttpDriver {
         &self,
         endpoint: &str,
         timeout: Option<Duration>,
-    ) -> DriverResult<cheetah_onvif_module::services::SystemDateAndTime> {
+    ) -> DriverResult<cheetah_onvif_services::services::SystemDateAndTime> {
         let deadline = timeout.map(|d| Instant::now() + d);
         let _permit = self
             .acquire_device_permit(endpoint, resolve_timeout(deadline)?)
@@ -165,7 +165,7 @@ impl OnvifHttpDriver {
                 http_timeout,
             )
             .await?;
-        Ok(cheetah_onvif_module::services::parse_get_system_date_and_time_response(&body)?)
+        Ok(cheetah_onvif_services::services::parse_get_system_date_and_time_response(&body)?)
     }
 
     /// Fetches the ONVIF service list, using a per-tenant/endpoint cache and TTL.

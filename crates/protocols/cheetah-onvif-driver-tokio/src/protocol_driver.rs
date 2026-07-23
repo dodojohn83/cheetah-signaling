@@ -7,7 +7,7 @@
 use crate::commands::*;
 use crate::{DriverConfig, DriverError, OnvifHttpDriver, events};
 use async_trait::async_trait;
-use cheetah_onvif_module::services::{SystemDateAndTime, redact_uri_userinfo};
+use cheetah_onvif_services::services::{SystemDateAndTime, redact_uri_userinfo};
 use cheetah_plugin_sdk::{
     CapabilityDescriptor, DriverCommand, DriverContext, HealthReport, HealthStatus, PluginError,
     PluginName, ProtocolCapability, ProtocolDirection, ProtocolDriver, ProtocolDriverFactory,

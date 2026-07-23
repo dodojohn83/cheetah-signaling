@@ -1,7 +1,7 @@
 //! Driver error types.
 
 use cheetah_onvif_core::OnvifError;
-use cheetah_onvif_module::OnvifModuleError;
+use cheetah_onvif_services::OnvifServiceError;
 
 /// Errors produced by the Tokio ONVIF driver.
 #[derive(Debug, thiserror::Error)]
@@ -11,7 +11,7 @@ pub enum DriverError {
     Onvif(#[from] OnvifError),
     /// Module builder/parser error.
     #[error(transparent)]
-    Module(#[from] OnvifModuleError),
+    Module(#[from] OnvifServiceError),
     /// HTTP transport failure.
     #[error("http error: {0}")]
     Http(String),

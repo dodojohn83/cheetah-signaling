@@ -4,11 +4,11 @@
 //! host can correlate the asynchronous result with the command that produced it.
 
 use cheetah_onvif_core::services::system_date_time::DateTime;
-use cheetah_onvif_module::services::{
+use cheetah_onvif_services::services::{
     MediaDialect, MediaProfile, OnvifNotification, PtzPreset, PullPointSubscription, SnapshotUri,
     StreamUri, SystemDateAndTime, normalize_topic, redact_uri_userinfo,
 };
-use cheetah_onvif_module::{CapabilityKind, CapabilityProbeResult, DeviceInformation, Service};
+use cheetah_onvif_services::{CapabilityKind, CapabilityProbeResult, DeviceInformation, Service};
 use cheetah_plugin_sdk::{DriverContext, PluginError, ProtocolEvent};
 use cheetah_signal_types::{TenantId, UtcTimestamp};
 use serde_json::{Value, json};

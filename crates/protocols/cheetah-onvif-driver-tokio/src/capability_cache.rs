@@ -10,7 +10,7 @@
 //! is inserted, expired entries are purged first and then the least-recently-known
 //! remaining entry is evicted.
 
-use cheetah_onvif_module::{CapabilityKind, CapabilityProbeResult, Service};
+use cheetah_onvif_services::{CapabilityKind, CapabilityProbeResult, Service};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};

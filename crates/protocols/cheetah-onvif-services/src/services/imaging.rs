@@ -5,7 +5,7 @@
 //! fabricate success.
 
 use crate::config::ParserLimits;
-use crate::error::OnvifModuleError;
+use crate::error::OnvifServiceError;
 use crate::services::parse::{ParseContext, local_name};
 use cheetah_onvif_core::soap::Envelope;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
@@ -36,7 +36,7 @@ pub struct ImagingSettings {
     pub focus_mode: Option<String>,
 }
 
-fn video_source_body(local: &str, video_source_token: &str) -> Result<String, OnvifModuleError> {
+fn video_source_body(local: &str, video_source_token: &str) -> Result<String, OnvifServiceError> {
     let mut cursor = Cursor::new(Vec::new());
     let mut writer = Writer::new(&mut cursor);
     let body_name = format!("timg:{local}");
@@ -48,35 +48,35 @@ fn video_source_body(local: &str, video_source_token: &str) -> Result<String, On
     writer.write_event(Event::End(BytesEnd::new("timg:VideoSourceToken")))?;
     writer.write_event(Event::End(BytesEnd::new(&body_name)))?;
     String::from_utf8(cursor.into_inner())
-        .map_err(|e| OnvifModuleError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string())))
+        .map_err(|e| OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string())))
 }
 
 /// Builds GetImagingSettings (read-only).
 pub fn get_imaging_settings_request(
     video_source_token: &str,
     message_id: impl Into<String>,
-) -> Result<String, OnvifModuleError> {
+) -> Result<String, OnvifServiceError> {
     Envelope::new(
         GET_IMAGING_SETTINGS_ACTION,
         video_source_body("GetImagingSettings", video_source_token)?,
     )
     .with_message_id(message_id)
     .build()
-    .map_err(OnvifModuleError::Onvif)
+    .map_err(OnvifServiceError::Onvif)
 }
 
 /// Builds GetOptions (read-only capability/options query).
 pub fn get_imaging_options_request(
     video_source_token: &str,
     message_id: impl Into<String>,
-) -> Result<String, OnvifModuleError> {
+) -> Result<String, OnvifServiceError> {
     Envelope::new(
         GET_OPTIONS_ACTION,
         video_source_body("GetOptions", video_source_token)?,
     )
     .with_message_id(message_id)
     .build()
-    .map_err(OnvifModuleError::Onvif)
+    .map_err(OnvifServiceError::Onvif)
 }
 
 /// v1 refuses imaging writes that may irreversibly change exposure/focus.
@@ -85,8 +85,8 @@ pub fn get_imaging_options_request(
 pub fn set_imaging_settings_request(
     _video_source_token: &str,
     _message_id: impl Into<String>,
-) -> Result<String, OnvifModuleError> {
-    Err(OnvifModuleError::Unsupported(
+) -> Result<String, OnvifServiceError> {
+    Err(OnvifServiceError::Unsupported(
         "ONVIF SetImagingSettings is not enabled in v1; imaging writes may be irreversible"
             .to_string(),
     ))
@@ -97,14 +97,14 @@ pub fn set_imaging_settings_action() -> &'static str {
     SET_IMAGING_SETTINGS_ACTION
 }
 
-fn parse_f64(text: &str, field: &str) -> Result<Option<f64>, OnvifModuleError> {
+fn parse_f64(text: &str, field: &str) -> Result<Option<f64>, OnvifServiceError> {
     let text = text.trim();
     if text.is_empty() {
         return Ok(None);
     }
     text.parse::<f64>()
         .map(Some)
-        .map_err(|e| OnvifModuleError::InvalidValue {
+        .map_err(|e| OnvifServiceError::InvalidValue {
             field: field.to_string(),
             message: format!("expected a valid floating point value: {e}"),
         })
@@ -114,7 +114,7 @@ fn parse_f64(text: &str, field: &str) -> Result<Option<f64>, OnvifModuleError> {
 pub fn parse_get_imaging_settings_response(
     xml: &str,
     limits: &ParserLimits,
-) -> Result<ImagingSettings, OnvifModuleError> {
+) -> Result<ImagingSettings, OnvifServiceError> {
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(true);
     let mut ctx = ParseContext::new(limits, xml)?;
@@ -156,7 +156,7 @@ pub fn parse_get_imaging_settings_response(
             }
             Ok(Event::Eof) => break,
             Err(e) => {
-                return Err(OnvifModuleError::Onvif(
+                return Err(OnvifServiceError::Onvif(
                     cheetah_onvif_core::OnvifError::Xml(e.to_string()),
                 ));
             }
@@ -183,7 +183,7 @@ mod tests {
     #[test]
     fn set_imaging_settings_is_unsupported() {
         let err = set_imaging_settings_request("vs1", "urn:uuid:1").unwrap_err();
-        assert!(matches!(err, OnvifModuleError::Unsupported(_)));
+        assert!(matches!(err, OnvifServiceError::Unsupported(_)));
     }
 
     #[test]
