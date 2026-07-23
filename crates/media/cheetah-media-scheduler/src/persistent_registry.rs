@@ -4,7 +4,11 @@ use crate::config::MediaRegistryConfig;
 use crate::error::SchedulerError;
 use crate::model::{MediaNode, NodeStatus};
 use crate::registry::{MediaNodeRegistry, NodeEntry, is_active, lease_until, to_media_node};
-use cheetah_signal_types::{Clock, MAX_PAGE_SIZE, MediaBindingId, NodeId, PageRequest, TenantId};
+use cheetah_domain::DomainEvent;
+use cheetah_signal_types::{
+    Clock, Event, IdGenerator, MAX_PAGE_SIZE, MediaBindingId, NodeId, PageRequest, Principal,
+    PrincipalKind, RequestContext, ResourceId, ResourceKind, ResourceRef, TenantId,
+};
 use cheetah_storage_api::MediaNodeRepository;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -16,6 +20,8 @@ pub struct PersistentMediaNodeRegistry {
     config: MediaRegistryConfig,
     repo: Arc<Mutex<Box<dyn MediaNodeRepository>>>,
     nodes: RwLock<BTreeMap<NodeId, NodeEntry>>,
+    id_generator: Arc<dyn IdGenerator>,
+    node_id: NodeId,
 }
 
 impl std::fmt::Debug for PersistentMediaNodeRegistry {
@@ -28,12 +34,53 @@ impl std::fmt::Debug for PersistentMediaNodeRegistry {
 
 impl PersistentMediaNodeRegistry {
     /// Creates a new registry backed by `repo`.
-    pub fn new(config: MediaRegistryConfig, repo: Box<dyn MediaNodeRepository>) -> Self {
+    pub fn new(
+        config: MediaRegistryConfig,
+        repo: Box<dyn MediaNodeRepository>,
+        id_generator: Arc<dyn IdGenerator>,
+        node_id: NodeId,
+    ) -> Self {
         Self {
             config,
             repo: Arc::new(Mutex::new(repo)),
             nodes: RwLock::new(BTreeMap::new()),
+            id_generator,
+            node_id,
         }
+    }
+
+    fn make_event(&self, clock: &dyn Clock, node: &MediaNode) -> Event<DomainEvent> {
+        let message_id = self.id_generator.generate_message_id();
+        let correlation_id = self.id_generator.generate_correlation_id();
+        let ctx = RequestContext {
+            tenant_id: TenantId::default(),
+            principal: Principal {
+                id: self.node_id.to_string(),
+                kind: PrincipalKind::Service,
+                scopes: Vec::new(),
+            },
+            message_id,
+            correlation_id,
+            traceparent: None,
+            tracestate: None,
+            deadline: None,
+            node_id: Some(self.node_id),
+            source_ip: None,
+        };
+        let aggregate_ref = ResourceRef {
+            tenant_id: TenantId::default(),
+            kind: ResourceKind::MediaNode,
+            id: ResourceId::MediaNode(node.node_id),
+        };
+        Event::new(
+            self.id_generator.as_ref(),
+            clock,
+            &ctx,
+            TenantId::default(),
+            aggregate_ref,
+            node.revision,
+            DomainEvent::MediaNodeUpdated { node: node.clone() },
+        )
     }
 
     /// Loads currently alive nodes from the repository into memory.
@@ -125,11 +172,12 @@ impl MediaNodeRegistry for PersistentMediaNodeRegistry {
 
         updated.recalc_health();
 
+        let event = self.make_event(clock, &updated);
         let persisted = self
             .repo
             .lock()
             .await
-            .register(updated)
+            .register(updated, vec![event])
             .await
             .map_err(|e| SchedulerError::Backend(e.to_string()))?;
 
@@ -184,6 +232,13 @@ impl MediaNodeRegistry for PersistentMediaNodeRegistry {
         let lease = lease_until(clock, self.config.default_lease_ttl_ms)
             .ok_or_else(|| SchedulerError::Backend("lease timestamp overflow".to_string()))?;
 
+        let mut event_node = entry.node.clone();
+        event_node.load = load;
+        event_node.session_count = session_count;
+        event_node.last_heartbeat_at = Some(now);
+        event_node.lease_until = Some(lease);
+        let event = self.make_event(clock, &event_node);
+
         let persisted = self
             .repo
             .lock()
@@ -195,6 +250,7 @@ impl MediaNodeRegistry for PersistentMediaNodeRegistry {
                 now,
                 load,
                 session_count,
+                vec![event],
             )
             .await
             .map_err(|e| SchedulerError::Backend(e.to_string()))?;
@@ -224,11 +280,20 @@ impl MediaNodeRegistry for PersistentMediaNodeRegistry {
         let now = clock.now_wall();
         let instance_id = entry.instance_id.clone();
 
+        let mut event_node = entry.node.clone();
+        event_node.draining = drain;
+        event_node.status = if drain {
+            NodeStatus::Draining
+        } else {
+            NodeStatus::Active
+        };
+        let event = self.make_event(clock, &event_node);
+
         let persisted = self
             .repo
             .lock()
             .await
-            .set_draining(node_id, instance_id, drain, now)
+            .set_draining(node_id, instance_id, drain, now, vec![event])
             .await
             .map_err(|e| SchedulerError::Backend(e.to_string()))?;
 
@@ -254,11 +319,16 @@ impl MediaNodeRegistry for PersistentMediaNodeRegistry {
         let instance_id = entry.instance_id.clone();
         let protection_lease = lease_until(clock, self.config.deregister_protection_ttl_ms);
 
+        let mut event_node = entry.node.clone();
+        event_node.status = NodeStatus::Left;
+        event_node.lease_until = protection_lease;
+        let event = self.make_event(clock, &event_node);
+
         let persisted = self
             .repo
             .lock()
             .await
-            .deregister(node_id, instance_id, now, protection_lease)
+            .deregister(node_id, instance_id, now, protection_lease, vec![event])
             .await
             .map_err(|e| SchedulerError::Backend(e.to_string()))?;
 

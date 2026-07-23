@@ -15,10 +15,10 @@
 
 ## 3. MED-R-002：MediaNode repository
 
-- [ ] 持久化稳定node、当前instance、endpoint、zone、addresses、capabilities、capacity、load、lease、drain和revision。
-- [ ] 同node新instance必须fence旧instance；旧heartbeat不得延长新lease。
-- [ ] 更新带revision条件并通过outbox发布node事件。
-- [ ] SQLite/PostgreSQL执行相同contract。
+- [x] 持久化稳定node、当前instance、endpoint、zone、addresses、capabilities、capacity、load、lease、drain和revision：`PostgresMediaNodeRepository`/`SqliteMediaNodeRepository` 的 `register` 在事务中 INSERT/UPDATE `media_nodes` 全部字段并返回持久化后的 `MediaNode`（`crates/storage/cheetah-storage-{postgres,sqlite}/src/media_node.rs`）。
+- [x] 同node新instance必须fence旧instance；旧heartbeat不得延长新lease：`heartbeat`/`set_draining`/`deregister` 的 SQL 均带 `WHERE node_id = ? AND instance_id = ?`，`fetch_optional` 不匹配时返回 `None`；`register` 对同一 `node_id` 用 `instance_epoch` 低值拒绝旧实例（`PersistentMediaNodeRegistry::heartbeat` 在调用 repo 前校验 lease_id 与 instance_epoch）。
+- [x] 更新带revision条件并通过outbox发布node事件：所有 mutating 方法在单一事务内先 `UPDATE ... revision = revision + 1`，再调用 `append_outbox_events` 把 `MediaNodeUpdated` 事件写入 `outbox_events`；`append_outbox_events` 将 `aggregate_sequence` 与 payload 中的 `node.revision` 同步为持久化后的 `revision`。
+- [x] SQLite/PostgreSQL执行相同contract：`crates/testing/cheetah-storage-tests/src/contract/media_node.rs` 新增 `node_updated_event` 辅助与 `assert_media_node_outbox_event` 断言，`postgres` 和 `sqlite` contract suites 均通过。
 
 ## 4. MED-R-003：调度与reservation
 

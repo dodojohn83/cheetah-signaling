@@ -969,8 +969,12 @@ pub async fn start(
     let mut media_registry_config = MediaRegistryConfig::production();
     let media_metrics = cheetah_media_scheduler::MediaMetrics::arc();
     let media_repo = storage.media_node_repository();
-    let persistent_registry =
-        PersistentMediaNodeRegistry::new(media_registry_config.clone(), media_repo);
+    let persistent_registry = PersistentMediaNodeRegistry::new(
+        media_registry_config.clone(),
+        media_repo,
+        id_generator.clone(),
+        node_id,
+    );
     persistent_registry
         .load(clock.as_ref())
         .await
