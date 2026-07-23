@@ -61,18 +61,23 @@ impl std::str::FromStr for OperationStatus {
     type Err = DomainError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let status = match s.to_lowercase().as_str() {
-            "pending" => Self::Pending,
-            "running" => Self::Running,
-            "succeeded" => Self::Succeeded,
-            "failed" => Self::Failed,
-            "cancelled" => Self::Cancelled,
-            "timed_out" => Self::TimedOut,
-            _ => {
-                return Err(DomainError::invalid_argument(format!(
-                    "unknown status: {s}"
-                )));
-            }
+        let status = if s.eq_ignore_ascii_case("pending") {
+            Self::Pending
+        } else if s.eq_ignore_ascii_case("running") {
+            Self::Running
+        } else if s.eq_ignore_ascii_case("succeeded") {
+            Self::Succeeded
+        } else if s.eq_ignore_ascii_case("failed") {
+            Self::Failed
+        } else if s.eq_ignore_ascii_case("cancelled") {
+            Self::Cancelled
+        } else if s.eq_ignore_ascii_case("timed_out") {
+            Self::TimedOut
+        } else {
+            let display = s.chars().take(64).collect::<String>();
+            return Err(DomainError::invalid_argument(format!(
+                "unknown status: {display}"
+            )));
         };
         Ok(status)
     }

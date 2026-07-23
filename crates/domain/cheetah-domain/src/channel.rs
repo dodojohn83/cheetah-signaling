@@ -58,15 +58,22 @@ impl std::str::FromStr for ChannelKind {
     type Err = DomainError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let kind = match s.to_lowercase().as_str() {
-            "video" => Self::Video,
-            "audio" => Self::Audio,
-            "ptz" => Self::Ptz,
-            "organization" => Self::Organization,
-            "event" => Self::Event,
-            "io" => Self::Io,
-            "composite" => Self::Composite,
-            _ => Self::Unknown,
+        let kind = if s.eq_ignore_ascii_case("video") {
+            Self::Video
+        } else if s.eq_ignore_ascii_case("audio") {
+            Self::Audio
+        } else if s.eq_ignore_ascii_case("ptz") {
+            Self::Ptz
+        } else if s.eq_ignore_ascii_case("organization") {
+            Self::Organization
+        } else if s.eq_ignore_ascii_case("event") {
+            Self::Event
+        } else if s.eq_ignore_ascii_case("io") {
+            Self::Io
+        } else if s.eq_ignore_ascii_case("composite") {
+            Self::Composite
+        } else {
+            Self::Unknown
         };
         Ok(kind)
     }
@@ -106,11 +113,14 @@ impl std::str::FromStr for ChannelStatus {
     type Err = DomainError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let status = match s.to_lowercase().as_str() {
-            "online" => Self::Online,
-            "offline" => Self::Offline,
-            "fault" => Self::Fault,
-            _ => Self::Unknown,
+        let status = if s.eq_ignore_ascii_case("online") {
+            Self::Online
+        } else if s.eq_ignore_ascii_case("offline") {
+            Self::Offline
+        } else if s.eq_ignore_ascii_case("fault") {
+            Self::Fault
+        } else {
+            Self::Unknown
         };
         Ok(status)
     }

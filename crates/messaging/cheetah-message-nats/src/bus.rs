@@ -80,8 +80,8 @@ impl NatsBus {
         operation_timeout: Duration,
     ) -> Result<Self, BusError> {
         let url = url.into();
-        let scheme = url.split("://").next().unwrap_or(&url).to_lowercase();
-        if !matches!(scheme.as_str(), "tls" | "wss") {
+        let scheme = url.split("://").next().unwrap_or(&url);
+        if !scheme.eq_ignore_ascii_case("tls") && !scheme.eq_ignore_ascii_case("wss") {
             return Err(nats_error_to_bus(format!(
                 "NATS URL must use tls:// or wss:// scheme, got: {url}"
             )));
