@@ -2,6 +2,28 @@
 
 use crate::CorrelationId;
 
+/// Maximum byte length of a `SignalError` safe message.
+const MAX_ERROR_MESSAGE_BYTES: usize = 2048;
+/// Maximum byte length of a field violation field path.
+const MAX_FIELD_VIOLATION_FIELD_BYTES: usize = 256;
+/// Maximum byte length of a field violation description.
+const MAX_FIELD_VIOLATION_DESCRIPTION_BYTES: usize = 1024;
+
+/// Truncates `s` to at most `max` bytes, never splitting a multi-byte character.
+fn clamp_string_bytes(s: String, max: usize) -> String {
+    if s.len() <= max {
+        return s;
+    }
+    let mut end = 0;
+    for (i, c) in s.char_indices() {
+        if i + c.len_utf8() > max {
+            break;
+        }
+        end = i + c.len_utf8();
+    }
+    s[..end].to_string()
+}
+
 /// Categorization of failures that can be returned to callers.
 ///
 /// Each variant has a stable code string and a retryability classification.
@@ -167,7 +189,7 @@ pub struct SignalError {
 impl SignalError {
     /// Creates a new error with the given kind and safe message.
     pub fn new(kind: SignalErrorKind, message: impl Into<String>) -> Self {
-        let message = message.into();
+        let message = clamp_string_bytes(message.into(), MAX_ERROR_MESSAGE_BYTES);
         Self {
             code: kind.code(),
             retryable: kind.is_retryable(),
@@ -217,8 +239,11 @@ impl SignalError {
         description: impl Into<String>,
     ) -> Self {
         self.field_violations.push(FieldViolation {
-            field: field.into(),
-            description: description.into(),
+            field: clamp_string_bytes(field.into(), MAX_FIELD_VIOLATION_FIELD_BYTES),
+            description: clamp_string_bytes(
+                description.into(),
+                MAX_FIELD_VIOLATION_DESCRIPTION_BYTES,
+            ),
         });
         self
     }
@@ -259,3 +284,50 @@ pub struct FieldViolation {
 
 /// Alias used throughout the workspace for fallible operations.
 pub type Result<T> = std::result::Result<T, SignalError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn signal_error_clamps_oversized_message() {
+        let oversized = "x".repeat(MAX_ERROR_MESSAGE_BYTES + 1);
+        let err = SignalError::new(SignalErrorKind::InvalidArgument, oversized);
+        assert_eq!(err.message().len(), MAX_ERROR_MESSAGE_BYTES);
+    }
+
+    #[test]
+    fn signal_error_clamps_oversized_field_violation() {
+        let err = SignalError::new(SignalErrorKind::InvalidArgument, "bad request")
+            .with_field_violation(
+                "x".repeat(MAX_FIELD_VIOLATION_FIELD_BYTES + 1),
+                "y".repeat(5),
+            );
+        assert_eq!(
+            err.field_violations()[0].field.len(),
+            MAX_FIELD_VIOLATION_FIELD_BYTES
+        );
+        assert_eq!(err.field_violations()[0].description, "y".repeat(5));
+    }
+
+    #[test]
+    fn signal_error_clamps_oversized_field_description() {
+        let err = SignalError::new(SignalErrorKind::InvalidArgument, "bad request")
+            .with_field_violation(
+                "field",
+                "x".repeat(MAX_FIELD_VIOLATION_DESCRIPTION_BYTES + 1),
+            );
+        assert_eq!(
+            err.field_violations()[0].description.len(),
+            MAX_FIELD_VIOLATION_DESCRIPTION_BYTES
+        );
+    }
+
+    #[test]
+    fn clamp_string_bytes_preserves_utf8_boundary() {
+        let s = "α".repeat(10);
+        let clamped = super::clamp_string_bytes(s.clone(), 3);
+        assert!(clamped.is_char_boundary(clamped.len()));
+        assert!(clamped.len() <= 3);
+    }
+}
