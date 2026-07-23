@@ -1,5 +1,6 @@
 //! Authentication and RBAC for the HTTP API.
 
+use crate::router::{MAX_CORRELATION_ID_BYTES, RequestId};
 use crate::{ApiState, HttpError};
 use axum::{
     extract::{ConnectInfo, FromRequestParts},
@@ -213,18 +214,24 @@ async fn authenticate_bearer(
     })
 }
 
+/// Maximum byte length of a string placed into an `AuditEvent` free-text field
+/// from an untrusted source. Keeps audit records bounded even if upstream
+/// validation is bypassed or absent.
+const MAX_AUDIT_STRING_BYTES: usize = 256;
+
 fn record_auth_audit(parts: &Parts, state: &ApiState, result: &Result<AuthContext, HttpError>) {
     let request_id = parts
-        .headers
-        .get("x-request-id")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string())
+        .extensions
+        .get::<RequestId>()
+        .and_then(|r| r.0.parse::<uuid::Uuid>().ok())
+        .map(|uuid| uuid.to_string())
         .unwrap_or_else(|| state.id_generator.generate_message_id().to_string());
     let correlation_id = parts
         .headers
         .get("x-correlation-id")
         .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string());
+        .filter(|s| !s.is_empty() && s.len() <= MAX_CORRELATION_ID_BYTES)
+        .map(str::to_string);
     let source_ip = parts
         .extensions
         .get::<ConnectInfo<SocketAddr>>()
@@ -232,7 +239,7 @@ fn record_auth_audit(parts: &Parts, state: &ApiState, result: &Result<AuthContex
 
     let (actor, tenant_id, outcome, details) = match result {
         Ok(ctx) => (
-            ctx.principal.id.clone(),
+            truncate_audit_string(ctx.principal.id.clone(), MAX_AUDIT_STRING_BYTES),
             ctx.tenant_id,
             AuditOutcome::Success,
             None,
@@ -255,11 +262,25 @@ fn record_auth_audit(parts: &Parts, state: &ApiState, result: &Result<AuthContex
         target_type: "session".to_string(),
         target_id: None,
         outcome,
-        request_id,
-        correlation_id,
+        request_id: truncate_audit_string(request_id, MAX_AUDIT_STRING_BYTES),
+        correlation_id: correlation_id.map(|s| truncate_audit_string(s, MAX_AUDIT_STRING_BYTES)),
         source_ip,
         node_id: state.config.node_id,
         details: details.map(SafeDetails::new),
     };
     state.audit.record(event);
+}
+
+fn truncate_audit_string(s: String, max: usize) -> String {
+    if s.len() <= max {
+        return s;
+    }
+    let mut end = 0;
+    for (i, c) in s.char_indices() {
+        if i + c.len_utf8() > max {
+            break;
+        }
+        end = i + c.len_utf8();
+    }
+    s[..end].to_string()
 }
