@@ -605,10 +605,26 @@ impl MediaSession {
         start_time: UtcTimestamp,
         end_time: UtcTimestamp,
         scale: f64,
-    ) {
+    ) -> crate::Result<()> {
+        if self.is_terminal() {
+            return Err(DomainError::invalid_argument(
+                "cannot set playback window on a terminal media session",
+            ));
+        }
+        if start_time > end_time {
+            return Err(DomainError::invalid_argument(
+                "playback start_time must not be after end_time",
+            ));
+        }
+        if !scale.is_finite() || scale < 0.0 {
+            return Err(DomainError::invalid_argument(
+                "playback scale must be finite and non-negative",
+            ));
+        }
         self.playback_start_time = Some(start_time);
         self.playback_end_time = Some(end_time);
         self.playback_scale = Some(scale);
+        Ok(())
     }
 
     /// Whether the session is terminal.
@@ -679,5 +695,58 @@ mod tests {
 
         let result = session.failed(MediaSessionError::new("code", "x".repeat(2049)), &clock);
         assert!(matches!(result, Err(DomainError::InvalidArgument { .. })));
+    }
+
+    #[test]
+    fn set_playback_window_rejects_invalid_window() -> crate::Result<()> {
+        let clock = InMemoryClock::new();
+        let ids = InMemoryIdGenerator::new();
+        let tenant_id = ids.generate_tenant_id();
+        let device_id = ids.generate_device_id();
+        let channel_id = ids.generate_channel_id();
+        let operation_id = ids.generate_operation_id();
+        let media_session_id = ids.generate_media_session_id();
+        let scope = crate::IdempotencyScope::new(
+            tenant_id,
+            "u",
+            cheetah_signal_types::ResourceRef {
+                tenant_id,
+                kind: ResourceKind::Device,
+                id: ResourceId::Device(device_id),
+            },
+            "key",
+        )?;
+        let (mut session, _) = MediaSession::new(
+            &clock,
+            media_session_id,
+            tenant_id,
+            device_id,
+            channel_id,
+            MediaPurpose::Playback,
+            MediaSessionDesiredState::Active,
+            OwnerEpoch::default(),
+            operation_id,
+            scope,
+            None,
+        )?;
+
+        let start = clock.now_wall();
+        let end = start;
+        session.set_playback_window(start, end, 1.0)?;
+        assert_eq!(session.playback_scale(), Some(1.0));
+
+        assert!(session.set_playback_window(start, end, f64::NAN).is_err());
+        assert!(
+            session
+                .set_playback_window(start, end, f64::INFINITY)
+                .is_err()
+        );
+        assert!(session.set_playback_window(start, end, -1.0).is_err());
+
+        let later = start
+            .checked_add(cheetah_signal_types::DurationMs::from_millis(1_000))
+            .ok_or_else(|| DomainError::internal("timestamp overflow"))?;
+        assert!(session.set_playback_window(later, start, 1.0).is_err());
+        Ok(())
     }
 }
