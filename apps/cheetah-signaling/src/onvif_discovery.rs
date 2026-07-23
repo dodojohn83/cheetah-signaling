@@ -24,6 +24,13 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 use uuid::Uuid;
 
+/// Maximum ONVIF discovery interval; larger values overflow `tokio::time` deadlines.
+const MAX_DISCOVERY_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
+
+fn clamp_discovery_interval(ms: u64) -> Duration {
+    Duration::from_millis(ms).min(MAX_DISCOVERY_INTERVAL)
+}
+
 /// Starts a periodic ONVIF discovery worker.
 ///
 /// If `onvif.discovery_interval_ms` is zero the worker performs a single sweep
@@ -65,8 +72,8 @@ pub fn spawn(
         };
 
         let interval =
-            Duration::from_millis(config.discovery_interval_ms.as_millis().max(0) as u64);
-        let single_sweep = interval.is_zero();
+            clamp_discovery_interval(config.discovery_interval_ms.as_millis().max(0) as u64);
+        let single_sweep = config.discovery_interval_ms.as_millis() == 0;
 
         loop {
             if cancel.is_cancelled() {
@@ -330,5 +337,20 @@ fn build_context(
         deadline: None,
         node_id: Some(node_id),
         source_ip,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clamp_discovery_interval_saturates_at_max_and_preserves_zero() {
+        assert_eq!(clamp_discovery_interval(0), Duration::ZERO);
+        assert_eq!(
+            clamp_discovery_interval(5_000),
+            Duration::from_millis(5_000)
+        );
+        assert_eq!(clamp_discovery_interval(u64::MAX), MAX_DISCOVERY_INTERVAL);
     }
 }
