@@ -1,9 +1,11 @@
 //! Webhook HTTP client and background delivery worker.
 
+use bytes::Bytes;
 use cheetah_signal_application::{
     WebhookHttpClient, WebhookHttpRequest, WebhookHttpResponse, WebhookService,
 };
 use cheetah_signal_types::{SignalError, SignalErrorKind};
+use futures::StreamExt;
 use reqwest::dns::{Addrs, Name, Resolve, Resolving};
 use reqwest::redirect::Policy;
 use std::net::{IpAddr, SocketAddr};
@@ -13,6 +15,12 @@ use tokio_util::sync::CancellationToken;
 /// Maximum outbound webhook request timeout; larger values overflow
 /// `tokio::time` deadlines used by `reqwest`.
 const MAX_WEBHOOK_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// Maximum response body size the webhook client will accept.
+///
+/// This bounds the memory used for a single delivery attempt so a misbehaving
+/// target cannot exhaust the process by returning a huge body.
+const MAX_WEBHOOK_RESPONSE_BODY_BYTES: usize = 1_048_576;
 
 fn clamp_webhook_timeout(timeout_ms: u64) -> Duration {
     Duration::from_millis(timeout_ms).min(MAX_WEBHOOK_TIMEOUT)
@@ -107,12 +115,43 @@ impl WebhookHttpClient for ReqwestWebhookClient {
         })?;
 
         let status = resp.status().as_u16();
-        let body = match resp.bytes().await {
-            Ok(bytes) => bytes.to_vec(),
-            Err(_) => Vec::new(),
-        };
+        if let Some(content_length) = resp.content_length()
+            && content_length as usize > MAX_WEBHOOK_RESPONSE_BODY_BYTES
+        {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                "webhook response body exceeds maximum allowed size",
+            ));
+        }
+        let body =
+            read_bounded_stream(resp.bytes_stream(), MAX_WEBHOOK_RESPONSE_BODY_BYTES).await?;
         Ok(WebhookHttpResponse { status, body })
     }
+}
+
+/// Reads a byte stream while enforcing a cumulative byte limit.
+async fn read_bounded_stream<E, S>(mut stream: S, limit: usize) -> Result<Vec<u8>, SignalError>
+where
+    E: std::error::Error + Send + Sync + 'static,
+    S: futures::Stream<Item = Result<Bytes, E>> + Unpin,
+{
+    let mut body = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| {
+            SignalError::new(
+                SignalErrorKind::Unavailable,
+                format!("webhook response body read failed: {e}"),
+            )
+        })?;
+        if body.len() + chunk.len() > limit {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                "webhook response body exceeds maximum allowed size",
+            ));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
 }
 
 fn validate_host(url: &url::Url) -> Result<(), SignalError> {
@@ -212,5 +251,39 @@ mod tests {
     fn clamp_webhook_timeout_saturates_at_max() {
         assert_eq!(clamp_webhook_timeout(1_000), Duration::from_millis(1_000));
         assert_eq!(clamp_webhook_timeout(u64::MAX), MAX_WEBHOOK_TIMEOUT);
+    }
+
+    #[tokio::test]
+    async fn read_bounded_stream_accepts_body_within_limit() {
+        let stream = futures::stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
+            b"hello".to_vec(),
+        ))]);
+        let body = match read_bounded_stream(stream, 10).await {
+            Ok(b) => b,
+            Err(e) => panic!("{e:?}"),
+        };
+        assert_eq!(body, b"hello");
+    }
+
+    #[tokio::test]
+    async fn read_bounded_stream_rejects_body_over_limit() {
+        let stream = futures::stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
+            b"hello".to_vec(),
+        ))]);
+        let result = read_bounded_stream(stream, 2).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn read_bounded_stream_accepts_exact_limit() {
+        let stream = futures::stream::iter(vec![
+            Ok::<_, std::io::Error>(Bytes::from(b"hel".to_vec())),
+            Ok::<_, std::io::Error>(Bytes::from(b"lo".to_vec())),
+        ]);
+        let body = match read_bounded_stream(stream, 5).await {
+            Ok(b) => b,
+            Err(e) => panic!("{e:?}"),
+        };
+        assert_eq!(body, b"hello");
     }
 }
