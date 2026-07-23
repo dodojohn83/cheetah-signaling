@@ -176,3 +176,53 @@ async fn device_service_replace_channel_catalog() {
     assert_eq!(channels[0].name(), "ch1");
     assert_eq!(channels[1].name(), "ch2");
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn device_service_replace_channel_catalog_rejects_oversized_catalog() {
+    let mut ctx = setup();
+    let context = request_context(&ctx);
+    let device = ctx
+        .device_service
+        .register_or_update_device(
+            &context,
+            &mut ctx.uow,
+            RegisterDeviceRequest {
+                protocol: "gb28181".to_string(),
+                external_id: "ext-1".to_string(),
+                authority: Some("authority".to_string()),
+                name: "camera-01".to_string(),
+                kind: "camera".to_string(),
+                capabilities: None,
+                metadata: None,
+            },
+        )
+        .await
+        .unwrap()
+        .device;
+
+    let oversized: Vec<ChannelDescriptor> = (0..1025)
+        .map(|i| ChannelDescriptor {
+            id: None,
+            name: format!("ch-{i}"),
+            kind: "video".to_string(),
+            enabled: true,
+            status: None,
+            stream_profiles: Vec::new(),
+            ptz_capabilities: None,
+            metadata: None,
+        })
+        .collect();
+
+    let result = ctx
+        .device_service
+        .replace_channel_catalog(
+            &context,
+            &mut ctx.uow,
+            device.device_id,
+            ReplaceChannelCatalogRequest {
+                channels: oversized,
+            },
+        )
+        .await;
+    assert!(result.is_err());
+}
