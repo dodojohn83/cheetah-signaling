@@ -77,7 +77,6 @@ pub use protocol_session::{
     SipTransport,
 };
 pub use tenant::{MAX_TENANT_NAME_LEN, Tenant};
-
 pub(crate) mod str_util {
     /// Case- and dash/underscore-insensitive ASCII comparison without allocating.
     pub(crate) fn eq_ignore_ascii_case_and_dash_underscore(s: &str, pat: &str) -> bool {
@@ -98,4 +97,7 @@ pub(crate) mod str_util {
             }))
     }
 }
-pub use webhook::{DeliveryStatus, WebhookConfig, WebhookDelivery, sign_webhook_payload};
+pub use webhook::{
+    DeliveryStatus, MAX_WEBHOOK_EVENT_TYPE_BYTES, WebhookConfig, WebhookDelivery,
+    sign_webhook_payload, validate_event_type,
+};
