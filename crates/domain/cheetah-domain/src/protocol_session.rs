@@ -51,13 +51,17 @@ impl std::str::FromStr for SipTransport {
     type Err = DomainError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_ascii_lowercase().as_str() {
-            "udp" => Ok(Self::Udp),
-            "tcp" => Ok(Self::Tcp),
-            other => Err(DomainError::invalid_argument(format!(
-                "unknown transport: {other}"
-            ))),
-        }
+        let transport = if s.eq_ignore_ascii_case("udp") {
+            Self::Udp
+        } else if s.eq_ignore_ascii_case("tcp") {
+            Self::Tcp
+        } else {
+            let display = s.chars().take(64).collect::<String>();
+            return Err(DomainError::invalid_argument(format!(
+                "unknown transport: {display}"
+            )));
+        };
+        Ok(transport)
     }
 }
 
@@ -92,14 +96,19 @@ impl std::str::FromStr for PresenceState {
     type Err = DomainError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_ascii_lowercase().as_str() {
-            "unknown" => Ok(Self::Unknown),
-            "online" => Ok(Self::Online),
-            "offline" => Ok(Self::Offline),
-            other => Err(DomainError::invalid_argument(format!(
-                "unknown presence state: {other}"
-            ))),
-        }
+        let state = if s.eq_ignore_ascii_case("unknown") {
+            Self::Unknown
+        } else if s.eq_ignore_ascii_case("online") {
+            Self::Online
+        } else if s.eq_ignore_ascii_case("offline") {
+            Self::Offline
+        } else {
+            let display = s.chars().take(64).collect::<String>();
+            return Err(DomainError::invalid_argument(format!(
+                "unknown presence state: {display}"
+            )));
+        };
+        Ok(state)
     }
 }
 
@@ -243,31 +252,83 @@ impl std::str::FromStr for CompatibilityCapability {
     type Err = DomainError;
 
     fn from_str(s: &str) -> crate::Result<Self> {
-        match s.to_ascii_lowercase().replace('-', "_").as_str() {
-            "charset_fallback" => Ok(Self::CharsetFallback),
-            "mime_alias" => Ok(Self::MimeAlias),
-            "contact_rport_route" => Ok(Self::ContactRportRoute),
-            "header_normalization" => Ok(Self::HeaderNormalization),
-            "catalog_count_fragment" => Ok(Self::CatalogCountFragment),
-            "catalog_notify" => Ok(Self::CatalogNotify),
-            "alarm_subscription" => Ok(Self::AlarmSubscription),
-            "mobile_position" => Ok(Self::MobilePosition),
-            "gb2016" => Ok(Self::Gb2016),
-            "config_download" => Ok(Self::ConfigDownload),
-            "preset_query" => Ok(Self::PresetQuery),
-            "broadcast" => Ok(Self::Broadcast),
-            "media_status" => Ok(Self::MediaStatus),
-            "sdp_media_override" => Ok(Self::SdpMediaOverride),
-            "duplicate_register_allowed" => Ok(Self::DuplicateRegisterAllowed),
-            "strict_realm" => Ok(Self::StrictRealm),
-            "minimum_expiry" => Ok(Self::MinimumExpiry),
-            "udp_route" => Ok(Self::UdpRoute),
-            "tcp_route" => Ok(Self::TcpRoute),
-            "device_per_password" => Ok(Self::DevicePerPassword),
-            other => Err(DomainError::invalid_argument(format!(
-                "unknown compatibility capability: {other}"
-            ))),
-        }
+        let cap =
+            if crate::str_util::eq_ignore_ascii_case_and_dash_underscore(s, "charset_fallback") {
+                Self::CharsetFallback
+            } else if crate::str_util::eq_ignore_ascii_case_and_dash_underscore(s, "mime_alias") {
+                Self::MimeAlias
+            } else if crate::str_util::eq_ignore_ascii_case_and_dash_underscore(
+                s,
+                "contact_rport_route",
+            ) {
+                Self::ContactRportRoute
+            } else if crate::str_util::eq_ignore_ascii_case_and_dash_underscore(
+                s,
+                "header_normalization",
+            ) {
+                Self::HeaderNormalization
+            } else if crate::str_util::eq_ignore_ascii_case_and_dash_underscore(
+                s,
+                "catalog_count_fragment",
+            ) {
+                Self::CatalogCountFragment
+            } else if crate::str_util::eq_ignore_ascii_case_and_dash_underscore(s, "catalog_notify")
+            {
+                Self::CatalogNotify
+            } else if crate::str_util::eq_ignore_ascii_case_and_dash_underscore(
+                s,
+                "alarm_subscription",
+            ) {
+                Self::AlarmSubscription
+            } else if crate::str_util::eq_ignore_ascii_case_and_dash_underscore(
+                s,
+                "mobile_position",
+            ) {
+                Self::MobilePosition
+            } else if crate::str_util::eq_ignore_ascii_case_and_dash_underscore(s, "gb2016") {
+                Self::Gb2016
+            } else if crate::str_util::eq_ignore_ascii_case_and_dash_underscore(
+                s,
+                "config_download",
+            ) {
+                Self::ConfigDownload
+            } else if crate::str_util::eq_ignore_ascii_case_and_dash_underscore(s, "preset_query") {
+                Self::PresetQuery
+            } else if crate::str_util::eq_ignore_ascii_case_and_dash_underscore(s, "broadcast") {
+                Self::Broadcast
+            } else if crate::str_util::eq_ignore_ascii_case_and_dash_underscore(s, "media_status") {
+                Self::MediaStatus
+            } else if crate::str_util::eq_ignore_ascii_case_and_dash_underscore(
+                s,
+                "sdp_media_override",
+            ) {
+                Self::SdpMediaOverride
+            } else if crate::str_util::eq_ignore_ascii_case_and_dash_underscore(
+                s,
+                "duplicate_register_allowed",
+            ) {
+                Self::DuplicateRegisterAllowed
+            } else if crate::str_util::eq_ignore_ascii_case_and_dash_underscore(s, "strict_realm") {
+                Self::StrictRealm
+            } else if crate::str_util::eq_ignore_ascii_case_and_dash_underscore(s, "minimum_expiry")
+            {
+                Self::MinimumExpiry
+            } else if crate::str_util::eq_ignore_ascii_case_and_dash_underscore(s, "udp_route") {
+                Self::UdpRoute
+            } else if crate::str_util::eq_ignore_ascii_case_and_dash_underscore(s, "tcp_route") {
+                Self::TcpRoute
+            } else if crate::str_util::eq_ignore_ascii_case_and_dash_underscore(
+                s,
+                "device_per_password",
+            ) {
+                Self::DevicePerPassword
+            } else {
+                let display = s.chars().take(64).collect::<String>();
+                return Err(DomainError::invalid_argument(format!(
+                    "unknown compatibility capability: {display}"
+                )));
+            };
+        Ok(cap)
     }
 }
 

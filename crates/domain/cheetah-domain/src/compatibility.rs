@@ -110,13 +110,17 @@ impl std::str::FromStr for BroadcastAddressSource {
     type Err = DomainError;
 
     fn from_str(s: &str) -> crate::Result<Self> {
-        match s.to_ascii_lowercase().replace('-', "_").as_str() {
-            "media_node" => Ok(Self::MediaNode),
-            "signaling_host" => Ok(Self::SignalingHost),
-            other => Err(DomainError::invalid_argument(format!(
-                "unknown broadcast address source: {other}"
-            ))),
-        }
+        let source = if crate::str_util::eq_ignore_ascii_case_and_dash_underscore(s, "media_node") {
+            Self::MediaNode
+        } else if crate::str_util::eq_ignore_ascii_case_and_dash_underscore(s, "signaling_host") {
+            Self::SignalingHost
+        } else {
+            let display = s.chars().take(64).collect::<String>();
+            return Err(DomainError::invalid_argument(format!(
+                "unknown broadcast address source: {display}"
+            )));
+        };
+        Ok(source)
     }
 }
 
@@ -343,6 +347,14 @@ mod tests {
             "media_node".parse::<BroadcastAddressSource>().unwrap(),
             BroadcastAddressSource::MediaNode
         );
+        assert_eq!(
+            "MEDIA-NODE".parse::<BroadcastAddressSource>().unwrap(),
+            BroadcastAddressSource::MediaNode
+        );
         assert!("bogus".parse::<BroadcastAddressSource>().is_err());
+        assert!(matches!(
+            "x".repeat(1024).parse::<BroadcastAddressSource>(),
+            Err(DomainError::InvalidArgument { .. })
+        ));
     }
 }

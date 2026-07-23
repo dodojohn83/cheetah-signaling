@@ -74,13 +74,17 @@ impl std::str::FromStr for PlatformDirection {
     type Err = DomainError;
 
     fn from_str(s: &str) -> crate::Result<Self> {
-        match s.to_ascii_lowercase().as_str() {
-            "upstream" => Ok(Self::Upstream),
-            "downstream" => Ok(Self::Downstream),
-            other => Err(DomainError::invalid_argument(format!(
-                "unknown platform direction: {other}"
-            ))),
-        }
+        let direction = if s.eq_ignore_ascii_case("upstream") {
+            Self::Upstream
+        } else if s.eq_ignore_ascii_case("downstream") {
+            Self::Downstream
+        } else {
+            let display = s.chars().take(64).collect::<String>();
+            return Err(DomainError::invalid_argument(format!(
+                "unknown platform direction: {display}"
+            )));
+        };
+        Ok(direction)
     }
 }
 
@@ -906,5 +910,14 @@ mod tests {
         assert_eq!(policy.backoff_ms(55), 8_000);
         assert_eq!(policy.backoff_ms(63), 8_000);
         assert_eq!(policy.backoff_ms(u32::MAX), 8_000);
+    }
+
+    #[test]
+    fn platform_direction_from_str_is_case_insensitive_and_bounds_error() {
+        let parsed = "DOWNSTREAM".parse::<PlatformDirection>();
+        assert!(matches!(parsed, Ok(PlatformDirection::Downstream)));
+
+        let result = "x".repeat(1024).parse::<PlatformDirection>();
+        assert!(matches!(result, Err(DomainError::InvalidArgument { .. })));
     }
 }
