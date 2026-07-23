@@ -1420,6 +1420,9 @@ impl Default for ObservabilityConfig {
     }
 }
 
+/// Maximum byte length of the log format configuration value.
+const MAX_LOG_FORMAT_INPUT_BYTES: usize = 64;
+
 /// Supported log output formats.
 #[derive(Clone, Copy, Debug, Default, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -1449,11 +1452,18 @@ impl<'de> Deserialize<'de> for LogFormat {
             where
                 E: serde::de::Error,
             {
-                let normalized = value.trim().to_ascii_lowercase();
-                match normalized.as_str() {
-                    "" | "json" => Ok(LogFormat::Json),
-                    "compact" => Ok(LogFormat::Compact),
-                    other => Err(E::unknown_variant(other, &["json", "compact"])),
+                if value.len() > MAX_LOG_FORMAT_INPUT_BYTES {
+                    return Err(E::custom(format!(
+                        "log format value exceeds {MAX_LOG_FORMAT_INPUT_BYTES} bytes"
+                    )));
+                }
+                let trimmed = value.trim();
+                if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("json") {
+                    Ok(LogFormat::Json)
+                } else if trimmed.eq_ignore_ascii_case("compact") {
+                    Ok(LogFormat::Compact)
+                } else {
+                    Err(E::unknown_variant(trimmed, &["json", "compact"]))
                 }
             }
         }

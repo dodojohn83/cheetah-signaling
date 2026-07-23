@@ -1,9 +1,10 @@
 //! Integration tests for cheetah-signal-types.
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use cheetah_signal_types::{
     Deadline, DeviceId, DurationMs, MAX_PAGE_SIZE, MediaSessionId, MessageId, OwnerEpoch, Page,
     PageRequest, ProtocolIdentity, Revision, SignalConfig, SignalError, SignalErrorKind, TenantId,
-    UtcTimestamp,
+    UtcTimestamp, config::LogFormat,
 };
 use std::str::FromStr;
 
@@ -165,4 +166,31 @@ fn generated_ids_use_uuidv7() -> Result<(), SignalError> {
         .ok_or_else(|| SignalError::new(SignalErrorKind::Internal, "uuid version missing"))?;
     assert_eq!(version, uuid::Version::SortRand);
     Ok(())
+}
+
+#[test]
+fn log_format_deserialization_is_case_insensitive_and_bounded() {
+    let config: SignalConfig = toml::from_str("[observability]\nlog_format = \"json\"").unwrap();
+    assert_eq!(config.observability.log_format, LogFormat::Json);
+
+    let config: SignalConfig = toml::from_str("[observability]\nlog_format = \"JSON\"").unwrap();
+    assert_eq!(config.observability.log_format, LogFormat::Json);
+
+    let config: SignalConfig = toml::from_str("[observability]\nlog_format = \"compact\"").unwrap();
+    assert_eq!(config.observability.log_format, LogFormat::Compact);
+
+    let config: SignalConfig =
+        toml::from_str("[observability]\nlog_format = \" COMPACT \"").unwrap();
+    assert_eq!(config.observability.log_format, LogFormat::Compact);
+
+    let config: SignalConfig = toml::from_str("[observability]\nlog_format = \"\"").unwrap();
+    assert_eq!(config.observability.log_format, LogFormat::Json);
+
+    let invalid = toml::from_str::<SignalConfig>("[observability]\nlog_format = \"verbose\"");
+    assert!(invalid.is_err(), "expected invalid log format to fail");
+
+    let long = "x".repeat(65);
+    let oversized =
+        toml::from_str::<SignalConfig>(&format!("[observability]\nlog_format = \"{long}\""));
+    assert!(oversized.is_err(), "expected oversized log format to fail");
 }
