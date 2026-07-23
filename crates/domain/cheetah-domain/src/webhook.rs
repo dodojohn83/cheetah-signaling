@@ -166,13 +166,18 @@ fn validate_event_types(event_types: &[String]) -> Result<()> {
 /// Maximum byte length of an HMAC-SHA256 hex signature.
 const MAX_WEBHOOK_SIGNATURE_BYTES: usize = 256;
 
-fn validate_last_error(error: &str) -> Result<()> {
-    if error.len() > MAX_WEBHOOK_LAST_ERROR_BYTES {
-        return Err(DomainError::invalid_argument(
-            "webhook last error message too long",
-        ));
+fn clamp_string_bytes(s: String, max: usize) -> String {
+    if s.len() <= max {
+        return s;
     }
-    Ok(())
+    let mut end = 0;
+    for (i, c) in s.char_indices() {
+        if i + c.len_utf8() > max {
+            break;
+        }
+        end = i + c.len_utf8();
+    }
+    s[..end].to_string()
 }
 
 /// A configured outbound webhook endpoint.
@@ -375,9 +380,8 @@ impl WebhookDelivery {
         error: String,
         next_attempt_at: Option<UtcTimestamp>,
     ) -> Result<()> {
-        validate_last_error(&error)?;
         self.status = DeliveryStatus::Failed;
-        self.last_error = Some(error);
+        self.last_error = Some(clamp_string_bytes(error, MAX_WEBHOOK_LAST_ERROR_BYTES));
         self.next_attempt_at = next_attempt_at;
         self.updated_at = clock.now_wall();
         Ok(())
@@ -385,9 +389,8 @@ impl WebhookDelivery {
 
     /// Moves the delivery to the dead-letter state.
     pub fn dead_letter(&mut self, clock: &dyn Clock, error: String) -> Result<()> {
-        validate_last_error(&error)?;
         self.status = DeliveryStatus::DeadLetter;
-        self.last_error = Some(error);
+        self.last_error = Some(clamp_string_bytes(error, MAX_WEBHOOK_LAST_ERROR_BYTES));
         self.next_attempt_at = None;
         self.updated_at = clock.now_wall();
         Ok(())
@@ -554,7 +557,7 @@ mod tests {
     }
 
     #[test]
-    fn webhook_delivery_rejects_oversized_error() {
+    fn webhook_delivery_clamps_oversized_error() {
         let clock = InMemoryClock::new();
         let ids = InMemoryIdGenerator::new();
         let mut delivery = match WebhookDelivery::new(
@@ -568,7 +571,11 @@ mod tests {
             Ok(d) => d,
             Err(e) => panic!("{e}"),
         };
-        let result = delivery.fail(&clock, "x".repeat(MAX_WEBHOOK_LAST_ERROR_BYTES + 1), None);
-        assert!(matches!(result, Err(DomainError::InvalidArgument { .. })));
+        let oversized = "x".repeat(MAX_WEBHOOK_LAST_ERROR_BYTES + 1);
+        assert!(delivery.fail(&clock, oversized, None).is_ok());
+        assert_eq!(
+            delivery.last_error.as_ref().map(|s| s.len()),
+            Some(MAX_WEBHOOK_LAST_ERROR_BYTES)
+        );
     }
 }
