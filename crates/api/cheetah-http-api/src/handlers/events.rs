@@ -94,14 +94,27 @@ pub async fn event_stream(
     ))
 }
 
+/// Maximum byte length of an SSE cursor query parameter. `u64` needs at most
+/// 20 decimal digits, so anything far longer is malformed and wastes CPU
+/// parsing.
+const MAX_EVENT_CURSOR_BYTES: usize = 32;
+
 fn resolve_start_cursor(cursor: Option<String>, latest: u64) -> Result<u64, HttpError> {
     match cursor.as_deref() {
-        Some(s) if !s.is_empty() => s.parse::<u64>().map_err(|_| {
-            HttpError::Signal(SignalError::new(
-                SignalErrorKind::InvalidArgument,
-                "cursor must be a non-negative integer",
-            ))
-        }),
+        Some(s) if !s.is_empty() => {
+            if s.len() > MAX_EVENT_CURSOR_BYTES {
+                return Err(HttpError::Signal(SignalError::new(
+                    SignalErrorKind::InvalidArgument,
+                    "cursor too long",
+                )));
+            }
+            s.parse::<u64>().map_err(|_| {
+                HttpError::Signal(SignalError::new(
+                    SignalErrorKind::InvalidArgument,
+                    "cursor must be a non-negative integer",
+                ))
+            })
+        }
         _ => Ok(latest),
     }
 }
@@ -139,6 +152,14 @@ mod tests {
         match resolve_start_cursor(Some("abc".into()), 42) {
             Err(err) => assert_eq!(err.status(), axum::http::StatusCode::BAD_REQUEST),
             Ok(_) => panic!("expected invalid cursor error"),
+        }
+    }
+
+    #[test]
+    fn resolve_start_cursor_rejects_oversized_cursor() {
+        match resolve_start_cursor(Some("0".repeat(MAX_EVENT_CURSOR_BYTES + 1)), 42) {
+            Err(err) => assert_eq!(err.status(), axum::http::StatusCode::BAD_REQUEST),
+            Ok(_) => panic!("expected oversized cursor error"),
         }
     }
 }
