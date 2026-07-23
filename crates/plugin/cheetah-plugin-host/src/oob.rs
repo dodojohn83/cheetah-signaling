@@ -31,13 +31,14 @@ mod tls_verifier;
 use log_forward::forward_logs;
 use tls_verifier::build_plugin_identity_verifier;
 
+use crate::startup::wait_for_ready;
 use tokio::fs;
-use tokio::net::TcpStream;
 use tokio::process::{Child, Command};
 use tokio::sync::{Mutex, oneshot};
+#[cfg(test)]
 use tokio::time::sleep;
 use tonic::transport::{Channel, ClientTlsConfig, Identity};
-use tracing::{debug, warn};
+use tracing::warn;
 use uuid::Uuid;
 
 /// Configuration for spawning and connecting to an out-of-process plugin.
@@ -461,50 +462,10 @@ impl ProtocolDriver for OutOfProcessDriver {
     }
 }
 
-const MAX_PLUGIN_STARTUP_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
 const MAX_RPC_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
-const MIN_POLL_INTERVAL: Duration = Duration::from_millis(1);
 
 fn clamp_timeout(timeout: DurationMs) -> Duration {
     Duration::from_millis(timeout.as_millis().max(0) as u64).min(MAX_RPC_TIMEOUT)
-}
-
-fn startup_deadline_from_now(timeout_ms: DurationMs) -> std::time::Instant {
-    let now = std::time::Instant::now();
-    let timeout =
-        Duration::from_millis(timeout_ms.as_millis().max(0) as u64).min(MAX_PLUGIN_STARTUP_TIMEOUT);
-    now.checked_add(timeout).unwrap_or(now)
-}
-
-async fn wait_for_ready(
-    address: &str,
-    startup_timeout: DurationMs,
-    poll_interval: DurationMs,
-) -> Result<(), PluginError> {
-    let deadline = startup_deadline_from_now(startup_timeout);
-    let poll =
-        Duration::from_millis(poll_interval.as_millis().max(1) as u64).max(MIN_POLL_INTERVAL);
-
-    while std::time::Instant::now() < deadline {
-        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-        let connect = tokio::time::timeout(remaining, TcpStream::connect(address));
-        match connect.await {
-            Ok(Ok(_stream)) => return Ok(()),
-            Ok(Err(e)) => {
-                debug!(address = %address, error = %e, "plugin not ready yet");
-                sleep(poll).await;
-            }
-            Err(_) => {
-                debug!(address = %address, "plugin readiness probe timed out");
-                sleep(poll).await;
-            }
-        }
-    }
-
-    Err(PluginError::Driver(format!(
-        "plugin did not become reachable at {address} within {} ms",
-        startup_timeout.as_millis()
-    )))
 }
 
 fn decode_response(
@@ -778,20 +739,6 @@ mod tests {
         let value = decode_response(&response, "shutdown")?;
         assert_eq!(value, serde_json::Value::Null);
         Ok(())
-    }
-
-    #[test]
-    fn startup_deadline_from_now_does_not_panic_with_huge_timeout() {
-        let now = std::time::Instant::now();
-        let deadline = startup_deadline_from_now(DurationMs::from_millis(i64::MAX));
-        assert!(deadline >= now, "deadline must not be in the past");
-    }
-
-    #[test]
-    fn poll_interval_zero_is_clamped_to_one_millisecond() {
-        let interval_ms = DurationMs::from_millis(0).as_millis().max(1);
-        let poll = Duration::from_millis(interval_ms as u64).max(MIN_POLL_INTERVAL);
-        assert_eq!(poll, MIN_POLL_INTERVAL);
     }
 
     #[test]
