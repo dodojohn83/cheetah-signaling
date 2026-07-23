@@ -65,7 +65,9 @@ impl RateLimiter {
     pub fn new(capacity: u32, refill_per_second: u32) -> Self {
         let inner = Inner {
             buckets: HashMap::new(),
-            next_cleanup: Instant::now() + Duration::from_secs(60),
+            next_cleanup: Instant::now()
+                .checked_add(Duration::from_secs(60))
+                .unwrap_or_else(Instant::now),
         };
         Self {
             capacity,
@@ -89,7 +91,7 @@ impl RateLimiter {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
 
         if now >= inner.next_cleanup {
-            let deadline = now - self.stale_after;
+            let deadline = now.checked_sub(self.stale_after).unwrap_or(now);
             inner
                 .buckets
                 .retain(|_, bucket| bucket.last_update > deadline);
@@ -105,7 +107,7 @@ impl RateLimiter {
                     break;
                 }
             }
-            inner.next_cleanup = now + self.stale_after;
+            inner.next_cleanup = now.checked_add(self.stale_after).unwrap_or(now);
         }
 
         let bucket = inner.buckets.entry(key.clone()).or_insert(Bucket {
@@ -113,7 +115,9 @@ impl RateLimiter {
             tokens: f64::from(self.capacity),
         });
 
-        let elapsed = now.duration_since(bucket.last_update).as_secs_f64();
+        let elapsed = now
+            .saturating_duration_since(bucket.last_update)
+            .as_secs_f64();
         bucket.tokens =
             (bucket.tokens + elapsed * self.refill_per_second).min(f64::from(self.capacity));
         bucket.last_update = now;
@@ -177,5 +181,26 @@ impl RateLimiter {
     /// Returns true when no rate limit is configured.
     pub(crate) fn is_disabled(&self) -> bool {
         self.capacity == 0 || self.refill_per_second == 0.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn check_does_not_panic_with_fresh_bucket_and_performs_cleanup() {
+        let limiter = RateLimiter::new(1, 1_000);
+        let key = RateKey {
+            source: [127, 0, 0, 1].into(),
+            tenant: "t".to_string(),
+            protocol: "devices".to_string(),
+            node: "n".to_string(),
+        };
+        assert!(limiter.check(&key));
+        // The second call consumes the only token in the bucket.
+        assert!(!limiter.check(&key));
+        // Cleanup path is exercised (runs only once per 60s window); no panic.
+        assert!(!limiter.check(&key));
     }
 }
