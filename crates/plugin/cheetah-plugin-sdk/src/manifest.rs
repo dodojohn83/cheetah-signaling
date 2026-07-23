@@ -5,6 +5,35 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
 
+/// Maximum byte length of a plugin version string.
+const MAX_PLUGIN_VERSION_BYTES: usize = 64;
+/// Maximum byte length of an SDK version requirement string.
+const MAX_SDK_VERSION_REQ_BYTES: usize = 128;
+/// Maximum number of protocols declared by a plugin.
+const MAX_PROTOCOLS: usize = 32;
+/// Maximum number of permissions declared by a plugin.
+const MAX_PERMISSIONS: usize = 32;
+/// Maximum byte length of a protocol capability name.
+const MAX_PROTOCOL_NAME_BYTES: usize = 64;
+/// Maximum byte length of an optional media transport string.
+const MAX_MEDIA_TRANSPORT_BYTES: usize = 64;
+/// Maximum number of metadata entries in a manifest.
+const MAX_METADATA_KEYS: usize = 64;
+/// Maximum byte length of a metadata key.
+const MAX_METADATA_KEY_BYTES: usize = 128;
+/// Maximum byte length of a metadata value.
+const MAX_METADATA_VALUE_BYTES: usize = 1024;
+/// Maximum byte length of a plugin entry path.
+const MAX_ENTRY_PATH_BYTES: usize = 1024;
+/// Maximum byte length of a checksum algorithm name.
+const MAX_CHECKSUM_ALGORITHM_BYTES: usize = 32;
+/// Maximum byte length of a checksum digest value.
+const MAX_CHECKSUM_DIGEST_BYTES: usize = 256;
+/// Maximum number of required fields listed in a config schema.
+const MAX_CONFIG_SCHEMA_REQUIRED: usize = 128;
+/// Maximum byte length of a single config-schema required-field name.
+const MAX_CONFIG_SCHEMA_REQUIRED_ITEM_BYTES: usize = 128;
+
 /// A human-readable plugin type identifier, e.g. `cheetah/gb28181`.
 ///
 /// This is separate from the runtime [`PluginId`](cheetah_signal_types::PluginId)
@@ -120,6 +149,11 @@ impl PluginVersion {
     /// Parses a plugin version.
     pub fn new(version: impl Into<String>) -> Result<Self, PluginError> {
         let version = version.into();
+        if version.len() > MAX_PLUGIN_VERSION_BYTES {
+            return Err(PluginError::InvalidManifest(format!(
+                "plugin version must not exceed {MAX_PLUGIN_VERSION_BYTES} bytes"
+            )));
+        }
         if semver::Version::parse(&version).is_err() {
             return Err(PluginError::InvalidManifest(format!(
                 "plugin version {version:?} is not valid semver"
@@ -191,6 +225,11 @@ impl SdkVersionReq {
     /// Parses an SDK version requirement.
     pub fn new(req: impl Into<String>) -> Result<Self, PluginError> {
         let req = req.into();
+        if req.len() > MAX_SDK_VERSION_REQ_BYTES {
+            return Err(PluginError::InvalidManifest(format!(
+                "SDK version requirement must not exceed {MAX_SDK_VERSION_REQ_BYTES} bytes"
+            )));
+        }
         if semver::VersionReq::parse(&req).is_err() {
             return Err(PluginError::InvalidManifest(format!(
                 "SDK version requirement {req:?} is not valid"
@@ -384,11 +423,28 @@ impl PluginManifest {
                 "manifest must declare at least one protocol".to_string(),
             ));
         }
-        for protocol in &self.protocols {
+        if self.protocols.len() > MAX_PROTOCOLS {
+            return Err(PluginError::InvalidManifest(format!(
+                "manifest must not declare more than {MAX_PROTOCOLS} protocols"
+            )));
+        }
+        for (i, protocol) in self.protocols.iter().enumerate() {
             if protocol.protocol.is_empty() {
                 return Err(PluginError::InvalidManifest(
                     "protocol name must not be empty".to_string(),
                 ));
+            }
+            if protocol.protocol.len() > MAX_PROTOCOL_NAME_BYTES {
+                return Err(PluginError::InvalidManifest(format!(
+                    "protocol name at index {i} must not exceed {MAX_PROTOCOL_NAME_BYTES} bytes"
+                )));
+            }
+            if let Some(transport) = &protocol.media_transport
+                && transport.len() > MAX_MEDIA_TRANSPORT_BYTES
+            {
+                return Err(PluginError::InvalidManifest(format!(
+                    "media transport at protocol index {i} must not exceed {MAX_MEDIA_TRANSPORT_BYTES} bytes"
+                )));
             }
         }
         if self.permissions.is_empty() {
@@ -396,10 +452,70 @@ impl PluginManifest {
                 "manifest must declare at least one permission".to_string(),
             ));
         }
+        if self.permissions.len() > MAX_PERMISSIONS {
+            return Err(PluginError::InvalidManifest(format!(
+                "manifest must not declare more than {MAX_PERMISSIONS} permissions"
+            )));
+        }
         if self.config_schema.schema.is_null() {
             return Err(PluginError::InvalidManifest(
                 "config schema must be a valid JSON object".to_string(),
             ));
+        }
+        if self.config_schema.required.len() > MAX_CONFIG_SCHEMA_REQUIRED {
+            return Err(PluginError::InvalidManifest(format!(
+                "config schema required fields must not exceed {MAX_CONFIG_SCHEMA_REQUIRED} entries"
+            )));
+        }
+        for (i, field) in self.config_schema.required.iter().enumerate() {
+            if field.len() > MAX_CONFIG_SCHEMA_REQUIRED_ITEM_BYTES {
+                return Err(PluginError::InvalidManifest(format!(
+                    "config schema required field at index {i} must not exceed {MAX_CONFIG_SCHEMA_REQUIRED_ITEM_BYTES} bytes"
+                )));
+            }
+        }
+        match &self.entry {
+            PluginEntry::BuiltIn { path } | PluginEntry::OutOfProcess { path } => {
+                if path.is_empty() {
+                    return Err(PluginError::InvalidManifest(
+                        "plugin entry path must not be empty".to_string(),
+                    ));
+                }
+                if path.len() > MAX_ENTRY_PATH_BYTES {
+                    return Err(PluginError::InvalidManifest(format!(
+                        "plugin entry path must not exceed {MAX_ENTRY_PATH_BYTES} bytes"
+                    )));
+                }
+            }
+        }
+        if let Some(checksum) = &self.checksum {
+            if checksum.algorithm.len() > MAX_CHECKSUM_ALGORITHM_BYTES {
+                return Err(PluginError::InvalidManifest(format!(
+                    "checksum algorithm must not exceed {MAX_CHECKSUM_ALGORITHM_BYTES} bytes"
+                )));
+            }
+            if checksum.digest.len() > MAX_CHECKSUM_DIGEST_BYTES {
+                return Err(PluginError::InvalidManifest(format!(
+                    "checksum digest must not exceed {MAX_CHECKSUM_DIGEST_BYTES} bytes"
+                )));
+            }
+        }
+        if self.metadata.len() > MAX_METADATA_KEYS {
+            return Err(PluginError::InvalidManifest(format!(
+                "manifest metadata must not exceed {MAX_METADATA_KEYS} keys"
+            )));
+        }
+        for (key, value) in &self.metadata {
+            if key.len() > MAX_METADATA_KEY_BYTES {
+                return Err(PluginError::InvalidManifest(format!(
+                    "metadata key must not exceed {MAX_METADATA_KEY_BYTES} bytes"
+                )));
+            }
+            if value.len() > MAX_METADATA_VALUE_BYTES {
+                return Err(PluginError::InvalidManifest(format!(
+                    "metadata value for key {key:?} must not exceed {MAX_METADATA_VALUE_BYTES} bytes"
+                )));
+            }
         }
         self.version.parse()
     }
