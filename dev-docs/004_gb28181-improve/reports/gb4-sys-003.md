@@ -50,6 +50,22 @@
 
 这些基线验证控制面协议解析、状态迁移和领域行为，但不替代真实设备/NVR 的互操作证据。
 
-## 6. 阻塞原因
+## 6. 验收 checklist 与本地预验证映射
+
+以下映射说明 checklist 中每项已在本地控制面通过哪些 `GB4-*` 任务、系统测试或 simulator 预验证；真实设备/NVR 证据仍需在获得外部对端后补充。
+
+| Checklist | 本地预验证 | 证据位置 |
+| --- | --- | --- |
+| 注册/续期/注销/保活成功 | `GB4-ACC-001..005`、`GB4-SIP-004..006` 实现 REGISTER/keepalive/deregister 状态机与 Digest；`cheetah-gb-system-tests/tests/gb4_sys_001_edge.rs`、`gb4_sys_002_cluster.rs` 覆盖 edge/cluster 完整生命周期 | `crates/testing/cheetah-gb-system-tests/tests/gb4_sys_001_edge.rs`、`gb4_sys_002_cluster.rs` |
+| Catalog 分片完整聚合 | `GB4-ACC-005` bounded catalog/record-info aggregation 与 `FragmentBuffer`；`GB4-EVT-001` 目录事件落库 | `crates/testing/cheetah-gb-system-tests/tests/catalog.rs`、`crates/protocols/cheetah-gb28181-module/src/catalog/` |
+| DeviceInfo/DeviceStatus 返回与 fixture 一致 | `GB4-ACC-004` bootstrap query Operation；`GB4-CMD-001` typed device-control payloads | `crates/testing/cheetah-gb-system-tests/tests/command.rs`、`cheetah-state-machine-tests` |
+| RecordInfo 查询与回放 invite/bye | `GB4-MED-001..008` 媒体 Saga、`GB4-CMD-001/003` 命令/查询 Operation、`GB4-WF-002/003` playback/talk workflow | `crates/testing/cheetah-gb-system-tests/tests/media.rs`、workflow 单测 |
+| PTZ/Preset/HomePosition/DragZoom 指令与确认 | `GB4-CMD-001` typed PTZ/preset/device-control；`GB4-MED-001..008` media command routing | `crates/protocols/cheetah-gb28181-module/src/device_control/`、系统测试 |
+| Alarm/MobilePosition 上报 | `GB4-EVT-001` 所有 GB 事件进入 application handler 与 outbox；`GB4-EVT-002` 优先级/合并/死信 | `crates/testing/cheetah-gb-system-tests/tests/`、`tools/gb28181-simulator` |
+| 直播 invite 200 OK + media callback 终止 | `GB4-MED-001..008`、`GB4-WF-001..004` live/playback/talk/stop workflow；`MediaPort` contract 与 fake media 纵向测试 | `crates/testing/cheetah-gb-system-tests/tests/media.rs` |
+| 对讲 broadcast 与语音通道建立 | `GB4-MED-001..008` 语音广播/对讲 command；`GB4-WF-003` playback/talk saga | `crates/testing/cheetah-gb-system-tests/tests/media.rs`、workflow 单测 |
+| 断网/重启/重复响应后的状态恢复 | `GB4-SYS-006` chaos/rolling upgrade、`GB4-TST-004` deterministic fault DSL；`owner epoch`、`MediaBinding` fencing 与对账 | `crates/testing/cheetah-gb-system-tests/`、`tools/gb28181-simulator` |
+
+## 7. 阻塞原因
 
 当前环境未接入真实 GB28181 设备或 NVR；报告将在获得真实设备后补充。
