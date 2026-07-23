@@ -26,13 +26,20 @@ use tower_http::{
 };
 use tracing::Span;
 
+/// Maximum HTTP read timeout; larger values overflow `tokio::time` deadlines.
+const MAX_READ_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
+
+fn clamp_read_timeout(ms: u64) -> Duration {
+    Duration::from_millis(ms).min(MAX_READ_TIMEOUT)
+}
+
 /// Extension carrying the request identifier for correlation.
 #[derive(Clone, Debug)]
 pub struct RequestId(pub String);
 
 /// Builds the public API router.
 pub fn build_router(state: ApiState) -> Router {
-    let timeout = Duration::from_millis(state.config.read_timeout_ms);
+    let timeout = clamp_read_timeout(state.config.read_timeout_ms);
     let body_limit = state.config.request_body_limit_bytes;
     let cors = build_cors_layer(&state.config.cors_allowed_origins);
     let metrics = state.metrics.clone();
