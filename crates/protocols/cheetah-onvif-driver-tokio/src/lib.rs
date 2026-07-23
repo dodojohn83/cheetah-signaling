@@ -10,6 +10,7 @@ pub mod capability_cache;
 pub mod config;
 pub mod discovery;
 pub mod error;
+pub(crate) mod events;
 pub mod protocol_driver;
 pub mod soap_client;
 
@@ -108,6 +109,13 @@ impl OnvifHttpDriver {
                         break;
                     }
                 }
+            }
+
+            if guard.len() >= self.max_tracked_device_endpoints && !guard.contains_key(endpoint) {
+                return Err(DriverError::Config(format!(
+                    "max tracked device endpoints ({}) reached",
+                    self.max_tracked_device_endpoints
+                )));
             }
 
             guard

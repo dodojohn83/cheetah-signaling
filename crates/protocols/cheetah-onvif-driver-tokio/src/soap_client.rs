@@ -92,10 +92,10 @@ impl SoapClient {
         })?;
         self.policy.validate(&url).map_err(DriverError::Onvif)?;
 
-        let _permit = self
-            .permits
-            .acquire()
+        let wait_timeout = timeout.unwrap_or(self.request_timeout);
+        let _permit = tokio::time::timeout(wait_timeout, self.permits.acquire())
             .await
+            .map_err(|_| DriverError::Timeout("request permit wait timed out".into()))?
             .map_err(|_| DriverError::Config("request semaphore closed".into()))?;
 
         let timeout = timeout.unwrap_or(self.request_timeout);

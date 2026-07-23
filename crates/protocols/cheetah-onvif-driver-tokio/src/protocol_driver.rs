@@ -4,17 +4,12 @@
 //! lower-level `OnvifHttpDriver` methods and exposes a factory that can be
 //! registered with the `PluginHost`.
 
-use crate::{DeviceCredentials, DriverConfig, DriverError, OnvifHttpDriver};
+use crate::{DeviceCredentials, DriverConfig, DriverError, OnvifHttpDriver, events};
 use async_trait::async_trait;
-use cheetah_onvif_module::services::{
-    MediaDialect, OnvifNotification, PtzPreset, PtzVelocity, PullPointSubscription, SnapshotUri,
-    SystemDateAndTime, clip_unit, normalize_topic, redact_uri_userinfo,
-};
-use cheetah_onvif_module::{CapabilityKind, CapabilityProbeResult, Service};
+use cheetah_onvif_module::services::{MediaDialect, PtzVelocity, SystemDateAndTime, clip_unit};
 use cheetah_plugin_sdk::{
     CapabilityDescriptor, DriverCommand, DriverContext, HealthReport, HealthStatus, PluginError,
     PluginName, ProtocolCapability, ProtocolDirection, ProtocolDriver, ProtocolDriverFactory,
-    ProtocolEvent,
 };
 use cheetah_signal_types::DurationMs;
 use cheetah_signal_types::TenantId;
@@ -25,7 +20,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tracing::{debug, warn};
+use tracing::debug;
 
 const PROTOCOL: &str = "onvif";
 
@@ -46,24 +41,16 @@ impl OnvifTokioProtocolDriver {
     }
 
     fn get_or_build_driver(&self, ctx: &dyn DriverContext) -> Result<OnvifHttpDriver, PluginError> {
-        {
-            let guard = self
-                .driver
-                .lock()
-                .map_err(|e| PluginError::Driver(format!("driver mutex poisoned: {e:?}")))?;
-            if let Some(driver) = guard.as_ref() {
-                return Ok(driver.clone());
-            }
+        let mut guard = self
+            .driver
+            .lock()
+            .map_err(|e| PluginError::Driver(format!("driver mutex poisoned: {e:?}")))?;
+        if let Some(driver) = guard.as_ref() {
+            return Ok(driver.clone());
         }
-        let config = onvif_config(ctx);
+        let config = onvif_config(ctx)?;
         let driver = build_driver(&config)?;
-        {
-            let mut guard = self
-                .driver
-                .lock()
-                .map_err(|e| PluginError::Driver(format!("driver mutex poisoned: {e:?}")))?;
-            *guard = Some(driver.clone());
-        }
+        *guard = Some(driver.clone());
         Ok(driver)
     }
 }
@@ -104,7 +91,7 @@ impl ProtocolDriver for OnvifTokioProtocolDriver {
         timeout: DurationMs,
     ) -> Result<(), PluginError> {
         let driver = self.get_or_build_driver(ctx)?;
-        let config = onvif_config(ctx);
+        let config = onvif_config(ctx)?;
         let timeout = effective_timeout(timeout, &driver);
         dispatch_command(ctx, &config, &driver, &command, timeout).await
     }
@@ -116,7 +103,7 @@ impl ProtocolDriver for OnvifTokioProtocolDriver {
         timeout: DurationMs,
     ) -> Result<CapabilityDescriptor, PluginError> {
         let driver = self.get_or_build_driver(ctx)?;
-        let config = onvif_config(ctx);
+        let config = onvif_config(ctx)?;
         let timeout = effective_timeout(timeout, &driver);
         let system_date_and_time = driver
             .get_system_date_and_time(target, timeout)
@@ -156,7 +143,8 @@ impl ProtocolDriver for OnvifTokioProtocolDriver {
                     .await
                 {
                     Ok(services) => {
-                        metadata.insert("services".to_string(), services_to_json(&services));
+                        metadata
+                            .insert("services".to_string(), events::services_to_json(&services));
                         metadata
                             .insert("onvif_services_fetched_at".to_string(), fetched_at.clone());
                     }
@@ -169,7 +157,10 @@ impl ProtocolDriver for OnvifTokioProtocolDriver {
                     .await
                 {
                     Ok(caps) => {
-                        metadata.insert("capabilities".to_string(), capabilities_to_json(&caps));
+                        metadata.insert(
+                            "capabilities".to_string(),
+                            events::capabilities_to_json(&caps),
+                        );
                         metadata.insert("onvif_capabilities_fetched_at".to_string(), fetched_at);
                     }
                     Err(e) => {
@@ -200,7 +191,16 @@ impl ProtocolDriver for OnvifTokioProtocolDriver {
         ctx: &dyn DriverContext,
         _timeout: DurationMs,
     ) -> Result<HealthReport, PluginError> {
-        let config = onvif_config(ctx);
+        let config = match onvif_config(ctx) {
+            Ok(config) => config,
+            Err(e) => {
+                return Ok(HealthReport {
+                    status: HealthStatus::Unhealthy,
+                    message: format!("invalid onvif config: {e}"),
+                    metrics: HashMap::new(),
+                });
+            }
+        };
         let driver_result = self.get_or_build_driver(ctx);
 
         let driver_ready = driver_result.is_ok();
@@ -286,14 +286,12 @@ fn build_driver(config: &OnvifConfig) -> Result<OnvifHttpDriver, PluginError> {
     OnvifHttpDriver::new(&driver_config).map_err(plugin_error_from_driver_error)
 }
 
-fn onvif_config(ctx: &dyn DriverContext) -> OnvifConfig {
+fn onvif_config(ctx: &dyn DriverContext) -> Result<OnvifConfig, PluginError> {
     if ctx.config().is_null() {
-        OnvifConfig::default()
+        Ok(OnvifConfig::default())
     } else {
-        serde_json::from_value::<OnvifConfig>(ctx.config().clone()).unwrap_or_else(|e| {
-            warn!(error = %e, "failed to parse onvif config; using defaults");
-            OnvifConfig::default()
-        })
+        serde_json::from_value::<OnvifConfig>(ctx.config().clone())
+            .map_err(|e| PluginError::Driver(format!("invalid onvif config: {e}")))
     }
 }
 
@@ -316,26 +314,33 @@ async fn dispatch_command(
     match command.command_type.as_str() {
         "get_device_information" => {
             let cmd: EndpointCommand = parse_payload(&command.payload)?;
+            let tenant_id = parse_tenant_id(cmd.tenant_id.as_deref())?;
             let timeout = cmd.command_timeout(timeout);
             let credentials = cmd.resolve_credentials(ctx, config).await?;
-            driver
+            let info = driver
                 .get_device_information(&cmd.endpoint, credentials.as_ref(), timeout)
                 .await
                 .map_err(plugin_error_from_driver_error)?;
+            events::emit_device_information(ctx, tenant_id, &info, &command.idempotency_key)
+                .await?;
         }
         "get_system_date_and_time" => {
             let cmd: EndpointCommand = parse_payload(&command.payload)?;
+            let tenant_id = parse_tenant_id(cmd.tenant_id.as_deref())?;
             let timeout = cmd.command_timeout(timeout);
-            driver
+            let dt = driver
                 .get_system_date_and_time(&cmd.endpoint, timeout)
                 .await
                 .map_err(plugin_error_from_driver_error)?;
+            events::emit_system_date_and_time(ctx, tenant_id, &dt, &command.idempotency_key)
+                .await?;
         }
         "get_profiles" => {
             let cmd: MediaCommand = parse_payload(&command.payload)?;
+            let tenant_id = parse_tenant_id(cmd.tenant_id.as_deref())?;
             let timeout = cmd.command_timeout(timeout);
             let credentials = cmd.resolve_credentials(ctx, config).await?;
-            driver
+            let (dialect, profiles) = driver
                 .get_profiles(
                     &cmd.media_endpoint,
                     cmd.dialect(),
@@ -344,12 +349,15 @@ async fn dispatch_command(
                 )
                 .await
                 .map_err(plugin_error_from_driver_error)?;
+            events::emit_profiles(ctx, tenant_id, dialect, &profiles, &command.idempotency_key)
+                .await?;
         }
         "get_stream_uri" => {
             let cmd: StreamUriCommand = parse_payload(&command.payload)?;
+            let tenant_id = parse_tenant_id(cmd.tenant_id.as_deref())?;
             let timeout = cmd.command_timeout(timeout);
             let credentials = cmd.resolve_credentials(ctx, config).await?;
-            driver
+            let uri = driver
                 .get_stream_uri(
                     &cmd.media_endpoint,
                     cmd.dialect(),
@@ -360,12 +368,21 @@ async fn dispatch_command(
                 )
                 .await
                 .map_err(plugin_error_from_driver_error)?;
+            events::emit_stream_uri(
+                ctx,
+                tenant_id,
+                &cmd.profile_token,
+                &uri,
+                &command.idempotency_key,
+            )
+            .await?;
         }
         "get_snapshot_uri" => {
             let cmd: SnapshotUriCommand = parse_payload(&command.payload)?;
+            let tenant_id = parse_tenant_id(cmd.tenant_id.as_deref())?;
             let timeout = cmd.command_timeout(timeout);
             let credentials = cmd.resolve_credentials(ctx, config).await?;
-            driver
+            let uri = driver
                 .get_snapshot_uri(
                     &cmd.media_endpoint,
                     cmd.dialect(),
@@ -375,35 +392,49 @@ async fn dispatch_command(
                 )
                 .await
                 .map_err(plugin_error_from_driver_error)?;
+            events::emit_snapshot(
+                ctx,
+                tenant_id,
+                &cmd.profile_token,
+                &uri,
+                &command.idempotency_key,
+            )
+            .await?;
         }
         "get_services" => {
             let cmd: EndpointCommand = parse_payload(&command.payload)?;
+            let tenant_id = parse_tenant_id(cmd.tenant_id.as_deref())?;
+            let tenant_str = tenant_id.as_ref().map(|t| t.to_string());
             let timeout = cmd.command_timeout(timeout);
             let credentials = cmd.resolve_credentials(ctx, config).await?;
-            driver
+            let services = driver
                 .get_services(
                     &cmd.endpoint,
-                    cmd.tenant_id.as_deref(),
+                    tenant_str.as_deref(),
                     cmd.include_capabilities,
                     credentials.as_ref(),
                     timeout,
                 )
                 .await
                 .map_err(plugin_error_from_driver_error)?;
+            events::emit_services(ctx, tenant_id, &services, &command.idempotency_key).await?;
         }
         "get_capabilities" => {
             let cmd: EndpointCommand = parse_payload(&command.payload)?;
+            let tenant_id = parse_tenant_id(cmd.tenant_id.as_deref())?;
+            let tenant_str = tenant_id.as_ref().map(|t| t.to_string());
             let timeout = cmd.command_timeout(timeout);
             let credentials = cmd.resolve_credentials(ctx, config).await?;
-            driver
+            let caps = driver
                 .get_capabilities(
                     &cmd.endpoint,
-                    cmd.tenant_id.as_deref(),
+                    tenant_str.as_deref(),
                     credentials.as_ref(),
                     timeout,
                 )
                 .await
                 .map_err(plugin_error_from_driver_error)?;
+            events::emit_capabilities(ctx, tenant_id, &caps, &command.idempotency_key).await?;
         }
         "take_snapshot" => {
             let cmd: SnapshotUriCommand = parse_payload(&command.payload)?;
@@ -420,7 +451,14 @@ async fn dispatch_command(
                 )
                 .await
                 .map_err(plugin_error_from_driver_error)?;
-            emit_snapshot(ctx, tenant_id, &uri).await?;
+            events::emit_snapshot(
+                ctx,
+                tenant_id,
+                &cmd.profile_token,
+                &uri,
+                &command.idempotency_key,
+            )
+            .await?;
         }
         "ptz_get_presets" => {
             let cmd: PtzGetPresetsCommand = parse_payload(&command.payload)?;
@@ -436,7 +474,14 @@ async fn dispatch_command(
                 )
                 .await
                 .map_err(plugin_error_from_driver_error)?;
-            emit_ptz_presets(ctx, tenant_id, &cmd.profile_token, &presets).await?;
+            events::emit_ptz_presets(
+                ctx,
+                tenant_id,
+                &cmd.profile_token,
+                &presets,
+                &command.idempotency_key,
+            )
+            .await?;
         }
         "ptz_continuous_move" => {
             let cmd: PtzContinuousMoveCommand = parse_payload(&command.payload)?;
@@ -484,7 +529,8 @@ async fn dispatch_command(
                 )
                 .await
                 .map_err(plugin_error_from_driver_error)?;
-            emit_pull_point_subscription(ctx, tenant_id, &sub).await?;
+            events::emit_pull_point_subscription(ctx, tenant_id, &sub, &command.idempotency_key)
+                .await?;
         }
         "pull_messages" => {
             let cmd: PullMessagesCommand = parse_payload(&command.payload)?;
@@ -501,9 +547,8 @@ async fn dispatch_command(
                 )
                 .await
                 .map_err(plugin_error_from_driver_error)?;
-            if !messages.is_empty() {
-                emit_onvif_notifications(ctx, tenant_id, messages).await?;
-            }
+            events::emit_onvif_notifications(ctx, tenant_id, messages, &command.idempotency_key)
+                .await?;
         }
         "renew_pull_point_subscription" => {
             let cmd: RenewPullPointSubscriptionCommand = parse_payload(&command.payload)?;
@@ -639,6 +684,8 @@ struct MediaCommand {
     password_text: bool,
     #[serde(default)]
     clock_offset_seconds: i64,
+    #[serde(default)]
+    tenant_id: Option<String>,
 }
 
 impl MediaCommand {
@@ -688,6 +735,8 @@ struct StreamUriCommand {
     password_text: bool,
     #[serde(default)]
     clock_offset_seconds: i64,
+    #[serde(default)]
+    tenant_id: Option<String>,
 }
 
 impl StreamUriCommand {
@@ -1101,103 +1150,6 @@ fn parse_tenant_id(raw: Option<&str>) -> Result<Option<TenantId>, PluginError> {
     }
 }
 
-fn snapshot_event_payload(uri: &SnapshotUri) -> serde_json::Value {
-    serde_json::json!({
-        "uri": redact_uri_userinfo(&uri.uri),
-        "invalid_after_connect": uri.invalid_after_connect,
-        "invalid_after_reboot": uri.invalid_after_reboot,
-        "timeout": uri.timeout,
-    })
-}
-
-async fn emit_snapshot(
-    ctx: &dyn DriverContext,
-    tenant_id: Option<TenantId>,
-    uri: &SnapshotUri,
-) -> Result<(), PluginError> {
-    ctx.device_sink()
-        .emit_event(ProtocolEvent {
-            event_type: "onvif.snapshot_uri".into(),
-            payload: snapshot_event_payload(uri),
-            tenant_id,
-        })
-        .await
-}
-
-fn ptz_presets_event_payload(profile_token: &str, presets: &[PtzPreset]) -> serde_json::Value {
-    serde_json::json!({
-        "profile_token": profile_token,
-        "presets": presets.iter().map(|p| serde_json::json!({"token": p.token, "name": p.name})).collect::<Vec<_>>(),
-    })
-}
-
-async fn emit_ptz_presets(
-    ctx: &dyn DriverContext,
-    tenant_id: Option<TenantId>,
-    profile_token: &str,
-    presets: &[PtzPreset],
-) -> Result<(), PluginError> {
-    ctx.device_sink()
-        .emit_event(ProtocolEvent {
-            event_type: "onvif.ptz_presets".into(),
-            payload: ptz_presets_event_payload(profile_token, presets),
-            tenant_id,
-        })
-        .await
-}
-
-fn notifications_event_payload(notifications: &[OnvifNotification]) -> serde_json::Value {
-    serde_json::json!({
-        "notifications": notifications
-            .iter()
-            .map(|n| serde_json::json!({
-                "topic": normalize_topic(&n.topic),
-                "utc_time": n.utc_time,
-                "property_operation": n.property_operation,
-            }))
-            .collect::<Vec<_>>(),
-    })
-}
-
-async fn emit_onvif_notifications(
-    ctx: &dyn DriverContext,
-    tenant_id: Option<TenantId>,
-    messages: Vec<OnvifNotification>,
-) -> Result<(), PluginError> {
-    if messages.is_empty() {
-        return Ok(());
-    }
-    ctx.device_sink()
-        .emit_event(ProtocolEvent {
-            event_type: "onvif.notification".into(),
-            payload: notifications_event_payload(&messages),
-            tenant_id,
-        })
-        .await
-}
-
-fn pull_point_subscription_event_payload(sub: &PullPointSubscription) -> serde_json::Value {
-    serde_json::json!({
-        "subscription_reference": redact_uri_userinfo(&sub.subscription_reference),
-        "termination_time": sub.termination_time,
-        "current_time": sub.current_time,
-    })
-}
-
-async fn emit_pull_point_subscription(
-    ctx: &dyn DriverContext,
-    tenant_id: Option<TenantId>,
-    sub: &PullPointSubscription,
-) -> Result<(), PluginError> {
-    ctx.device_sink()
-        .emit_event(ProtocolEvent {
-            event_type: "onvif.pull_point_subscription".into(),
-            payload: pull_point_subscription_event_payload(sub),
-            tenant_id,
-        })
-        .await
-}
-
 async fn resolve_credentials(
     ctx: &dyn DriverContext,
     config: &OnvifConfig,
@@ -1277,48 +1229,6 @@ fn command_timeout(timeout_ms: Option<u64>, default: Option<Duration>) -> Option
         .filter(|&ms| ms > 0)
         .map(Duration::from_millis)
         .or(default)
-}
-
-fn services_to_json(services: &[Service]) -> String {
-    let values: Vec<serde_json::Value> = services
-        .iter()
-        .map(|s| {
-            serde_json::json!({
-                "namespace": s.namespace,
-                "xaddr": s.xaddr,
-                "version": s.version,
-            })
-        })
-        .collect();
-    serde_json::to_string(&values).unwrap_or_default()
-}
-
-fn capabilities_to_json(
-    caps: &std::collections::HashMap<CapabilityKind, CapabilityProbeResult>,
-) -> String {
-    let mut map = serde_json::Map::new();
-    for (kind, result) in caps {
-        let value = match result {
-            CapabilityProbeResult::Supported {
-                namespace,
-                xaddr,
-                version,
-            } => serde_json::json!({
-                "status": "supported",
-                "namespace": namespace,
-                "xaddr": xaddr,
-                "version": version,
-            }),
-            CapabilityProbeResult::Unsupported => serde_json::json!({"status": "unsupported"}),
-            CapabilityProbeResult::Failed { reason, retryable } => serde_json::json!({
-                "status": "failed",
-                "reason": reason,
-                "retryable": retryable,
-            }),
-        };
-        map.insert(kind.to_string(), value);
-    }
-    serde_json::to_string(&serde_json::Value::Object(map)).unwrap_or_default()
 }
 
 fn clock_offset_seconds(system: &SystemDateAndTime) -> Result<i64, PluginError> {
@@ -1651,32 +1561,6 @@ mod tests {
         assert_eq!(velocity.pan, 1.0);
         assert_eq!(velocity.tilt, -1.0);
         assert_eq!(velocity.zoom, 0.5);
-    }
-
-    #[test]
-    fn snapshot_event_payload_redacts_uri_userinfo() {
-        let uri = SnapshotUri {
-            uri: "http://user:pass@192.0.2.10/snapshot".into(),
-            invalid_after_connect: Some(false),
-            invalid_after_reboot: Some(false),
-            timeout: None,
-        };
-        let payload = snapshot_event_payload(&uri);
-        let emitted = payload["uri"].as_str().unwrap();
-        assert!(!emitted.contains("pass"));
-        assert!(emitted.contains("192.0.2.10"));
-        assert_eq!(payload["invalid_after_connect"].as_bool(), Some(false));
-    }
-
-    #[test]
-    fn ptz_presets_event_payload_uses_command_profile_token() {
-        let presets = vec![PtzPreset {
-            token: "preset-token".into(),
-            name: "Home".into(),
-        }];
-        let payload = ptz_presets_event_payload("profile-token", &presets);
-        assert_eq!(payload["profile_token"].as_str().unwrap(), "profile-token");
-        assert_eq!(payload["presets"].as_array().unwrap().len(), presets.len());
     }
 
     #[test]
