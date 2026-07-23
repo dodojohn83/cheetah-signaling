@@ -6,6 +6,11 @@ use cheetah_signal_types::{
     Revision, TenantId, UtcTimestamp,
 };
 
+/// Maximum byte length of a media binding error code.
+const MAX_MEDIA_BINDING_ERROR_CODE_BYTES: usize = 128;
+/// Maximum byte length of a media binding error message.
+const MAX_MEDIA_BINDING_ERROR_MESSAGE_BYTES: usize = 2048;
+
 /// State of a media binding.
 #[derive(
     Clone, Copy, Debug, Default, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize,
@@ -83,6 +88,21 @@ impl MediaBindingError {
     /// Human readable message.
     pub fn message(&self) -> &str {
         &self.message
+    }
+
+    /// Validates the error code and message length.
+    pub fn validate(&self) -> crate::Result<()> {
+        if self.code.len() > MAX_MEDIA_BINDING_ERROR_CODE_BYTES {
+            return Err(DomainError::invalid_argument(
+                "media binding error code must not exceed 128 bytes",
+            ));
+        }
+        if self.message.len() > MAX_MEDIA_BINDING_ERROR_MESSAGE_BYTES {
+            return Err(DomainError::invalid_argument(
+                "media binding error message must not exceed 2048 bytes",
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -224,6 +244,9 @@ impl MediaBinding {
                 format!("{:?}", new_state),
             ));
         }
+        if let Some(ref error) = error {
+            error.validate()?;
+        }
         let previous = self.state;
         self.state = new_state;
         if error.is_some() {
@@ -342,5 +365,48 @@ impl MediaBinding {
     /// Whether the binding is terminal.
     pub fn is_terminal(&self) -> bool {
         self.state.is_terminal()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::in_memory::{InMemoryClock, InMemoryIdGenerator};
+    use cheetah_signal_types::IdGenerator;
+
+    #[test]
+    fn media_binding_error_rejects_oversized_code_and_message() {
+        let error = MediaBindingError::new("x".repeat(129), "msg");
+        assert!(matches!(
+            error.validate(),
+            Err(DomainError::InvalidArgument { .. })
+        ));
+
+        let error = MediaBindingError::new("code", "x".repeat(2049));
+        assert!(matches!(
+            error.validate(),
+            Err(DomainError::InvalidArgument { .. })
+        ));
+    }
+
+    #[test]
+    fn media_binding_failed_rejects_oversized_error() {
+        let clock = InMemoryClock::new();
+        let ids = InMemoryIdGenerator::new();
+        let mut binding = match MediaBinding::new(
+            &clock,
+            ids.generate_media_binding_id(),
+            ids.generate_media_session_id(),
+            ids.generate_tenant_id(),
+            ids.generate_channel_id(),
+            ids.generate_node_id(),
+            OwnerEpoch::default(),
+            MediaNodeInstanceEpoch::default(),
+        ) {
+            Ok((b, _)) => b,
+            Err(e) => panic!("{e}"),
+        };
+        let result = binding.failed(MediaBindingError::new("code", "x".repeat(2049)), &clock);
+        assert!(matches!(result, Err(DomainError::InvalidArgument { .. })));
     }
 }
