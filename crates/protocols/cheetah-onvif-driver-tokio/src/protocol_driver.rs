@@ -7,12 +7,14 @@
 use crate::{DeviceCredentials, DriverConfig, DriverError, OnvifHttpDriver};
 use async_trait::async_trait;
 use cheetah_onvif_module::services::MediaDialect;
+use cheetah_onvif_module::services::SystemDateAndTime;
 use cheetah_onvif_module::{CapabilityKind, CapabilityProbeResult, Service};
 use cheetah_plugin_sdk::{
     CapabilityDescriptor, DriverCommand, DriverContext, HealthReport, HealthStatus, PluginError,
     PluginName, ProtocolCapability, ProtocolDirection, ProtocolDriver, ProtocolDriverFactory,
 };
 use cheetah_signal_types::DurationMs;
+use cheetah_signal_types::UtcTimestamp;
 use cheetah_signal_types::config::OnvifConfig;
 use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
@@ -112,15 +114,37 @@ impl ProtocolDriver for OnvifTokioProtocolDriver {
         let driver = self.get_or_build_driver(ctx)?;
         let config = onvif_config(ctx);
         let timeout = effective_timeout(timeout, &driver);
-        driver
+        let system_date_and_time = driver
             .get_system_date_and_time(target, timeout)
             .await
             .map_err(plugin_error_from_driver_error)?;
 
         let mut metadata = HashMap::new();
+        metadata.insert("onvif_endpoint".to_string(), target.to_string());
+
+        // Persist the device clock offset and the wall time at which the probe ran.
+        let offset_seconds = clock_offset_seconds(&system_date_and_time)?;
+        metadata.insert(
+            "onvif_clock_offset_seconds".to_string(),
+            offset_seconds.to_string(),
+        );
+
+        if let Some(credentials_ref) = &config.default_credentials_ref {
+            metadata.insert(
+                "onvif_default_credentials_ref".to_string(),
+                credentials_ref.clone(),
+            );
+        }
+        if let Some(username) = &config.default_username {
+            metadata.insert("onvif_default_username".to_string(), username.clone());
+        }
+
         // Use configured default credentials, if any, to probe services and capabilities.
         // Failures here are recorded in metadata but do not fail the probe so that
         // reachable devices without credentials still report basic availability.
+        let fetched_at = UtcTimestamp::from_offset(time::OffsetDateTime::now_utc())
+            .to_rfc3339()
+            .unwrap_or_default();
         match resolve_credentials(ctx, &config, None, None, None, false, 0).await {
             Ok(Some(credentials)) => {
                 match driver
@@ -129,6 +153,8 @@ impl ProtocolDriver for OnvifTokioProtocolDriver {
                 {
                     Ok(services) => {
                         metadata.insert("services".to_string(), services_to_json(&services));
+                        metadata
+                            .insert("onvif_services_fetched_at".to_string(), fetched_at.clone());
                     }
                     Err(e) => {
                         metadata.insert("services_error".to_string(), e.to_string());
@@ -140,6 +166,7 @@ impl ProtocolDriver for OnvifTokioProtocolDriver {
                 {
                     Ok(caps) => {
                         metadata.insert("capabilities".to_string(), capabilities_to_json(&caps));
+                        metadata.insert("onvif_capabilities_fetched_at".to_string(), fetched_at);
                     }
                     Err(e) => {
                         metadata.insert("capabilities_error".to_string(), e.to_string());
@@ -745,6 +772,21 @@ fn capabilities_to_json(
     serde_json::to_string(&serde_json::Value::Object(map)).unwrap_or_default()
 }
 
+fn clock_offset_seconds(system: &SystemDateAndTime) -> Result<i64, PluginError> {
+    clock_offset_seconds_with_local(system, time::OffsetDateTime::now_utc())
+}
+
+fn clock_offset_seconds_with_local(
+    system: &SystemDateAndTime,
+    local_utc: time::OffsetDateTime,
+) -> Result<i64, PluginError> {
+    let device_utc = system
+        .utc
+        .to_utc()
+        .map_err(|e| PluginError::Driver(e.to_string()))?;
+    Ok((device_utc - local_utc).whole_seconds())
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(
@@ -1009,5 +1051,30 @@ mod tests {
                 "{command_type} should be unsupported, got {result:?}"
             );
         }
+    }
+
+    #[test]
+    fn clock_offset_matches_device_minus_local_time() {
+        use cheetah_onvif_core::services::system_date_time::{DateTime, SystemDateAndTime};
+
+        let local = time::OffsetDateTime::from_unix_timestamp(1_700_000_000).unwrap();
+        let device = local + time::Duration::seconds(37);
+        let system = SystemDateAndTime {
+            date_time_type: "NTP".to_string(),
+            daylight_savings: false,
+            timezone: None,
+            utc: DateTime {
+                year: device.year(),
+                month: device.month() as u8,
+                day: device.day(),
+                hour: device.hour(),
+                minute: device.minute(),
+                second: device.second(),
+            },
+            local: None,
+        };
+
+        let offset = clock_offset_seconds_with_local(&system, local).unwrap();
+        assert_eq!(offset, 37);
     }
 }
