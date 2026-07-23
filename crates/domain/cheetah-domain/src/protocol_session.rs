@@ -665,10 +665,19 @@ impl ProtocolSession {
     }
 
     /// Marks the session's device as offline with a diagnostic reason.
-    pub fn mark_offline(&mut self, clock: &dyn Clock, reason: impl Into<String>) {
+    pub fn mark_offline(
+        &mut self,
+        clock: &dyn Clock,
+        reason: impl Into<String>,
+    ) -> crate::Result<()> {
+        let reason = reason.into();
+        if reason.len() > MAX_FIELD_BYTES {
+            return Err(DomainError::invalid_argument("offline_reason too long"));
+        }
         self.presence = PresenceState::Offline;
-        self.offline_reason = Some(reason.into());
+        self.offline_reason = Some(reason);
         self.bump(clock);
+        Ok(())
     }
 
     /// Assigns ownership to a node, incrementing the owner epoch for fencing.
