@@ -12,6 +12,7 @@ members = [
     "crates/cluster/*",
     "crates/media/*",
     "crates/api/*",
+    "crates/transport/*",
     "crates/plugin/*",
     "crates/protocols/*",
     "crates/testing/*",
@@ -48,6 +49,7 @@ tonic = "0.14"
 tonic-prost = "0.14"
 tonic-prost-build = "0.14"
 prost = "0.14"
+prost-build = "0.14"
 prost-types = "0.14"
 async-nats = { version = "0.49.1", default-features = false, features = ["jetstream", "ring"] }
 axum = { version = "0.8.9", default-features = false, features = ["json", "query", "form", "tokio", "http1", "matched-path", "original-uri"] }

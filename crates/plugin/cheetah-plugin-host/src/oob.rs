@@ -14,7 +14,7 @@ use cheetah_plugin_sdk::{
     CapabilityDescriptor, DriverCommand, DriverContext, HealthReport, PluginError, PluginName,
     ProtocolCapability, ProtocolDriver, ProtocolDriverFactory, ProtocolEvent,
 };
-use cheetah_signal_contracts::cheetah::plugin::v1::{
+use cheetah_signal_grpc::cheetah::plugin::v1::{
     PluginRuntimeCallDriverRequest, PluginRuntimeCallDriverResponse,
     plugin_runtime_client::PluginRuntimeClient,
 };
@@ -534,7 +534,7 @@ mod tests {
     use cheetah_plugin_sdk::{
         CommandSource, DeviceSink, HealthStatus, ProtocolDirection, ResourceBudget,
     };
-    use cheetah_signal_contracts::cheetah::plugin::v1::{
+    use cheetah_signal_grpc::cheetah::plugin::v1::{
         PluginRuntimeCallDriverRequest, PluginRuntimeCallDriverResponse,
         PluginRuntimeStreamRequest, PluginRuntimeStreamResponse,
         plugin_runtime_server::{PluginRuntime, PluginRuntimeServer},

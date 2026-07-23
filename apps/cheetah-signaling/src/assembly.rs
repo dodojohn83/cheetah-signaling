@@ -47,7 +47,7 @@ use cheetah_plugin_host::PluginHost;
 use cheetah_plugin_sdk::{PluginManifest, ProtocolDriverFactory};
 use cheetah_secret::{CompositeSecretStore, EnvSecretStore, FileSecretStore};
 use cheetah_signal_application::OutboxRelay;
-use cheetah_signal_contracts::cheetah::common::v1::media_cluster_registry_server::MediaClusterRegistryServer;
+use cheetah_signal_grpc::cheetah::common::v1::media_cluster_registry_server::MediaClusterRegistryServer;
 use cheetah_signal_types::config::{
     Gb28181CompatibilityOverridesConfig, Gb28181CompatibilityProfileConfig,
 };

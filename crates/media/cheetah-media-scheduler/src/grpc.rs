@@ -5,13 +5,13 @@ use crate::error::SchedulerError;
 use crate::metrics::MediaMetrics;
 use crate::model::{MediaCapability, MediaNode, MediaNodeCapacity, MediaNodeHealth, NodeStatus};
 use crate::registry::MediaNodeRegistry;
-use cheetah_signal_contracts::cheetah::common::v1::media_cluster_registry_server::MediaClusterRegistry;
 use cheetah_signal_contracts::cheetah::common::v1::{
     DeregisterMediaNodeRequest, DeregisterMediaNodeResponse, DrainMediaNodeRequest,
     DrainMediaNodeResponse, HeartbeatMediaNodeRequest, HeartbeatMediaNodeResponse,
     RegisterMediaNodeRequest, RegisterMediaNodeResponse,
 };
 use cheetah_signal_contracts::cheetah::media::v1 as media_proto;
+use cheetah_signal_grpc::cheetah::common::v1::media_cluster_registry_server::MediaClusterRegistry;
 use cheetah_signal_types::{
     AuditEvent, AuditLog, AuditOutcome, Clock, IdGenerator, NodeId, SafeDetails, is_internal_ip,
 };

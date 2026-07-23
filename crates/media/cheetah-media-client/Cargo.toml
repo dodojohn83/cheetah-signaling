@@ -9,7 +9,7 @@ repository.workspace = true
 description = "Media control gRPC client with connection pooling, retries, and circuit breaker."
 
 [dependencies]
-cheetah-signal-contracts = { path = "../../foundation/cheetah-signal-contracts" }
+cheetah-signal-grpc = { path = "../../transport/cheetah-signal-grpc" }
 cheetah-signal-types = { path = "../../foundation/cheetah-signal-types" }
 
 tonic = { workspace = true, features = ["tls-native-roots"] }

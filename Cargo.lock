@@ -738,7 +738,7 @@ name = "cheetah-media-client"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "cheetah-signal-contracts",
+ "cheetah-signal-grpc",
  "cheetah-signal-types",
  "fastrand",
  "prost-types",
@@ -755,7 +755,7 @@ dependencies = [
 name = "cheetah-media-control-simulator"
 version = "0.1.0"
 dependencies = [
- "cheetah-signal-contracts",
+ "cheetah-signal-grpc",
  "clap",
  "futures",
  "prost-types",
@@ -778,6 +778,7 @@ dependencies = [
  "cheetah-domain",
  "cheetah-media-client",
  "cheetah-signal-contracts",
+ "cheetah-signal-grpc",
  "cheetah-signal-types",
  "cheetah-storage-api",
  "fastrand",
@@ -981,7 +982,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "cheetah-plugin-sdk",
- "cheetah-signal-contracts",
+ "cheetah-signal-grpc",
  "cheetah-signal-types",
  "futures",
  "prost",
@@ -1085,6 +1086,16 @@ version = "0.1.0"
 dependencies = [
  "proptest",
  "prost",
+ "prost-build",
+ "prost-types",
+]
+
+[[package]]
+name = "cheetah-signal-grpc"
+version = "0.1.0"
+dependencies = [
+ "cheetah-signal-contracts",
+ "prost",
  "prost-types",
  "tonic",
  "tonic-prost",
@@ -1136,7 +1147,7 @@ dependencies = [
  "cheetah-runtime-tokio",
  "cheetah-secret",
  "cheetah-signal-application",
- "cheetah-signal-contracts",
+ "cheetah-signal-grpc",
  "cheetah-signal-types",
  "cheetah-storage-api",
  "cheetah-storage-postgres",
