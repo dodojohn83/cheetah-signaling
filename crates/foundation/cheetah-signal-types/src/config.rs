@@ -12,6 +12,10 @@ use std::net::SocketAddr;
 
 /// Maximum byte length of free-form compatibility profile string fields.
 pub const MAX_COMPATIBILITY_FIELD_BYTES: usize = 512;
+/// Maximum number of allowed CORS origins.
+const MAX_CORS_ORIGINS: usize = 64;
+/// Maximum byte length of a single CORS allowed origin.
+const MAX_CORS_ORIGIN_BYTES: usize = 256;
 
 /// Serializes a `SecretString` as a redacted placeholder, preserving empty defaults.
 ///
@@ -134,6 +138,7 @@ impl SignalConfig {
             ));
         }
         self.gb28181.validate()?;
+        self.http.validate()?;
         if self.onvif.enabled {
             if self.onvif.connect_timeout_ms.as_millis() <= 0 {
                 return Err(SignalError::new(
@@ -505,6 +510,44 @@ impl Default for HttpConfig {
             rate_limit_burst: 200,
         }
     }
+}
+
+impl HttpConfig {
+    /// Validates HTTP-specific configuration.
+    pub fn validate(&self) -> Result<()> {
+        if self.cors_allowed_origins.len() > MAX_CORS_ORIGINS {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                format!("http.cors_allowed_origins must not exceed {MAX_CORS_ORIGINS} entries"),
+            ));
+        }
+        for origin in &self.cors_allowed_origins {
+            if origin == "*" {
+                continue;
+            }
+            if origin.len() > MAX_CORS_ORIGIN_BYTES {
+                return Err(SignalError::new(
+                    SignalErrorKind::InvalidArgument,
+                    format!(
+                        "http.cors_allowed_origins entry exceeds {MAX_CORS_ORIGIN_BYTES} bytes"
+                    ),
+                ));
+            }
+            if origin.is_empty() || !origin.bytes().all(is_valid_header_value_byte) {
+                return Err(SignalError::new(
+                    SignalErrorKind::InvalidArgument,
+                    "http.cors_allowed_origins entry contains invalid characters",
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Returns true for bytes accepted in an HTTP header value by the `http` crate:
+/// visible ASCII characters, space and tab.
+fn is_valid_header_value_byte(b: u8) -> bool {
+    b == b'\t' || (b' '..=b'~').contains(&b)
 }
 
 /// gRPC API configuration.
@@ -1674,5 +1717,85 @@ mod gb28181_listener_tests {
         let (listeners, legacy) = cfg.resolve_listeners();
         assert!(!legacy);
         assert_eq!(listeners.len(), 2);
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod http_config_tests {
+    use super::*;
+
+    fn http_config_with_origins(origins: Vec<String>) -> HttpConfig {
+        HttpConfig {
+            cors_allowed_origins: origins,
+            ..HttpConfig::default()
+        }
+    }
+
+    #[test]
+    fn default_http_config_is_valid() {
+        assert!(HttpConfig::default().validate().is_ok());
+    }
+
+    #[test]
+    fn wildcard_cors_origin_is_valid() {
+        assert!(
+            http_config_with_origins(vec!["*".to_string()])
+                .validate()
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn valid_cors_origin_is_accepted() {
+        assert!(
+            http_config_with_origins(vec!["https://example.com:8080".to_string()])
+                .validate()
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn empty_cors_origin_is_rejected() {
+        assert!(
+            http_config_with_origins(vec!["".to_string()])
+                .validate()
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn oversized_cors_origin_is_rejected() {
+        assert!(
+            http_config_with_origins(vec!["x".repeat(MAX_CORS_ORIGIN_BYTES + 1)])
+                .validate()
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn too_many_cors_origins_is_rejected() {
+        let origins = (0..MAX_CORS_ORIGINS + 1)
+            .map(|i| format!("https://example{i}.com"))
+            .collect();
+        assert!(http_config_with_origins(origins).validate().is_err());
+    }
+
+    #[test]
+    fn control_character_in_cors_origin_is_rejected() {
+        assert!(
+            http_config_with_origins(vec!["https://evil\n.com".to_string()])
+                .validate()
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn non_ascii_byte_in_cors_origin_is_rejected() {
+        assert!(
+            http_config_with_origins(vec!["https://exämple.com".to_string()])
+                .validate()
+                .is_err()
+        );
     }
 }
