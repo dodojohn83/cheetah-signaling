@@ -50,16 +50,23 @@ impl std::str::FromStr for DeliveryStatus {
     type Err = DomainError;
 
     fn from_str(s: &str) -> Result<Self> {
-        match s {
-            "pending" => Ok(Self::Pending),
-            "in_progress" => Ok(Self::InProgress),
-            "succeeded" => Ok(Self::Succeeded),
-            "failed" => Ok(Self::Failed),
-            "dead_letter" => Ok(Self::DeadLetter),
-            _ => Err(DomainError::invalid_argument(format!(
-                "unknown delivery status: {s}"
-            ))),
-        }
+        let status = if s.eq_ignore_ascii_case("pending") {
+            Self::Pending
+        } else if s.eq_ignore_ascii_case("in_progress") {
+            Self::InProgress
+        } else if s.eq_ignore_ascii_case("succeeded") {
+            Self::Succeeded
+        } else if s.eq_ignore_ascii_case("failed") {
+            Self::Failed
+        } else if s.eq_ignore_ascii_case("dead_letter") {
+            Self::DeadLetter
+        } else {
+            let display = s.chars().take(64).collect::<String>();
+            return Err(DomainError::invalid_argument(format!(
+                "unknown delivery status: {display}"
+            )));
+        };
+        Ok(status)
     }
 }
 
@@ -569,6 +576,15 @@ mod tests {
             Err(e) => panic!("{e}"),
         };
         let result = delivery.fail(&clock, "x".repeat(MAX_WEBHOOK_LAST_ERROR_BYTES + 1), None);
+        assert!(matches!(result, Err(DomainError::InvalidArgument { .. })));
+    }
+
+    #[test]
+    fn delivery_status_from_str_is_case_insensitive_and_bounds_error() {
+        let parsed = "In_Progress".parse::<DeliveryStatus>();
+        assert!(matches!(parsed, Ok(DeliveryStatus::InProgress)));
+
+        let result = "x".repeat(1024).parse::<DeliveryStatus>();
         assert!(matches!(result, Err(DomainError::InvalidArgument { .. })));
     }
 }
