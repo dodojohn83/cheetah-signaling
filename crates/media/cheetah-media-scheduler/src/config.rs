@@ -22,6 +22,8 @@ pub struct MediaRegistryConfig {
     pub max_endpoint_uri_length: usize,
     /// Maximum length of any free-form string field supplied by a media node.
     pub max_string_field_length: usize,
+    /// Maximum number of network zones a media node may advertise.
+    pub max_network_zones: usize,
     /// Maximum number of operations advertised per MediaCapability.
     pub max_capability_operations: usize,
     /// Maximum number of constraint key-value pairs per MediaCapability.
@@ -59,6 +61,7 @@ impl MediaRegistryConfig {
             allowed_endpoint_schemes: vec!["http".to_string(), "https".to_string()],
             max_endpoint_uri_length: 2048,
             max_string_field_length: 256,
+            max_network_zones: 64,
             max_capability_operations: 64,
             max_capability_constraints: 64,
             allow_internal_endpoints: false,
