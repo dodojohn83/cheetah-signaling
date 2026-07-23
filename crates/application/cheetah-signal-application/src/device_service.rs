@@ -15,6 +15,9 @@ use cheetah_signal_types::{
 };
 use std::collections::HashSet;
 
+/// Maximum number of channels allowed per device.
+const MAX_CHANNELS: usize = 1024;
+
 /// Application service for device lifecycle.
 #[derive(Clone)]
 pub struct DeviceService {
@@ -218,7 +221,13 @@ impl DeviceService {
             )));
         }
 
-        let mut incoming_ids = HashSet::new();
+        if request.channels.len() > MAX_CHANNELS {
+            return Err(crate::SignalError::from(DomainError::invalid_argument(
+                "channel catalog exceeds maximum allowed channels",
+            )));
+        }
+
+        let mut incoming_ids = HashSet::with_capacity(request.channels.len());
         for descriptor in &request.channels {
             if let Some(id) = &descriptor.id {
                 let channel_id = id.parse::<ChannelId>()?;
