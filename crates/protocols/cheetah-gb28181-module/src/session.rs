@@ -337,7 +337,7 @@ impl ProtocolSessionLink {
 
         let mut reaped = 0;
         for mut session in expired {
-            session.mark_offline(self.clock.as_ref(), REASON_EXPIRED);
+            session.mark_offline(self.clock.as_ref(), REASON_EXPIRED)?;
             match repo.save(&session).await {
                 Ok(()) => reaped += 1,
                 Err(DomainError::ConcurrentModification { .. }) => continue,

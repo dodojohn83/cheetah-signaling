@@ -132,7 +132,7 @@ fn unregister_marks_offline_with_reason() {
     let id_generator = InMemoryIdGenerator::new();
     let mut session = new_session(&clock, &id_generator);
     session.record_keepalive(&clock);
-    session.mark_offline(&clock, "expired");
+    session.mark_offline(&clock, "expired").unwrap();
     assert_eq!(session.presence(), PresenceState::Offline);
     assert_eq!(session.offline_reason(), Some("expired"));
 }
