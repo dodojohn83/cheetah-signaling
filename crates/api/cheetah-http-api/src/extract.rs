@@ -166,11 +166,17 @@ fn resolve_tenant_id(parts: &Parts, auth: &AuthContext) -> Result<TenantId, Http
     })?;
     let header = text.parse::<TenantId>()?;
 
-    if let Some(auth_tenant) = auth.tenant_id
-        && header != auth_tenant
-    {
+    if let Some(auth_tenant) = auth.tenant_id {
+        if header != auth_tenant {
+            return Err(HttpError::PermissionDenied(
+                "tenant header does not match token tenant".to_string(),
+            ));
+        }
+    } else if !auth.principal.scopes.iter().any(|s| s == "system_admin") {
+        // Tokens that do not assert a tenant claim must carry system_admin scope
+        // before they are allowed to select a tenant via the x-tenant-id header.
         return Err(HttpError::PermissionDenied(
-            "tenant header does not match token tenant".to_string(),
+            "token without tenant claim requires system_admin scope".to_string(),
         ));
     }
 
@@ -382,11 +388,18 @@ mod tests {
     }
 
     fn auth_with_tenant(tenant_id: Option<TenantId>) -> AuthContext {
+        // A token without an explicit tenant claim must carry system_admin scope
+        // before the x-tenant-id header is accepted.
+        let scopes = if tenant_id.is_some() {
+            vec![]
+        } else {
+            vec!["system_admin".to_string()]
+        };
         AuthContext {
             principal: Principal {
                 id: "u".to_string(),
                 kind: PrincipalKind::User,
-                scopes: vec![],
+                scopes,
             },
             tenant_id,
         }
@@ -449,5 +462,21 @@ mod tests {
         let auth = auth_with_tenant(None);
         let err = resolve_tenant_id(&parts, &auth).expect_err("missing tenant");
         assert_eq!(err.status(), axum::http::StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn resolve_tenant_id_rejects_header_without_tenant_claim_or_system_admin_scope() {
+        let tenant = TenantId::from_str("018f3e7a-6a7d-7c9e-8b1a-2b3c4d5e6f7a").unwrap();
+        let parts = parts_with_header("x-tenant-id", tenant.to_string().as_bytes());
+        let auth = AuthContext {
+            principal: Principal {
+                id: "u".to_string(),
+                kind: PrincipalKind::User,
+                scopes: vec![],
+            },
+            tenant_id: None,
+        };
+        let err = resolve_tenant_id(&parts, &auth).expect_err("missing scope");
+        assert_eq!(err.status(), axum::http::StatusCode::FORBIDDEN);
     }
 }
