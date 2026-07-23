@@ -72,9 +72,10 @@ fn build_scenario(args: &Args) -> Result<Scenario, ScenarioError> {
     if let Some(path) = &args.scenario {
         return Scenario::from_toml_path(path);
     }
-    let transport = match args.transport.to_ascii_lowercase().as_str() {
-        "tcp" => Transport::Tcp,
-        _ => Transport::Udp,
+    let transport = if args.transport.eq_ignore_ascii_case("tcp") {
+        Transport::Tcp
+    } else {
+        Transport::Udp
     };
     let mut faults = Vec::new();
     if args.drop_rate > 0.0 {
