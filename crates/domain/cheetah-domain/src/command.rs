@@ -10,6 +10,10 @@ use cheetah_signal_types::{
 const MAX_IDEMPOTENCY_KEY_BYTES: usize = 256;
 /// Maximum byte length of a principal identifier stored in an idempotency scope.
 const MAX_PRINCIPAL_ID_BYTES: usize = 256;
+/// Maximum byte length of a `QueryCommand.config_type` value.
+const MAX_QUERY_CONFIG_TYPE_BYTES: usize = 128;
+/// Maximum byte length of a `DeviceControlCommand.param` value.
+const MAX_DEVICE_CONTROL_PARAM_BYTES: usize = 1024;
 
 /// Scope used to deduplicate operations and media sessions.
 #[derive(Clone, Debug, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
@@ -104,8 +108,9 @@ impl Command {
         causation_id: MessageId,
         traceparent: Option<String>,
         tracestate: Option<String>,
-    ) -> Self {
-        Self {
+    ) -> crate::Result<Self> {
+        payload.validate()?;
+        Ok(Self {
             command_id: id_generator.generate_message_id(),
             message_id: id_generator.generate_message_id(),
             operation_id,
@@ -123,7 +128,7 @@ impl Command {
             causation_id,
             traceparent,
             tracestate,
-        }
+        })
     }
 
     /// Returns the command id.
@@ -319,6 +324,15 @@ impl CommandPayload {
             Self::DeviceControl { .. } => "DeviceControl",
         }
     }
+
+    /// Validates payload-specific length and value constraints.
+    pub fn validate(&self) -> crate::Result<()> {
+        match self {
+            Self::Query { query } => query.validate(),
+            Self::DeviceControl { control } => control.validate(),
+            _ => Ok(()),
+        }
+    }
 }
 
 /// Playback control commands.
@@ -394,6 +408,20 @@ pub struct QueryCommand {
     pub scale: Option<f64>,
 }
 
+impl QueryCommand {
+    /// Validates the query command.
+    pub fn validate(&self) -> crate::Result<()> {
+        if let Some(config_type) = &self.config_type
+            && config_type.len() > MAX_QUERY_CONFIG_TYPE_BYTES
+        {
+            return Err(DomainError::invalid_argument(
+                "config_type must not exceed 128 bytes",
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// Kinds of query commands.
 #[derive(
     Clone, Copy, Debug, Default, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize,
@@ -457,6 +485,20 @@ pub struct DeviceControlCommand {
     pub param: Option<String>,
 }
 
+impl DeviceControlCommand {
+    /// Validates the device control command.
+    pub fn validate(&self) -> crate::Result<()> {
+        if let Some(param) = &self.param
+            && param.len() > MAX_DEVICE_CONTROL_PARAM_BYTES
+        {
+            return Err(DomainError::invalid_argument(
+                "param must not exceed 1024 bytes",
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// Kinds of device control actions.
 #[derive(
     Clone, Copy, Debug, Default, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize,
@@ -477,7 +519,6 @@ pub enum DeviceControlKind {
     /// Update a device configuration section.
     DeviceConfig,
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -508,5 +549,35 @@ mod tests {
         };
         let result = IdempotencyScope::new(tenant_id, "x".repeat(257), target, "key");
         assert!(matches!(result, Err(DomainError::InvalidArgument { .. })));
+    }
+
+    #[test]
+    fn query_command_rejects_oversized_config_type() {
+        let query = QueryCommand {
+            kind: QueryKind::ConfigDownload,
+            channel_id: None,
+            start_time: None,
+            end_time: None,
+            config_type: Some("x".repeat(129)),
+            scale: None,
+        };
+        assert!(matches!(
+            query.validate(),
+            Err(DomainError::InvalidArgument { .. })
+        ));
+    }
+
+    #[test]
+    fn device_control_command_rejects_oversized_param() {
+        let control = DeviceControlCommand {
+            kind: DeviceControlKind::DeviceConfig,
+            channel_id: None,
+            enabled: None,
+            param: Some("x".repeat(1025)),
+        };
+        assert!(matches!(
+            control.validate(),
+            Err(DomainError::InvalidArgument { .. })
+        ));
     }
 }

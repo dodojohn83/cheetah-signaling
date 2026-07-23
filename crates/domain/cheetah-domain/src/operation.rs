@@ -440,7 +440,7 @@ impl Operation {
             context.message_id,
             context.traceparent.clone(),
             context.tracestate.clone(),
-        );
+        )?;
         let initial_step = OperationStep::new(command.clone(), clock);
         let now = clock.now_wall();
         let operation = Self {
