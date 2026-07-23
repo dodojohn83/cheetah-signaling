@@ -60,3 +60,33 @@ async fn device_list_pagination_and_name_prefix() {
     let prefix_page: serde_json::Value = prefix.json().await.expect("read body");
     assert_eq!(prefix_page["items"].as_array().unwrap().len(), 1);
 }
+
+#[tokio::test]
+async fn oversized_cursor_is_rejected() {
+    let server = common::TestServer::new().await;
+    let oversized_cursor = "x".repeat(1025);
+    let response = server
+        .request(
+            reqwest::Method::GET,
+            &format!("/api/v1/devices?cursor={oversized_cursor}"),
+        )
+        .send()
+        .await
+        .expect("send request");
+    assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn oversized_name_prefix_is_rejected() {
+    let server = common::TestServer::new().await;
+    let oversized_prefix = "x".repeat(257);
+    let response = server
+        .request(
+            reqwest::Method::GET,
+            &format!("/api/v1/devices?name_prefix={oversized_prefix}"),
+        )
+        .send()
+        .await
+        .expect("send request");
+    assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+}
