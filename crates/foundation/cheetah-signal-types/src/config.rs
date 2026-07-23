@@ -1238,6 +1238,11 @@ pub struct OnvifConfig {
     pub max_response_bytes: usize,
     /// Maximum concurrent HTTP requests per driver client.
     pub max_concurrent_requests: usize,
+    /// Maximum concurrent ONVIF service calls to the same device endpoint.
+    pub per_device_concurrency: usize,
+    /// Maximum number of device endpoints whose concurrency semaphore is kept
+    /// in memory. Idle entries are evicted when the map exceeds this limit.
+    pub max_tracked_device_endpoints: usize,
     /// Whether to follow HTTP redirects (each hop re-checked against policy).
     pub follow_redirects: bool,
     /// Allowed URL schemes for discovered device XAddrs.
@@ -1299,6 +1304,8 @@ impl Default for OnvifConfig {
             request_timeout_ms: DurationMs::from_millis(15_000),
             max_response_bytes: 2 * 1024 * 1024,
             max_concurrent_requests: 32,
+            per_device_concurrency: 2,
+            max_tracked_device_endpoints: 1_024,
             follow_redirects: false,
             allowed_schemes: vec!["http".to_string(), "https".to_string()],
             allowed_ports: vec![80, 443],

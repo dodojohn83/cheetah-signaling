@@ -17,6 +17,11 @@ pub struct DriverConfig {
     pub max_response_bytes: usize,
     /// Maximum concurrent HTTP requests per client.
     pub max_concurrent_requests: usize,
+    /// Maximum concurrent ONVIF service calls to the same device endpoint.
+    pub per_device_concurrency: usize,
+    /// Maximum number of device endpoints whose concurrency semaphore is kept
+    /// in memory. Idle entries are evicted when the map exceeds this limit.
+    pub max_tracked_device_endpoints: usize,
     /// XAddr / stream URI SSRF policy.
     pub xaddr_policy: XAddrPolicy,
     /// WS-Discovery limits.
@@ -43,6 +48,8 @@ impl Default for DriverConfig {
             request_timeout: Duration::from_secs(15),
             max_response_bytes: 2 * 1024 * 1024,
             max_concurrent_requests: 32,
+            per_device_concurrency: 2,
+            max_tracked_device_endpoints: 1_024,
             xaddr_policy: XAddrPolicy::default().with_allow_private(true),
             discovery_limits: DiscoveryLimits::default(),
             // Well-known WS-Discovery multicast endpoint and ephemeral local bind.
@@ -67,6 +74,8 @@ impl From<&OnvifConfig> for DriverConfig {
             ),
             max_response_bytes: config.max_response_bytes,
             max_concurrent_requests: config.max_concurrent_requests,
+            per_device_concurrency: config.per_device_concurrency.max(1),
+            max_tracked_device_endpoints: config.max_tracked_device_endpoints.max(1),
             xaddr_policy: XAddrPolicy {
                 allowed_schemes: config.allowed_schemes.clone(),
                 allowed_ports: config.allowed_ports.clone(),
