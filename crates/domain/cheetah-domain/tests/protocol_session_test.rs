@@ -4,8 +4,8 @@
 
 use cheetah_domain::in_memory::{InMemoryClock, InMemoryIdGenerator};
 use cheetah_domain::{
-    CompatibilityProfile, DomainError, LocalIdentity, NewProtocolSession, PresenceState, Protocol,
-    ProtocolSession, RegistrationInfo, SessionEndpoint, SipTransport,
+    CompatibilityCapability, CompatibilityProfile, DomainError, LocalIdentity, NewProtocolSession,
+    PresenceState, Protocol, ProtocolSession, RegistrationInfo, SessionEndpoint, SipTransport,
 };
 use cheetah_signal_types::{
     Clock, DurationMs, IdGenerator, OwnerEpoch, ProtocolIdentity, UtcTimestamp,
@@ -70,4 +70,45 @@ fn mark_offline_sets_offline_reason() {
     session.mark_offline(&clock, "expired").unwrap();
     assert_eq!(session.presence(), PresenceState::Offline);
     assert_eq!(session.offline_reason(), Some("expired"));
+}
+
+#[test]
+fn sip_transport_from_str_is_case_insensitive_and_bounds_error() {
+    assert_eq!("UDP".parse::<SipTransport>().unwrap(), SipTransport::Udp);
+    assert!(matches!(
+        "x".repeat(1024).parse::<SipTransport>(),
+        Err(DomainError::InvalidArgument { .. })
+    ));
+}
+
+#[test]
+fn presence_state_from_str_is_case_insensitive_and_bounds_error() {
+    assert_eq!(
+        "OFFLINE".parse::<PresenceState>().unwrap(),
+        PresenceState::Offline
+    );
+    assert!(matches!(
+        "x".repeat(1024).parse::<PresenceState>(),
+        Err(DomainError::InvalidArgument { .. })
+    ));
+}
+
+#[test]
+fn compatibility_capability_from_str_normalizes_dash_underscore_and_bounds_error() {
+    assert_eq!(
+        "SDP-Media-Override"
+            .parse::<CompatibilityCapability>()
+            .unwrap(),
+        CompatibilityCapability::SdpMediaOverride
+    );
+    assert_eq!(
+        "sdp_media_override"
+            .parse::<CompatibilityCapability>()
+            .unwrap(),
+        CompatibilityCapability::SdpMediaOverride
+    );
+    assert!(matches!(
+        "x".repeat(1024).parse::<CompatibilityCapability>(),
+        Err(DomainError::InvalidArgument { .. })
+    ));
 }
