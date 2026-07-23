@@ -4,7 +4,7 @@ use cheetah_domain::{Command, CommandPayload, DomainEvent};
 use cheetah_signal_contracts::cheetah::common::v1 as proto;
 use cheetah_signal_contracts::cheetah::control::v1 as control;
 use cheetah_signal_types::{
-    Event, ResourceId, ResourceRef, UtcTimestamp, validate_traceparent, validate_tracestate,
+    Event, ResourceRef, UtcTimestamp, validate_traceparent, validate_tracestate,
 };
 use prost_types::Timestamp;
 
@@ -23,21 +23,11 @@ fn to_timestamp(value: UtcTimestamp) -> Timestamp {
 }
 
 fn resource_ref_to_proto(value: &ResourceRef) -> proto::ResourceRef {
-    let resource_id = match &value.id {
-        ResourceId::Tenant(id) => id.to_string(),
-        ResourceId::Device(id) => id.to_string(),
-        ResourceId::Channel(id) => id.to_string(),
-        ResourceId::Endpoint(id) => id.to_string(),
-        ResourceId::ProtocolSession(id) => id.to_string(),
-        ResourceId::MediaSession(id) => id.to_string(),
-        ResourceId::Operation(id) => id.to_string(),
-        ResourceId::Event(id) => id.to_string(),
-        ResourceId::Plugin(id) => id.to_string(),
-        ResourceId::Node(id) => id.to_string(),
-        ResourceId::MediaBinding(id) => id.to_string(),
-        ResourceId::MediaNode(id) => id.to_string(),
-        _ => String::new(),
-    };
+    // `ResourceId` is non-exhaustive, so it cannot be matched exhaustively
+    // outside of `cheetah-signal-types`. Its `Display` impl is defined in the
+    // same crate as the enum and is kept exhaustive, ensuring the underlying
+    // identifier is never silently dropped when a new resource kind is added.
+    let resource_id = value.id.to_string();
     let kind = match value.kind {
         cheetah_signal_types::ResourceKind::Tenant => proto::ResourceKind::Tenant as i32,
         cheetah_signal_types::ResourceKind::Device => proto::ResourceKind::Device as i32,

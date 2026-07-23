@@ -101,6 +101,25 @@ pub enum ResourceKind {
     MediaNode,
 }
 
+impl std::fmt::Display for ResourceId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Tenant(id) => id.fmt(f),
+            Self::Device(id) => id.fmt(f),
+            Self::Channel(id) => id.fmt(f),
+            Self::Endpoint(id) => id.fmt(f),
+            Self::ProtocolSession(id) => id.fmt(f),
+            Self::MediaSession(id) => id.fmt(f),
+            Self::MediaBinding(id) => id.fmt(f),
+            Self::Operation(id) => id.fmt(f),
+            Self::Event(id) => id.fmt(f),
+            Self::Plugin(id) => id.fmt(f),
+            Self::Node(id) => id.fmt(f),
+            Self::MediaNode(id) => id.fmt(f),
+        }
+    }
+}
+
 /// Identifier for a resource, grouped by the resource kind.
 #[derive(Clone, Debug, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
