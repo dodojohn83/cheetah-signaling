@@ -27,6 +27,15 @@ impl PlaybackAction {
             Self::Teardown => "TEARDOWN",
         }
     }
+
+    /// Lower-case MANSRTSP method name, used for branch identifiers.
+    pub fn method_lower(self) -> &'static str {
+        match self {
+            Self::Play => "play",
+            Self::Pause => "pause",
+            Self::Teardown => "teardown",
+        }
+    }
 }
 
 /// Rejects values that would inject extra MANSRTSP lines.
