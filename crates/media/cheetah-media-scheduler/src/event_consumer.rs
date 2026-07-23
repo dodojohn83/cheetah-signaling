@@ -18,7 +18,7 @@ use cheetah_domain::{
 };
 use cheetah_signal_types::{
     Clock, CorrelationId, DurationMs, MediaNodeInstanceEpoch, MessageId, NodeId, Principal,
-    PrincipalKind, RequestContext, TenantId,
+    PrincipalKind, RequestContext, TenantId, UtcTimestamp,
 };
 use cheetah_storage_api::Storage;
 use futures::StreamExt;
@@ -29,6 +29,24 @@ use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 
 pub use crate::event_consumer_support::{NoopReconciliationHandler, ReconciliationHandler};
+
+/// Computes the expiry timestamp for a processed-message record.
+///
+/// If `ttl_ms` is so large that `now + ttl` overflows `OffsetDateTime`, the
+/// result is clamped to the latest representable UTC timestamp so the record
+/// remains evictable instead of being stored with a permanent `NULL` expiry.
+fn ttl_expires_at(now: UtcTimestamp, ttl_ms: u64) -> UtcTimestamp {
+    let ttl = i64::try_from(ttl_ms).unwrap_or(i64::MAX);
+    now.checked_add(DurationMs::from_millis(ttl))
+        .unwrap_or_else(|| {
+            UtcTimestamp::from_offset(time::OffsetDateTime::new_in_offset(
+                time::Date::from_calendar_date(9999, time::Month::December, 31)
+                    .unwrap_or(time::Date::MAX),
+                time::Time::from_hms(23, 59, 59).unwrap_or(time::Time::MIDNIGHT),
+                time::UtcOffset::UTC,
+            ))
+        })
+}
 
 /// A gRPC consumer that applies media-node events to the control plane.
 #[derive(Clone)]
@@ -389,8 +407,9 @@ impl MediaEventConsumer {
             status: ProcessedMessageStatus::Pending,
             result_payload: None,
             processed_at: self.clock.now_wall(),
-            expires_at: self.clock.now_wall().checked_add(DurationMs::from_millis(
-                i64::try_from(self.config.record_ttl_ms).unwrap_or(i64::MAX),
+            expires_at: Some(ttl_expires_at(
+                self.clock.now_wall(),
+                self.config.record_ttl_ms,
             )),
         };
 
@@ -496,8 +515,9 @@ impl MediaEventConsumer {
                     status: ProcessedMessageStatus::Pending,
                     result_payload: None,
                     processed_at: self.clock.now_wall(),
-                    expires_at: self.clock.now_wall().checked_add(DurationMs::from_millis(
-                        i64::try_from(self.config.record_ttl_ms).unwrap_or(i64::MAX),
+                    expires_at: Some(ttl_expires_at(
+                        self.clock.now_wall(),
+                        self.config.record_ttl_ms,
                     )),
                 };
                 uow.processed_message_repository()
@@ -625,9 +645,7 @@ impl MediaEventConsumer {
             status: ProcessedMessageStatus::Pending,
             result_payload: None,
             processed_at: now,
-            expires_at: now.checked_add(DurationMs::from_millis(
-                i64::try_from(self.config.record_ttl_ms).unwrap_or(i64::MAX),
-            )),
+            expires_at: Some(ttl_expires_at(now, self.config.record_ttl_ms)),
         };
 
         uow.processed_message_repository()
@@ -678,5 +696,27 @@ impl MediaEventConsumer {
             node_id: Some(self.source_node_id),
             source_ip: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use time::OffsetDateTime;
+
+    #[test]
+    fn ttl_expires_at_clamps_overflow_to_representable_max() {
+        let now = UtcTimestamp::from_offset(OffsetDateTime::now_utc());
+
+        // A normal TTL produces a finite future timestamp.
+        let short = ttl_expires_at(now, 60_000);
+        assert!(short.as_offset() > now.as_offset());
+
+        // `u64::MAX` milliseconds overflows `OffsetDateTime`; it must not
+        // return `None` (which would store a permanent `NULL` expiry) and
+        // must not panic.
+        let far = ttl_expires_at(now, u64::MAX);
+        assert!(far.as_offset() > now.as_offset());
+        assert!(far.as_offset().year() >= 9999);
     }
 }
