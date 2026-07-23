@@ -3,6 +3,19 @@
 use std::collections::HashMap;
 use std::fmt;
 
+/// Maximum byte length of a binary version requirement string.
+const MAX_BINARY_VERSION_RANGE_BYTES: usize = 128;
+/// Maximum byte length of a binary version reported by a node.
+const MAX_BINARY_VERSION_BYTES: usize = 128;
+/// Maximum number of contract versions tracked in the matrix.
+const MAX_CONTRACT_VERSIONS: usize = 64;
+/// Maximum byte length of a contract name.
+const MAX_CONTRACT_NAME_BYTES: usize = 128;
+/// Maximum byte length of a contract version requirement string.
+const MAX_CONTRACT_VERSION_REQ_BYTES: usize = 128;
+/// Maximum byte length of a contract version string reported by a node.
+const MAX_CONTRACT_VERSION_STRING_BYTES: usize = 128;
+
 /// A compatibility matrix that decides whether a node with a given binary
 /// version and contract versions is allowed to join the cluster.
 #[derive(Clone, Debug)]
@@ -46,6 +59,9 @@ pub enum CompatibilityError {
         /// Allowed range.
         range: String,
     },
+    /// An input exceeded the allowed length or count.
+    #[error("{0}")]
+    InvalidArgument(String),
 }
 
 impl CompatibilityMatrix {
@@ -57,6 +73,16 @@ impl CompatibilityMatrix {
         binary_version_range: &str,
         contract_versions: HashMap<String, String>,
     ) -> Result<Self, CompatibilityError> {
+        if binary_version_range.len() > MAX_BINARY_VERSION_RANGE_BYTES {
+            return Err(CompatibilityError::InvalidArgument(format!(
+                "binary version range must not exceed {MAX_BINARY_VERSION_RANGE_BYTES} bytes"
+            )));
+        }
+        if contract_versions.len() > MAX_CONTRACT_VERSIONS {
+            return Err(CompatibilityError::InvalidArgument(format!(
+                "contract_versions must not exceed {MAX_CONTRACT_VERSIONS} entries"
+            )));
+        }
         let binary_version_range = parse_req(binary_version_range).map_err(|e| {
             CompatibilityError::InvalidBinaryVersion(format!(
                 "binary version range {binary_version_range:?}: {e}"
@@ -64,6 +90,16 @@ impl CompatibilityMatrix {
         })?;
         let mut parsed_contracts = HashMap::with_capacity(contract_versions.len());
         for (name, req) in contract_versions {
+            if name.len() > MAX_CONTRACT_NAME_BYTES {
+                return Err(CompatibilityError::InvalidArgument(format!(
+                    "contract name must not exceed {MAX_CONTRACT_NAME_BYTES} bytes"
+                )));
+            }
+            if req.len() > MAX_CONTRACT_VERSION_REQ_BYTES {
+                return Err(CompatibilityError::InvalidArgument(format!(
+                    "contract {name:?} version requirement must not exceed {MAX_CONTRACT_VERSION_REQ_BYTES} bytes"
+                )));
+            }
             let req = parse_req(&req).map_err(|e| {
                 CompatibilityError::InvalidContractVersion(
                     name.clone(),
@@ -93,6 +129,17 @@ impl CompatibilityMatrix {
         binary_version: &str,
         contract_versions: &HashMap<String, String>,
     ) -> Result<(), CompatibilityError> {
+        if binary_version.len() > MAX_BINARY_VERSION_BYTES {
+            return Err(CompatibilityError::InvalidArgument(format!(
+                "binary version must not exceed {MAX_BINARY_VERSION_BYTES} bytes"
+            )));
+        }
+        if contract_versions.len() > MAX_CONTRACT_VERSIONS {
+            return Err(CompatibilityError::InvalidArgument(format!(
+                "contract_versions must not exceed {MAX_CONTRACT_VERSIONS} entries"
+            )));
+        }
+
         // A STAR range imposes no binary-version constraint. Skip parsing so that
         // non-semver version strings (e.g., git hashes or custom labels) are still
         // accepted when the matrix is fully permissive.
@@ -114,6 +161,11 @@ impl CompatibilityMatrix {
                     contract: contract.clone(),
                 }
             })?;
+            if node_version.len() > MAX_CONTRACT_VERSION_STRING_BYTES {
+                return Err(CompatibilityError::InvalidArgument(format!(
+                    "contract {contract:?} version must not exceed {MAX_CONTRACT_VERSION_STRING_BYTES} bytes"
+                )));
+            }
             let node_version = semver::Version::parse(node_version).map_err(|_| {
                 CompatibilityError::InvalidContractVersion(contract.clone(), node_version.clone())
             })?;
@@ -141,7 +193,8 @@ fn parse_req(s: &str) -> Result<semver::VersionReq, semver::Error> {
     // interpreted as a caret requirement, which is usually too loose for our
     // matrix. Normalize bare versions to exact matches.
     if s.chars().all(|c| c.is_ascii_digit() || c == '.') {
-        semver::VersionReq::parse(&format!("={s}"))
+        let normalized = format!("={s}");
+        semver::VersionReq::parse(&normalized)
     } else {
         semver::VersionReq::parse(s)
     }
@@ -217,6 +270,84 @@ mod tests {
 
         node.insert("x".to_string(), "1.0.1".to_string());
         assert!(matrix.check("1.0.0", &node).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn new_rejects_oversized_binary_version_range() {
+        let range = ">=".repeat(65);
+        assert!(matches!(
+            CompatibilityMatrix::new(&range, HashMap::new()),
+            Err(CompatibilityError::InvalidArgument(_))
+        ));
+    }
+
+    #[test]
+    fn new_rejects_too_many_contracts() {
+        let contracts = (0..65)
+            .map(|i| (format!("contract-{i}"), ">=1.0.0".to_string()))
+            .collect();
+        assert!(matches!(
+            CompatibilityMatrix::new(">=1.0.0", contracts),
+            Err(CompatibilityError::InvalidArgument(_))
+        ));
+    }
+
+    #[test]
+    fn new_rejects_oversized_contract_name() {
+        let contracts = HashMap::from([("x".repeat(129), ">=1.0.0".to_string())]);
+        assert!(matches!(
+            CompatibilityMatrix::new(">=1.0.0", contracts),
+            Err(CompatibilityError::InvalidArgument(_))
+        ));
+    }
+
+    #[test]
+    fn new_rejects_oversized_contract_req() {
+        let contracts = HashMap::from([("cheetah.media.v1".to_string(), ">=".repeat(65))]);
+        assert!(matches!(
+            CompatibilityMatrix::new(">=1.0.0", contracts),
+            Err(CompatibilityError::InvalidArgument(_))
+        ));
+    }
+
+    #[test]
+    fn check_rejects_oversized_binary_version() -> Result<(), CompatibilityError> {
+        let matrix = CompatibilityMatrix::new(">=1.0.0, <2.0.0", HashMap::new())?;
+        let version = "1.".repeat(65);
+        assert!(matches!(
+            matrix.check(&version, &HashMap::new()),
+            Err(CompatibilityError::InvalidArgument(_))
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn check_rejects_too_many_contract_versions() -> Result<(), CompatibilityError> {
+        let matrix = CompatibilityMatrix::new(">=1.0.0, <2.0.0", HashMap::new())?;
+        let node = (0..65)
+            .map(|i| (format!("contract-{i}"), "1.0.0".to_string()))
+            .collect();
+        assert!(matches!(
+            matrix.check("1.2.0", &node),
+            Err(CompatibilityError::InvalidArgument(_))
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn check_rejects_oversized_node_contract_version() -> Result<(), CompatibilityError> {
+        let mut contracts = HashMap::new();
+        contracts.insert(
+            "cheetah.media.v1".to_string(),
+            ">=1.0.0, <2.0.0".to_string(),
+        );
+        let matrix = CompatibilityMatrix::new(">=1.0.0, <2.0.0", contracts)?;
+        let node = HashMap::from([("cheetah.media.v1".to_string(), "x".repeat(129))]);
+        assert!(matches!(
+            matrix.check("1.2.0", &node),
+            Err(CompatibilityError::InvalidArgument(_))
+        ));
         Ok(())
     }
 }
