@@ -19,6 +19,12 @@ const COMMANDS_STREAM: &str = "CHEETAH_COMMANDS";
 const EVENTS_STREAM: &str = "CHEETAH_EVENTS";
 const COMMAND_SUBJECT_PATTERN: &str = "sig.v1.command.*.*";
 const EVENT_SUBJECT_PATTERN: &str = "sig.v1.event.*.*";
+/// Maximum timeout passed to `tokio::time::timeout` to avoid `Instant` overflow.
+const MAX_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
+
+fn clamp_timeout(timeout: Duration) -> Duration {
+    timeout.min(MAX_TIMEOUT).max(Duration::from_millis(1))
+}
 
 fn nats_error_to_bus(err: impl std::fmt::Display) -> BusError {
     BusError::Unavailable(err.to_string())
@@ -32,7 +38,7 @@ async fn with_timeout<T, E>(
 where
     E: std::fmt::Display,
 {
-    tokio::time::timeout(timeout, fut)
+    tokio::time::timeout(clamp_timeout(timeout), fut)
         .await
         .map_err(|_| nats_error_to_bus(format!("{description} timed out")))?
         .map_err(nats_error_to_bus)
@@ -434,5 +440,20 @@ where
             }
             Err(e) => Err(nats_error_to_bus(e)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clamp_timeout_saturates_at_max_and_min() {
+        assert_eq!(clamp_timeout(Duration::ZERO), Duration::from_millis(1));
+        assert_eq!(
+            clamp_timeout(Duration::from_millis(5_000)),
+            Duration::from_millis(5_000)
+        );
+        assert_eq!(clamp_timeout(Duration::MAX), MAX_TIMEOUT);
     }
 }
