@@ -331,13 +331,26 @@ fn cseq_number(msg: &SipMessage) -> Result<u32, SipError> {
     msg.cseq().map(|(n, _)| n)
 }
 
-pub(crate) fn extract_tag(value: &str) -> Option<&str> {
+fn find_case_insensitive(haystack: &str, needle: &str) -> Option<usize> {
+    debug_assert!(needle.is_ascii());
+    let needle_len = needle.len();
+    haystack.as_bytes().windows(needle_len).position(|window| {
+        window
+            .iter()
+            .zip(needle.as_bytes().iter())
+            .all(|(a, b)| a.eq_ignore_ascii_case(b))
+    })
+}
+
+/// Extracts the value of a `tag` parameter from a SIP `From`/`To` header value.
+///
+/// Matching is case-insensitive and does not allocate a copy of the header value.
+pub fn extract_tag(value: &str) -> Option<&str> {
     let value = value.trim();
-    let lower = value.to_ascii_lowercase();
-    let start = lower.find(";tag=")? + 5;
+    let start = find_case_insensitive(value, ";tag=")? + 5;
     let rest = &value[start..];
     let end = rest
-        .find(|c: char| c == ';' || c.is_whitespace())
+        .find(|c: char| c == ';' || c == '<' || c == '>' || c.is_whitespace())
         .unwrap_or(rest.len());
     let tag = &rest[..end];
     Some(tag.trim_matches('"'))
@@ -430,4 +443,33 @@ fn extract_first_uri(value: &str) -> Option<SipUri> {
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::extract_tag;
+
+    #[test]
+    fn extract_tag_is_case_insensitive() {
+        assert_eq!(extract_tag("\"Alice\" <sip:a@b>;tag=abc").unwrap(), "abc");
+        assert_eq!(extract_tag("\"Alice\" <sip:a@b>;TAG=ABC").unwrap(), "ABC");
+        assert_eq!(
+            extract_tag("\"Alice\" <sip:a@b>;Tag=MiXeD").unwrap(),
+            "MiXeD"
+        );
+    }
+
+    #[test]
+    fn extract_tag_stops_at_terminator_and_trims_quotes() {
+        assert_eq!(extract_tag(";tag=\"quoted\"").unwrap(), "quoted");
+        assert_eq!(extract_tag(";tag=abc;other=value").unwrap(), "abc");
+        assert_eq!(extract_tag("<sip:a@b>;tag=abc>").unwrap(), "abc");
+    }
+
+    #[test]
+    fn extract_tag_returns_none_when_missing() {
+        assert!(extract_tag("<sip:a@b>").is_none());
+    }
 }

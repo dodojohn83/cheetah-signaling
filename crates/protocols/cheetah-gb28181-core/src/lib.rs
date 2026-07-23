@@ -26,7 +26,9 @@ pub use sdp::{
     SdpOrigin, SdpParserConfig, SdpSession, SdpSetup, SdpTime, encode_sdp, parse_sdp,
 };
 
-pub use sip::dialog::{Dialog, DialogEvent, DialogId, DialogOutput, DialogRole, DialogState};
+pub use sip::dialog::{
+    Dialog, DialogEvent, DialogId, DialogOutput, DialogRole, DialogState, extract_tag,
+};
 pub use sip::dialog_manager::{
     DEFAULT_DIALOG_TTL, DEFAULT_MAX_DIALOGS, DialogManager, DialogManagerConfig, DialogRouting,
 };
