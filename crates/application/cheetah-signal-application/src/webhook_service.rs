@@ -346,7 +346,7 @@ impl WebhookService {
             Some(c) if c.enabled() => c,
             Some(_) => {
                 let mut dl = delivery;
-                dl.dead_letter(self.clock.as_ref(), "webhook disabled".to_string());
+                dl.dead_letter(self.clock.as_ref(), "webhook disabled".to_string())?;
                 self.save_delivery(dl).await?;
                 return Ok(());
             }
@@ -355,7 +355,7 @@ impl WebhookService {
                 dl.dead_letter(
                     self.clock.as_ref(),
                     "webhook configuration removed".to_string(),
-                );
+                )?;
                 self.save_delivery(dl).await?;
                 return Ok(());
             }
@@ -373,7 +373,7 @@ impl WebhookService {
             }
         };
 
-        current.set_signature(signature.clone());
+        current.set_signature(signature.clone())?;
 
         let mut headers = vec![
             ("Content-Type".to_string(), "application/json".to_string()),
@@ -439,7 +439,7 @@ impl WebhookService {
             config.webhook_id(),
             event_id,
             payload,
-        );
+        )?;
         let signature = sign_webhook_payload(
             secret.expose_secret(),
             &delivery.delivery_id().to_string(),
@@ -447,7 +447,7 @@ impl WebhookService {
             &timestamp,
             delivery.payload(),
         )?;
-        delivery.set_signature(signature);
+        delivery.set_signature(signature)?;
         Ok(delivery)
     }
 
@@ -479,7 +479,7 @@ impl WebhookService {
             self.bump_failures(webhook_id);
             self.fail_delivery(delivery, message).await
         } else {
-            delivery.dead_letter(self.clock.as_ref(), message);
+            delivery.dead_letter(self.clock.as_ref(), message)?;
             self.save_delivery(delivery).await
         }
     }
@@ -495,9 +495,9 @@ impl WebhookService {
         let next_attempt = self.apply_circuit_breaker(now, webhook_id, next_attempt);
 
         if delivery.attempt_count() >= self.config.max_attempts {
-            delivery.dead_letter(self.clock.as_ref(), error);
+            delivery.dead_letter(self.clock.as_ref(), error)?;
         } else {
-            delivery.fail(self.clock.as_ref(), error, next_attempt);
+            delivery.fail(self.clock.as_ref(), error, next_attempt)?;
         }
 
         self.save_delivery(delivery).await
