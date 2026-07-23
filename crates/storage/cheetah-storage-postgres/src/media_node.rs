@@ -44,8 +44,8 @@ fn media_node_columns() -> &'static str {
      draining, status, last_heartbeat_at, lease_until, generation, contract_version, revision, updated_at"
 }
 
-/// Patches media node event payloads with the persisted revision and appends
-/// the events to the outbox in the current transaction.
+/// Overwrites `MediaNodeUpdated` payloads with the persisted node snapshot and
+/// appends the events to the outbox in the current transaction.
 #[allow(clippy::explicit_auto_deref)]
 async fn append_outbox_events(
     conn: &mut PgConnection,
@@ -55,7 +55,7 @@ async fn append_outbox_events(
     for event in events.iter_mut() {
         event.aggregate_sequence = persisted.revision;
         if let DomainEvent::MediaNodeUpdated { ref mut node } = event.payload {
-            node.revision = persisted.revision;
+            *node = persisted.clone();
         }
 
         sqlx::query(
