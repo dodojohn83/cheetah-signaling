@@ -86,3 +86,32 @@ async fn execute_reaches_server_and_returns_result() {
     assert_eq!(result.status, CommandStatus::Completed as i32);
     assert_eq!(result.operation_id, "op-1");
 }
+
+#[tokio::test]
+async fn execute_with_zero_or_huge_config_values_does_not_block() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let service = MediaControlServer::new(MockMediaControl);
+    tokio::spawn(async move {
+        tonic::transport::Server::builder()
+            .add_service(service)
+            .serve_with_incoming(TcpListenerStream::new(listener))
+            .await
+            .unwrap();
+    });
+
+    let config = MediaClientConfig {
+        per_node_concurrency: 0,
+        circuit_breaker_cooldown_ms: u64::MAX,
+        circuit_breaker_threshold: 0,
+        ..MediaClientConfig::test()
+    };
+    let client = MediaControlClient::new(config);
+    let response = client
+        .execute(&format!("http://{addr}"), request())
+        .await
+        .unwrap();
+
+    let result = response.result.expect("missing command result");
+    assert_eq!(result.status, CommandStatus::Completed as i32);
+}
