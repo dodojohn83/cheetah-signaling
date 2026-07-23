@@ -113,12 +113,12 @@ impl DurationMs {
 
     /// Creates a duration from a number of seconds.
     pub const fn from_seconds(value: i64) -> Self {
-        Self(value * 1_000)
+        Self(value.saturating_mul(1_000))
     }
 
     /// Creates a duration from a number of minutes.
     pub const fn from_minutes(value: i64) -> Self {
-        Self(value * 60_000)
+        Self(value.saturating_mul(60_000))
     }
 
     /// Returns the duration as milliseconds.
@@ -163,7 +163,15 @@ impl From<i64> for DurationMs {
 
 impl From<time::Duration> for DurationMs {
     fn from(value: time::Duration) -> Self {
-        Self::from_millis(value.whole_milliseconds() as i64)
+        let ms = value.whole_milliseconds();
+        let clamped = if ms > i64::MAX as i128 {
+            i64::MAX
+        } else if ms < i64::MIN as i128 {
+            i64::MIN
+        } else {
+            ms as i64
+        };
+        Self::from_millis(clamped)
     }
 }
 
@@ -216,5 +224,30 @@ impl Deadline {
             };
             Some(DurationMs::from_millis(diff_millis_i64))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use super::*;
+
+    #[test]
+    fn from_time_duration_clamps_to_i64_range() {
+        // Seconds are multiplied to milliseconds, producing an i128 value outside the i64 range.
+        let huge = time::Duration::seconds(i64::MAX);
+        let d = DurationMs::from(huge);
+        assert_eq!(d.as_millis(), i64::MAX);
+
+        let negative_huge = time::Duration::seconds(i64::MIN);
+        let d = DurationMs::from(negative_huge);
+        assert_eq!(d.as_millis(), i64::MIN);
+    }
+
+    #[test]
+    fn from_seconds_saturates_on_overflow() {
+        assert_eq!(DurationMs::from_seconds(i64::MAX).as_millis(), i64::MAX);
+        assert_eq!(DurationMs::from_seconds(i64::MIN).as_millis(), i64::MIN);
     }
 }
