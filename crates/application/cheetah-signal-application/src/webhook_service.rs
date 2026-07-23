@@ -44,6 +44,29 @@ impl Default for WebhookDeliveryConfig {
     }
 }
 
+impl WebhookDeliveryConfig {
+    /// Returns a sanitized copy with clamped bounds.
+    ///
+    /// Negative delays/timeouts are clamped to non-negative values,
+    /// `max_delay_ms` is at least `base_delay_ms`, `max_attempts` is at
+    /// least 1, and `request_timeout_ms` is at least 1 millisecond so a
+    /// request does not hang without a deadline.
+    pub fn sanitize(&self) -> Self {
+        let base_delay_ms = self.base_delay_ms.as_millis().max(0);
+        let max_delay_ms = self.max_delay_ms.as_millis().max(base_delay_ms);
+        let request_timeout_ms = self.request_timeout_ms.as_millis().max(1);
+        let circuit_breaker_cooldown_ms = self.circuit_breaker_cooldown_ms.as_millis().max(0);
+        Self {
+            max_attempts: self.max_attempts.max(1),
+            base_delay_ms: DurationMs::from_millis(base_delay_ms),
+            max_delay_ms: DurationMs::from_millis(max_delay_ms),
+            request_timeout_ms: DurationMs::from_millis(request_timeout_ms),
+            circuit_breaker_threshold: self.circuit_breaker_threshold,
+            circuit_breaker_cooldown_ms: DurationMs::from_millis(circuit_breaker_cooldown_ms),
+        }
+    }
+}
+
 /// An outbound webhook HTTP request.
 #[derive(Clone, Debug)]
 pub struct WebhookHttpRequest {
@@ -109,7 +132,7 @@ impl WebhookService {
             clock,
             id_generator,
             http_client,
-            config,
+            config: config.sanitize(),
             consecutive_failures: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -567,5 +590,45 @@ impl WebhookService {
             Ok(guard) => guard,
             Err(poisoned) => poisoned.into_inner(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn webhook_delivery_config_sanitizes_negative_values() {
+        let config = WebhookDeliveryConfig {
+            max_attempts: 0,
+            base_delay_ms: DurationMs::from_millis(-1_000),
+            max_delay_ms: DurationMs::from_millis(-500),
+            request_timeout_ms: DurationMs::from_millis(-10_000),
+            circuit_breaker_threshold: 3,
+            circuit_breaker_cooldown_ms: DurationMs::from_millis(-30_000),
+        }
+        .sanitize();
+
+        assert_eq!(config.max_attempts, 1);
+        assert_eq!(config.base_delay_ms.as_millis(), 0);
+        assert_eq!(config.max_delay_ms.as_millis(), 0);
+        assert_eq!(config.request_timeout_ms.as_millis(), 1);
+        assert_eq!(config.circuit_breaker_cooldown_ms.as_millis(), 0);
+    }
+
+    #[test]
+    fn webhook_delivery_config_max_delay_at_least_base_delay() {
+        let config = WebhookDeliveryConfig {
+            max_attempts: 5,
+            base_delay_ms: DurationMs::from_millis(10_000),
+            max_delay_ms: DurationMs::from_millis(1_000),
+            request_timeout_ms: DurationMs::from_millis(10_000),
+            circuit_breaker_threshold: 3,
+            circuit_breaker_cooldown_ms: DurationMs::from_millis(30_000),
+        }
+        .sanitize();
+
+        assert_eq!(config.base_delay_ms.as_millis(), 10_000);
+        assert_eq!(config.max_delay_ms.as_millis(), 10_000);
     }
 }
