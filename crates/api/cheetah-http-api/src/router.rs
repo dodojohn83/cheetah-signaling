@@ -35,9 +35,32 @@ pub(crate) const MAX_REQUEST_ID_BYTES: usize = 128;
 /// Maximum byte length of an incoming `x-correlation-id` header value.
 /// Values longer than this are ignored when constructing a correlation id.
 pub(crate) const MAX_CORRELATION_ID_BYTES: usize = 128;
+/// Maximum byte length of the URI path recorded in request tracing spans.
+/// Keeps trace/span payloads bounded and avoids logging query-string secrets.
+const MAX_URI_PATH_BYTES: usize = 1024;
 
 fn clamp_read_timeout(ms: u64) -> Duration {
     Duration::from_millis(ms).min(MAX_READ_TIMEOUT)
+}
+
+/// Clamp a URI path to a bounded byte length while preserving UTF-8 boundaries.
+///
+/// The full URI (including scheme, host and query) is not recorded: query
+/// strings may contain secrets and the path alone is enough for routing/span
+/// context. The resulting string is guaranteed to fit within `MAX_URI_PATH_BYTES`.
+fn clamp_uri_path(uri: &axum::http::Uri) -> String {
+    let path = uri.path();
+    if path.len() <= MAX_URI_PATH_BYTES {
+        return path.to_string();
+    }
+    let mut end = 0;
+    for (i, c) in path.char_indices() {
+        if i + c.len_utf8() > MAX_URI_PATH_BYTES {
+            break;
+        }
+        end = i + c.len_utf8();
+    }
+    path[..end].to_string()
 }
 
 /// Extension carrying the request identifier for correlation.
@@ -87,7 +110,7 @@ pub fn build_router(state: ApiState) -> Router {
         })
         .on_request(move |req: &Request<_>, span: &Span| {
             span.record("http.method", tracing::field::display(req.method()));
-            span.record("http.uri", req.uri().to_string());
+            span.record("http.uri", clamp_uri_path(req.uri()));
             metrics_request.record_request();
         })
         .on_response(
