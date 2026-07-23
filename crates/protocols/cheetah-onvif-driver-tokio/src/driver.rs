@@ -92,7 +92,7 @@ impl OnvifHttpDriver {
             }
 
             if guard.len() >= self.max_tracked_device_endpoints && !guard.contains_key(endpoint) {
-                return Err(DriverError::Config(format!(
+                return Err(DriverError::Overloaded(format!(
                     "max tracked device endpoints ({}) reached",
                     self.max_tracked_device_endpoints
                 )));

@@ -191,10 +191,15 @@ impl ProtocolDriver for OnvifTokioProtocolDriver {
         let config = match onvif_config(ctx) {
             Ok(config) => config,
             Err(e) => {
+                let mut metrics = HashMap::new();
+                metrics.insert("driver_ready".to_string(), 0);
+                metrics.insert("credentials_available".to_string(), 0);
+                metrics.insert("queue_saturated".to_string(), 0);
+                metrics.insert("dependency_degraded".to_string(), 1);
                 return Ok(HealthReport {
                     status: HealthStatus::Unhealthy,
                     message: format!("invalid onvif config: {e}"),
-                    metrics: HashMap::new(),
+                    metrics,
                 });
             }
         };
@@ -617,6 +622,7 @@ fn plugin_error_from_driver_error(e: DriverError) -> PluginError {
         DriverError::Io(e) => PluginError::Transient(e.to_string()),
         DriverError::Timeout(_) => PluginError::Cancelled,
         DriverError::Config(s) => PluginError::Driver(s),
+        DriverError::Overloaded(s) => PluginError::Transient(s),
     }
 }
 

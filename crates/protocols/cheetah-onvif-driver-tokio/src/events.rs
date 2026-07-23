@@ -10,7 +10,7 @@ use cheetah_onvif_module::services::{
 };
 use cheetah_onvif_module::{CapabilityKind, CapabilityProbeResult, DeviceInformation, Service};
 use cheetah_plugin_sdk::{DriverContext, PluginError, ProtocolEvent};
-use cheetah_signal_types::TenantId;
+use cheetah_signal_types::{TenantId, UtcTimestamp};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 
@@ -23,7 +23,17 @@ fn dialect_str(dialect: MediaDialect) -> &'static str {
 
 fn date_time_value(dt: &DateTime) -> Value {
     match dt.to_utc() {
-        Ok(utc) => Value::String(utc.to_string()),
+        Ok(utc) => match UtcTimestamp::from_offset(utc).to_rfc3339() {
+            Ok(s) => Value::String(s),
+            Err(_) => json!({
+                "year": dt.year,
+                "month": dt.month,
+                "day": dt.day,
+                "hour": dt.hour,
+                "minute": dt.minute,
+                "second": dt.second,
+            }),
+        },
         Err(_) => json!({
             "year": dt.year,
             "month": dt.month,
