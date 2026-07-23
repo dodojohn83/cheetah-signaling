@@ -139,7 +139,8 @@ impl SignalingRuntime {
             .clone();
         let mut remaining: Vec<(usize, JoinHandle<()>)> =
             self.workers.into_iter().enumerate().collect();
-        let deadline = tokio::time::Instant::now() + worker_timeout;
+        let now = tokio::time::Instant::now();
+        let deadline = now.checked_add(worker_timeout).unwrap_or(now);
 
         while !remaining.is_empty() {
             let left = deadline.saturating_duration_since(tokio::time::Instant::now());

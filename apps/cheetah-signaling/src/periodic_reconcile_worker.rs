@@ -17,6 +17,12 @@ use tracing::{info, warn};
 
 /// Spawns a background task that periodically reconciles media sessions for all
 /// tenants until the cancellation token fires.
+const MAX_RECONCILE_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
+
+fn clamp_reconcile_interval(interval: Duration) -> Duration {
+    interval.clamp(Duration::from_millis(1), MAX_RECONCILE_INTERVAL)
+}
+
 pub fn spawn(
     media_service: MediaService,
     storage: Arc<dyn Storage>,
@@ -25,9 +31,11 @@ pub fn spawn(
     interval: Duration,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
+        let interval = clamp_reconcile_interval(interval);
         // Delay the first tick so the process has time to start listeners and
         // for media nodes to re-register before any heavy reconcile RPCs run.
-        let start = tokio::time::Instant::now() + interval;
+        let now = tokio::time::Instant::now();
+        let start = now.checked_add(interval).unwrap_or(now);
         let mut interval = tokio::time::interval_at(start, interval);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
@@ -125,4 +133,25 @@ async fn reconcile_all_tenants(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clamp_reconcile_interval_bounds_duration() {
+        assert_eq!(
+            clamp_reconcile_interval(Duration::ZERO),
+            Duration::from_millis(1)
+        );
+        assert_eq!(
+            clamp_reconcile_interval(Duration::from_millis(5_000)),
+            Duration::from_millis(5_000)
+        );
+        assert_eq!(
+            clamp_reconcile_interval(Duration::from_secs(u64::MAX)),
+            MAX_RECONCILE_INTERVAL
+        );
+    }
 }
