@@ -3,7 +3,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use cheetah_domain::in_memory::{InMemoryClock, InMemoryIdGenerator, request_context};
-use cheetah_domain::{Clock, IdGenerator};
+use cheetah_domain::{Clock, IdGenerator, MAX_WEBHOOK_EVENT_TYPE_BYTES};
 use cheetah_signal_application::{
     CreateWebhookRequest, TriggerWebhookRequest, UpdateWebhookRequest, WebhookDeliveryConfig,
     WebhookHttpClient, WebhookHttpRequest, WebhookHttpResponse, WebhookService,
@@ -303,6 +303,38 @@ async fn webhook_trigger_and_delivery_succeeds() {
     )
     .unwrap();
     assert_eq!(computed, delivery.signature());
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn trigger_webhook_rejects_oversized_event_type() {
+    let ctx = setup().await;
+    let context = request_context(ctx.tenant_id, &*ctx.id_generator, &*ctx.clock);
+
+    let config = ctx
+        .service
+        .create_webhook(
+            &context,
+            CreateWebhookRequest {
+                url: "http://example.com/webhook".to_string(),
+                secret_ref: "sig.test".to_string(),
+                event_types: vec!["device.online".to_string()],
+            },
+        )
+        .await
+        .unwrap();
+
+    let result = ctx
+        .service
+        .trigger_webhook(
+            &context,
+            config.webhook_id(),
+            TriggerWebhookRequest {
+                event_type: "x".repeat(MAX_WEBHOOK_EVENT_TYPE_BYTES + 1),
+                payload: serde_json::json!({"x": 1}),
+            },
+        )
+        .await;
+    assert!(result.is_err(), "oversized event_type must be rejected");
 }
 
 #[tokio::test(flavor = "current_thread")]

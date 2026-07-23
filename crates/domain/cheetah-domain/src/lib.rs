@@ -77,4 +77,7 @@ pub use protocol_session::{
     SipTransport,
 };
 pub use tenant::{MAX_TENANT_NAME_LEN, Tenant};
-pub use webhook::{DeliveryStatus, WebhookConfig, WebhookDelivery, sign_webhook_payload};
+pub use webhook::{
+    DeliveryStatus, MAX_WEBHOOK_EVENT_TYPE_BYTES, WebhookConfig, WebhookDelivery,
+    sign_webhook_payload, validate_event_type,
+};

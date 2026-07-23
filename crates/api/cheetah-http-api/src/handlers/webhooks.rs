@@ -158,7 +158,7 @@ pub async fn trigger_delivery(
     Path(id): Path<String>,
     State(state): State<Arc<ApiState>>,
     ctx: ApiRequestContext,
-    Json(body): Json<TriggerWebhookRequest>,
+    JsonBody(body): JsonBody<TriggerWebhookRequest>,
 ) -> Result<impl IntoResponse, HttpError> {
     ctx.require_scope("operator")?;
     let webhook_id = parse_webhook_id(&id)?;

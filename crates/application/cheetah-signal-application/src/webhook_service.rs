@@ -3,7 +3,7 @@
 use crate::dto::{CreateWebhookRequest, TriggerWebhookRequest, UpdateWebhookRequest};
 use cheetah_domain::{
     Clock, DeliveryStatus, DomainError, IdGenerator, WebhookConfig, WebhookDelivery,
-    sign_webhook_payload,
+    sign_webhook_payload, validate_event_type,
 };
 use cheetah_signal_types::{
     DeliveryId, DurationMs, EventId, Page, PageRequest, RequestContext, SecretStore, UtcTimestamp,
@@ -236,6 +236,7 @@ impl WebhookService {
         if !config.enabled() {
             return Err(DomainError::invalid_argument("webhook is disabled").into());
         }
+        validate_event_type(&request.event_type)?;
         if !config.matches_event(&request.event_type) {
             return Err(DomainError::invalid_argument(
                 "webhook does not subscribe to the requested event type",
