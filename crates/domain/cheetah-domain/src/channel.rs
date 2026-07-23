@@ -7,6 +7,10 @@ use std::collections::BTreeMap;
 
 /// Maximum number of stream profiles per channel.
 const MAX_STREAM_PROFILES: usize = 16;
+/// Maximum byte length of a channel display name.
+const MAX_CHANNEL_NAME_BYTES: usize = 1024;
+/// Maximum byte length of stream profile string fields.
+const MAX_STREAM_PROFILE_FIELD_BYTES: usize = 256;
 
 /// Channel kind.
 #[derive(
@@ -146,12 +150,14 @@ impl StreamProfile {
 
     /// Validates the stream profile.
     pub fn validate(&self) -> crate::Result<()> {
-        if self.encoding.is_empty() {
-            return Err(DomainError::invalid_argument("encoding must not be empty"));
-        }
-        if self.resolution.is_empty() {
+        if self.encoding.is_empty() || self.encoding.len() > MAX_STREAM_PROFILE_FIELD_BYTES {
             return Err(DomainError::invalid_argument(
-                "resolution must not be empty",
+                "encoding must not be empty and must not exceed 256 bytes",
+            ));
+        }
+        if self.resolution.is_empty() || self.resolution.len() > MAX_STREAM_PROFILE_FIELD_BYTES {
+            return Err(DomainError::invalid_argument(
+                "resolution must not be empty and must not exceed 256 bytes",
             ));
         }
         if self.frame_rate == 0 {
@@ -249,8 +255,10 @@ impl Channel {
             return Err(DomainError::invalid_argument("channel_id must not be nil"));
         }
         let name = name.into();
-        if name.is_empty() {
-            return Err(DomainError::invalid_argument("name must not be empty"));
+        if name.is_empty() || name.len() > MAX_CHANNEL_NAME_BYTES {
+            return Err(DomainError::invalid_argument(
+                "name must not be empty and must not exceed 1024 bytes",
+            ));
         }
         validate_stream_profiles(&stream_profiles)?;
         validate_metadata(&metadata)?;
@@ -304,8 +312,10 @@ impl Channel {
             self.kind = kind;
         }
         if let Some(name) = name {
-            if name.is_empty() {
-                return Err(DomainError::invalid_argument("name must not be empty"));
+            if name.is_empty() || name.len() > MAX_CHANNEL_NAME_BYTES {
+                return Err(DomainError::invalid_argument(
+                    "name must not be empty and must not exceed 1024 bytes",
+                ));
             }
             self.name = name;
         }
@@ -483,4 +493,86 @@ pub fn map_gb28181_channel_id(
         channel_external_id
     );
     ChannelId::from_uuid(uuid::Uuid::new_v5(&namespace, name.as_bytes()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::in_memory::{InMemoryClock, InMemoryIdGenerator};
+    use cheetah_signal_types::IdGenerator;
+
+    fn clock_and_ids() -> (
+        InMemoryClock,
+        InMemoryIdGenerator,
+        TenantId,
+        DeviceId,
+        ChannelId,
+    ) {
+        let clock = InMemoryClock::new();
+        let ids = InMemoryIdGenerator::new();
+        let tenant_id = ids.generate_tenant_id();
+        let device_id = ids.generate_device_id();
+        let channel_id = ids.generate_channel_id();
+        (clock, ids, tenant_id, device_id, channel_id)
+    }
+
+    #[test]
+    fn channel_new_rejects_oversized_name() {
+        let (clock, _, tenant_id, device_id, channel_id) = clock_and_ids();
+        let result = Channel::new(
+            &clock,
+            tenant_id,
+            device_id,
+            channel_id,
+            ChannelKind::Video,
+            "x".repeat(1025),
+            true,
+            None,
+            Vec::new(),
+            PtzCapabilities::default(),
+            BTreeMap::new(),
+        );
+        assert!(matches!(result, Err(DomainError::InvalidArgument { .. })));
+    }
+
+    #[test]
+    fn channel_update_rejects_oversized_name() {
+        let (clock, _, tenant_id, device_id, channel_id) = clock_and_ids();
+        let (mut channel, _) = match Channel::new(
+            &clock,
+            tenant_id,
+            device_id,
+            channel_id,
+            ChannelKind::Video,
+            "channel-01",
+            true,
+            None,
+            Vec::new(),
+            PtzCapabilities::default(),
+            BTreeMap::new(),
+        ) {
+            Ok(v) => v,
+            Err(e) => panic!("{e}"),
+        };
+        let result = channel.update(
+            &clock,
+            None,
+            Some("x".repeat(1025)),
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        assert!(matches!(result, Err(DomainError::InvalidArgument { .. })));
+    }
+
+    #[test]
+    fn stream_profile_rejects_oversized_encoding_and_resolution() {
+        let result = StreamProfile::new("x".repeat(257), "1080p", 25, 4_000_000);
+        assert!(matches!(result, Err(DomainError::InvalidArgument { .. })));
+
+        let result = StreamProfile::new("h264", "x".repeat(257), 25, 4_000_000);
+        assert!(matches!(result, Err(DomainError::InvalidArgument { .. })));
+    }
 }
