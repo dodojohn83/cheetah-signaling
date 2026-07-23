@@ -19,11 +19,14 @@ pub enum DigestAlgorithm {
 impl DigestAlgorithm {
     /// Parses the algorithm name from the wire form.
     pub fn parse(s: &str) -> Option<Self> {
-        match s.to_ascii_lowercase().as_str() {
-            "md5" => Some(Self::Md5),
-            "sha-256" | "sha256" => Some(Self::Sha256),
-            "sha-512" | "sha512" => Some(Self::Sha512),
-            _ => None,
+        if s.eq_ignore_ascii_case("md5") {
+            Some(Self::Md5)
+        } else if s.eq_ignore_ascii_case("sha-256") || s.eq_ignore_ascii_case("sha256") {
+            Some(Self::Sha256)
+        } else if s.eq_ignore_ascii_case("sha-512") || s.eq_ignore_ascii_case("sha512") {
+            Some(Self::Sha512)
+        } else {
+            None
         }
     }
 
@@ -55,10 +58,12 @@ pub enum DigestQop {
 
 impl DigestQop {
     fn parse(s: &str) -> Option<Self> {
-        match s.to_ascii_lowercase().as_str() {
-            "auth" => Some(Self::Auth),
-            "auth-int" => Some(Self::AuthInt),
-            _ => None,
+        if s.eq_ignore_ascii_case("auth") {
+            Some(Self::Auth)
+        } else if s.eq_ignore_ascii_case("auth-int") {
+            Some(Self::AuthInt)
+        } else {
+            None
         }
     }
 
@@ -217,36 +222,37 @@ impl DigestResponse {
                     "missing '=' in digest parameter".to_string(),
                 ));
             };
-            let key = part[..eq].trim().to_ascii_lowercase();
+            let key = part[..eq].trim();
             let raw = part[eq + 1..].trim();
             let value = unquote(raw);
 
-            match key.as_str() {
-                "username" => username = Some(value.into_owned()),
-                "realm" => realm = Some(value.into_owned()),
-                "nonce" => nonce = Some(value.into_owned()),
-                "uri" => uri = Some(value.into_owned()),
-                "response" => response = Some(value.into_owned()),
-                "cnonce" => cnonce = Some(value.into_owned()),
-                "nc" => {
-                    nc = Some(
-                        u64::from_str_radix(value.as_ref(), 16)
-                            .map_err(|_| DigestError::Malformed("bad nc value".to_string()))?,
-                    );
-                }
-                "qop" => {
-                    qop = DigestQop::parse(value.as_ref())
-                        .map(Some)
-                        .ok_or(DigestError::InvalidQop)?;
-                }
-                "algorithm" => {
-                    algorithm = Some(
-                        DigestAlgorithm::parse(value.as_ref())
-                            .ok_or(DigestError::UnknownAlgorithm)?,
-                    );
-                }
-                "opaque" => opaque = Some(value.into_owned()),
-                _ => {}
+            if key.eq_ignore_ascii_case("username") {
+                username = Some(value.into_owned());
+            } else if key.eq_ignore_ascii_case("realm") {
+                realm = Some(value.into_owned());
+            } else if key.eq_ignore_ascii_case("nonce") {
+                nonce = Some(value.into_owned());
+            } else if key.eq_ignore_ascii_case("uri") {
+                uri = Some(value.into_owned());
+            } else if key.eq_ignore_ascii_case("response") {
+                response = Some(value.into_owned());
+            } else if key.eq_ignore_ascii_case("cnonce") {
+                cnonce = Some(value.into_owned());
+            } else if key.eq_ignore_ascii_case("nc") {
+                nc = Some(
+                    u64::from_str_radix(value.as_ref(), 16)
+                        .map_err(|_| DigestError::Malformed("bad nc value".to_string()))?,
+                );
+            } else if key.eq_ignore_ascii_case("qop") {
+                qop = DigestQop::parse(value.as_ref())
+                    .map(Some)
+                    .ok_or(DigestError::InvalidQop)?;
+            } else if key.eq_ignore_ascii_case("algorithm") {
+                algorithm = Some(
+                    DigestAlgorithm::parse(value.as_ref()).ok_or(DigestError::UnknownAlgorithm)?,
+                );
+            } else if key.eq_ignore_ascii_case("opaque") {
+                opaque = Some(value.into_owned());
             }
         }
 
@@ -368,40 +374,38 @@ impl DigestChallenge {
                     "missing '=' in digest parameter".to_string(),
                 ));
             };
-            let key = part[..eq].trim().to_ascii_lowercase();
+            let key = part[..eq].trim();
             let raw = part[eq + 1..].trim();
             let value = unquote(raw);
 
-            match key.as_str() {
-                "realm" => realm = Some(value.into_owned()),
-                "nonce" => nonce = Some(value.into_owned()),
-                "opaque" => opaque = Some(value.into_owned()),
-                "stale" => stale = value.eq_ignore_ascii_case("true"),
-                "algorithm" => {
-                    algorithm = Some(
-                        DigestAlgorithm::parse(value.as_ref())
-                            .ok_or(DigestError::UnknownAlgorithm)?,
-                    );
-                }
-                "qop" => {
-                    let value = value.into_owned();
-                    let mut selected = None;
-                    for token in split_commas(&value) {
-                        let token = token.trim();
-                        if token.is_empty() {
-                            continue;
-                        }
-                        let token = unquote(token).into_owned();
-                        if token.eq_ignore_ascii_case("auth") {
-                            selected = Some(DigestQop::Auth);
-                            break;
-                        } else if token.eq_ignore_ascii_case("auth-int") {
-                            selected = Some(DigestQop::AuthInt);
-                        }
+            if key.eq_ignore_ascii_case("realm") {
+                realm = Some(value.into_owned());
+            } else if key.eq_ignore_ascii_case("nonce") {
+                nonce = Some(value.into_owned());
+            } else if key.eq_ignore_ascii_case("opaque") {
+                opaque = Some(value.into_owned());
+            } else if key.eq_ignore_ascii_case("stale") {
+                stale = value.eq_ignore_ascii_case("true");
+            } else if key.eq_ignore_ascii_case("algorithm") {
+                algorithm = Some(
+                    DigestAlgorithm::parse(value.as_ref()).ok_or(DigestError::UnknownAlgorithm)?,
+                );
+            } else if key.eq_ignore_ascii_case("qop") {
+                let mut selected = None;
+                for token in split_commas(value.as_ref()) {
+                    let token = token.trim();
+                    if token.is_empty() {
+                        continue;
                     }
-                    qop = selected;
+                    let token = unquote(token);
+                    if token.eq_ignore_ascii_case("auth") {
+                        selected = Some(DigestQop::Auth);
+                        break;
+                    } else if token.eq_ignore_ascii_case("auth-int") {
+                        selected = Some(DigestQop::AuthInt);
+                    }
                 }
-                _ => {}
+                qop = selected;
             }
         }
 

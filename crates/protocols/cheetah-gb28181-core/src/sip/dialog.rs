@@ -333,14 +333,23 @@ fn cseq_number(msg: &SipMessage) -> Result<u32, SipError> {
 
 pub(crate) fn extract_tag(value: &str) -> Option<&str> {
     let value = value.trim();
-    let lower = value.to_ascii_lowercase();
-    let start = lower.find(";tag=")? + 5;
-    let rest = &value[start..];
-    let end = rest
-        .find(|c: char| c == ';' || c.is_whitespace())
-        .unwrap_or(rest.len());
-    let tag = &rest[..end];
-    Some(tag.trim_matches('"'))
+    const NEEDLE: &[u8] = b";tag=";
+    for (i, window) in value.as_bytes().windows(NEEDLE.len()).enumerate() {
+        if window
+            .iter()
+            .zip(NEEDLE)
+            .all(|(a, b)| a.eq_ignore_ascii_case(b))
+        {
+            let start = i + NEEDLE.len();
+            let rest = &value[start..];
+            let end = rest
+                .find(|c: char| c == ';' || c.is_whitespace())
+                .unwrap_or(rest.len());
+            let tag = &rest[..end];
+            return Some(tag.trim_matches('"'));
+        }
+    }
+    None
 }
 
 fn extract_route_set(msg: &SipMessage, reverse: bool) -> Result<Vec<SipUri>, SipError> {
