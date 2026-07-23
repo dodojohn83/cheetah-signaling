@@ -22,12 +22,17 @@ pub use soap_client::SoapClient;
 
 use crate::capability_cache::CapabilityCache;
 use cheetah_onvif_module::services::{
-    MediaDialect, MediaProfile, SnapshotUri, StreamUri, get_capabilities_request,
-    get_device_information_request, get_profiles_request, get_services_request,
-    get_snapshot_uri_request, get_stream_uri_request_media1, get_stream_uri_request_media2,
-    get_system_date_and_time_request, parse_get_capabilities_response,
-    parse_get_device_information_response, parse_get_profiles_response,
+    MediaDialect, MediaProfile, OnvifNotification, PtzPreset, PtzVelocity, PullPointSubscription,
+    RENEW_ACTION, SnapshotUri, StreamUri, UNSUBSCRIBE_ACTION, continuous_move_request,
+    create_pull_point_subscription_request, get_capabilities_request,
+    get_device_information_request, get_presets_request, get_profiles_request,
+    get_services_request, get_snapshot_uri_request, get_stream_uri_request_media1,
+    get_stream_uri_request_media2, get_system_date_and_time_request,
+    parse_create_pull_point_response, parse_get_capabilities_response,
+    parse_get_device_information_response, parse_get_presets_response, parse_get_profiles_response,
     parse_get_services_response, parse_get_snapshot_uri_response, parse_get_stream_uri_response,
+    parse_pull_messages_response, pull_messages_request, renew_request, stop_request,
+    unsubscribe_request,
 };
 use cheetah_onvif_module::{
     CapabilityKind, CapabilityProbeResult, DeviceInformation, ParserLimits, Service, XAddrPolicy,
@@ -475,6 +480,205 @@ impl OnvifHttpDriver {
         )?)
     }
 
+    /// Lists PTZ presets for a profile.
+    ///
+    /// When `credentials` are supplied the request is signed with a WS-Security
+    /// UsernameToken; otherwise the device is queried unauthenticated.
+    pub async fn get_ptz_presets(
+        &self,
+        ptz_endpoint: &str,
+        profile_token: &str,
+        credentials: Option<&DeviceCredentials>,
+        timeout: Option<Duration>,
+    ) -> DriverResult<Vec<PtzPreset>> {
+        let deadline = timeout.map(|d| Instant::now() + d);
+        let _permit = self
+            .acquire_device_permit(ptz_endpoint, resolve_timeout(deadline)?)
+            .await?;
+        let http_timeout = resolve_timeout(deadline)?;
+        let msg_id = format!("urn:uuid:{}", Uuid::now_v7());
+        let req = get_presets_request(profile_token, &msg_id)?;
+        let action = "http://www.onvif.org/ver20/ptz/wsdl/GetPresets";
+        let body = self
+            .post_with_optional_auth(ptz_endpoint, action, &req, credentials, http_timeout)
+            .await?;
+        Ok(parse_get_presets_response(&body, &self.limits)?)
+    }
+
+    /// Starts a continuous PTZ move with a device-side timeout.
+    ///
+    /// Callers must provide a `timeout_seconds` so the device will stop the move
+    /// automatically; a dedicated `ptz_stop` is also available for explicit stop.
+    pub async fn ptz_continuous_move(
+        &self,
+        ptz_endpoint: &str,
+        profile_token: &str,
+        velocity: PtzVelocity,
+        timeout_seconds: u64,
+        credentials: Option<&DeviceCredentials>,
+        timeout: Option<Duration>,
+    ) -> DriverResult<()> {
+        let deadline = timeout.map(|d| Instant::now() + d);
+        let _permit = self
+            .acquire_device_permit(ptz_endpoint, resolve_timeout(deadline)?)
+            .await?;
+        let http_timeout = resolve_timeout(deadline)?;
+        let msg_id = format!("urn:uuid:{}", Uuid::now_v7());
+        let req = continuous_move_request(profile_token, velocity, Some(timeout_seconds), &msg_id)?;
+        let action = "http://www.onvif.org/ver20/ptz/wsdl/ContinuousMove";
+        self.post_with_optional_auth(ptz_endpoint, action, &req, credentials, http_timeout)
+            .await?;
+        Ok(())
+    }
+
+    /// Stops an active PTZ move.
+    ///
+    /// When `pan_tilt` and `zoom` are both `true` the entire move is stopped.
+    pub async fn ptz_stop(
+        &self,
+        ptz_endpoint: &str,
+        profile_token: &str,
+        pan_tilt: bool,
+        zoom: bool,
+        credentials: Option<&DeviceCredentials>,
+        timeout: Option<Duration>,
+    ) -> DriverResult<()> {
+        let deadline = timeout.map(|d| Instant::now() + d);
+        let _permit = self
+            .acquire_device_permit(ptz_endpoint, resolve_timeout(deadline)?)
+            .await?;
+        let http_timeout = resolve_timeout(deadline)?;
+        let msg_id = format!("urn:uuid:{}", Uuid::now_v7());
+        let req = stop_request(profile_token, pan_tilt, zoom, &msg_id)?;
+        let action = "http://www.onvif.org/ver20/ptz/wsdl/Stop";
+        self.post_with_optional_auth(ptz_endpoint, action, &req, credentials, http_timeout)
+            .await?;
+        Ok(())
+    }
+
+    /// Creates a bounded pull-point subscription for ONVIF events.
+    ///
+    /// The returned subscription reference must be used for `pull_messages` and
+    /// `renew_pull_point_subscription` calls.
+    pub async fn create_pull_point_subscription(
+        &self,
+        events_endpoint: &str,
+        initial_termination_time: &str,
+        credentials: Option<&DeviceCredentials>,
+        timeout: Option<Duration>,
+    ) -> DriverResult<PullPointSubscription> {
+        let deadline = timeout.map(|d| Instant::now() + d);
+        let _permit = self
+            .acquire_device_permit(events_endpoint, resolve_timeout(deadline)?)
+            .await?;
+        let http_timeout = resolve_timeout(deadline)?;
+        let msg_id = format!("urn:uuid:{}", Uuid::now_v7());
+        let req = create_pull_point_subscription_request(initial_termination_time, &msg_id)?;
+        let action = "http://www.onvif.org/ver10/events/wsdl/CreatePullPointSubscription";
+        let body = self
+            .post_with_optional_auth(events_endpoint, action, &req, credentials, http_timeout)
+            .await?;
+        Ok(parse_create_pull_point_response(
+            &body,
+            &self.limits,
+            &self.policy,
+        )?)
+    }
+
+    /// Pulls a bounded number of ONVIF event notifications from a subscription.
+    ///
+    /// `message_limit` caps the number of notifications returned in a single call.
+    /// The ONVIF `Timeout` long-poll value (`timeout_str`, e.g. `PT30S`) must be
+    /// shorter than the caller-provided HTTP deadline, otherwise the request will
+    /// time out at the client before the device returns an empty/partial batch.
+    pub async fn pull_messages(
+        &self,
+        subscription_reference: &str,
+        timeout_str: &str,
+        message_limit: u32,
+        credentials: Option<&DeviceCredentials>,
+        timeout: Option<Duration>,
+    ) -> DriverResult<Vec<OnvifNotification>> {
+        let deadline = timeout.map(|d| Instant::now() + d);
+        let _permit = self
+            .acquire_device_permit(subscription_reference, resolve_timeout(deadline)?)
+            .await?;
+        let http_timeout = resolve_timeout(deadline)?;
+        let msg_id = format!("urn:uuid:{}", Uuid::now_v7());
+        let req = pull_messages_request(timeout_str, message_limit, &msg_id)?;
+        let action = "http://www.onvif.org/ver10/events/wsdl/PullPointSubscription/PullMessages";
+        let body = self
+            .post_with_optional_auth(
+                subscription_reference,
+                action,
+                &req,
+                credentials,
+                http_timeout,
+            )
+            .await?;
+        Ok(parse_pull_messages_response(
+            &body,
+            &self.limits,
+            message_limit as usize,
+        )?)
+    }
+
+    /// Renews an existing pull-point subscription with a new termination time.
+    ///
+    /// `subscription_reference` is the endpoint returned by `create_pull_point_subscription`.
+    pub async fn renew_pull_point_subscription(
+        &self,
+        subscription_reference: &str,
+        termination_time: &str,
+        credentials: Option<&DeviceCredentials>,
+        timeout: Option<Duration>,
+    ) -> DriverResult<()> {
+        let deadline = timeout.map(|d| Instant::now() + d);
+        let _permit = self
+            .acquire_device_permit(subscription_reference, resolve_timeout(deadline)?)
+            .await?;
+        let http_timeout = resolve_timeout(deadline)?;
+        let msg_id = format!("urn:uuid:{}", Uuid::now_v7());
+        let req = renew_request(termination_time, &msg_id)?;
+        self.post_with_optional_auth(
+            subscription_reference,
+            RENEW_ACTION,
+            &req,
+            credentials,
+            http_timeout,
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Unsubscribes and tears down an existing pull-point subscription.
+    ///
+    /// `subscription_reference` is the endpoint returned by `create_pull_point_subscription`.
+    /// Cancellation is bounded by `timeout` and the request is sent best-effort.
+    pub async fn unsubscribe_pull_point(
+        &self,
+        subscription_reference: &str,
+        credentials: Option<&DeviceCredentials>,
+        timeout: Option<Duration>,
+    ) -> DriverResult<()> {
+        let deadline = timeout.map(|d| Instant::now() + d);
+        let _permit = self
+            .acquire_device_permit(subscription_reference, resolve_timeout(deadline)?)
+            .await?;
+        let http_timeout = resolve_timeout(deadline)?;
+        let msg_id = format!("urn:uuid:{}", Uuid::now_v7());
+        let req = unsubscribe_request(&msg_id)?;
+        self.post_with_optional_auth(
+            subscription_reference,
+            UNSUBSCRIBE_ACTION,
+            &req,
+            credentials,
+            http_timeout,
+        )
+        .await?;
+        Ok(())
+    }
+
     async fn post_with_optional_auth(
         &self,
         endpoint: &str,
@@ -483,6 +687,9 @@ impl OnvifHttpDriver {
         credentials: Option<&DeviceCredentials>,
         timeout: Option<Duration>,
     ) -> DriverResult<String> {
+        // Every outbound SOAP target must pass the configured SSRF policy before
+        // credentials or a request body are transmitted.
+        let _ = validate_endpoint(endpoint, &self.policy)?;
         match credentials {
             Some(creds) => {
                 self.client

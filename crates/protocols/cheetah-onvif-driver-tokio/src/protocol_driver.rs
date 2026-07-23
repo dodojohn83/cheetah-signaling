@@ -6,14 +6,18 @@
 
 use crate::{DeviceCredentials, DriverConfig, DriverError, OnvifHttpDriver};
 use async_trait::async_trait;
-use cheetah_onvif_module::services::MediaDialect;
-use cheetah_onvif_module::services::SystemDateAndTime;
+use cheetah_onvif_module::services::{
+    MediaDialect, OnvifNotification, PtzPreset, PtzVelocity, PullPointSubscription, SnapshotUri,
+    SystemDateAndTime, clip_unit, normalize_topic, redact_uri_userinfo,
+};
 use cheetah_onvif_module::{CapabilityKind, CapabilityProbeResult, Service};
 use cheetah_plugin_sdk::{
     CapabilityDescriptor, DriverCommand, DriverContext, HealthReport, HealthStatus, PluginError,
     PluginName, ProtocolCapability, ProtocolDirection, ProtocolDriver, ProtocolDriverFactory,
+    ProtocolEvent,
 };
 use cheetah_signal_types::DurationMs;
+use cheetah_signal_types::TenantId;
 use cheetah_signal_types::UtcTimestamp;
 use cheetah_signal_types::config::OnvifConfig;
 use secrecy::{ExposeSecret, SecretString};
@@ -401,6 +405,129 @@ async fn dispatch_command(
                 .await
                 .map_err(plugin_error_from_driver_error)?;
         }
+        "take_snapshot" => {
+            let cmd: SnapshotUriCommand = parse_payload(&command.payload)?;
+            let tenant_id = parse_tenant_id(cmd.tenant_id.as_deref())?;
+            let timeout = cmd.command_timeout(timeout);
+            let credentials = cmd.resolve_credentials(ctx, config).await?;
+            let uri = driver
+                .get_snapshot_uri(
+                    &cmd.media_endpoint,
+                    cmd.dialect(),
+                    &cmd.profile_token,
+                    credentials.as_ref(),
+                    timeout,
+                )
+                .await
+                .map_err(plugin_error_from_driver_error)?;
+            emit_snapshot(ctx, tenant_id, &uri).await?;
+        }
+        "ptz_get_presets" => {
+            let cmd: PtzGetPresetsCommand = parse_payload(&command.payload)?;
+            let tenant_id = parse_tenant_id(cmd.tenant_id.as_deref())?;
+            let timeout = cmd.command_timeout(timeout);
+            let credentials = cmd.resolve_credentials(ctx, config).await?;
+            let presets = driver
+                .get_ptz_presets(
+                    &cmd.ptz_endpoint,
+                    &cmd.profile_token,
+                    credentials.as_ref(),
+                    timeout,
+                )
+                .await
+                .map_err(plugin_error_from_driver_error)?;
+            emit_ptz_presets(ctx, tenant_id, &cmd.profile_token, &presets).await?;
+        }
+        "ptz_continuous_move" => {
+            let cmd: PtzContinuousMoveCommand = parse_payload(&command.payload)?;
+            let timeout = cmd.command_timeout(timeout);
+            let credentials = cmd.resolve_credentials(ctx, config).await?;
+            driver
+                .ptz_continuous_move(
+                    &cmd.ptz_endpoint,
+                    &cmd.profile_token,
+                    cmd.velocity(),
+                    cmd.timeout_seconds,
+                    credentials.as_ref(),
+                    timeout,
+                )
+                .await
+                .map_err(plugin_error_from_driver_error)?;
+        }
+        "ptz_stop" => {
+            let cmd: PtzStopCommand = parse_payload(&command.payload)?;
+            let timeout = cmd.command_timeout(timeout);
+            let credentials = cmd.resolve_credentials(ctx, config).await?;
+            driver
+                .ptz_stop(
+                    &cmd.ptz_endpoint,
+                    &cmd.profile_token,
+                    cmd.pan_tilt,
+                    cmd.zoom,
+                    credentials.as_ref(),
+                    timeout,
+                )
+                .await
+                .map_err(plugin_error_from_driver_error)?;
+        }
+        "create_pull_point_subscription" => {
+            let cmd: CreatePullPointSubscriptionCommand = parse_payload(&command.payload)?;
+            let tenant_id = parse_tenant_id(cmd.tenant_id.as_deref())?;
+            let timeout = cmd.command_timeout(timeout);
+            let credentials = cmd.resolve_credentials(ctx, config).await?;
+            let sub = driver
+                .create_pull_point_subscription(
+                    &cmd.events_endpoint,
+                    &cmd.initial_termination_time,
+                    credentials.as_ref(),
+                    timeout,
+                )
+                .await
+                .map_err(plugin_error_from_driver_error)?;
+            emit_pull_point_subscription(ctx, tenant_id, &sub).await?;
+        }
+        "pull_messages" => {
+            let cmd: PullMessagesCommand = parse_payload(&command.payload)?;
+            let tenant_id = parse_tenant_id(cmd.tenant_id.as_deref())?;
+            let timeout = cmd.command_timeout(timeout);
+            let credentials = cmd.resolve_credentials(ctx, config).await?;
+            let messages = driver
+                .pull_messages(
+                    &cmd.subscription_reference,
+                    &cmd.timeout,
+                    cmd.message_limit,
+                    credentials.as_ref(),
+                    timeout,
+                )
+                .await
+                .map_err(plugin_error_from_driver_error)?;
+            if !messages.is_empty() {
+                emit_onvif_notifications(ctx, tenant_id, messages).await?;
+            }
+        }
+        "renew_pull_point_subscription" => {
+            let cmd: RenewPullPointSubscriptionCommand = parse_payload(&command.payload)?;
+            let timeout = cmd.command_timeout(timeout);
+            let credentials = cmd.resolve_credentials(ctx, config).await?;
+            driver
+                .renew_pull_point_subscription(
+                    &cmd.subscription_reference,
+                    &cmd.termination_time,
+                    credentials.as_ref(),
+                    timeout,
+                )
+                .await
+                .map_err(plugin_error_from_driver_error)?;
+        }
+        "unsubscribe_pull_point" => {
+            let cmd: UnsubscribePullPointCommand = parse_payload(&command.payload)?;
+            let timeout = cmd.command_timeout(timeout);
+            let credentials = cmd.resolve_credentials(ctx, config).await?;
+            driver
+                .unsubscribe_pull_point(&cmd.subscription_reference, credentials.as_ref(), timeout)
+                .await
+                .map_err(plugin_error_from_driver_error)?;
+        }
         // Imaging v1 write commands are explicitly rejected; they are not part of
         // the signaling control plane and would require media-node coordination.
         "set_imaging_settings"
@@ -608,6 +735,8 @@ struct SnapshotUriCommand {
     password_text: bool,
     #[serde(default)]
     clock_offset_seconds: i64,
+    #[serde(default)]
+    tenant_id: Option<String>,
 }
 
 impl SnapshotUriCommand {
@@ -637,6 +766,319 @@ impl SnapshotUriCommand {
     }
 }
 
+#[derive(Deserialize)]
+struct PtzGetPresetsCommand {
+    ptz_endpoint: String,
+    profile_token: String,
+    #[serde(default)]
+    timeout_ms: Option<u64>,
+    #[serde(default)]
+    username: Option<String>,
+    #[serde(default)]
+    credentials_ref: Option<String>,
+    #[serde(default)]
+    password: Option<String>,
+    #[serde(default)]
+    password_text: bool,
+    #[serde(default)]
+    clock_offset_seconds: i64,
+    #[serde(default)]
+    tenant_id: Option<String>,
+}
+
+impl PtzGetPresetsCommand {
+    async fn resolve_credentials(
+        &self,
+        ctx: &dyn DriverContext,
+        config: &OnvifConfig,
+    ) -> Result<Option<DeviceCredentials>, PluginError> {
+        resolve_credentials(
+            ctx,
+            config,
+            self.username.as_deref(),
+            self.credentials_ref.as_deref(),
+            self.password.as_deref(),
+            self.password_text,
+            self.clock_offset_seconds,
+        )
+        .await
+    }
+
+    fn command_timeout(&self, default: Option<Duration>) -> Option<Duration> {
+        command_timeout(self.timeout_ms, default)
+    }
+}
+
+#[derive(Deserialize)]
+struct PtzContinuousMoveCommand {
+    ptz_endpoint: String,
+    profile_token: String,
+    pan: f64,
+    tilt: f64,
+    zoom: f64,
+    timeout_seconds: u64,
+    #[serde(default)]
+    timeout_ms: Option<u64>,
+    #[serde(default)]
+    username: Option<String>,
+    #[serde(default)]
+    credentials_ref: Option<String>,
+    #[serde(default)]
+    password: Option<String>,
+    #[serde(default)]
+    password_text: bool,
+    #[serde(default)]
+    clock_offset_seconds: i64,
+}
+
+impl PtzContinuousMoveCommand {
+    fn velocity(&self) -> PtzVelocity {
+        PtzVelocity {
+            pan: clip_unit(self.pan),
+            tilt: clip_unit(self.tilt),
+            zoom: clip_unit(self.zoom),
+        }
+    }
+
+    async fn resolve_credentials(
+        &self,
+        ctx: &dyn DriverContext,
+        config: &OnvifConfig,
+    ) -> Result<Option<DeviceCredentials>, PluginError> {
+        resolve_credentials(
+            ctx,
+            config,
+            self.username.as_deref(),
+            self.credentials_ref.as_deref(),
+            self.password.as_deref(),
+            self.password_text,
+            self.clock_offset_seconds,
+        )
+        .await
+    }
+
+    fn command_timeout(&self, default: Option<Duration>) -> Option<Duration> {
+        command_timeout(self.timeout_ms, default)
+    }
+}
+
+#[derive(Deserialize)]
+struct PtzStopCommand {
+    ptz_endpoint: String,
+    profile_token: String,
+    #[serde(default = "default_true")]
+    pan_tilt: bool,
+    #[serde(default = "default_true")]
+    zoom: bool,
+    #[serde(default)]
+    timeout_ms: Option<u64>,
+    #[serde(default)]
+    username: Option<String>,
+    #[serde(default)]
+    credentials_ref: Option<String>,
+    #[serde(default)]
+    password: Option<String>,
+    #[serde(default)]
+    password_text: bool,
+    #[serde(default)]
+    clock_offset_seconds: i64,
+}
+
+impl PtzStopCommand {
+    async fn resolve_credentials(
+        &self,
+        ctx: &dyn DriverContext,
+        config: &OnvifConfig,
+    ) -> Result<Option<DeviceCredentials>, PluginError> {
+        resolve_credentials(
+            ctx,
+            config,
+            self.username.as_deref(),
+            self.credentials_ref.as_deref(),
+            self.password.as_deref(),
+            self.password_text,
+            self.clock_offset_seconds,
+        )
+        .await
+    }
+
+    fn command_timeout(&self, default: Option<Duration>) -> Option<Duration> {
+        command_timeout(self.timeout_ms, default)
+    }
+}
+
+#[derive(Deserialize)]
+struct CreatePullPointSubscriptionCommand {
+    events_endpoint: String,
+    initial_termination_time: String,
+    #[serde(default)]
+    timeout_ms: Option<u64>,
+    #[serde(default)]
+    username: Option<String>,
+    #[serde(default)]
+    credentials_ref: Option<String>,
+    #[serde(default)]
+    password: Option<String>,
+    #[serde(default)]
+    password_text: bool,
+    #[serde(default)]
+    clock_offset_seconds: i64,
+    #[serde(default)]
+    tenant_id: Option<String>,
+}
+
+impl CreatePullPointSubscriptionCommand {
+    async fn resolve_credentials(
+        &self,
+        ctx: &dyn DriverContext,
+        config: &OnvifConfig,
+    ) -> Result<Option<DeviceCredentials>, PluginError> {
+        resolve_credentials(
+            ctx,
+            config,
+            self.username.as_deref(),
+            self.credentials_ref.as_deref(),
+            self.password.as_deref(),
+            self.password_text,
+            self.clock_offset_seconds,
+        )
+        .await
+    }
+
+    fn command_timeout(&self, default: Option<Duration>) -> Option<Duration> {
+        command_timeout(self.timeout_ms, default)
+    }
+}
+
+#[derive(Deserialize)]
+struct PullMessagesCommand {
+    subscription_reference: String,
+    timeout: String,
+    message_limit: u32,
+    #[serde(default)]
+    timeout_ms: Option<u64>,
+    #[serde(default)]
+    username: Option<String>,
+    #[serde(default)]
+    credentials_ref: Option<String>,
+    #[serde(default)]
+    password: Option<String>,
+    #[serde(default)]
+    password_text: bool,
+    #[serde(default)]
+    clock_offset_seconds: i64,
+    #[serde(default)]
+    tenant_id: Option<String>,
+}
+
+impl PullMessagesCommand {
+    async fn resolve_credentials(
+        &self,
+        ctx: &dyn DriverContext,
+        config: &OnvifConfig,
+    ) -> Result<Option<DeviceCredentials>, PluginError> {
+        resolve_credentials(
+            ctx,
+            config,
+            self.username.as_deref(),
+            self.credentials_ref.as_deref(),
+            self.password.as_deref(),
+            self.password_text,
+            self.clock_offset_seconds,
+        )
+        .await
+    }
+
+    fn command_timeout(&self, default: Option<Duration>) -> Option<Duration> {
+        command_timeout(self.timeout_ms, default)
+    }
+}
+
+#[derive(Deserialize)]
+struct RenewPullPointSubscriptionCommand {
+    subscription_reference: String,
+    termination_time: String,
+    #[serde(default)]
+    timeout_ms: Option<u64>,
+    #[serde(default)]
+    username: Option<String>,
+    #[serde(default)]
+    credentials_ref: Option<String>,
+    #[serde(default)]
+    password: Option<String>,
+    #[serde(default)]
+    password_text: bool,
+    #[serde(default)]
+    clock_offset_seconds: i64,
+}
+
+impl RenewPullPointSubscriptionCommand {
+    async fn resolve_credentials(
+        &self,
+        ctx: &dyn DriverContext,
+        config: &OnvifConfig,
+    ) -> Result<Option<DeviceCredentials>, PluginError> {
+        resolve_credentials(
+            ctx,
+            config,
+            self.username.as_deref(),
+            self.credentials_ref.as_deref(),
+            self.password.as_deref(),
+            self.password_text,
+            self.clock_offset_seconds,
+        )
+        .await
+    }
+
+    fn command_timeout(&self, default: Option<Duration>) -> Option<Duration> {
+        command_timeout(self.timeout_ms, default)
+    }
+}
+
+#[derive(Deserialize)]
+struct UnsubscribePullPointCommand {
+    subscription_reference: String,
+    #[serde(default)]
+    timeout_ms: Option<u64>,
+    #[serde(default)]
+    username: Option<String>,
+    #[serde(default)]
+    credentials_ref: Option<String>,
+    #[serde(default)]
+    password: Option<String>,
+    #[serde(default)]
+    password_text: bool,
+    #[serde(default)]
+    clock_offset_seconds: i64,
+}
+
+impl UnsubscribePullPointCommand {
+    async fn resolve_credentials(
+        &self,
+        ctx: &dyn DriverContext,
+        config: &OnvifConfig,
+    ) -> Result<Option<DeviceCredentials>, PluginError> {
+        resolve_credentials(
+            ctx,
+            config,
+            self.username.as_deref(),
+            self.credentials_ref.as_deref(),
+            self.password.as_deref(),
+            self.password_text,
+            self.clock_offset_seconds,
+        )
+        .await
+    }
+
+    fn command_timeout(&self, default: Option<Duration>) -> Option<Duration> {
+        command_timeout(self.timeout_ms, default)
+    }
+}
+
+fn default_true() -> bool {
+    true
+}
+
 fn default_stream_protocol() -> String {
     "UDP".to_string()
 }
@@ -647,6 +1089,113 @@ fn parse_dialect(dialect: Option<&str>) -> MediaDialect {
         Some("media2") => MediaDialect::Media2,
         _ => MediaDialect::Media2,
     }
+}
+
+fn parse_tenant_id(raw: Option<&str>) -> Result<Option<TenantId>, PluginError> {
+    match raw {
+        None | Some("") => Ok(None),
+        Some(s) => s
+            .parse()
+            .map(Some)
+            .map_err(|e| PluginError::Driver(format!("invalid tenant_id {s}: {e}"))),
+    }
+}
+
+fn snapshot_event_payload(uri: &SnapshotUri) -> serde_json::Value {
+    serde_json::json!({
+        "uri": redact_uri_userinfo(&uri.uri),
+        "invalid_after_connect": uri.invalid_after_connect,
+        "invalid_after_reboot": uri.invalid_after_reboot,
+        "timeout": uri.timeout,
+    })
+}
+
+async fn emit_snapshot(
+    ctx: &dyn DriverContext,
+    tenant_id: Option<TenantId>,
+    uri: &SnapshotUri,
+) -> Result<(), PluginError> {
+    ctx.device_sink()
+        .emit_event(ProtocolEvent {
+            event_type: "onvif.snapshot_uri".into(),
+            payload: snapshot_event_payload(uri),
+            tenant_id,
+        })
+        .await
+}
+
+fn ptz_presets_event_payload(profile_token: &str, presets: &[PtzPreset]) -> serde_json::Value {
+    serde_json::json!({
+        "profile_token": profile_token,
+        "presets": presets.iter().map(|p| serde_json::json!({"token": p.token, "name": p.name})).collect::<Vec<_>>(),
+    })
+}
+
+async fn emit_ptz_presets(
+    ctx: &dyn DriverContext,
+    tenant_id: Option<TenantId>,
+    profile_token: &str,
+    presets: &[PtzPreset],
+) -> Result<(), PluginError> {
+    ctx.device_sink()
+        .emit_event(ProtocolEvent {
+            event_type: "onvif.ptz_presets".into(),
+            payload: ptz_presets_event_payload(profile_token, presets),
+            tenant_id,
+        })
+        .await
+}
+
+fn notifications_event_payload(notifications: &[OnvifNotification]) -> serde_json::Value {
+    serde_json::json!({
+        "notifications": notifications
+            .iter()
+            .map(|n| serde_json::json!({
+                "topic": normalize_topic(&n.topic),
+                "utc_time": n.utc_time,
+                "property_operation": n.property_operation,
+            }))
+            .collect::<Vec<_>>(),
+    })
+}
+
+async fn emit_onvif_notifications(
+    ctx: &dyn DriverContext,
+    tenant_id: Option<TenantId>,
+    messages: Vec<OnvifNotification>,
+) -> Result<(), PluginError> {
+    if messages.is_empty() {
+        return Ok(());
+    }
+    ctx.device_sink()
+        .emit_event(ProtocolEvent {
+            event_type: "onvif.notification".into(),
+            payload: notifications_event_payload(&messages),
+            tenant_id,
+        })
+        .await
+}
+
+fn pull_point_subscription_event_payload(sub: &PullPointSubscription) -> serde_json::Value {
+    serde_json::json!({
+        "subscription_reference": redact_uri_userinfo(&sub.subscription_reference),
+        "termination_time": sub.termination_time,
+        "current_time": sub.current_time,
+    })
+}
+
+async fn emit_pull_point_subscription(
+    ctx: &dyn DriverContext,
+    tenant_id: Option<TenantId>,
+    sub: &PullPointSubscription,
+) -> Result<(), PluginError> {
+    ctx.device_sink()
+        .emit_event(ProtocolEvent {
+            event_type: "onvif.pull_point_subscription".into(),
+            payload: pull_point_subscription_event_payload(sub),
+            tenant_id,
+        })
+        .await
 }
 
 async fn resolve_credentials(
@@ -1010,7 +1559,9 @@ mod tests {
             _params: serde_json::Value,
             _timeout: DurationMs,
         ) -> Result<String, PluginError> {
-            unimplemented!()
+            Err(PluginError::Unsupported(
+                "media session not available in tests".into(),
+            ))
         }
 
         async fn register_endpoint(
@@ -1018,7 +1569,9 @@ mod tests {
             _protocol: &str,
             _address: &str,
         ) -> Result<String, PluginError> {
-            unimplemented!()
+            Err(PluginError::Unsupported(
+                "endpoint registration not available in tests".into(),
+            ))
         }
     }
 
@@ -1076,5 +1629,60 @@ mod tests {
 
         let offset = clock_offset_seconds_with_local(&system, local).unwrap();
         assert_eq!(offset, 37);
+    }
+
+    #[test]
+    fn ptz_continuous_move_clips_velocity_components_to_unit_range() {
+        let cmd = PtzContinuousMoveCommand {
+            ptz_endpoint: "http://192.0.2.10/onvif/ptz".into(),
+            profile_token: "profile1".into(),
+            pan: 1.5,
+            tilt: -2.0,
+            zoom: 0.5,
+            timeout_seconds: 5,
+            timeout_ms: None,
+            username: None,
+            credentials_ref: None,
+            password: None,
+            password_text: false,
+            clock_offset_seconds: 0,
+        };
+        let velocity = cmd.velocity();
+        assert_eq!(velocity.pan, 1.0);
+        assert_eq!(velocity.tilt, -1.0);
+        assert_eq!(velocity.zoom, 0.5);
+    }
+
+    #[test]
+    fn snapshot_event_payload_redacts_uri_userinfo() {
+        let uri = SnapshotUri {
+            uri: "http://user:pass@192.0.2.10/snapshot".into(),
+            invalid_after_connect: Some(false),
+            invalid_after_reboot: Some(false),
+            timeout: None,
+        };
+        let payload = snapshot_event_payload(&uri);
+        let emitted = payload["uri"].as_str().unwrap();
+        assert!(!emitted.contains("pass"));
+        assert!(emitted.contains("192.0.2.10"));
+        assert_eq!(payload["invalid_after_connect"].as_bool(), Some(false));
+    }
+
+    #[test]
+    fn ptz_presets_event_payload_uses_command_profile_token() {
+        let presets = vec![PtzPreset {
+            token: "preset-token".into(),
+            name: "Home".into(),
+        }];
+        let payload = ptz_presets_event_payload("profile-token", &presets);
+        assert_eq!(payload["profile_token"].as_str().unwrap(), "profile-token");
+        assert_eq!(payload["presets"].as_array().unwrap().len(), presets.len());
+    }
+
+    #[test]
+    fn parse_tenant_id_rejects_malformed_input() {
+        assert!(parse_tenant_id(None).unwrap().is_none());
+        assert!(parse_tenant_id(Some("")).unwrap().is_none());
+        assert!(parse_tenant_id(Some("not-a-uuid")).is_err());
     }
 }

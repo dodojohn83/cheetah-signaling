@@ -10,12 +10,17 @@ use quick_xml::{Reader, Writer};
 use std::io::Cursor;
 
 const EVENTS_NS: &str = "http://www.onvif.org/ver10/events/wsdl";
+const WSNT_NS: &str = "http://docs.oasis-open.org/wsn/b-2";
 const CREATE_PULLPOINT_ACTION: &str =
     "http://www.onvif.org/ver10/events/wsdl/CreatePullPointSubscription";
 const PULL_MESSAGES_ACTION: &str =
     "http://www.onvif.org/ver10/events/wsdl/PullPointSubscription/PullMessages";
-const RENEW_ACTION: &str = "http://www.onvif.org/ver10/events/wsdl/PullPointSubscription/Renew";
-const UNSUBSCRIBE_ACTION: &str =
+
+/// SOAP action for Renew.
+pub const RENEW_ACTION: &str = "http://www.onvif.org/ver10/events/wsdl/PullPointSubscription/Renew";
+
+/// SOAP action for Unsubscribe.
+pub const UNSUBSCRIBE_ACTION: &str =
     "http://www.onvif.org/ver10/events/wsdl/PullPointSubscription/Unsubscribe";
 
 /// Result of creating a pull-point subscription.
@@ -99,6 +104,7 @@ pub fn renew_request(
     let mut writer = Writer::new(&mut cursor);
     let mut body = BytesStart::new("tev:Renew");
     body.push_attribute(("xmlns:tev", EVENTS_NS));
+    body.push_attribute(("xmlns:wsnt", WSNT_NS));
     writer.write_event(Event::Start(body))?;
     writer.write_event(Event::Start(BytesStart::new("wsnt:TerminationTime")))?;
     writer.write_event(Event::Text(BytesText::new(termination_time)))?;
@@ -249,11 +255,19 @@ pub fn parse_pull_messages_response(
                             let snippet = text.trim();
                             if !snippet.is_empty() {
                                 let existing = msg.extension_xml.get_or_insert_with(String::new);
-                                if existing.len() < 512 {
+                                let sep = if existing.is_empty() { 0 } else { 1 };
+                                let available = 512usize.saturating_sub(existing.len());
+                                let max_take =
+                                    available.saturating_sub(sep).min(128).min(snippet.len());
+                                if max_take > 0 {
                                     if !existing.is_empty() {
                                         existing.push(';');
                                     }
-                                    existing.push_str(&snippet[..snippet.len().min(128)]);
+                                    let mut take = max_take;
+                                    while take > 0 && !snippet.is_char_boundary(take) {
+                                        take -= 1;
+                                    }
+                                    existing.push_str(&snippet[..take]);
                                 }
                             }
                         }
@@ -307,6 +321,14 @@ mod tests {
     }
 
     #[test]
+    fn renew_request_declares_wsnt_namespace_and_termination_time() {
+        let xml = renew_request("PT60S", "urn:uuid:1").unwrap();
+        assert!(xml.contains("tev:Renew"));
+        assert!(xml.contains("xmlns:wsnt=\"http://docs.oasis-open.org/wsn/b-2\""));
+        assert!(xml.contains("<wsnt:TerminationTime>PT60S</wsnt:TerminationTime>"));
+    }
+
+    #[test]
     fn normalize_motion_topic() {
         assert_eq!(
             normalize_topic("tns1:RuleEngine/CellMotionDetector/Motion"),
@@ -332,5 +354,36 @@ mod tests {
         let policy = XAddrPolicy::default().with_allow_private(true);
         let sub = parse_create_pull_point_response(xml, &ParserLimits::default(), &policy).unwrap();
         assert!(sub.subscription_reference.contains("192.0.2.10"));
+    }
+
+    #[test]
+    fn parse_pull_messages_truncates_multibyte_source_on_char_boundary() {
+        // 50 three-byte Chinese characters = 150 bytes; byte 128 is not a char
+        // boundary, so the old byte-slice would panic. Char-boundary truncation
+        // must keep a prefix that ends exactly on a character boundary.
+        let source = "中".repeat(50);
+        let xml = format!(
+            r#"
+        <s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">
+          <s:Body>
+            <tev:PullMessagesResponse xmlns:tev="http://www.onvif.org/ver10/events/wsdl">
+              <tev:NotificationMessage>
+                <wsnt:Message xmlns:wsnt="http://docs.oasis-open.org/wsn/b-2">
+                  <tt:Message xmlns:tt="http://www.onvif.org/ver10/schema">
+                    <tt:Source>{source}</tt:Source>
+                  </tt:Message>
+                </wsnt:Message>
+              </tev:NotificationMessage>
+            </tev:PullMessagesResponse>
+          </s:Body>
+        </s:Envelope>"#
+        );
+        let messages = parse_pull_messages_response(&xml, &ParserLimits::default(), 10).unwrap();
+        assert_eq!(messages.len(), 1);
+        let ext = messages[0].extension_xml.as_deref().unwrap_or("");
+        assert!(!ext.is_empty());
+        // Truncated prefix must be valid UTF-8 and not exceed the 128-byte window.
+        assert!(ext.len() <= 128);
+        assert!(String::from_utf8(ext.as_bytes().to_vec()).is_ok());
     }
 }
