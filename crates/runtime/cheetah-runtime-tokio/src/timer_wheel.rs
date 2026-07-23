@@ -10,6 +10,14 @@ use cheetah_runtime_api::{DeviceKey, RuntimeMessage, RuntimeMetrics, ShardRouter
 use tokio::sync::mpsc;
 use tokio::time::{Instant, Interval, MissedTickBehavior};
 
+/// Minimum/maximum timer wheel tick resolution.
+const MIN_TICK_RESOLUTION: Duration = Duration::from_millis(1);
+const MAX_TICK_RESOLUTION: Duration = Duration::from_secs(24 * 60 * 60);
+
+fn clamp_tick_resolution(ms: u64) -> Duration {
+    Duration::from_millis(ms).clamp(MIN_TICK_RESOLUTION, MAX_TICK_RESOLUTION)
+}
+
 /// Command sent to the timer wheel.
 #[derive(Clone, Debug)]
 pub(crate) enum TimerCommand {
@@ -57,7 +65,7 @@ impl TimerWheel {
         metrics: Arc<RuntimeMetrics>,
     ) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>> {
         Box::pin(async move {
-            let tick_period = Duration::from_millis(tick_resolution_ms);
+            let tick_period = clamp_tick_resolution(tick_resolution_ms);
             let mut interval = interval(tick_period);
             let mut pending_dispatch: VecDeque<RuntimeMessage> = VecDeque::new();
             let mut timers_by_deadline: BTreeMap<Instant, Vec<TimerEntry>> = BTreeMap::new();
@@ -277,5 +285,17 @@ fn enforce_limit(
     }
     while pending_dispatch.len() > max_pending_dispatch {
         pending_dispatch.pop_front();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clamp_tick_resolution_bounds_resolution() {
+        assert_eq!(clamp_tick_resolution(0), MIN_TICK_RESOLUTION);
+        assert_eq!(clamp_tick_resolution(100), Duration::from_millis(100));
+        assert_eq!(clamp_tick_resolution(u64::MAX), MAX_TICK_RESOLUTION);
     }
 }
