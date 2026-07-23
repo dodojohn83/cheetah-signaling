@@ -28,9 +28,24 @@ use tracing::Span;
 
 /// Maximum HTTP read timeout; larger values overflow `tokio::time` deadlines.
 const MAX_READ_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
+/// Maximum bytes recorded in the `http.uri` trace attribute to avoid
+/// unbounded telemetry payloads and to keep secrets out of query strings.
+const MAX_SPAN_URI_BYTES: usize = 1024;
 
 fn clamp_read_timeout(ms: u64) -> Duration {
     Duration::from_millis(ms).min(MAX_READ_TIMEOUT)
+}
+
+fn clamp_uri_path(uri: &axum::http::Uri) -> &str {
+    let path = uri.path();
+    if path.len() <= MAX_SPAN_URI_BYTES {
+        return path;
+    }
+    path.char_indices()
+        .take_while(|(i, _)| *i < MAX_SPAN_URI_BYTES)
+        .last()
+        .map(|(i, c)| &path[..i + c.len_utf8()])
+        .unwrap_or(path)
 }
 
 /// Extension carrying the request identifier for correlation.
@@ -80,7 +95,7 @@ pub fn build_router(state: ApiState) -> Router {
         })
         .on_request(move |req: &Request<_>, span: &Span| {
             span.record("http.method", tracing::field::display(req.method()));
-            span.record("http.uri", req.uri().to_string());
+            span.record("http.uri", clamp_uri_path(req.uri()));
             metrics_request.record_request();
         })
         .on_response(
@@ -328,4 +343,25 @@ async fn fallback() -> (StatusCode, Json<crate::ProblemDetails>) {
         field_violations: Vec::new(),
     };
     (StatusCode::NOT_FOUND, Json(problem))
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+
+    #[test]
+    fn clamp_uri_path_passes_small_paths_unchanged() {
+        let uri: axum::http::Uri = "/api/v1/devices".parse().unwrap();
+        assert_eq!(clamp_uri_path(&uri), "/api/v1/devices");
+    }
+
+    #[test]
+    fn clamp_uri_path_truncates_huge_path() {
+        let huge = format!("/api/v1/devices/{}", "x".repeat(2048));
+        let uri: axum::http::Uri = huge.parse().unwrap();
+        let clamped = clamp_uri_path(&uri);
+        assert!(clamped.len() <= MAX_SPAN_URI_BYTES + 3);
+        assert!(clamped.starts_with("/api/v1/devices/"));
+    }
 }
