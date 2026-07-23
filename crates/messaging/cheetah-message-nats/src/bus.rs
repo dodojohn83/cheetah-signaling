@@ -414,7 +414,9 @@ where
         // Wait for the next message with an operation deadline. A quiet period
         // should not terminate the consumer, so timeouts are retried.
         let message = loop {
-            match tokio::time::timeout(self.operation_timeout, self.messages.next()).await {
+            match tokio::time::timeout(clamp_timeout(self.operation_timeout), self.messages.next())
+                .await
+            {
                 Ok(Some(result)) => break result,
                 Ok(None) => return Ok(None),
                 Err(_) => {
