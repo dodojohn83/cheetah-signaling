@@ -1,6 +1,6 @@
 //! Stable hash routing from a device key to a fixed shard index.
 
-use std::hash::{DefaultHasher, Hash, Hasher};
+use cheetah_signal_types::hash::stable_hash_u64;
 
 use crate::DeviceKey;
 
@@ -21,9 +21,7 @@ impl ShardRouter {
         if self.shard_count == 0 {
             return 0;
         }
-        let mut hasher = DefaultHasher::new();
-        key.hash(&mut hasher);
-        (hasher.finish() as usize) % self.shard_count
+        (stable_hash_u64(&key) as usize) % self.shard_count
     }
 
     /// Returns the configured shard count.

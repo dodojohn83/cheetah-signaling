@@ -5,9 +5,8 @@ use crate::error::SchedulerError;
 use crate::model::{MediaNode, MediaNodeHealth, NodeStatus};
 use crate::registry::MediaNodeRegistry;
 use cheetah_domain::MediaRequirements;
-use cheetah_signal_types::{Clock, MediaBindingId, NodeId, TenantId};
+use cheetah_signal_types::{Clock, MediaBindingId, NodeId, TenantId, hash::stable_hash_u64};
 use std::collections::{BTreeMap, BTreeSet};
-use std::hash::{DefaultHasher, Hasher};
 use std::sync::{Arc, Mutex};
 
 struct SchedulerState {
@@ -450,10 +449,7 @@ fn contract_version_score(node: &MediaNode, requirements: &MediaRequirements) ->
 
 fn stable_random(media_session_id: Option<&str>, node_id: &str) -> f64 {
     let seed = media_session_id.unwrap_or(node_id);
-    let mut hasher = DefaultHasher::new();
-    hasher.write(seed.as_bytes());
-    hasher.write(node_id.as_bytes());
-    let value = hasher.finish();
+    let value = stable_hash_u64(&(seed, node_id));
     (value as f64) / (u64::MAX as f64)
 }
 
