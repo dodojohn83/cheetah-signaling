@@ -12,6 +12,7 @@ pub mod host;
 pub mod loader;
 pub mod oob;
 pub mod registry;
+pub(crate) mod startup;
 
 pub use error::PluginHostError;
 pub use host::{HostDriverContext, NoopSecretProvider, PluginHost, SecretProvider};
