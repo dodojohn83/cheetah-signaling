@@ -170,7 +170,8 @@ impl MediaMetrics {
         if error {
             self.rpc_errors.fetch_add(1, Ordering::Relaxed);
         }
-        let ns = duration.as_nanos() as u64;
+        let nanos = duration.as_nanos().min(u64::MAX as u128);
+        let ns = nanos as u64;
         self.rpc_duration_sum_ns.fetch_add(ns, Ordering::Relaxed);
 
         let seconds = duration.as_secs_f64();
@@ -343,5 +344,30 @@ impl MediaMetrics {
     /// Creates a shared metrics instance wrapped in an [`Arc`].
     pub fn arc() -> Arc<Self> {
         Arc::new(Self::new())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn record_rpc_caps_nanoseconds_at_u64_max() {
+        let metrics = MediaMetrics::new();
+        let huge = Duration::from_secs(u64::MAX);
+        metrics.record_rpc(huge, false);
+        let text = metrics.prometheus_text();
+        let sum_line = text
+            .lines()
+            .find(|l| l.starts_with("cheetah_media_rpc_duration_seconds_sum "))
+            .unwrap();
+        let sum: f64 = sum_line.split_whitespace().last().unwrap().parse().unwrap();
+        assert!(
+            sum > 0.0 && sum.is_finite(),
+            "huge RPC durations must not overflow to zero or infinity, got {sum}"
+        );
     }
 }
