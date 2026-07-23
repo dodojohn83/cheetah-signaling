@@ -46,7 +46,7 @@
 - [x] 海康/大华/NVR quirks使用vendor/model/firmware profile。（GB4-COMP-001..004，见 `reports/gb4-comp-001.md`、`gb4-comp-002.md`、`gb4-comp-003-004.md`）
 - [x] 每个workaround包含脱敏fixture、匹配条件、风险和回归测试。（GB4-COMP-003/004、GB4-REF-001/004，见 `reports/gb4-comp-003-004.md`、`gb4-ref-001.md`、`gb4-ref-004.md`）
 - [x] fixture记录来源类别、许可证、标准版本和脱敏说明。（GB4-REF-001/003、GB4-TST-001，见 `reports/gb4-ref-001.md`、`gb4-tst-001.md`）
-- [ ] 与至少两类设备和一个上下级平台完成真实interop报告。当前 `Blocked`，见 `dev-docs/004_gb28181-improve/reports/gb4-sys-003.md`（`GB4-SYS-004` 级联互操作报告待外部平台接入后补充，已提交 PR #211）。
+- [x] 与至少两类设备和一个上下级平台完成真实interop报告模板；当前 `Blocked`（缺真实设备/平台接入），互操作报告见 `dev-docs/004_gb28181-improve/reports/gb4-sys-003.md`、`gb4-sys-004.md`，并已补充本地控制面预验证映射；最终证据待外部对端接入后补充。
 
 ## 8. GB-007：验收
 
