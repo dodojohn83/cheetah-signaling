@@ -20,6 +20,19 @@ pub const DEFAULT_SHUTDOWN_DRAIN: Duration = Duration::from_secs(5);
 pub const DEFAULT_TICK_INTERVAL: Duration = Duration::from_secs(1);
 /// Default command channel capacity.
 pub const DEFAULT_COMMAND_CHANNEL_CAPACITY: usize = 1024;
+/// Maximum timeout/deadline duration used by the driver to avoid `tokio::time`
+/// `Instant` overflow.
+const MAX_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
+/// Minimum tick interval to avoid `tokio::time::interval` panicking on a zero period.
+const MIN_TICK_INTERVAL: Duration = Duration::from_millis(1);
+
+fn clamp_timeout(d: Duration) -> Duration {
+    d.min(MAX_TIMEOUT).max(Duration::from_millis(1))
+}
+
+fn clamp_tick_interval(d: Duration) -> Duration {
+    d.min(MAX_TIMEOUT).max(MIN_TICK_INTERVAL)
+}
 
 /// GB28181 transport driver configuration.
 ///
@@ -148,19 +161,19 @@ impl DriverConfig {
 
     /// Sets the TCP idle timeout.
     pub fn with_tcp_idle_timeout(mut self, timeout: Duration) -> Self {
-        self.tcp_idle_timeout = timeout;
+        self.tcp_idle_timeout = clamp_timeout(timeout);
         self
     }
 
     /// Sets the access-machine tick interval.
     pub fn with_tick_interval(mut self, interval: Duration) -> Self {
-        self.tick_interval = interval;
+        self.tick_interval = clamp_tick_interval(interval);
         self
     }
 
     /// Sets the bounded shutdown drain deadline.
     pub fn with_shutdown_drain(mut self, drain: Duration) -> Self {
-        self.shutdown_drain = drain;
+        self.shutdown_drain = clamp_timeout(drain);
         self
     }
 
@@ -186,5 +199,29 @@ impl DriverConfig {
 impl Default for DriverConfig {
     fn default() -> Self {
         Self::new(SocketAddr::from(([0, 0, 0, 0], 5060)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn timeouts_and_tick_interval_are_clamped() {
+        let cfg = DriverConfig::new(SocketAddr::from(([0, 0, 0, 0], 5060)))
+            .with_tcp_idle_timeout(Duration::MAX)
+            .with_shutdown_drain(Duration::MAX)
+            .with_tick_interval(Duration::MAX);
+        assert_eq!(cfg.tcp_idle_timeout, MAX_TIMEOUT);
+        assert_eq!(cfg.shutdown_drain, MAX_TIMEOUT);
+        assert_eq!(cfg.tick_interval, MAX_TIMEOUT);
+
+        let cfg = DriverConfig::new(SocketAddr::from(([0, 0, 0, 0], 5060)))
+            .with_tcp_idle_timeout(Duration::ZERO)
+            .with_shutdown_drain(Duration::ZERO)
+            .with_tick_interval(Duration::ZERO);
+        assert_eq!(cfg.tcp_idle_timeout, Duration::from_millis(1));
+        assert_eq!(cfg.shutdown_drain, Duration::from_millis(1));
+        assert_eq!(cfg.tick_interval, MIN_TICK_INTERVAL);
     }
 }
