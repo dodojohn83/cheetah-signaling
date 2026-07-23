@@ -6,6 +6,11 @@ use cheetah_signal_types::{
     OperationId, OwnerEpoch, Principal, ResourceRef, TenantId, UtcTimestamp,
 };
 
+/// Maximum byte length of an idempotency key.
+const MAX_IDEMPOTENCY_KEY_BYTES: usize = 256;
+/// Maximum byte length of a principal identifier stored in an idempotency scope.
+const MAX_PRINCIPAL_ID_BYTES: usize = 256;
+
 /// Scope used to deduplicate operations and media sessions.
 #[derive(Clone, Debug, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct IdempotencyScope {
@@ -35,9 +40,20 @@ impl IdempotencyScope {
                 "idempotency_key must not be empty",
             ));
         }
+        if idempotency_key.len() > MAX_IDEMPOTENCY_KEY_BYTES {
+            return Err(DomainError::invalid_argument(
+                "idempotency_key must not exceed 256 bytes",
+            ));
+        }
+        let principal_id = principal_id.into();
+        if principal_id.len() > MAX_PRINCIPAL_ID_BYTES {
+            return Err(DomainError::invalid_argument(
+                "principal_id must not exceed 256 bytes",
+            ));
+        }
         Ok(Self {
             tenant_id,
-            principal_id: principal_id.into(),
+            principal_id,
             target,
             idempotency_key,
         })
@@ -460,4 +476,37 @@ pub enum DeviceControlKind {
     IFrame,
     /// Update a device configuration section.
     DeviceConfig,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::in_memory::InMemoryIdGenerator;
+    use cheetah_signal_types::{IdGenerator, ResourceId, ResourceKind};
+
+    #[test]
+    fn idempotency_scope_rejects_oversized_key() {
+        let tenant_id = InMemoryIdGenerator::new().generate_tenant_id();
+        let device_id = InMemoryIdGenerator::new().generate_device_id();
+        let target = ResourceRef {
+            tenant_id,
+            kind: ResourceKind::Device,
+            id: ResourceId::Device(device_id),
+        };
+        let result = IdempotencyScope::new(tenant_id, "u", target, "x".repeat(257));
+        assert!(matches!(result, Err(DomainError::InvalidArgument { .. })));
+    }
+
+    #[test]
+    fn idempotency_scope_rejects_oversized_principal() {
+        let tenant_id = InMemoryIdGenerator::new().generate_tenant_id();
+        let device_id = InMemoryIdGenerator::new().generate_device_id();
+        let target = ResourceRef {
+            tenant_id,
+            kind: ResourceKind::Device,
+            id: ResourceId::Device(device_id),
+        };
+        let result = IdempotencyScope::new(tenant_id, "x".repeat(257), target, "key");
+        assert!(matches!(result, Err(DomainError::InvalidArgument { .. })));
+    }
 }
