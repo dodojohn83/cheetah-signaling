@@ -7,6 +7,11 @@ use crate::error::{OnvifError, OnvifResult};
 use std::collections::{HashMap, VecDeque};
 use std::net::IpAddr;
 
+/// Upper bound for distinct source IPs tracked by the rate limiter.
+const MAX_RATE_SOURCES: usize = 100_000;
+/// Upper bound for datagram timestamps kept per source.
+const MAX_RATE_PER_SOURCE: u32 = 100_000;
+
 /// Size and rate limits for discovery traffic.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DiscoveryLimits {
@@ -65,9 +70,14 @@ pub struct DiscoveryRateLimiter {
 impl DiscoveryRateLimiter {
     /// Creates a rate limiter with the supplied configuration.
     pub fn new(config: RateLimitConfig) -> Self {
+        let config = RateLimitConfig {
+            max_sources: config.max_sources.min(MAX_RATE_SOURCES),
+            max_per_source: config.max_per_source.min(MAX_RATE_PER_SOURCE),
+            window_seconds: config.window_seconds,
+        };
         Self {
             config,
-            buckets: HashMap::with_capacity(config.max_sources),
+            buckets: HashMap::with_capacity(config.max_sources.min(MAX_RATE_SOURCES)),
         }
     }
 
@@ -263,5 +273,15 @@ mod tests {
         };
         assert!(check_datagram_size("hello", &limits).is_err());
         assert!(check_datagram_size("hi", &limits).is_ok());
+    }
+
+    #[test]
+    fn rate_limiter_clamps_huge_capacity_without_panic() {
+        let mut rl = DiscoveryRateLimiter::new(RateLimitConfig {
+            max_sources: usize::MAX,
+            max_per_source: u32::MAX,
+            window_seconds: 60,
+        });
+        assert!(rl.check("192.0.2.1".parse().unwrap(), 1));
     }
 }

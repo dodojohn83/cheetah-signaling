@@ -5,6 +5,7 @@
 //! registered with the `PluginHost`.
 
 use crate::commands::*;
+use crate::util::clamp_timeout;
 use crate::{DriverConfig, DriverError, OnvifHttpDriver, events};
 use async_trait::async_trait;
 use cheetah_onvif_services::services::{SystemDateAndTime, redact_uri_userinfo};
@@ -297,10 +298,11 @@ fn onvif_config(ctx: &dyn DriverContext) -> Result<OnvifConfig, PluginError> {
     }
 }
 
-fn effective_timeout(timeout: DurationMs, driver: &OnvifHttpDriver) -> Option<Duration> {
-    let _ = driver;
+fn effective_timeout(timeout: DurationMs, _driver: &OnvifHttpDriver) -> Option<Duration> {
     if timeout.as_millis() > 0 {
-        Some(Duration::from_millis(timeout.as_millis() as u64))
+        Some(clamp_timeout(Duration::from_millis(
+            timeout.as_millis() as u64
+        )))
     } else {
         None
     }

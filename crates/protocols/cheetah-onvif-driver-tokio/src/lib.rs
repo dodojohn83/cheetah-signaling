@@ -15,6 +15,7 @@ pub mod error;
 pub(crate) mod events;
 pub mod protocol_driver;
 pub mod soap_client;
+pub(crate) mod util;
 
 pub use auth::{DeviceCredentials, inject_username_token};
 pub use config::DriverConfig;
