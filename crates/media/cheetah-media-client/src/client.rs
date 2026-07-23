@@ -777,11 +777,17 @@ fn backoff(base_ms: u64, max_ms: u64, attempt: usize) -> u64 {
 }
 
 /// Returns true if `request_timeout_ms + delay` pushes the current wall time
-/// to or beyond `deadline` (or beyond the representable `OffsetDateTime` range).
+/// to or beyond `deadline`.
+///
+/// Both `request_timeout_ms` and `delay` are clamped to the same bounds used
+/// for the actual `tokio::time::timeout` and sleep, so the deadline check stays
+/// consistent and cannot overflow `OffsetDateTime`.
 fn deadline_exceeded(deadline: UtcTimestamp, request_timeout_ms: u64, delay: u64) -> bool {
     let now = UtcTimestamp::from_offset(time::OffsetDateTime::now_utc());
-    let total_ms = request_timeout_ms.saturating_add(delay);
-    let total_ms_i64 = i64::try_from(total_ms).unwrap_or(i64::MAX);
+    let total = clamp_timeout_ms(request_timeout_ms)
+        .as_millis()
+        .saturating_add(clamp_backoff_ms(delay).as_millis());
+    let total_ms_i64 = i64::try_from(total).unwrap_or(i64::MAX);
     let needed = time::Duration::milliseconds(total_ms_i64);
     now.as_offset()
         .checked_add(needed)
@@ -816,9 +822,15 @@ mod tests {
         // A reasonable timeout should not exceed a far-future deadline.
         assert!(!deadline_exceeded(far_future, 1_000, 0));
 
-        // A huge timeout that overflows the OffsetDateTime range must be
-        // reported as exceeded instead of panicking.
+        // A huge timeout is clamped to the same per-attempt cap used by
+        // `tokio::time::timeout`; for a deadline 10 ms in the future the
+        // next attempt plus backoff will still exceed it, and the function
+        // must not panic.
         assert!(deadline_exceeded(near, u64::MAX, u64::MAX));
+
+        // A huge timeout against a far-future deadline must not be reported as
+        // exceeded just because the unclamped value overflows `OffsetDateTime`.
+        assert!(!deadline_exceeded(far_future, u64::MAX, u64::MAX));
     }
 
     #[test]
