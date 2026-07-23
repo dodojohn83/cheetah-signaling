@@ -1,28 +1,19 @@
 [package]
-name = "cheetah-onvif-module"
+name = "cheetah-onvif-services"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+description = "ONVIF service request builders, response parsers, and wire types shared between module and driver."
 
 [dependencies]
 cheetah-onvif-core = { path = "../cheetah-onvif-core" }
-cheetah-onvif-services = { path = "../cheetah-onvif-services" }
-cheetah-plugin-sdk = { path = "../../plugin/cheetah-plugin-sdk" }
 cheetah-signal-types = { path = "../../foundation/cheetah-signal-types" }
-async-trait = { workspace = true }
 quick-xml = { workspace = true }
 url = { workspace = true }
-secrecy = { workspace = true }
-serde_json = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["sync"] }
-
-[dev-dependencies]
-uuid = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt"] }
 
 [lints]
 workspace = true

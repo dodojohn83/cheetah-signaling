@@ -5,7 +5,7 @@
 )]
 
 use super::*;
-use cheetah_onvif_module::services::MediaDialect;
+use cheetah_onvif_services::services::MediaDialect;
 use cheetah_plugin_sdk::{CommandSource, DeviceSink, PluginName, ProtocolEvent, ResourceBudget};
 use secrecy::{ExposeSecret, SecretString};
 

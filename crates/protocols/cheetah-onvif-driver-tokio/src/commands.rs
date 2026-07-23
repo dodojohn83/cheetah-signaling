@@ -1,7 +1,7 @@
 //! Typed ONVIF command payloads and credential resolution helpers.
 
 use crate::DeviceCredentials;
-use cheetah_onvif_module::services::{MediaDialect, PtzVelocity, clip_unit};
+use cheetah_onvif_services::services::{MediaDialect, PtzVelocity, clip_unit};
 use cheetah_plugin_sdk::{DriverContext, PluginError};
 use cheetah_signal_types::{TenantId, config::OnvifConfig};
 use secrecy::{ExposeSecret, SecretString};

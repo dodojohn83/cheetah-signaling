@@ -61,6 +61,7 @@ LAYER_PATTERNS = [
     ("cheetah-cluster-registry", 6),
     ("cheetah-gb28181-core", 6),
     ("cheetah-onvif-core", 6),
+    ("cheetah-onvif-services", 6),
     ("cheetah-plugin-sdk", 6),
 ]
 

@@ -1,7 +1,7 @@
 //! ONVIF Events PullPoint request builders and response parsers.
 
 use crate::config::ParserLimits;
-use crate::error::OnvifModuleError;
+use crate::error::OnvifServiceError;
 use crate::services::parse::{ParseContext, local_name};
 use cheetah_onvif_core::discovery::XAddrPolicy;
 use cheetah_onvif_core::soap::Envelope;
@@ -51,7 +51,7 @@ pub struct OnvifNotification {
 pub fn create_pull_point_subscription_request(
     initial_termination_time: &str,
     message_id: impl Into<String>,
-) -> Result<String, OnvifModuleError> {
+) -> Result<String, OnvifServiceError> {
     let mut cursor = Cursor::new(Vec::new());
     let mut writer = Writer::new(&mut cursor);
     let mut body = BytesStart::new("tev:CreatePullPointSubscription");
@@ -61,12 +61,13 @@ pub fn create_pull_point_subscription_request(
     writer.write_event(Event::Text(BytesText::new(initial_termination_time)))?;
     writer.write_event(Event::End(BytesEnd::new("tev:InitialTerminationTime")))?;
     writer.write_event(Event::End(BytesEnd::new("tev:CreatePullPointSubscription")))?;
-    let body = String::from_utf8(cursor.into_inner())
-        .map_err(|e| OnvifModuleError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string())))?;
+    let body = String::from_utf8(cursor.into_inner()).map_err(|e| {
+        OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string()))
+    })?;
     Envelope::new(CREATE_PULLPOINT_ACTION, body)
         .with_message_id(message_id)
         .build()
-        .map_err(OnvifModuleError::Onvif)
+        .map_err(OnvifServiceError::Onvif)
 }
 
 /// Builds PullMessages.
@@ -74,7 +75,7 @@ pub fn pull_messages_request(
     timeout: &str,
     message_limit: u32,
     message_id: impl Into<String>,
-) -> Result<String, OnvifModuleError> {
+) -> Result<String, OnvifServiceError> {
     let mut cursor = Cursor::new(Vec::new());
     let mut writer = Writer::new(&mut cursor);
     let mut body = BytesStart::new("tev:PullMessages");
@@ -87,19 +88,20 @@ pub fn pull_messages_request(
     writer.write_event(Event::Text(BytesText::new(&message_limit.to_string())))?;
     writer.write_event(Event::End(BytesEnd::new("tev:MessageLimit")))?;
     writer.write_event(Event::End(BytesEnd::new("tev:PullMessages")))?;
-    let body = String::from_utf8(cursor.into_inner())
-        .map_err(|e| OnvifModuleError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string())))?;
+    let body = String::from_utf8(cursor.into_inner()).map_err(|e| {
+        OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string()))
+    })?;
     Envelope::new(PULL_MESSAGES_ACTION, body)
         .with_message_id(message_id)
         .build()
-        .map_err(OnvifModuleError::Onvif)
+        .map_err(OnvifServiceError::Onvif)
 }
 
 /// Builds Renew with a termination time.
 pub fn renew_request(
     termination_time: &str,
     message_id: impl Into<String>,
-) -> Result<String, OnvifModuleError> {
+) -> Result<String, OnvifServiceError> {
     let mut cursor = Cursor::new(Vec::new());
     let mut writer = Writer::new(&mut cursor);
     let mut body = BytesStart::new("tev:Renew");
@@ -110,27 +112,29 @@ pub fn renew_request(
     writer.write_event(Event::Text(BytesText::new(termination_time)))?;
     writer.write_event(Event::End(BytesEnd::new("wsnt:TerminationTime")))?;
     writer.write_event(Event::End(BytesEnd::new("tev:Renew")))?;
-    let body = String::from_utf8(cursor.into_inner())
-        .map_err(|e| OnvifModuleError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string())))?;
+    let body = String::from_utf8(cursor.into_inner()).map_err(|e| {
+        OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string()))
+    })?;
     Envelope::new(RENEW_ACTION, body)
         .with_message_id(message_id)
         .build()
-        .map_err(OnvifModuleError::Onvif)
+        .map_err(OnvifServiceError::Onvif)
 }
 
 /// Builds Unsubscribe.
-pub fn unsubscribe_request(message_id: impl Into<String>) -> Result<String, OnvifModuleError> {
+pub fn unsubscribe_request(message_id: impl Into<String>) -> Result<String, OnvifServiceError> {
     let mut cursor = Cursor::new(Vec::new());
     let mut writer = Writer::new(&mut cursor);
     let mut body = BytesStart::new("tev:Unsubscribe");
     body.push_attribute(("xmlns:tev", EVENTS_NS));
     writer.write_event(Event::Empty(body))?;
-    let body = String::from_utf8(cursor.into_inner())
-        .map_err(|e| OnvifModuleError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string())))?;
+    let body = String::from_utf8(cursor.into_inner()).map_err(|e| {
+        OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string()))
+    })?;
     Envelope::new(UNSUBSCRIBE_ACTION, body)
         .with_message_id(message_id)
         .build()
-        .map_err(OnvifModuleError::Onvif)
+        .map_err(OnvifServiceError::Onvif)
 }
 
 /// Parses CreatePullPointSubscriptionResponse.
@@ -138,7 +142,7 @@ pub fn parse_create_pull_point_response(
     xml: &str,
     limits: &ParserLimits,
     policy: &XAddrPolicy,
-) -> Result<PullPointSubscription, OnvifModuleError> {
+) -> Result<PullPointSubscription, OnvifServiceError> {
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(true);
     let mut ctx = ParseContext::new(limits, xml)?;
@@ -170,7 +174,7 @@ pub fn parse_create_pull_point_response(
             }
             Ok(Event::Eof) => break,
             Err(e) => {
-                return Err(OnvifModuleError::Onvif(
+                return Err(OnvifServiceError::Onvif(
                     cheetah_onvif_core::OnvifError::Xml(e.to_string()),
                 ));
             }
@@ -179,14 +183,14 @@ pub fn parse_create_pull_point_response(
     }
 
     if sub.subscription_reference.is_empty() {
-        return Err(OnvifModuleError::MissingField(
+        return Err(OnvifServiceError::MissingField(
             "SubscriptionReference/Address".into(),
         ));
     }
     let url = url::Url::parse(&sub.subscription_reference).map_err(|e| {
-        OnvifModuleError::Onvif(cheetah_onvif_core::OnvifError::InvalidXAddr(e.to_string()))
+        OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::InvalidXAddr(e.to_string()))
     })?;
-    policy.validate(&url).map_err(OnvifModuleError::Onvif)?;
+    policy.validate(&url).map_err(OnvifServiceError::Onvif)?;
     Ok(sub)
 }
 
@@ -195,7 +199,7 @@ pub fn parse_pull_messages_response(
     xml: &str,
     limits: &ParserLimits,
     max_messages: usize,
-) -> Result<Vec<OnvifNotification>, OnvifModuleError> {
+) -> Result<Vec<OnvifNotification>, OnvifServiceError> {
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(true);
     let mut ctx = ParseContext::new(limits, xml)?;
@@ -209,7 +213,7 @@ pub fn parse_pull_messages_response(
                 let name = local_name(&e.name());
                 if name == "NotificationMessage" {
                     if messages.len() >= max_messages {
-                        return Err(OnvifModuleError::Onvif(
+                        return Err(OnvifServiceError::Onvif(
                             cheetah_onvif_core::OnvifError::LimitExceeded(
                                 "pull messages exceed max_messages".into(),
                             ),
@@ -278,7 +282,7 @@ pub fn parse_pull_messages_response(
             }
             Ok(Event::Eof) => break,
             Err(e) => {
-                return Err(OnvifModuleError::Onvif(
+                return Err(OnvifServiceError::Onvif(
                     cheetah_onvif_core::OnvifError::Xml(e.to_string()),
                 ));
             }

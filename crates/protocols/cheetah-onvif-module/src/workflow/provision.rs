@@ -1,7 +1,7 @@
 //! ONVIF device provisioning workflow.
 
+use crate::OnvifModuleError;
 use crate::config::XAddrPolicy;
-use crate::error::OnvifModuleError;
 use crate::services::{
     get_capabilities_request, get_device_information_request, get_services_request,
 };
