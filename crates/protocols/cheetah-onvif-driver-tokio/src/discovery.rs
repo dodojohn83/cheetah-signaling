@@ -126,10 +126,23 @@ async fn collect_matches(
 }
 
 /// Validates a configured device endpoint against SSRF policy before HTTP.
+///
+/// Rejects URLs that embed credentials in the userinfo section; ONVIF devices
+/// are authenticated via WS-Security UsernameToken, so any userinfo in the
+/// XAddr is a potential secret leak and should not be transmitted.
 pub fn validate_endpoint(endpoint: &str, policy: &XAddrPolicy) -> DriverResult<url::Url> {
-    let url = url::Url::parse(endpoint).map_err(|e| {
+    let mut url = url::Url::parse(endpoint).map_err(|e| {
         DriverError::Onvif(cheetah_onvif_core::OnvifError::InvalidXAddr(e.to_string()))
     })?;
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(DriverError::Onvif(
+            cheetah_onvif_core::OnvifError::InvalidXAddr(
+                "endpoint must not contain userinfo".into(),
+            ),
+        ));
+    }
     policy.validate(&url).map_err(DriverError::Onvif)?;
+    let _ = url.set_username("");
+    let _ = url.set_password(None);
     Ok(url)
 }

@@ -7,7 +7,7 @@
 use crate::commands::*;
 use crate::{DriverConfig, DriverError, OnvifHttpDriver, events};
 use async_trait::async_trait;
-use cheetah_onvif_module::services::SystemDateAndTime;
+use cheetah_onvif_module::services::{SystemDateAndTime, redact_uri_userinfo};
 use cheetah_plugin_sdk::{
     CapabilityDescriptor, DriverCommand, DriverContext, HealthReport, HealthStatus, PluginError,
     PluginName, ProtocolCapability, ProtocolDirection, ProtocolDriver, ProtocolDriverFactory,
@@ -108,7 +108,7 @@ impl ProtocolDriver for OnvifTokioProtocolDriver {
             .map_err(plugin_error_from_driver_error)?;
 
         let mut metadata = HashMap::new();
-        metadata.insert("onvif_endpoint".to_string(), target.to_string());
+        metadata.insert("onvif_endpoint".to_string(), redact_uri_userinfo(target));
 
         // Persist the device clock offset and the wall time at which the probe ran.
         let offset_seconds = clock_offset_seconds(&system_date_and_time)?;
