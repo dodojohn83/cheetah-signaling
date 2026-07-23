@@ -6,8 +6,8 @@ use cheetah_domain::in_memory::{
     InMemoryClock, InMemoryIdGenerator, device_resource_ref, request_context,
 };
 use cheetah_domain::{
-    CommandPayload, DomainError, IdempotencyScope, MediaPurpose, Operation, OperationResult,
-    OperationStatus,
+    CommandPayload, DomainError, IdempotencyScope, MediaPurpose, Operation, OperationError,
+    OperationResult, OperationStatus,
 };
 use cheetah_signal_types::{
     Clock, Deadline, DeviceId, DurationMs, IdGenerator, OwnerEpoch, TenantId,
@@ -272,4 +272,58 @@ fn operation_idempotency_scope_matches_input() {
     assert_eq!(operation.idempotency_scope().idempotency_key, "key-1");
     assert_eq!(operation.command().idempotency_key(), "key-1");
     assert_eq!(operation.command().operation_id(), operation.operation_id());
+}
+
+#[test]
+fn operation_result_rejects_oversized_code_and_message() {
+    let result = OperationResult::failure("x".repeat(129), "msg");
+    assert!(matches!(
+        result.validate(),
+        Err(DomainError::InvalidArgument { .. })
+    ));
+
+    let result = OperationResult::failure("code", "x".repeat(2049));
+    assert!(matches!(
+        result.validate(),
+        Err(DomainError::InvalidArgument { .. })
+    ));
+}
+
+#[test]
+fn operation_error_rejects_oversized_code_and_message() {
+    let error = OperationError::new("x".repeat(129), "msg");
+    assert!(matches!(
+        error.validate(),
+        Err(DomainError::InvalidArgument { .. })
+    ));
+
+    let error = OperationError::new("code", "x".repeat(2049));
+    assert!(matches!(
+        error.validate(),
+        Err(DomainError::InvalidArgument { .. })
+    ));
+}
+
+#[test]
+fn operation_complete_rejects_oversized_failure_result() {
+    let (clock, id_generator, tenant_id, device_id) = setup();
+    let mut operation = new_operation(&clock, &id_generator, tenant_id, device_id);
+    operation.start(&clock).unwrap();
+    let result = OperationResult::failure("code", "x".repeat(2049));
+    let err = operation.complete(result, &clock).unwrap_err();
+    assert!(matches!(err, DomainError::InvalidArgument { .. }));
+}
+
+#[test]
+fn operation_fail_rejects_oversized_code_and_message() {
+    let (clock, id_generator, tenant_id, device_id) = setup();
+    let mut operation = new_operation(&clock, &id_generator, tenant_id, device_id);
+    let err = operation.fail("x".repeat(129), "msg", &clock).unwrap_err();
+    assert!(matches!(err, DomainError::InvalidArgument { .. }));
+
+    let mut operation = new_operation(&clock, &id_generator, tenant_id, device_id);
+    let err = operation
+        .fail("code", "x".repeat(2049), &clock)
+        .unwrap_err();
+    assert!(matches!(err, DomainError::InvalidArgument { .. }));
 }

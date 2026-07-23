@@ -6,6 +6,11 @@ use cheetah_signal_types::{
     RequestContext, ResourceRef, Revision, TenantId, UtcTimestamp,
 };
 
+/// Maximum byte length of an operation error code.
+const MAX_OPERATION_ERROR_CODE_BYTES: usize = 128;
+/// Maximum byte length of an operation error message.
+const MAX_OPERATION_ERROR_MESSAGE_BYTES: usize = 2048;
+
 /// Status of an operation.
 #[derive(
     Clone, Copy, Debug, Default, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize,
@@ -103,6 +108,23 @@ impl OperationResult {
         }
     }
 
+    /// Validates that code and message length are within bounds.
+    pub fn validate(&self) -> crate::Result<()> {
+        if let Self::Failure { code, message } = self {
+            if code.len() > MAX_OPERATION_ERROR_CODE_BYTES {
+                return Err(DomainError::invalid_argument(
+                    "operation error code must not exceed 128 bytes",
+                ));
+            }
+            if message.len() > MAX_OPERATION_ERROR_MESSAGE_BYTES {
+                return Err(DomainError::invalid_argument(
+                    "operation error message must not exceed 2048 bytes",
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Whether the result is success.
     pub const fn is_success(&self) -> bool {
         matches!(self, Self::Success)
@@ -144,22 +166,43 @@ impl OperationError {
         }
     }
 
+    /// Validates that code and message length are within bounds.
+    pub fn validate(&self) -> crate::Result<()> {
+        if self.code.len() > MAX_OPERATION_ERROR_CODE_BYTES {
+            return Err(DomainError::invalid_argument(
+                "operation error code must not exceed 128 bytes",
+            ));
+        }
+        if self.message.len() > MAX_OPERATION_ERROR_MESSAGE_BYTES {
+            return Err(DomainError::invalid_argument(
+                "operation error message must not exceed 2048 bytes",
+            ));
+        }
+        Ok(())
+    }
+
     /// Error code for an operation that expired before dispatch.
     pub fn expired_before_dispatch() -> Self {
-        Self::new(
-            "expired_before_dispatch",
-            "deadline expired before dispatch",
-        )
+        Self {
+            code: "expired_before_dispatch".to_string(),
+            message: "deadline expired before dispatch".to_string(),
+        }
     }
 
     /// Error code for a cancelled operation.
     pub fn cancelled() -> Self {
-        Self::new("cancelled", "operation was cancelled")
+        Self {
+            code: "cancelled".to_string(),
+            message: "operation was cancelled".to_string(),
+        }
     }
 
     /// Error code for a timed out operation.
     pub fn timeout() -> Self {
-        Self::new("timeout", "operation timed out")
+        Self {
+            code: "timeout".to_string(),
+            message: "operation timed out".to_string(),
+        }
     }
 
     /// Stable error code.
@@ -257,10 +300,12 @@ impl DispatchAttempt {
     }
 
     /// Marks the attempt as negatively acknowledged with an error.
-    pub fn mark_nacked(&mut self, error: OperationError, clock: &dyn Clock) {
+    pub fn mark_nacked(&mut self, error: OperationError, clock: &dyn Clock) -> crate::Result<()> {
+        error.validate()?;
         self.status = DispatchAttemptStatus::Nacked;
         self.error = Some(error);
         self.acked_at = Some(clock.now_wall());
+        Ok(())
     }
 
     /// Marks the attempt as timed out.
@@ -270,10 +315,16 @@ impl DispatchAttempt {
     }
 
     /// Marks the attempt as dead-lettered.
-    pub fn mark_dead_letter(&mut self, error: OperationError, clock: &dyn Clock) {
+    pub fn mark_dead_letter(
+        &mut self,
+        error: OperationError,
+        clock: &dyn Clock,
+    ) -> crate::Result<()> {
+        error.validate()?;
         self.status = DispatchAttemptStatus::DeadLetter;
         self.error = Some(error);
         self.acked_at = Some(clock.now_wall());
+        Ok(())
     }
 
     /// Returns the attempt identifier.
@@ -357,7 +408,8 @@ impl OperationStep {
     }
 
     /// Completes the step with a result.
-    pub fn complete(&mut self, result: OperationResult, clock: &dyn Clock) {
+    pub fn complete(&mut self, result: OperationResult, clock: &dyn Clock) -> crate::Result<()> {
+        result.validate()?;
         self.status = if result.is_success() {
             OperationStepStatus::Succeeded
         } else {
@@ -365,6 +417,7 @@ impl OperationStep {
         };
         self.result = Some(result);
         self.updated_at = clock.now_wall();
+        Ok(())
     }
 
     /// Compensates the step.
@@ -521,6 +574,7 @@ impl Operation {
         result: OperationResult,
         clock: &dyn Clock,
     ) -> crate::Result<DomainEvent> {
+        result.validate()?;
         match self.status {
             OperationStatus::Running => {
                 let previous = self.status;
@@ -532,7 +586,7 @@ impl Operation {
                 self.result = Some(result.clone());
                 self.error = None;
                 if let Some(step) = self.current_step_mut() {
-                    step.complete(result, clock);
+                    step.complete(result, clock)?;
                 }
                 self.bump(clock);
                 Ok(self.state_changed_event(previous))
@@ -575,7 +629,7 @@ impl Operation {
                     step.complete(
                         OperationResult::failure("cancelled", "operation cancelled"),
                         clock,
-                    );
+                    )?;
                 }
                 self.bump(clock);
                 Ok(self.state_changed_event(previous))
@@ -610,11 +664,14 @@ impl Operation {
                 let code = code.into();
                 let message = message.into();
                 let result = OperationResult::failure(code.clone(), message.clone());
-                self.result = Some(result.clone());
-                self.error = Some(OperationError::new(code, message));
+                result.validate()?;
+                let error = OperationError::new(code, message);
+                error.validate()?;
+                self.error = Some(error);
                 if let Some(step) = self.current_step_mut() {
-                    step.complete(result, clock);
+                    step.complete(result.clone(), clock)?;
                 }
+                self.result = Some(result);
                 self.bump(clock);
                 Ok(self.state_changed_event(previous))
             }
@@ -638,6 +695,7 @@ impl Operation {
         error: OperationError,
         clock: &dyn Clock,
     ) -> crate::Result<DomainEvent> {
+        error.validate()?;
         match self.status {
             OperationStatus::Pending | OperationStatus::Running => {
                 let previous = self.status;
@@ -647,7 +705,7 @@ impl Operation {
                     step.complete(
                         OperationResult::failure(error.code(), error.message()),
                         clock,
-                    );
+                    )?;
                 }
                 self.bump(clock);
                 Ok(self.state_changed_event(previous))
@@ -847,7 +905,7 @@ impl Operation {
         let attempt = step
             .attempt_mut(attempt_id)
             .ok_or_else(|| DomainError::not_found("dispatch attempt", attempt_id.to_string()))?;
-        attempt.mark_nacked(error, clock);
+        attempt.mark_nacked(error, clock)?;
         self.bump(clock);
         Ok(())
     }
