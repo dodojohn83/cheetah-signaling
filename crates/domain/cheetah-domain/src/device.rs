@@ -72,14 +72,20 @@ impl std::str::FromStr for DeviceKind {
     type Err = DomainError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let kind = match s.to_lowercase().as_str() {
-            "camera" => Self::Camera,
-            "nvr" => Self::Nvr,
-            "dvr" => Self::Dvr,
-            "encoder" => Self::Encoder,
-            "iot" => Self::Iot,
-            "platform" => Self::Platform,
-            _ => Self::Unknown,
+        let kind = if s.eq_ignore_ascii_case("camera") {
+            Self::Camera
+        } else if s.eq_ignore_ascii_case("nvr") {
+            Self::Nvr
+        } else if s.eq_ignore_ascii_case("dvr") {
+            Self::Dvr
+        } else if s.eq_ignore_ascii_case("encoder") {
+            Self::Encoder
+        } else if s.eq_ignore_ascii_case("iot") {
+            Self::Iot
+        } else if s.eq_ignore_ascii_case("platform") {
+            Self::Platform
+        } else {
+            Self::Unknown
         };
         Ok(kind)
     }
@@ -134,20 +140,29 @@ impl std::str::FromStr for Protocol {
     type Err = DomainError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let protocol = match s.to_lowercase().as_str() {
-            "gb28181" => Self::Gb28181,
-            "onvif" => Self::Onvif,
-            "plugin" => Self::Plugin,
-            "mqtt" => Self::Mqtt,
-            "jt808" => Self::Jt808,
-            "isup" => Self::Isup,
-            "homekit" => Self::Homekit,
-            "matter" => Self::Matter,
-            _ => Self::Unknown,
+        let protocol = if s.eq_ignore_ascii_case("gb28181") {
+            Self::Gb28181
+        } else if s.eq_ignore_ascii_case("onvif") {
+            Self::Onvif
+        } else if s.eq_ignore_ascii_case("plugin") {
+            Self::Plugin
+        } else if s.eq_ignore_ascii_case("mqtt") {
+            Self::Mqtt
+        } else if s.eq_ignore_ascii_case("jt808") {
+            Self::Jt808
+        } else if s.eq_ignore_ascii_case("isup") {
+            Self::Isup
+        } else if s.eq_ignore_ascii_case("homekit") {
+            Self::Homekit
+        } else if s.eq_ignore_ascii_case("matter") {
+            Self::Matter
+        } else {
+            Self::Unknown
         };
         if protocol == Self::Unknown {
+            let display = s.chars().take(64).collect::<String>();
             return Err(DomainError::invalid_argument(format!(
-                "unknown protocol: {s}"
+                "unknown protocol: {display}"
             )));
         }
         Ok(protocol)
@@ -188,16 +203,19 @@ impl std::str::FromStr for DeviceLifecycle {
     type Err = DomainError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let lifecycle = match s.to_lowercase().as_str() {
-            "provisioning" => Self::Provisioning,
-            "active" => Self::Active,
-            "suspended" => Self::Suspended,
-            "retired" => Self::Retired,
-            _ => {
-                return Err(DomainError::invalid_argument(format!(
-                    "unknown lifecycle: {s}"
-                )));
-            }
+        let lifecycle = if s.eq_ignore_ascii_case("provisioning") {
+            Self::Provisioning
+        } else if s.eq_ignore_ascii_case("active") {
+            Self::Active
+        } else if s.eq_ignore_ascii_case("suspended") {
+            Self::Suspended
+        } else if s.eq_ignore_ascii_case("retired") {
+            Self::Retired
+        } else {
+            let display = s.chars().take(64).collect::<String>();
+            return Err(DomainError::invalid_argument(format!(
+                "unknown lifecycle: {display}"
+            )));
         };
         Ok(lifecycle)
     }

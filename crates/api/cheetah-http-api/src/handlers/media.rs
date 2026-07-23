@@ -63,55 +63,49 @@ pub async fn create_session(
     let purpose = body
         .get("purpose")
         .and_then(|v| v.as_str())
-        .unwrap_or("live")
-        .to_lowercase();
-    let result = match purpose.as_str() {
-        "live" => {
-            let mut request: StartLiveRequest =
-                serde_json::from_value(body).map_err(HttpError::from)?;
-            request.idempotency_key = idempotency.0.clone();
-            state
-                .media_service
-                .start_live(&ctx.0, &mut *uow, request)
-                .await
-                .map_err(HttpError::from)?
-        }
-        "playback" => {
-            let mut request: StartPlaybackRequest =
-                serde_json::from_value(body).map_err(HttpError::from)?;
-            request.idempotency_key = idempotency.0.clone();
-            state
-                .media_service
-                .start_playback(&ctx.0, &mut *uow, request)
-                .await
-                .map_err(HttpError::from)?
-        }
-        "talk" => {
-            let mut request: StartTalkRequest =
-                serde_json::from_value(body).map_err(HttpError::from)?;
-            request.idempotency_key = idempotency.0.clone();
-            state
-                .media_service
-                .start_talk(&ctx.0, &mut *uow, request)
-                .await
-                .map_err(HttpError::from)?
-        }
-        "broadcast" => {
-            let mut request: StartBroadcastRequest =
-                serde_json::from_value(body).map_err(HttpError::from)?;
-            request.idempotency_key = idempotency.0.clone();
-            state
-                .media_service
-                .start_broadcast(&ctx.0, &mut *uow, request)
-                .await
-                .map_err(HttpError::from)?
-        }
-        _ => {
-            return Err(HttpError::Signal(cheetah_signal_types::SignalError::new(
-                cheetah_signal_types::SignalErrorKind::InvalidArgument,
-                "unsupported media purpose",
-            )));
-        }
+        .unwrap_or("live");
+    let result = if purpose.eq_ignore_ascii_case("live") {
+        let mut request: StartLiveRequest =
+            serde_json::from_value(body).map_err(HttpError::from)?;
+        request.idempotency_key = idempotency.0.clone();
+        state
+            .media_service
+            .start_live(&ctx.0, &mut *uow, request)
+            .await
+            .map_err(HttpError::from)?
+    } else if purpose.eq_ignore_ascii_case("playback") {
+        let mut request: StartPlaybackRequest =
+            serde_json::from_value(body).map_err(HttpError::from)?;
+        request.idempotency_key = idempotency.0.clone();
+        state
+            .media_service
+            .start_playback(&ctx.0, &mut *uow, request)
+            .await
+            .map_err(HttpError::from)?
+    } else if purpose.eq_ignore_ascii_case("talk") {
+        let mut request: StartTalkRequest =
+            serde_json::from_value(body).map_err(HttpError::from)?;
+        request.idempotency_key = idempotency.0.clone();
+        state
+            .media_service
+            .start_talk(&ctx.0, &mut *uow, request)
+            .await
+            .map_err(HttpError::from)?
+    } else if purpose.eq_ignore_ascii_case("broadcast") {
+        let mut request: StartBroadcastRequest =
+            serde_json::from_value(body).map_err(HttpError::from)?;
+        request.idempotency_key = idempotency.0.clone();
+        state
+            .media_service
+            .start_broadcast(&ctx.0, &mut *uow, request)
+            .await
+            .map_err(HttpError::from)?
+    } else {
+        let display = purpose.chars().take(64).collect::<String>();
+        return Err(HttpError::Signal(cheetah_signal_types::SignalError::new(
+            cheetah_signal_types::SignalErrorKind::InvalidArgument,
+            format!("unsupported media purpose: {display}"),
+        )));
     };
     let session_id = result.media_session_id.to_string();
     let body = serde_json::to_value(result).map_err(HttpError::from)?;

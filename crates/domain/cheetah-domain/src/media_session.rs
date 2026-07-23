@@ -75,15 +75,25 @@ impl std::str::FromStr for MediaSessionState {
     type Err = DomainError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let state = match s.to_lowercase().as_str() {
-            "requested" => Self::Requested,
-            "allocating" => Self::Allocating,
-            "inviting" => Self::Inviting,
-            "active" => Self::Active,
-            "stopping" => Self::Stopping,
-            "stopped" => Self::Stopped,
-            "failed" => Self::Failed,
-            _ => return Err(DomainError::invalid_argument(format!("unknown state: {s}"))),
+        let state = if s.eq_ignore_ascii_case("requested") {
+            Self::Requested
+        } else if s.eq_ignore_ascii_case("allocating") {
+            Self::Allocating
+        } else if s.eq_ignore_ascii_case("inviting") {
+            Self::Inviting
+        } else if s.eq_ignore_ascii_case("active") {
+            Self::Active
+        } else if s.eq_ignore_ascii_case("stopping") {
+            Self::Stopping
+        } else if s.eq_ignore_ascii_case("stopped") {
+            Self::Stopped
+        } else if s.eq_ignore_ascii_case("failed") {
+            Self::Failed
+        } else {
+            let display = s.chars().take(64).collect::<String>();
+            return Err(DomainError::invalid_argument(format!(
+                "unknown state: {display}"
+            )));
         };
         Ok(state)
     }
@@ -134,16 +144,21 @@ impl std::str::FromStr for MediaPurpose {
     type Err = DomainError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let purpose = match s.to_lowercase().as_str() {
-            "live" => Self::Live,
-            "playback" => Self::Playback,
-            "talk" => Self::Talk,
-            "broadcast" => Self::Broadcast,
-            _ => Self::Unknown,
+        let purpose = if s.eq_ignore_ascii_case("live") {
+            Self::Live
+        } else if s.eq_ignore_ascii_case("playback") {
+            Self::Playback
+        } else if s.eq_ignore_ascii_case("talk") {
+            Self::Talk
+        } else if s.eq_ignore_ascii_case("broadcast") {
+            Self::Broadcast
+        } else {
+            Self::Unknown
         };
         if purpose == Self::Unknown {
+            let display = s.chars().take(64).collect::<String>();
             return Err(DomainError::invalid_argument(format!(
-                "unknown media purpose: {s}"
+                "unknown media purpose: {display}"
             )));
         }
         Ok(purpose)
