@@ -97,8 +97,8 @@ impl UtcTimestamp {
     /// Creates a timestamp from a `prost_types::Timestamp` if it is valid.
     pub fn from_prost_timestamp(ts: &prost_types::Timestamp) -> Option<Self> {
         let date = OffsetDateTime::from_unix_timestamp(ts.seconds).ok()?;
-        let date = date + time::Duration::nanoseconds(ts.nanos as i64);
-        Some(Self::from_offset(date))
+        date.checked_add(time::Duration::nanoseconds(i64::from(ts.nanos)))
+            .map(Self::from_offset)
     }
 }
 
@@ -292,5 +292,28 @@ mod tests {
         // `i64::MIN` ms underflows and must clamp to year -9999.
         let past = UtcTimestamp::from_epoch_millis_saturating(i64::MIN);
         assert_eq!(past.as_offset().year(), -9999);
+    }
+    #[test]
+    fn from_prost_timestamp_does_not_panic_at_representable_limit() {
+        // At the maximum representable UTC instant, a nanos offset that overflows
+        // the OffsetDateTime range would have panicked with the previous `+`
+        // implementation.
+        let max =
+            OffsetDateTime::new_in_offset(time::Date::MAX, time::Time::MAX, time::UtcOffset::UTC);
+        let ts = prost_types::Timestamp {
+            seconds: max.unix_timestamp() - 1,
+            nanos: 2_000_000_000,
+        };
+        assert!(UtcTimestamp::from_prost_timestamp(&ts).is_none());
+    }
+
+    #[test]
+    fn from_prost_timestamp_round_trips_valid_timestamp() {
+        let ts = prost_types::Timestamp {
+            seconds: 1_700_000_000,
+            nanos: 500_000_000,
+        };
+        let u = UtcTimestamp::from_prost_timestamp(&ts).expect("valid timestamp");
+        assert_eq!(u.as_unix_seconds(), 1_700_000_000);
     }
 }
