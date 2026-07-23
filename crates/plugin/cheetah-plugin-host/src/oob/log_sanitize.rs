@@ -34,23 +34,31 @@ pub fn sanitize_log_line(line: &str) -> String {
         .into_owned()
 }
 
-#[allow(clippy::unwrap_used)]
-static AUTH_HEADER: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?i)(^.*?\bauthorization\s*:\s*)(.*)$").unwrap());
+// These patterns are literals checked into source control. A compilation or
+// test run will immediately fail if any of them is invalid, so using `expect`
+// here documents that invariant while keeping the statics concise.
+#[allow(clippy::expect_used)]
+static AUTH_HEADER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)(^.*?\bauthorization\s*:\s*)(.*)$")
+        .expect("AUTH_HEADER regex literal is valid")
+});
 
-#[allow(clippy::unwrap_used)]
-static BEARER_SCHEME: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?i)(\bbearer\s+)\S+").unwrap());
+#[allow(clippy::expect_used)]
+static BEARER_SCHEME: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)(\bbearer\s+)\S+").expect("BEARER_SCHEME regex literal is valid")
+});
 
-#[allow(clippy::unwrap_used)]
-static BASIC_SCHEME: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?i)(\bbasic\s+)\S+").unwrap());
+#[allow(clippy::expect_used)]
+static BASIC_SCHEME: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)(\bbasic\s+)\S+").expect("BASIC_SCHEME regex literal is valid")
+});
 
-#[allow(clippy::unwrap_used)]
-static DIGEST_SCHEME: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?i)(\bdigest\s+).*").unwrap());
+#[allow(clippy::expect_used)]
+static DIGEST_SCHEME: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)(\bdigest\s+).*").expect("DIGEST_SCHEME regex literal is valid")
+});
 
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::expect_used)]
 static SENSITIVE_KEY_VALUE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r#"(?ix)
@@ -66,7 +74,7 @@ static SENSITIVE_KEY_VALUE: LazyLock<Regex> = LazyLock::new(|| {
             [^ \t\r\n;&,]+
         )"#
     )
-    .unwrap()
+    .expect("SENSITIVE_KEY_VALUE regex literal is valid")
 });
 
 #[cfg(test)]
