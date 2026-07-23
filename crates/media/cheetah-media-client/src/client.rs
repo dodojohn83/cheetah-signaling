@@ -221,8 +221,9 @@ impl MediaControlClient {
 
             if let Some(deadline) = deadline {
                 let now = UtcTimestamp::from_offset(time::OffsetDateTime::now_utc());
-                let needed =
-                    time::Duration::milliseconds((self.config.request_timeout_ms + delay) as i64);
+                let total_ms = self.config.request_timeout_ms.saturating_add(delay);
+                let total_ms_i64 = i64::try_from(total_ms).unwrap_or(i64::MAX);
+                let needed = time::Duration::milliseconds(total_ms_i64);
                 if now.as_offset() + needed >= deadline.as_offset() {
                     return Err(MediaClientError::Grpc(last_error.unwrap_or_else(|| {
                         Status::deadline_exceeded("media command deadline exceeded")
@@ -740,9 +741,28 @@ fn is_retryable(code: Code) -> bool {
 }
 
 fn backoff(base_ms: u64, max_ms: u64, attempt: usize) -> u64 {
-    let base = base_ms.saturating_mul(2u64.saturating_pow(attempt as u32));
+    let exponent = u32::try_from(attempt).unwrap_or(u32::MAX);
+    let base = base_ms.saturating_mul(2u64.saturating_pow(exponent));
     if base == 0 {
         return 0;
     }
     fastrand::u64(..=base.min(max_ms))
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use super::*;
+
+    #[test]
+    fn backoff_caps_attempt_exponent_at_u32_max() {
+        // Values beyond u32::MAX must not wrap the exponent back to a tiny delay.
+        let huge = (u32::MAX as usize).saturating_add(1);
+        let value = backoff(1, u64::MAX, huge);
+        assert!(
+            value > 0,
+            "huge retry attempts must still produce a non-zero backoff"
+        );
+    }
 }

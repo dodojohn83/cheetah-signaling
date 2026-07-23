@@ -329,7 +329,8 @@ impl MediaEventConsumer {
             let lag =
                 (self.clock.now_wall().as_offset() - occurred.as_offset()).whole_milliseconds();
             if lag >= 0 {
-                self.metrics.record_event_lag_ms(lag as u64);
+                let lag_ms = u64::try_from(lag).unwrap_or(u64::MAX);
+                self.metrics.record_event_lag_ms(lag_ms);
             }
         }
 
