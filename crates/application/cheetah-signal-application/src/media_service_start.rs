@@ -218,7 +218,9 @@ impl MediaService {
         .map_err(crate::SignalError::from)?;
 
         if let Some((start_time, end_time, scale)) = playback {
-            session.set_playback_window(start_time, end_time, scale);
+            session
+                .set_playback_window(start_time, end_time, scale)
+                .map_err(crate::SignalError::from)?;
         }
 
         let (binding, binding_event) = MediaBinding::new(
