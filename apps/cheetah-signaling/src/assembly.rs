@@ -921,8 +921,11 @@ pub async fn start(
                         .into(),
                 );
             }
-            let scheme = url.split("://").next().unwrap_or(&url).to_lowercase();
-            if !matches!(scheme.as_str(), "tls" | "wss") {
+            const MAX_SCHEME_BYTES: usize = 32;
+            let scheme = url.split("://").next().unwrap_or(&url);
+            if scheme.len() > MAX_SCHEME_BYTES
+                || (!scheme.eq_ignore_ascii_case("tls") && !scheme.eq_ignore_ascii_case("wss"))
+            {
                 return Err(
                     "messaging.nats_url must use tls:// or wss:// scheme for cluster deployments"
                         .into(),

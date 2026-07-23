@@ -18,10 +18,15 @@ impl std::str::FromStr for SourceFormat {
     type Err = MigrationError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "csv" => Ok(Self::Csv),
-            "json" => Ok(Self::Json),
-            _ => Err(MigrationError::other(format!("unknown source format: {s}"))),
+        if s.eq_ignore_ascii_case("csv") {
+            Ok(Self::Csv)
+        } else if s.eq_ignore_ascii_case("json") {
+            Ok(Self::Json)
+        } else {
+            let display = s.chars().take(64).collect::<String>();
+            Err(MigrationError::other(format!(
+                "unknown source format: {display}"
+            )))
         }
     }
 }
