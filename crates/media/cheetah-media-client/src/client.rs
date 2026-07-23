@@ -219,16 +219,12 @@ impl MediaControlClient {
                 )
             };
 
-            if let Some(deadline) = deadline {
-                let now = UtcTimestamp::from_offset(time::OffsetDateTime::now_utc());
-                let total_ms = self.config.request_timeout_ms.saturating_add(delay);
-                let total_ms_i64 = i64::try_from(total_ms).unwrap_or(i64::MAX);
-                let needed = time::Duration::milliseconds(total_ms_i64);
-                if now.as_offset() + needed >= deadline.as_offset() {
-                    return Err(MediaClientError::Grpc(last_error.unwrap_or_else(|| {
-                        Status::deadline_exceeded("media command deadline exceeded")
-                    })));
-                }
+            if let Some(deadline) = deadline
+                && deadline_exceeded(deadline, self.config.request_timeout_ms, delay)
+            {
+                return Err(MediaClientError::Grpc(last_error.unwrap_or_else(|| {
+                    Status::deadline_exceeded("media command deadline exceeded")
+                })));
             }
 
             if delay > 0 {
@@ -749,6 +745,18 @@ fn backoff(base_ms: u64, max_ms: u64, attempt: usize) -> u64 {
     fastrand::u64(..=base.min(max_ms))
 }
 
+/// Returns true if `request_timeout_ms + delay` pushes the current wall time
+/// to or beyond `deadline` (or beyond the representable `OffsetDateTime` range).
+fn deadline_exceeded(deadline: UtcTimestamp, request_timeout_ms: u64, delay: u64) -> bool {
+    let now = UtcTimestamp::from_offset(time::OffsetDateTime::now_utc());
+    let total_ms = request_timeout_ms.saturating_add(delay);
+    let total_ms_i64 = i64::try_from(total_ms).unwrap_or(i64::MAX);
+    let needed = time::Duration::milliseconds(total_ms_i64);
+    now.as_offset()
+        .checked_add(needed)
+        .is_none_or(|t| t >= deadline.as_offset())
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
@@ -764,5 +772,21 @@ mod tests {
             value > 0,
             "huge retry attempts must still produce a non-zero backoff"
         );
+    }
+
+    #[test]
+    fn deadline_exceeded_detects_representable_and_overflow_timeouts() {
+        let far_future =
+            UtcTimestamp::from_offset(time::OffsetDateTime::now_utc() + time::Duration::days(365));
+        let near = UtcTimestamp::from_offset(
+            time::OffsetDateTime::now_utc() + time::Duration::milliseconds(10),
+        );
+
+        // A reasonable timeout should not exceed a far-future deadline.
+        assert!(!deadline_exceeded(far_future, 1_000, 0));
+
+        // A huge timeout that overflows the OffsetDateTime range must be
+        // reported as exceeded instead of panicking.
+        assert!(deadline_exceeded(near, u64::MAX, u64::MAX));
     }
 }
