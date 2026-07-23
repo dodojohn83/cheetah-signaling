@@ -5,6 +5,8 @@
 pub mod client;
 pub mod config;
 pub mod error;
+pub(crate) mod mapper;
+mod media_client_impl;
 
 pub use client::{MediaControlClient, MediaControlRequest, MediaListSessionsRequest};
 pub use config::MediaClientConfig;

@@ -14,7 +14,7 @@ name = "media-control-simulator"
 path = "src/main.rs"
 
 [dependencies]
-cheetah-signal-contracts = { path = "../../crates/foundation/cheetah-signal-contracts" }
+cheetah-signal-grpc = { path = "../../crates/transport/cheetah-signal-grpc" }
 clap = { workspace = true }
 futures = { workspace = true }
 prost-types = { workspace = true }

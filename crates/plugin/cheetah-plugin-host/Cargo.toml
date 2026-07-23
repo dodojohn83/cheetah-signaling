@@ -9,7 +9,7 @@ repository.workspace = true
 
 [dependencies]
 cheetah-plugin-sdk = { path = "../cheetah-plugin-sdk" }
-cheetah-signal-contracts = { path = "../../foundation/cheetah-signal-contracts" }
+cheetah-signal-grpc = { path = "../../transport/cheetah-signal-grpc" }
 cheetah-signal-types = { path = "../../foundation/cheetah-signal-types" }
 async-trait = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time", "process", "io-util", "net", "fs"] }

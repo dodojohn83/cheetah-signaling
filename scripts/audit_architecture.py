@@ -35,6 +35,7 @@ LAYER_PATTERNS = [
     ("cheetah-message-local", 2),
     ("cheetah-http-api", 2),
     ("cheetah-grpc-api", 2),
+    ("cheetah-signal-grpc", 5),
     ("cheetah-media-client", 2),
     # Layer 3: application services
     ("cheetah-signal-application", 3),

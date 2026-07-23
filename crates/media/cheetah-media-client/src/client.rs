@@ -2,13 +2,13 @@
 
 use crate::config::MediaClientConfig;
 use crate::error::MediaClientError;
-use cheetah_signal_contracts::cheetah::common::v1::command_envelope::Command;
-use cheetah_signal_contracts::cheetah::common::v1::{
+use cheetah_signal_grpc::cheetah::common::v1::command_envelope::Command;
+use cheetah_signal_grpc::cheetah::common::v1::{
     CommandEnvelope, EnvelopeMeta, ListSessionsRequest, MediaControlExecuteRequest, ResourceKind,
     ResourceRef, Uuid, media_control_client::MediaControlClient as TonicMediaControlClient,
     media_query_client::MediaQueryClient as TonicMediaQueryClient,
 };
-use cheetah_signal_contracts::cheetah::media::v1::{
+use cheetah_signal_grpc::cheetah::media::v1::{
     MediaCommand, MediaEvent, SubscribeRequest,
     media_event_stream_service_client::MediaEventStreamServiceClient,
 };
@@ -178,7 +178,7 @@ impl MediaControlClient {
         endpoint: &str,
         request: MediaControlRequest,
     ) -> Result<
-        cheetah_signal_contracts::cheetah::common::v1::MediaControlExecuteResponse,
+        cheetah_signal_grpc::cheetah::common::v1::MediaControlExecuteResponse,
         MediaClientError,
     > {
         validate_media_target(
@@ -289,7 +289,7 @@ impl MediaControlClient {
         &self,
         endpoint: &str,
         request: MediaListSessionsRequest,
-    ) -> Result<cheetah_signal_contracts::cheetah::common::v1::ListSessionsResponse, MediaClientError>
+    ) -> Result<cheetah_signal_grpc::cheetah::common::v1::ListSessionsResponse, MediaClientError>
     {
         validate_media_target(
             endpoint,
@@ -651,7 +651,7 @@ impl std::fmt::Debug for MediaControlClient {
 }
 
 /// Validates endpoint and fencing identifiers before establishing a connection.
-fn validate_media_target(
+pub(crate) fn validate_media_target(
     endpoint: &str,
     media_node_id: NodeId,
     instance_epoch: MediaNodeInstanceEpoch,

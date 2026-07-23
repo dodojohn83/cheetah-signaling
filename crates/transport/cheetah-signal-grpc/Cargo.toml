@@ -1,23 +1,22 @@
 [package]
-name = "cheetah-signal-contracts"
+name = "cheetah-signal-grpc"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-
-description = "Generated Protocol Buffer message bindings for Cheetah Signaling."
+description = "Generated tonic gRPC service bindings for Cheetah Signaling."
 
 [dependencies]
+cheetah-signal-contracts = { path = "../../foundation/cheetah-signal-contracts" }
 prost = { workspace = true }
 prost-types = { workspace = true }
+tonic = { workspace = true }
+tonic-prost = { workspace = true }
 
 [build-dependencies]
-prost-build = { workspace = true }
-
-[dev-dependencies]
-proptest = { workspace = true }
+tonic-prost-build = { workspace = true }
 
 [lints]
 workspace = true

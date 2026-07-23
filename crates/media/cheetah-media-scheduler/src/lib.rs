@@ -7,7 +7,6 @@ pub mod error;
 pub mod event_consumer;
 pub(crate) mod event_consumer_support;
 pub mod grpc;
-pub mod mapper;
 pub mod metrics;
 pub mod model;
 pub mod persistent_registry;

@@ -5,21 +5,19 @@
 //! be delayed by a configurable latency and a subset can be failed according to
 //! a configurable rate.  Events are emitted back through `MediaEventStream`.
 
-use cheetah_signal_contracts::cheetah::common::v1::command_envelope::Command as EnvelopeCommand;
-use cheetah_signal_contracts::cheetah::common::v1::event_envelope::Event as EnvelopeEvent;
-use cheetah_signal_contracts::cheetah::common::v1::media_cluster_registry_server::{
+use cheetah_signal_grpc::cheetah::common::v1::command_envelope::Command as EnvelopeCommand;
+use cheetah_signal_grpc::cheetah::common::v1::event_envelope::Event as EnvelopeEvent;
+use cheetah_signal_grpc::cheetah::common::v1::media_cluster_registry_server::{
     MediaClusterRegistry, MediaClusterRegistryServer,
 };
-use cheetah_signal_contracts::cheetah::common::v1::media_control_server::{
+use cheetah_signal_grpc::cheetah::common::v1::media_control_server::{
     MediaControl, MediaControlServer,
 };
-use cheetah_signal_contracts::cheetah::common::v1::media_event_stream_server::{
+use cheetah_signal_grpc::cheetah::common::v1::media_event_stream_server::{
     MediaEventStream, MediaEventStreamServer,
 };
-use cheetah_signal_contracts::cheetah::common::v1::media_query_server::{
-    MediaQuery, MediaQueryServer,
-};
-use cheetah_signal_contracts::cheetah::common::v1::{
+use cheetah_signal_grpc::cheetah::common::v1::media_query_server::{MediaQuery, MediaQueryServer};
+use cheetah_signal_grpc::cheetah::common::v1::{
     CommandResult, CommandStatus, DeregisterMediaNodeRequest, DeregisterMediaNodeResponse,
     DrainMediaNodeRequest, DrainMediaNodeResponse, ErrorStatus, EventEnvelope,
     HeartbeatMediaNodeRequest, HeartbeatMediaNodeResponse, ListSessionsRequest,
@@ -27,7 +25,7 @@ use cheetah_signal_contracts::cheetah::common::v1::{
     QueryResponse, RegisterMediaNodeRequest, RegisterMediaNodeResponse, StreamEventsRequest,
     StreamEventsResponse,
 };
-use cheetah_signal_contracts::cheetah::media::v1 as media;
+use cheetah_signal_grpc::cheetah::media::v1 as media;
 use clap::Parser;
 use futures::StreamExt;
 use rand::rngs::StdRng;

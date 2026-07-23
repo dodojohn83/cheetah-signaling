@@ -3,13 +3,11 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use cheetah_media_client::{MediaClientConfig, MediaControlClient, MediaControlRequest};
-use cheetah_signal_contracts::cheetah::common::v1::{
+use cheetah_signal_grpc::cheetah::common::v1::{
     CommandResult, CommandStatus, MediaControlExecuteRequest, MediaControlExecuteResponse,
     media_control_server::{MediaControl, MediaControlServer},
 };
-use cheetah_signal_contracts::cheetah::media::v1::{
-    MediaCommand, MediaControlPayload, media_command,
-};
+use cheetah_signal_grpc::cheetah::media::v1::{MediaCommand, MediaControlPayload, media_command};
 use cheetah_signal_types::{
     MediaBindingId, MediaNodeInstanceEpoch, MediaSessionId, NodeId, OperationId, OwnerEpoch,
     TenantId,

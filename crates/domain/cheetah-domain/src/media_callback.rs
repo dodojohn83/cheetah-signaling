@@ -2,7 +2,7 @@
 
 use cheetah_signal_types::{
     ChannelId, DeviceId, MediaBindingId, MediaNodeInstanceEpoch, MediaSessionId, NodeId,
-    OperationId, OwnerEpoch, Revision,
+    OperationId, OwnerEpoch, Revision, TenantId, UtcTimestamp,
 };
 
 /// A callback event emitted by a media node for a specific binding/session.
@@ -48,6 +48,34 @@ pub enum MediaNodeCallbackKind {
         /// Human-readable error message.
         message: String,
     },
+}
+
+/// A media node event as delivered by the client stream.
+///
+/// The event carries the raw envelope fields needed for deduplication and
+/// cursor management, plus an optional parsed callback. If the callback cannot
+/// be parsed (unknown event type, missing identifiers, etc.), `callback` is
+/// `None` and the consumer can log a diagnostic and advance the cursor without
+/// treating the event as a transient failure.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MediaNodeEvent {
+    /// Tenant that owns the media session.
+    pub tenant_id: TenantId,
+    /// Event identifier supplied by the media node.
+    pub event_id: String,
+    /// Correlation identifier from the media node event.
+    pub correlation_id: String,
+    /// Monotonic sequence number used for cursor and gap detection.
+    pub sequence: u64,
+    /// Wall-clock time at which the media node reports the event occurred.
+    pub occurred_at: Option<UtcTimestamp>,
+    /// W3C trace parent, if propagated by the media node.
+    pub traceparent: Option<String>,
+    /// W3C trace state, if propagated by the media node.
+    pub tracestate: Option<String>,
+    /// Parsed callback, if the payload was recognized and all required
+    /// identifiers could be parsed.
+    pub callback: Option<MediaNodeCallback>,
 }
 
 /// A media session as reported by a media node for reconciliation.

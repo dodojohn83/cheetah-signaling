@@ -12,15 +12,15 @@ description = "Media node registry, health tracking, and scheduling for Cheetah 
 cheetah-domain = { path = "../../domain/cheetah-domain" }
 cheetah-signal-types = { path = "../../foundation/cheetah-signal-types" }
 cheetah-signal-contracts = { path = "../../foundation/cheetah-signal-contracts" }
+cheetah-signal-grpc = { path = "../../transport/cheetah-signal-grpc" }
 cheetah-storage-api = { path = "../../storage/cheetah-storage-api" }
-cheetah-media-client = { path = "../cheetah-media-client" }
 
+futures = { workspace = true }
 tonic = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time"] }
 tokio-util = { workspace = true }
 time = { workspace = true }
 serde_json = { workspace = true }
-prost-types = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
 async-trait = { workspace = true }
@@ -30,6 +30,7 @@ fastrand = { workspace = true }
 
 [dev-dependencies]
 cheetah-domain = { path = "../../domain/cheetah-domain", features = ["test-util"] }
+cheetah-media-client = { path = "../cheetah-media-client" }
 cheetah-signal-types = { path = "../../foundation/cheetah-signal-types", features = ["test-support"] }
 tokio = { workspace = true, features = ["macros", "rt"] }
 

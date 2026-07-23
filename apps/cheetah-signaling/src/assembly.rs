@@ -20,7 +20,7 @@ use cheetah_cluster_ownership::{CachingDeviceOwnerResolver, OwnerLeaseService};
 #[cfg(feature = "cluster")]
 use cheetah_cluster_registry::NodeLeaseService;
 use cheetah_domain::ports::{DeviceOwnerResolver, MediaPort};
-use cheetah_domain::{CommandBus, DomainEvent, EventPublisher, MediaEventHandler};
+use cheetah_domain::{CommandBus, DomainEvent, EventPublisher, MediaClient, MediaEventHandler};
 use cheetah_gb28181_core::{
     BranchPolicy, BroadcastAddressSource, BroadcastOverride, CompatibilityCapability,
     CompatibilityOverrides, CompatibilityProfile, ManagerConfig, MediaStatusOverride,
@@ -47,7 +47,7 @@ use cheetah_plugin_host::PluginHost;
 use cheetah_plugin_sdk::{PluginManifest, ProtocolDriverFactory};
 use cheetah_secret::{CompositeSecretStore, EnvSecretStore, FileSecretStore};
 use cheetah_signal_application::OutboxRelay;
-use cheetah_signal_contracts::cheetah::common::v1::media_cluster_registry_server::MediaClusterRegistryServer;
+use cheetah_signal_grpc::cheetah::common::v1::media_cluster_registry_server::MediaClusterRegistryServer;
 use cheetah_signal_types::config::{
     Gb28181CompatibilityOverridesConfig, Gb28181CompatibilityProfileConfig,
 };
@@ -986,8 +986,10 @@ pub async fn start(
     let media_scheduler: Arc<dyn cheetah_media_scheduler::MediaScheduler> = Arc::new(
         LeastLoadedScheduler::new(media_registry, SchedulerConfig::default()),
     );
-    let media_client = MediaControlClient::new(MediaClientConfig::default())
-        .with_secret_store(secret_store.clone());
+    let media_client: Arc<dyn MediaClient> = Arc::new(
+        MediaControlClient::new(MediaClientConfig::default())
+            .with_secret_store(secret_store.clone()),
+    );
     let media_client_for_consumer = media_client.clone();
     let media_port: Arc<dyn MediaPort> = Arc::new(SchedulerMediaPort::new(
         media_scheduler,

@@ -1,19 +1,14 @@
 //! Domain `MediaPort` implementation backed by the media scheduler.
 
-use crate::mapper::{map_command_to_media_command, map_proto_session_ref};
 use crate::metrics::MediaMetrics;
 use crate::scheduler::MediaScheduler;
 use cheetah_domain::{
-    DomainError, MediaNodeCommand, MediaNodeCommandResult, MediaNodeSessionRef, MediaPort,
-    MediaRequirements, MediaReservation,
+    DomainError, MediaClient, MediaNodeCommand, MediaNodeCommandResult, MediaNodeSessionRef,
+    MediaPort, MediaRequirements, MediaReservation,
 };
-use cheetah_media_client::{
-    MediaClientError, MediaControlClient, MediaControlRequest, MediaListSessionsRequest,
-};
-use cheetah_signal_contracts::cheetah::media::v1::MediaMutationContext;
 use cheetah_signal_types::Page;
 use cheetah_signal_types::{
-    ChannelId, Clock, DeviceId, MediaBindingId, MediaSessionId, MessageId, MetricsExporter, NodeId,
+    ChannelId, Clock, DeviceId, MediaBindingId, MediaSessionId, MetricsExporter, NodeId,
     PageRequest, TenantId, UtcTimestamp,
 };
 use std::sync::Arc;
@@ -26,7 +21,7 @@ use crate::error::SchedulerError;
 #[derive(Clone)]
 pub struct SchedulerMediaPort {
     scheduler: Arc<dyn MediaScheduler>,
-    client: MediaControlClient,
+    client: Arc<dyn MediaClient>,
     metrics: Arc<MediaMetrics>,
 }
 
@@ -34,7 +29,7 @@ impl SchedulerMediaPort {
     /// Creates a new scheduler-backed media port.
     pub fn new(
         scheduler: Arc<dyn MediaScheduler>,
-        client: MediaControlClient,
+        client: Arc<dyn MediaClient>,
         metrics: Arc<MediaMetrics>,
     ) -> Self {
         Self {
@@ -146,7 +141,7 @@ impl MediaPort for SchedulerMediaPort {
 
     async fn execute(
         &self,
-        command: MediaNodeCommand,
+        mut command: MediaNodeCommand,
         clock: &dyn Clock,
     ) -> Result<MediaNodeCommandResult, DomainError> {
         let node = self
@@ -174,109 +169,18 @@ impl MediaPort for SchedulerMediaPort {
         }
 
         let endpoint = node.control_endpoint.clone();
-        let contract_version = if command.contract_version > 0 {
-            command.contract_version
-        } else {
-            node.contract_version
-        };
-
-        let deadline = command
-            .deadline
-            .map(|d| d.as_timestamp().to_prost_timestamp());
-        let context = MediaMutationContext {
-            tenant_id: command.tenant_id.to_string(),
-            request_id: command.request_id.clone(),
-            correlation_id: command.request_id.clone(),
-            message_id: MessageId::generate().to_string(),
-            idempotency_key: command.idempotency_key.clone(),
-            deadline,
-            source_signaling_node_id: command.source_node_id.to_string(),
-            owner_epoch: command.owner_epoch.0,
-            target_media_node_id: command.media_node_id.to_string(),
-            target_media_node_instance_epoch: command.media_node_instance_epoch.0,
-            operation_id: command.operation_id.to_string(),
-            operation_step_id: command.payload.kind().to_string(),
-            media_session_id: Some(command.media_session_id.to_string()),
-            media_binding_id: Some(command.media_binding_id.to_string()),
-            contract_version: contract_version as u64,
-            traceparent: None,
-            tracestate: None,
-        };
-        let mut proto_command = map_command_to_media_command(&command)?;
-        proto_command.context = Some(context);
-
-        let request = MediaControlRequest {
-            request_id: command.request_id,
-            tenant_id: command.tenant_id,
-            media_session_id: command.media_session_id,
-            media_binding_id: command.media_binding_id,
-            operation_id: command.operation_id,
-            owner_epoch: command.owner_epoch,
-            source_node_id: command.source_node_id,
-            media_node_id: command.media_node_id,
-            target_media_node_instance_epoch: command.media_node_instance_epoch,
-            deadline: command.deadline.map(|d| d.as_timestamp()),
-            idempotency_key: command.idempotency_key,
-            contract_version,
-            command: proto_command,
-        };
+        if command.contract_version == 0 {
+            command.contract_version = node.contract_version;
+        }
 
         let start = Instant::now();
-        let response = self.client.execute(&endpoint, request).await;
+        let result = self.client.execute(&endpoint, &command).await;
         let duration = start.elapsed();
-        let response = match response {
-            Ok(r) => {
-                self.metrics.record_rpc(duration, false);
-                r
-            }
-            Err(e) => {
-                self.metrics.record_rpc(duration, true);
-                return Err(map_client_error(e));
-            }
-        };
-
-        let result = response
-            .result
-            .ok_or_else(|| DomainError::unavailable("media node returned no command result"))?;
-
-        match cheetah_signal_contracts::cheetah::common::v1::CommandStatus::try_from(result.status)
-        {
-            Ok(cheetah_signal_contracts::cheetah::common::v1::CommandStatus::Completed) => {
-                Ok(MediaNodeCommandResult::Completed)
-            }
-            Ok(cheetah_signal_contracts::cheetah::common::v1::CommandStatus::Accepted) => {
-                Ok(MediaNodeCommandResult::Accepted)
-            }
-            // A timeout means the media node did not confirm the outcome; the
-            // side effect may or may not have been applied, so surface it as an
-            // unknown outcome for the reconciler rather than a terminal failure.
-            Ok(cheetah_signal_contracts::cheetah::common::v1::CommandStatus::Timeout) => {
-                Ok(MediaNodeCommandResult::UnknownOutcome {
-                    code: "timeout".to_string(),
-                    message: result
-                        .error
-                        .as_ref()
-                        .map(|e| e.message.clone())
-                        .unwrap_or_else(|| "media node command timed out".to_string()),
-                })
-            }
-            Ok(s) => Ok(MediaNodeCommandResult::Failed {
-                code: format!("{s:?}"),
-                message: result
-                    .error
-                    .as_ref()
-                    .map(|e| e.message.clone())
-                    .unwrap_or_default(),
-            }),
-            Err(_) => Ok(MediaNodeCommandResult::Failed {
-                code: "unknown_status".to_string(),
-                message: result
-                    .error
-                    .as_ref()
-                    .map(|e| e.message.clone())
-                    .unwrap_or_default(),
-            }),
+        match &result {
+            Ok(_) => self.metrics.record_rpc(duration, false),
+            Err(_) => self.metrics.record_rpc(duration, true),
         }
+        result
     }
 
     async fn list_nodes(
@@ -311,46 +215,23 @@ impl MediaPort for SchedulerMediaPort {
             .ok_or_else(|| DomainError::not_found("media_node", media_node_id.to_string()))?;
 
         let endpoint = node.control_endpoint.clone();
-        let request = MediaListSessionsRequest {
-            media_node_id,
-            media_node_instance_epoch: node.instance_epoch_value(),
-            tenant_id,
-            page_size: page.page_size,
-            page_token: page.cursor,
-        };
-
         let start = Instant::now();
-        let response = self.client.list_sessions(&endpoint, request).await;
+        let result = self
+            .client
+            .list_sessions(
+                &endpoint,
+                tenant_id,
+                media_node_id,
+                node.instance_epoch_value(),
+                page,
+            )
+            .await;
         let duration = start.elapsed();
-        let response = match response {
-            Ok(r) => r,
-            Err(e) => {
-                self.metrics.record_rpc(duration, true);
-                return Err(map_client_error(e));
-            }
-        };
-
-        let mut items = Vec::with_capacity(response.sessions.len());
-        for proto in response.sessions {
-            let session =
-                map_proto_session_ref(tenant_id, media_node_id, &proto).inspect_err(|_| {
-                    self.metrics.record_rpc(duration, true);
-                })?;
-            items.push(session);
+        match &result {
+            Ok(_) => self.metrics.record_rpc(duration, false),
+            Err(_) => self.metrics.record_rpc(duration, true),
         }
-        self.metrics.record_rpc(duration, false);
-
-        let next_cursor = if response.next_page_token.is_empty() {
-            None
-        } else {
-            Some(response.next_page_token)
-        };
-
-        Ok(Page {
-            items,
-            next_cursor,
-            total: None,
-        })
+        result
     }
 
     fn metrics(&self) -> Option<Arc<dyn MetricsExporter>> {
@@ -472,30 +353,6 @@ fn map_scheduler_error(e: crate::error::SchedulerError) -> DomainError {
         | crate::error::SchedulerError::IdentityMismatch { .. } => {
             DomainError::invalid_argument(e.to_string())
         }
-    }
-}
-
-fn map_client_error(e: MediaClientError) -> DomainError {
-    match e {
-        MediaClientError::InvalidEndpoint(_)
-        | MediaClientError::InsecureEndpoint(_)
-        | MediaClientError::InternalEndpoint(_)
-        | MediaClientError::MissingIdentifier { .. }
-        | MediaClientError::InvalidDeadline(_) => DomainError::invalid_argument(e.to_string()),
-        MediaClientError::Grpc(ref status) => match status.code() {
-            tonic::Code::InvalidArgument => {
-                DomainError::invalid_argument(status.message().to_string())
-            }
-            tonic::Code::NotFound => DomainError::not_found("media", status.message().to_string()),
-            tonic::Code::AlreadyExists => {
-                DomainError::invalid_argument(status.message().to_string())
-            }
-            _ => DomainError::unavailable(e.to_string()),
-        },
-        MediaClientError::Transport(_)
-        | MediaClientError::CircuitOpen(_)
-        | MediaClientError::PoolExhausted(_)
-        | MediaClientError::TlsConfig(_) => DomainError::unavailable(e.to_string()),
     }
 }
 

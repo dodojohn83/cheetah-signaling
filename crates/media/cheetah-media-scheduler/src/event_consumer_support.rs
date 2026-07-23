@@ -1,9 +1,6 @@
 //! Supporting state and utilities for the media event consumer.
 
-use crate::config::MediaEventConsumerConfig;
-use cheetah_domain::MediaNode;
-use cheetah_signal_contracts::cheetah::media::v1::SubscribeRequest;
-use cheetah_signal_types::{CorrelationId, MessageId, NodeId, OperationId, TenantId, UtcTimestamp};
+use cheetah_signal_types::{MessageId, NodeId, TenantId, UtcTimestamp};
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -150,44 +147,6 @@ impl SubscriptionState {
         }
     }
 }
-pub(crate) fn build_subscribe_request(
-    node: &MediaNode,
-    cursor: &str,
-    config: &MediaEventConsumerConfig,
-    source_node_id: NodeId,
-) -> SubscribeRequest {
-    use cheetah_signal_contracts::cheetah::media::v1::MediaMutationContext;
-
-    let request_message_id = MessageId::generate().to_string();
-    let context = MediaMutationContext {
-        tenant_id: String::new(),
-        request_id: request_message_id.clone(),
-        correlation_id: CorrelationId::generate().to_string(),
-        message_id: request_message_id,
-        idempotency_key: format!("subscribe-{}-{}", node.node_id, MessageId::generate()),
-        deadline: None,
-        source_signaling_node_id: source_node_id.to_string(),
-        owner_epoch: 0,
-        target_media_node_id: node.node_id.to_string(),
-        target_media_node_instance_epoch: node.instance_epoch,
-        operation_id: OperationId::generate().to_string(),
-        operation_step_id: "subscribe".to_string(),
-        media_session_id: None,
-        media_binding_id: None,
-        contract_version: node.contract_version as u64,
-        traceparent: None,
-        tracestate: None,
-    };
-
-    SubscribeRequest {
-        context: Some(context),
-        media_session_ids: Vec::new(),
-        resume_cursor: cursor.to_string(),
-        max_batch_size: config.max_batch_size,
-        filter: None,
-    }
-}
-
 pub(crate) fn message_id_for_event(tenant_id: TenantId, event_id: &str) -> MessageId {
     let namespace = tenant_id.as_uuid();
     MessageId::from_uuid(Uuid::new_v5(&namespace, event_id.as_bytes()))
@@ -223,28 +182,6 @@ mod tests {
         assert_eq!(a, b);
         let c = message_id_for_event(tenant, "event-2");
         assert_ne!(a, c);
-    }
-
-    #[test]
-    #[allow(clippy::unwrap_used)]
-    fn build_subscribe_request_uses_empty_tenant_for_all_tenants() {
-        let node = MediaNode {
-            node_id: NodeId::from_str("22222222-2222-2222-2222-222222222222").unwrap(),
-            instance_epoch: 5,
-            contract_version: 2,
-            ..Default::default()
-        };
-        let config = MediaEventConsumerConfig::test();
-        let source = NodeId::from_str("33333333-3333-3333-3333-333333333333").unwrap();
-
-        let request = build_subscribe_request(&node, "cursor-1", &config, source);
-        assert!(request.context.is_some());
-        let ctx = request.context.unwrap_or_default();
-        assert!(ctx.tenant_id.is_empty());
-        assert_eq!(ctx.target_media_node_id, node.node_id.to_string());
-        assert_eq!(ctx.target_media_node_instance_epoch, 5);
-        assert_eq!(ctx.contract_version, 2);
-        assert_eq!(request.resume_cursor, "cursor-1");
     }
 
     #[test]
