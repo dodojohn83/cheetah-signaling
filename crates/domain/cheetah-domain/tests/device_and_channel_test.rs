@@ -266,3 +266,89 @@ fn device_timestamps_use_injected_clock() {
     device.mark_online(&clock, None).unwrap();
     assert!(device.updated_at() > created_at);
 }
+
+#[test]
+fn device_new_rejects_oversized_name_and_authority() {
+    let (clock, _id_generator, tenant_id, device_id, _) = setup();
+    let oversized_name = "x".repeat(1025);
+    let result = Device::new(
+        &clock,
+        tenant_id,
+        device_id,
+        cheetah_domain::Protocol::Gb28181,
+        ProtocolIdentity::new("ext-1").unwrap(),
+        "authority",
+        oversized_name,
+        DeviceKind::Camera,
+        Vec::new(),
+        BTreeMap::new(),
+    );
+    assert!(matches!(
+        result,
+        Err(cheetah_domain::DomainError::InvalidArgument { .. })
+    ));
+
+    let oversized_authority = "a".repeat(257);
+    let result = Device::new(
+        &clock,
+        tenant_id,
+        device_id,
+        cheetah_domain::Protocol::Gb28181,
+        ProtocolIdentity::new("ext-1").unwrap(),
+        oversized_authority,
+        "camera-01",
+        DeviceKind::Camera,
+        Vec::new(),
+        BTreeMap::new(),
+    );
+    assert!(matches!(
+        result,
+        Err(cheetah_domain::DomainError::InvalidArgument { .. })
+    ));
+}
+
+#[test]
+fn device_update_rejects_oversized_name_and_authority() {
+    let (clock, _id_generator, tenant_id, device_id, _) = setup();
+    let mut device = new_device(&clock, tenant_id, device_id);
+    let result = device.update(
+        &clock,
+        Some("x".repeat(1025)),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    );
+    assert!(matches!(
+        result,
+        Err(cheetah_domain::DomainError::InvalidArgument { .. })
+    ));
+
+    let result = device.update(
+        &clock,
+        None,
+        None,
+        None,
+        None,
+        Some("a".repeat(257)),
+        None,
+        None,
+    );
+    assert!(matches!(
+        result,
+        Err(cheetah_domain::DomainError::InvalidArgument { .. })
+    ));
+}
+
+#[test]
+fn device_mark_offline_rejects_oversized_reason() {
+    let (clock, _id_generator, tenant_id, device_id, _) = setup();
+    let mut device = new_device(&clock, tenant_id, device_id);
+    let result = device.mark_offline(&clock, "x".repeat(1025));
+    assert!(matches!(
+        result,
+        Err(cheetah_domain::DomainError::InvalidArgument { .. })
+    ));
+}

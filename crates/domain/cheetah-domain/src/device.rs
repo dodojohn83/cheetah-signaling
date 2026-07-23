@@ -22,6 +22,12 @@ pub(crate) const MAX_METADATA_KEYS: usize = 64;
 pub(crate) const MAX_METADATA_KEY_BYTES: usize = 128;
 /// Maximum length of a metadata value in bytes.
 pub(crate) const MAX_METADATA_VALUE_BYTES: usize = 4096;
+/// Maximum length of a device display name in bytes.
+pub(crate) const MAX_DEVICE_NAME_BYTES: usize = 1024;
+/// Maximum length of a device authority in bytes.
+pub(crate) const MAX_DEVICE_AUTHORITY_BYTES: usize = 256;
+/// Maximum length of an online/offline reason in bytes.
+pub(crate) const MAX_DEVICE_REASON_BYTES: usize = 1024;
 
 /// Device kind.
 #[derive(
@@ -384,8 +390,16 @@ impl Device {
             ));
         }
         let name = name.into();
-        if name.is_empty() {
-            return Err(DomainError::invalid_argument("name must not be empty"));
+        if name.is_empty() || name.len() > MAX_DEVICE_NAME_BYTES {
+            return Err(DomainError::invalid_argument(
+                "name must not be empty and must not exceed 1024 bytes",
+            ));
+        }
+        let authority = authority.into();
+        if authority.len() > MAX_DEVICE_AUTHORITY_BYTES {
+            return Err(DomainError::invalid_argument(
+                "authority must not exceed 256 bytes",
+            ));
         }
         if kind == DeviceKind::Unknown {
             return Err(DomainError::invalid_argument("device kind must be known"));
@@ -399,7 +413,7 @@ impl Device {
             device_id,
             protocol,
             external_id,
-            authority: authority.into(),
+            authority,
             name,
             kind,
             lifecycle: DeviceLifecycle::Provisioning,
@@ -444,8 +458,10 @@ impl Device {
     ) -> crate::Result<DomainEvent> {
         self.guard_not_retired()?;
         if let Some(name) = name {
-            if name.is_empty() {
-                return Err(DomainError::invalid_argument("name must not be empty"));
+            if name.is_empty() || name.len() > MAX_DEVICE_NAME_BYTES {
+                return Err(DomainError::invalid_argument(
+                    "name must not be empty and must not exceed 1024 bytes",
+                ));
             }
             self.name = name;
         }
@@ -470,6 +486,11 @@ impl Device {
             self.external_id = external_id;
         }
         if let Some(authority) = authority {
+            if authority.len() > MAX_DEVICE_AUTHORITY_BYTES {
+                return Err(DomainError::invalid_argument(
+                    "authority must not exceed 256 bytes",
+                ));
+            }
             self.authority = authority;
         }
         if let Some(capabilities) = capabilities {
@@ -491,6 +512,13 @@ impl Device {
         reason: Option<String>,
     ) -> crate::Result<DomainEvent> {
         self.guard_not_retired()?;
+        if let Some(ref r) = reason
+            && r.len() > MAX_DEVICE_REASON_BYTES
+        {
+            return Err(DomainError::invalid_argument(
+                "reason must not exceed 1024 bytes",
+            ));
+        }
         if self.lifecycle == DeviceLifecycle::Provisioning {
             self.lifecycle = DeviceLifecycle::Active;
         }
@@ -512,6 +540,11 @@ impl Device {
         reason: String,
     ) -> crate::Result<DomainEvent> {
         self.guard_not_retired()?;
+        if reason.len() > MAX_DEVICE_REASON_BYTES {
+            return Err(DomainError::invalid_argument(
+                "reason must not exceed 1024 bytes",
+            ));
+        }
         self.connectivity = Connectivity::Offline {
             since: clock.now_wall(),
             reason,
