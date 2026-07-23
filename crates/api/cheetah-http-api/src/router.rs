@@ -29,6 +29,10 @@ use tracing::Span;
 /// Maximum HTTP read timeout; larger values overflow `tokio::time` deadlines.
 const MAX_READ_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
 
+/// Maximum byte length of an incoming `x-request-id` header value.
+/// Values longer than this are ignored and replaced with a freshly generated UUID.
+const MAX_REQUEST_ID_BYTES: usize = 128;
+
 fn clamp_read_timeout(ms: u64) -> Duration {
     Duration::from_millis(ms).min(MAX_READ_TIMEOUT)
 }
@@ -210,7 +214,7 @@ async fn request_id_and_trace_middleware(mut request: Request<Body>, next: Next)
         .headers()
         .get("x-request-id")
         .and_then(|v| v.to_str().ok())
-        .filter(|s| !s.is_empty())
+        .filter(|s| !s.is_empty() && s.len() <= MAX_REQUEST_ID_BYTES)
         .map(str::to_string)
         .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
 
