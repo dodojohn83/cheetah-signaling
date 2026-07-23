@@ -304,16 +304,13 @@ impl OutOfProcessDriver {
         .await?;
 
         let endpoint = format!("https://{}", runtime.listen_address);
+        let connect_timeout = clamp_timeout(runtime.connect_timeout);
         let channel = Channel::from_shared(endpoint.clone())
             .map_err(|e| PluginError::Driver(format!("invalid plugin endpoint {endpoint}: {e}")))?
             .tls_config_with_verifier(client_tls_config, verifier)
             .map_err(|e| PluginError::Driver(format!("invalid TLS config: {e}")))?
-            .connect_timeout(Duration::from_millis(
-                runtime.connect_timeout.as_millis().max(0) as u64,
-            ));
+            .connect_timeout(connect_timeout);
 
-        let connect_timeout =
-            Duration::from_millis(runtime.connect_timeout.as_millis().max(0) as u64);
         let channel = tokio::time::timeout(connect_timeout, channel.connect())
             .await
             .map_err(|_| PluginError::Cancelled)?
@@ -352,7 +349,7 @@ impl OutOfProcessDriver {
             timeout_ms: timeout.as_millis().max(0) as u64,
         };
 
-        let rpc_timeout = Duration::from_millis(timeout.as_millis().max(0) as u64);
+        let rpc_timeout = clamp_timeout(timeout);
         let mut client = self.client.lock().await.clone();
         let response = tokio::time::timeout(rpc_timeout, client.call_driver(request))
             .await
@@ -465,7 +462,12 @@ impl ProtocolDriver for OutOfProcessDriver {
 }
 
 const MAX_PLUGIN_STARTUP_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
+const MAX_RPC_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
 const MIN_POLL_INTERVAL: Duration = Duration::from_millis(1);
+
+fn clamp_timeout(timeout: DurationMs) -> Duration {
+    Duration::from_millis(timeout.as_millis().max(0) as u64).min(MAX_RPC_TIMEOUT)
+}
 
 fn startup_deadline_from_now(timeout_ms: DurationMs) -> std::time::Instant {
     let now = std::time::Instant::now();
@@ -790,5 +792,14 @@ mod tests {
         let interval_ms = DurationMs::from_millis(0).as_millis().max(1);
         let poll = Duration::from_millis(interval_ms as u64).max(MIN_POLL_INTERVAL);
         assert_eq!(poll, MIN_POLL_INTERVAL);
+    }
+
+    #[test]
+    fn clamp_timeout_saturates_at_max() {
+        let normal = clamp_timeout(DurationMs::from_millis(1_000));
+        assert_eq!(normal, Duration::from_millis(1_000));
+
+        let huge = clamp_timeout(DurationMs::from_millis(i64::MAX));
+        assert_eq!(huge, MAX_RPC_TIMEOUT);
     }
 }
