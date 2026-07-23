@@ -4,7 +4,7 @@
 
 use cheetah_gb28181_core::{
     Dialog, DialogEvent, DialogId, DialogOutput, DialogRole, DialogState, SipParser,
-    SipParserConfig,
+    SipParserConfig, sip::dialog::extract_tag,
 };
 
 fn parse(data: &str) -> cheetah_gb28181_core::SipMessage {
@@ -444,4 +444,16 @@ fn uac_dialog_accepts_escaped_quote_in_display_name() {
     assert_eq!(dialog.route_set().len(), 2);
     assert_eq!(dialog.route_set()[0].host(), "proxy2.example.com");
     assert_eq!(dialog.route_set()[1].host(), "proxy1.example.com");
+}
+
+#[test]
+fn extract_tag_is_case_insensitive_and_handles_huge_input() {
+    assert_eq!(extract_tag("<sip:a>;tag=abc"), Some("abc"));
+    assert_eq!(extract_tag("<sip:a>;TAG=ABC"), Some("ABC"));
+    assert_eq!(extract_tag("<sip:a>;Tag=\"quoted\""), Some("quoted"));
+    assert_eq!(extract_tag("<sip:a>"), None);
+    assert_eq!(extract_tag("<sip:a>;tag="), None);
+
+    let huge = "<sip:a>;tag=".to_string() + &"x".repeat(4096) + ";other=1";
+    assert_eq!(extract_tag(&huge), Some("x".repeat(4096).as_str()));
 }

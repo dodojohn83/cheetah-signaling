@@ -498,11 +498,5 @@ fn is_success_response(message: &SipMessage) -> bool {
 /// Extracts the `tag` parameter from a response's `To` header, if present.
 fn response_to_tag(message: &SipMessage) -> Option<String> {
     let value = message.headers().get(&HeaderName::To)?.as_str();
-    let lower = value.to_ascii_lowercase();
-    let start = lower.find(";tag=")? + 5;
-    let rest = &value[start..];
-    let end = rest
-        .find(|c: char| c == ';' || c.is_whitespace())
-        .unwrap_or(rest.len());
-    Some(rest[..end].trim_matches('"').to_string())
+    cheetah_gb28181_core::sip::dialog::extract_tag(value).map(str::to_string)
 }

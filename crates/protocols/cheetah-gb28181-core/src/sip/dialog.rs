@@ -331,16 +331,35 @@ fn cseq_number(msg: &SipMessage) -> Result<u32, SipError> {
     msg.cseq().map(|(n, _)| n)
 }
 
-pub(crate) fn extract_tag(value: &str) -> Option<&str> {
-    let value = value.trim();
-    let lower = value.to_ascii_lowercase();
-    let start = lower.find(";tag=")? + 5;
-    let rest = &value[start..];
-    let end = rest
-        .find(|c: char| c == ';' || c.is_whitespace())
-        .unwrap_or(rest.len());
-    let tag = &rest[..end];
-    Some(tag.trim_matches('"'))
+/// Extracts the SIP `tag` parameter value from a header field value.
+///
+/// The search is case-insensitive, does not allocate, and returns `None` when
+/// the `tag` parameter is missing or empty.
+pub fn extract_tag(value: &str) -> Option<&str> {
+    const NEEDLE: &[u8] = b";tag=";
+    let trimmed = value.trim();
+    let bytes = trimmed.as_bytes();
+    for i in 0..=bytes.len().saturating_sub(NEEDLE.len()) {
+        if bytes[i..]
+            .iter()
+            .zip(NEEDLE.iter())
+            .all(|(b, n)| b.to_ascii_lowercase() == *n)
+        {
+            let start = i + NEEDLE.len();
+            let rest = &bytes[start..];
+            let end = rest
+                .iter()
+                .position(|&b| b == b';' || b.is_ascii_whitespace())
+                .unwrap_or(rest.len());
+            let tag = std::str::from_utf8(&rest[..end]).ok()?;
+            let tag = tag.trim_matches('"');
+            if tag.is_empty() {
+                return None;
+            }
+            return Some(tag);
+        }
+    }
+    None
 }
 
 fn extract_route_set(msg: &SipMessage, reverse: bool) -> Result<Vec<SipUri>, SipError> {

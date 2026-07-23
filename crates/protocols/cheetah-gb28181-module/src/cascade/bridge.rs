@@ -672,7 +672,9 @@ fn build_bye_from_bridge(
     let target = super::catalog::parse_uri_from_header(&from_value).ok_or_else(|| {
         CascadeError::Internal("cannot parse upstream From URI for BYE".to_string())
     })?;
-    let remote_tag = extract_tag(&bridge.upstream_from).unwrap_or_default();
+    let remote_tag = cheetah_gb28181_core::sip::dialog::extract_tag(&bridge.upstream_from)
+        .unwrap_or_default()
+        .to_string();
 
     let mut headers = SipHeaders::new();
     headers.append(
@@ -709,21 +711,6 @@ fn build_bye_from_bridge(
         headers,
         body: Vec::new(),
     })
-}
-
-fn extract_tag(value: &str) -> Option<String> {
-    let lower = value.to_ascii_lowercase();
-    let start = lower.find(";tag=")? + 5;
-    let rest = &value[start..];
-    let end = rest
-        .find(|c: char| c == ';' || c == '<' || c == '>' || c.is_whitespace())
-        .unwrap_or(rest.len());
-    let tag = rest[..end].trim_matches('"');
-    if tag.is_empty() {
-        None
-    } else {
-        Some(tag.to_string())
-    }
 }
 
 /// Removes abandoned bridges whose deadlines have expired and emits the
