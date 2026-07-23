@@ -42,6 +42,11 @@ impl AuthContext {
     }
 }
 
+/// Maximum byte length of an `Authorization` header value.
+const MAX_AUTHORIZATION_BYTES: usize = 16_384;
+/// Maximum byte length of an `X-Api-Key` header value.
+const MAX_API_KEY_BYTES: usize = 4_096;
+
 impl FromRequestParts<Arc<ApiState>> for AuthContext {
     type Rejection = HttpError;
 
@@ -51,7 +56,12 @@ impl FromRequestParts<Arc<ApiState>> for AuthContext {
     ) -> Result<Self, Self::Rejection> {
         let auth_header = match parts.headers.get("authorization") {
             Some(value) => match value.to_str() {
-                Ok(text) => Some(text),
+                Ok(text) if text.len() <= MAX_AUTHORIZATION_BYTES => Some(text),
+                Ok(_) => {
+                    return Err(HttpError::Unauthenticated(
+                        "authorization header exceeds maximum length".to_string(),
+                    ));
+                }
                 Err(_) => {
                     return Err(HttpError::Unauthenticated(
                         "authorization header is not valid UTF-8".to_string(),
@@ -103,7 +113,12 @@ fn try_api_key_auth(
 ) -> Option<Result<AuthContext, HttpError>> {
     match parts.headers.get("x-api-key") {
         Some(value) => match value.to_str() {
-            Ok(api_key) => Some(authenticate_static_key(security, api_key)),
+            Ok(api_key) if api_key.len() <= MAX_API_KEY_BYTES => {
+                Some(authenticate_static_key(security, api_key))
+            }
+            Ok(_) => Some(Err(HttpError::Unauthenticated(
+                "x-api-key header exceeds maximum length".to_string(),
+            ))),
             Err(_) => Some(Err(HttpError::Unauthenticated(
                 "x-api-key header is not valid UTF-8".to_string(),
             ))),

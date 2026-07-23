@@ -149,6 +149,10 @@ fn check_rate_limit(
     }
 }
 
+/// Maximum byte length of an `x-tenant-id` header value. Tenant ids are UUIDs,
+/// so anything longer than a small multiple of the UUID length is malicious.
+const MAX_TENANT_ID_BYTES: usize = 128;
+
 fn resolve_tenant_id(parts: &Parts, auth: &AuthContext) -> Result<TenantId, HttpError> {
     let Some(value) = parts.headers.get("x-tenant-id") else {
         return auth.tenant_id.ok_or_else(|| {
@@ -164,6 +168,12 @@ fn resolve_tenant_id(parts: &Parts, auth: &AuthContext) -> Result<TenantId, Http
             "x-tenant-id header is not valid UTF-8",
         ))
     })?;
+    if text.len() > MAX_TENANT_ID_BYTES {
+        return Err(HttpError::Signal(SignalError::new(
+            SignalErrorKind::InvalidArgument,
+            "x-tenant-id header exceeds maximum length",
+        )));
+    }
     let header = text.parse::<TenantId>()?;
 
     if let Some(auth_tenant) = auth.tenant_id {
