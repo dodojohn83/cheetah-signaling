@@ -1,4 +1,5 @@
 use crate::capability_cache::CapabilityCache;
+use crate::util::deadline_from_now;
 use crate::{
     DeviceCredentials, DriverConfig, DriverError, DriverResult, SoapClient, validate_endpoint,
 };
@@ -129,7 +130,7 @@ impl OnvifHttpDriver {
         credentials: Option<&DeviceCredentials>,
         timeout: Option<Duration>,
     ) -> DriverResult<DeviceInformation> {
-        let deadline = timeout.map(|d| Instant::now() + d);
+        let deadline = deadline_from_now(timeout);
         let _permit = self
             .acquire_device_permit(endpoint, resolve_timeout(deadline)?)
             .await?;
@@ -149,7 +150,7 @@ impl OnvifHttpDriver {
         endpoint: &str,
         timeout: Option<Duration>,
     ) -> DriverResult<cheetah_onvif_services::services::SystemDateAndTime> {
-        let deadline = timeout.map(|d| Instant::now() + d);
+        let deadline = deadline_from_now(timeout);
         let _permit = self
             .acquire_device_permit(endpoint, resolve_timeout(deadline)?)
             .await?;
@@ -191,7 +192,7 @@ impl OnvifHttpDriver {
             return Ok(services);
         }
 
-        let deadline = timeout.map(|d| Instant::now() + d);
+        let deadline = deadline_from_now(timeout);
         let _permit = match self
             .acquire_device_permit(endpoint, resolve_timeout(deadline)?)
             .await
@@ -278,7 +279,7 @@ impl OnvifHttpDriver {
             return Ok(caps);
         }
 
-        let deadline = timeout.map(|d| Instant::now() + d);
+        let deadline = deadline_from_now(timeout);
         let _permit = match self
             .acquire_device_permit(endpoint, resolve_timeout(deadline)?)
             .await
@@ -354,7 +355,7 @@ impl OnvifHttpDriver {
         credentials: Option<&DeviceCredentials>,
         timeout: Option<Duration>,
     ) -> DriverResult<(MediaDialect, Vec<MediaProfile>)> {
-        let deadline = timeout.map(|d| Instant::now() + d);
+        let deadline = deadline_from_now(timeout);
         let _permit = self
             .acquire_device_permit(media_endpoint, resolve_timeout(deadline)?)
             .await?;
@@ -419,7 +420,7 @@ impl OnvifHttpDriver {
         credentials: Option<&DeviceCredentials>,
         timeout: Option<Duration>,
     ) -> DriverResult<StreamUri> {
-        let deadline = timeout.map(|d| Instant::now() + d);
+        let deadline = deadline_from_now(timeout);
         let _permit = self
             .acquire_device_permit(media_endpoint, resolve_timeout(deadline)?)
             .await?;
@@ -457,7 +458,7 @@ impl OnvifHttpDriver {
         credentials: Option<&DeviceCredentials>,
         timeout: Option<Duration>,
     ) -> DriverResult<SnapshotUri> {
-        let deadline = timeout.map(|d| Instant::now() + d);
+        let deadline = deadline_from_now(timeout);
         let _permit = self
             .acquire_device_permit(media_endpoint, resolve_timeout(deadline)?)
             .await?;
@@ -489,7 +490,7 @@ impl OnvifHttpDriver {
         credentials: Option<&DeviceCredentials>,
         timeout: Option<Duration>,
     ) -> DriverResult<Vec<PtzPreset>> {
-        let deadline = timeout.map(|d| Instant::now() + d);
+        let deadline = deadline_from_now(timeout);
         let _permit = self
             .acquire_device_permit(ptz_endpoint, resolve_timeout(deadline)?)
             .await?;
@@ -516,7 +517,7 @@ impl OnvifHttpDriver {
         credentials: Option<&DeviceCredentials>,
         timeout: Option<Duration>,
     ) -> DriverResult<()> {
-        let deadline = timeout.map(|d| Instant::now() + d);
+        let deadline = deadline_from_now(timeout);
         let _permit = self
             .acquire_device_permit(ptz_endpoint, resolve_timeout(deadline)?)
             .await?;
@@ -541,7 +542,7 @@ impl OnvifHttpDriver {
         credentials: Option<&DeviceCredentials>,
         timeout: Option<Duration>,
     ) -> DriverResult<()> {
-        let deadline = timeout.map(|d| Instant::now() + d);
+        let deadline = deadline_from_now(timeout);
         let _permit = self
             .acquire_device_permit(ptz_endpoint, resolve_timeout(deadline)?)
             .await?;
@@ -565,7 +566,7 @@ impl OnvifHttpDriver {
         credentials: Option<&DeviceCredentials>,
         timeout: Option<Duration>,
     ) -> DriverResult<PullPointSubscription> {
-        let deadline = timeout.map(|d| Instant::now() + d);
+        let deadline = deadline_from_now(timeout);
         let _permit = self
             .acquire_device_permit(events_endpoint, resolve_timeout(deadline)?)
             .await?;
@@ -597,7 +598,7 @@ impl OnvifHttpDriver {
         credentials: Option<&DeviceCredentials>,
         timeout: Option<Duration>,
     ) -> DriverResult<Vec<OnvifNotification>> {
-        let deadline = timeout.map(|d| Instant::now() + d);
+        let deadline = deadline_from_now(timeout);
         let _permit = self
             .acquire_device_permit(subscription_reference, resolve_timeout(deadline)?)
             .await?;
@@ -631,7 +632,7 @@ impl OnvifHttpDriver {
         credentials: Option<&DeviceCredentials>,
         timeout: Option<Duration>,
     ) -> DriverResult<()> {
-        let deadline = timeout.map(|d| Instant::now() + d);
+        let deadline = deadline_from_now(timeout);
         let _permit = self
             .acquire_device_permit(subscription_reference, resolve_timeout(deadline)?)
             .await?;
@@ -659,7 +660,7 @@ impl OnvifHttpDriver {
         credentials: Option<&DeviceCredentials>,
         timeout: Option<Duration>,
     ) -> DriverResult<()> {
-        let deadline = timeout.map(|d| Instant::now() + d);
+        let deadline = deadline_from_now(timeout);
         let _permit = self
             .acquire_device_permit(subscription_reference, resolve_timeout(deadline)?)
             .await?;

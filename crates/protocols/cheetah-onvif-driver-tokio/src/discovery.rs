@@ -2,9 +2,10 @@
 
 use crate::config::DriverConfig;
 use crate::error::{DriverError, DriverResult};
+use crate::util::{clamp_timeout, deadline_from_now};
 use cheetah_onvif_core::discovery::{
     AppId, DiscoveryLimits, ProbeMatch, XAddrPolicy, build_probe, check_datagram_size,
-    filter_xaddrs, parse_probe_matches,
+    filter_xaddrs, parse_probe_matches_with_limits,
 };
 use std::collections::HashSet;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -39,7 +40,9 @@ pub async fn probe_once(config: &DriverConfig) -> DriverResult<DiscoveryResult> 
         .await
         .map_err(DriverError::Io)?;
 
-    let timeout = Duration::from_millis(config.discovery_timeout.as_millis().max(0) as u64);
+    let timeout = clamp_timeout(Duration::from_millis(
+        config.discovery_timeout.as_millis().max(0) as u64,
+    ));
     collect_matches(
         &socket,
         &config.discovery_limits,
@@ -55,11 +58,13 @@ async fn collect_matches(
     policy: &XAddrPolicy,
     timeout: Duration,
 ) -> DriverResult<DiscoveryResult> {
-    let deadline = Instant::now() + timeout;
-    let mut buf = vec![0u8; limits.max_datagram_bytes.max(512)];
+    let deadline = deadline_from_now(Some(timeout));
+    let max_datagram_bytes = limits.max_datagram_bytes.max(512);
+    let mut buf = vec![0u8; max_datagram_bytes];
     let mut result = DiscoveryResult::default();
     let mut seen: HashSet<String> = HashSet::new();
 
+    let deadline = deadline.unwrap_or_else(Instant::now);
     loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
@@ -85,7 +90,7 @@ async fn collect_matches(
                     .duration_since(UNIX_EPOCH)
                     .map(|d| d.as_secs())
                     .unwrap_or(0);
-                let matches = match parse_probe_matches(text, now) {
+                let matches = match parse_probe_matches_with_limits(text, now, limits) {
                     Ok(m) => m,
                     Err(_) => {
                         result.datagrams_rejected += 1;

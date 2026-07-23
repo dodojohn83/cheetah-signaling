@@ -1,6 +1,7 @@
 //! Typed ONVIF command payloads and credential resolution helpers.
 
 use crate::DeviceCredentials;
+use crate::util::clamp_timeout;
 use cheetah_onvif_services::services::{MediaDialect, PtzVelocity, clip_unit};
 use cheetah_plugin_sdk::{DriverContext, PluginError};
 use cheetah_signal_types::{TenantId, config::OnvifConfig};
@@ -617,4 +618,5 @@ pub(crate) fn command_timeout(
         .filter(|&ms| ms > 0)
         .map(Duration::from_millis)
         .or(default)
+        .map(clamp_timeout)
 }
