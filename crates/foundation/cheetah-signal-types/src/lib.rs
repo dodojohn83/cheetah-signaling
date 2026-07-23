@@ -51,7 +51,9 @@ pub use id::{
 };
 pub use metrics::MetricsExporter;
 pub use net::is_internal_ip;
-pub use pagination::{DEFAULT_PAGE_SIZE, ListCursor, MAX_PAGE_SIZE, Page, PageRequest};
+pub use pagination::{
+    DEFAULT_PAGE_SIZE, ListCursor, MAX_CURSOR_BYTES, MAX_PAGE_SIZE, Page, PageRequest,
+};
 pub use ports::{Clock, IdGenerator, NetworkFaultPolicy, RandomSource, SecretStore};
 pub use redaction::{Redacted, SafeDetails, redact_details};
 #[cfg(any(test, feature = "test-support"))]

@@ -12,6 +12,8 @@ use uuid::Uuid;
 pub const DEFAULT_PAGE_SIZE: u32 = 20;
 /// Maximum page size allowed.
 pub const MAX_PAGE_SIZE: u32 = 1_000;
+/// Maximum byte length of an opaque pagination cursor.
+pub const MAX_CURSOR_BYTES: usize = 1024;
 /// Current cursor format version.
 const CURSOR_VERSION: u64 = 1;
 
@@ -189,6 +191,12 @@ impl ListCursor {
 
     /// Decodes a cursor from its opaque string form and verifies version and checksum.
     pub fn decode(value: &str) -> Result<Self> {
+        if value.len() > MAX_CURSOR_BYTES {
+            return Err(SignalError::new(
+                SignalErrorKind::CursorExpired,
+                "cursor exceeds maximum length",
+            ));
+        }
         let cursor: Self = serde_json::from_str(value).map_err(|e| {
             SignalError::new(
                 SignalErrorKind::CursorExpired,

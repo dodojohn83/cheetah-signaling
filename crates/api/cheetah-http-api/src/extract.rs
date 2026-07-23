@@ -10,6 +10,11 @@ use cheetah_signal_types::{
     CorrelationId, Deadline, DurationMs, MessageId, PageRequest, RequestContext, SignalError,
     SignalErrorKind, TenantId, validate_traceparent, validate_tracestate,
 };
+
+/// Maximum byte length of an `Idempotency-Key` header value.
+const MAX_IDEMPOTENCY_KEY_BYTES: usize = 256;
+/// Maximum byte length of an arbitrary list-query filter string.
+const MAX_FILTER_STRING_BYTES: usize = 256;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -238,14 +243,38 @@ impl Default for ListQuery {
 }
 
 impl ListQuery {
-    /// Converts to a validated `PageRequest`.
+    /// Converts to a validated `PageRequest` after checking filter string lengths.
     pub fn page_request(&self) -> Result<PageRequest, HttpError> {
         let mut req = PageRequest::new(self.page_size).map_err(HttpError::Signal)?;
         if let Some(cursor) = &self.cursor {
+            if cursor.len() > cheetah_signal_types::MAX_CURSOR_BYTES {
+                return Err(HttpError::Signal(SignalError::new(
+                    SignalErrorKind::InvalidArgument,
+                    "cursor exceeds maximum length",
+                )));
+            }
             req = req.with_cursor(cursor);
         }
+        validate_filter(&self.protocol, "protocol")?;
+        validate_filter(&self.status, "status")?;
+        validate_filter(&self.name_prefix, "name_prefix")?;
+        validate_filter(&self.updated_after, "updated_after")?;
+        validate_filter(&self.purpose, "purpose")?;
+        validate_filter(&self.event_type, "event_type")?;
         Ok(req)
     }
+}
+
+fn validate_filter(value: &Option<String>, name: &str) -> Result<(), HttpError> {
+    if let Some(v) = value
+        && v.len() > MAX_FILTER_STRING_BYTES
+    {
+        return Err(HttpError::Signal(SignalError::new(
+            SignalErrorKind::InvalidArgument,
+            format!("{name} exceeds maximum length"),
+        )));
+    }
+    Ok(())
 }
 
 /// Extractor for the required `Idempotency-Key` header on mutating write paths.
@@ -279,6 +308,12 @@ fn idempotency_key_from_header(
                 return Err(HttpError::Signal(SignalError::new(
                     SignalErrorKind::InvalidArgument,
                     "Idempotency-Key header must not be empty",
+                )));
+            }
+            if key.len() > MAX_IDEMPOTENCY_KEY_BYTES {
+                return Err(HttpError::Signal(SignalError::new(
+                    SignalErrorKind::InvalidArgument,
+                    "Idempotency-Key header exceeds maximum length",
                 )));
             }
             Ok(key.to_string())
