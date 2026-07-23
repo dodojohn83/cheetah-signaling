@@ -15,6 +15,13 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use subtle::ConstantTimeEq;
 
+/// Maximum byte length of a JWT `sub` claim stored as the principal id.
+const MAX_JWT_SUB_BYTES: usize = 256;
+/// Maximum number of scopes/roles extracted from a JWT.
+const MAX_JWT_SCOPES: usize = 64;
+/// Maximum byte length of an individual JWT scope/role string.
+const MAX_JWT_SCOPE_BYTES: usize = 64;
+
 /// Authenticated actor and optional tenant claim.
 #[derive(Clone, Debug)]
 pub struct AuthContext {
@@ -183,7 +190,7 @@ async fn authenticate_bearer(
         .map_err(|e| HttpError::Unauthenticated(format!("JWT validation failed: {e}")))?;
 
     let claims = token_data.claims;
-    let tenant_id = if let Some(t) = claims.tenant_id {
+    let tenant_id = if let Some(ref t) = claims.tenant_id {
         Some(
             t.parse::<TenantId>()
                 .map_err(|e| HttpError::Unauthenticated(format!("invalid tenant_id claim: {e}")))?,
@@ -192,24 +199,76 @@ async fn authenticate_bearer(
         None
     };
 
-    let mut scopes: Vec<String> = if !claims.scope.is_empty() {
-        claims
-            .scope
-            .split_whitespace()
-            .map(|s| s.to_string())
-            .collect()
-    } else {
-        claims.scopes
-    };
-    scopes.extend(claims.roles);
+    let principal = principal_from_jwt_claims(claims)?;
 
     Ok(AuthContext {
-        principal: Principal {
-            id: claims.sub,
-            kind: PrincipalKind::User,
-            scopes,
-        },
+        principal,
         tenant_id,
+    })
+}
+
+fn principal_from_jwt_claims(claims: JwtClaims) -> Result<Principal, HttpError> {
+    if claims.sub.is_empty() {
+        return Err(HttpError::Unauthenticated(
+            "JWT sub claim must not be empty".to_string(),
+        ));
+    }
+    if claims.sub.len() > MAX_JWT_SUB_BYTES {
+        return Err(HttpError::Unauthenticated(
+            "JWT sub claim exceeds maximum length".to_string(),
+        ));
+    }
+
+    let mut scopes = Vec::new();
+    if !claims.scope.is_empty() {
+        let parts = claims.scope.split_whitespace();
+        if parts.clone().count() > MAX_JWT_SCOPES {
+            return Err(HttpError::Unauthenticated(
+                "JWT scope claim contains too many entries".to_string(),
+            ));
+        }
+        for part in parts {
+            if part.len() > MAX_JWT_SCOPE_BYTES {
+                return Err(HttpError::Unauthenticated(
+                    "JWT scope entry exceeds maximum length".to_string(),
+                ));
+            }
+            scopes.push(part.to_string());
+        }
+    }
+
+    if claims.scopes.len() > MAX_JWT_SCOPES {
+        return Err(HttpError::Unauthenticated(
+            "JWT scopes claim contains too many entries".to_string(),
+        ));
+    }
+    for scope in &claims.scopes {
+        if scope.len() > MAX_JWT_SCOPE_BYTES {
+            return Err(HttpError::Unauthenticated(
+                "JWT scopes entry exceeds maximum length".to_string(),
+            ));
+        }
+        scopes.push(scope.clone());
+    }
+
+    if claims.roles.len() > MAX_JWT_SCOPES {
+        return Err(HttpError::Unauthenticated(
+            "JWT roles claim contains too many entries".to_string(),
+        ));
+    }
+    for role in &claims.roles {
+        if role.len() > MAX_JWT_SCOPE_BYTES {
+            return Err(HttpError::Unauthenticated(
+                "JWT roles entry exceeds maximum length".to_string(),
+            ));
+        }
+        scopes.push(role.clone());
+    }
+
+    Ok(Principal {
+        id: claims.sub,
+        kind: PrincipalKind::User,
+        scopes,
     })
 }
 
@@ -262,4 +321,87 @@ fn record_auth_audit(parts: &Parts, state: &ApiState, result: &Result<AuthContex
         details: details.map(SafeDetails::new),
     };
     state.audit.record(event);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn valid_claims() -> JwtClaims {
+        JwtClaims {
+            sub: "user-123".to_string(),
+            tenant_id: None,
+            scope: "viewer operator".to_string(),
+            scopes: vec!["tenant_admin".to_string()],
+            roles: vec!["system_admin".to_string()],
+        }
+    }
+
+    #[test]
+    fn principal_from_valid_jwt_claims() {
+        let principal = match principal_from_jwt_claims(valid_claims()) {
+            Ok(p) => p,
+            Err(_) => panic!("expected valid principal"),
+        };
+        assert_eq!(principal.id, "user-123");
+        assert!(principal.scopes.contains(&"viewer".to_string()));
+        assert!(principal.scopes.contains(&"operator".to_string()));
+        assert!(principal.scopes.contains(&"tenant_admin".to_string()));
+        assert!(principal.scopes.contains(&"system_admin".to_string()));
+    }
+
+    #[test]
+    fn rejects_empty_sub_claim() {
+        let mut claims = valid_claims();
+        claims.sub = String::new();
+        assert!(principal_from_jwt_claims(claims).is_err());
+    }
+
+    #[test]
+    fn rejects_oversized_sub_claim() {
+        let mut claims = valid_claims();
+        claims.sub = "x".repeat(MAX_JWT_SUB_BYTES + 1);
+        assert!(principal_from_jwt_claims(claims).is_err());
+    }
+
+    #[test]
+    fn rejects_too_many_scope_entries() {
+        let mut claims = valid_claims();
+        claims.scope = (0..=MAX_JWT_SCOPES)
+            .map(|i| format!("scope-{i}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(principal_from_jwt_claims(claims).is_err());
+    }
+
+    #[test]
+    fn rejects_oversized_scope_entry() {
+        let mut claims = valid_claims();
+        claims.scope = "x".repeat(MAX_JWT_SCOPE_BYTES + 1);
+        assert!(principal_from_jwt_claims(claims).is_err());
+    }
+
+    #[test]
+    fn rejects_too_many_scopes_claim_entries() {
+        let mut claims = valid_claims();
+        claims.scopes = (0..=MAX_JWT_SCOPES).map(|i| format!("scope-{i}")).collect();
+        claims.scope.clear();
+        assert!(principal_from_jwt_claims(claims).is_err());
+    }
+
+    #[test]
+    fn rejects_too_many_roles_claim_entries() {
+        let mut claims = valid_claims();
+        claims.roles = (0..=MAX_JWT_SCOPES).map(|i| format!("role-{i}")).collect();
+        claims.scope.clear();
+        assert!(principal_from_jwt_claims(claims).is_err());
+    }
+
+    #[test]
+    fn rejects_oversized_role_entry() {
+        let mut claims = valid_claims();
+        claims.roles = vec!["x".repeat(MAX_JWT_SCOPE_BYTES + 1)];
+        claims.scope.clear();
+        assert!(principal_from_jwt_claims(claims).is_err());
+    }
 }
