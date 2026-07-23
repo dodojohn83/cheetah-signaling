@@ -10,6 +10,7 @@ repository.workspace = true
 [dependencies]
 async-trait.workspace = true
 axum.workspace = true
+bytes.workspace = true
 cheetah-domain = { path = "../../../crates/domain/cheetah-domain" }
 cheetah-message-api = { path = "../../../crates/messaging/cheetah-message-api" }
 cheetah-runtime-tokio = { path = "../../../crates/runtime/cheetah-runtime-tokio" }
@@ -18,7 +19,7 @@ cheetah-signal-types = { path = "../../../crates/foundation/cheetah-signal-types
 cheetah-storage-api = { path = "../../../crates/storage/cheetah-storage-api" }
 futures.workspace = true
 jsonwebtoken.workspace = true
-reqwest.workspace = true
+reqwest = { workspace = true, features = ["stream"] }
 secrecy.workspace = true
 serde.workspace = true
 serde_json.workspace = true
