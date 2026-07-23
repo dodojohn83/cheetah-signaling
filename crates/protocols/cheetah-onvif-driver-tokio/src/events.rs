@@ -25,24 +25,24 @@ fn date_time_value(dt: &DateTime) -> Value {
     match dt.to_utc() {
         Ok(utc) => match UtcTimestamp::from_offset(utc).to_rfc3339() {
             Ok(s) => Value::String(s),
-            Err(_) => json!({
-                "year": dt.year,
-                "month": dt.month,
-                "day": dt.day,
-                "hour": dt.hour,
-                "minute": dt.minute,
-                "second": dt.second,
-            }),
+            Err(_) => date_time_components_value(dt),
         },
-        Err(_) => json!({
-            "year": dt.year,
-            "month": dt.month,
-            "day": dt.day,
-            "hour": dt.hour,
-            "minute": dt.minute,
-            "second": dt.second,
-        }),
+        Err(_) => date_time_components_value(dt),
     }
+}
+
+/// Serializes a [`DateTime`] as a structured object without a timezone
+/// designator. This is intended for local wall-clock times, which must not be
+/// stamped with a UTC `Z` suffix.
+fn date_time_components_value(dt: &DateTime) -> Value {
+    json!({
+        "year": dt.year,
+        "month": dt.month,
+        "day": dt.day,
+        "hour": dt.hour,
+        "minute": dt.minute,
+        "second": dt.second,
+    })
 }
 
 /// Builds a JSON payload for a snapshot URI query result.
@@ -187,7 +187,7 @@ pub(crate) fn system_date_and_time_event_payload(
         "daylight_savings": dt.daylight_savings,
         "timezone": dt.timezone,
         "utc": date_time_value(&dt.utc),
-        "local": dt.local.as_ref().map(date_time_value),
+        "local": dt.local.as_ref().map(date_time_components_value),
     })
 }
 
