@@ -6,6 +6,9 @@ use std::str::FromStr;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
+/// Maximum byte length of an RFC 3339 timestamp string.
+const MAX_RFC3339_BYTES: usize = 64;
+
 /// A UTC timestamp.
 #[derive(
     Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, serde::Serialize, serde::Deserialize,
@@ -49,6 +52,12 @@ impl UtcTimestamp {
 
     /// Parses an RFC 3339 string into a timestamp.
     pub fn parse_rfc3339(value: &str) -> Result<Self> {
+        if value.len() > MAX_RFC3339_BYTES {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                "timestamp exceeds maximum length",
+            ));
+        }
         let value = OffsetDateTime::parse(value, &Rfc3339).map_err(|e| {
             SignalError::new(SignalErrorKind::InvalidArgument, "invalid timestamp").with_source(e)
         })?;
@@ -315,5 +324,11 @@ mod tests {
         };
         let u = UtcTimestamp::from_prost_timestamp(&ts).expect("valid timestamp");
         assert_eq!(u.as_unix_seconds(), 1_700_000_000);
+    }
+
+    #[test]
+    fn parse_rfc3339_rejects_oversized_input() {
+        let oversized = "2".repeat(65);
+        assert!(UtcTimestamp::parse_rfc3339(&oversized).is_err());
     }
 }
