@@ -47,7 +47,14 @@ fn ttl_expires_at(now: UtcTimestamp, ttl_ms: u64) -> UtcTimestamp {
             ))
         })
 }
+const MIN_POLL_INTERVAL: Duration = Duration::from_millis(1);
+const MAX_SLEEP: Duration = Duration::from_secs(24 * 60 * 60);
 
+fn bounded_duration_from_ms(ms: u64) -> Duration {
+    Duration::from_millis(ms)
+        .min(MAX_SLEEP)
+        .max(MIN_POLL_INTERVAL)
+}
 /// A gRPC consumer that applies media-node events to the control plane.
 #[derive(Clone)]
 pub struct MediaEventConsumer {
@@ -111,7 +118,7 @@ impl MediaEventConsumer {
 
     /// Runs the consumer until `cancel` is triggered.
     pub async fn run(self: Arc<Self>, cancel: CancellationToken) -> Result<(), SchedulerError> {
-        let poll = Duration::from_millis(self.config.poll_interval_ms);
+        let poll = bounded_duration_from_ms(self.config.poll_interval_ms);
         loop {
             tokio::select! {
                 _ = cancel.cancelled() => break,
@@ -237,7 +244,7 @@ impl MediaEventConsumer {
 
             tokio::select! {
                 _ = cancel.cancelled() => return Ok(()),
-                _ = sleep(Duration::from_millis(sleep_ms)) => {}
+                _ = sleep(bounded_duration_from_ms(sleep_ms)) => {}
             }
         }
     }
@@ -718,5 +725,21 @@ mod tests {
         let far = ttl_expires_at(now, u64::MAX);
         assert!(far.as_offset() > now.as_offset());
         assert!(far.as_offset().year() >= 9999);
+    }
+
+    #[test]
+    fn bounded_duration_clamps_huge_ms_to_max() {
+        assert_eq!(bounded_duration_from_ms(u64::MAX), MAX_SLEEP);
+    }
+
+    #[test]
+    fn bounded_duration_clamps_zero_to_min() {
+        assert_eq!(bounded_duration_from_ms(0), MIN_POLL_INTERVAL);
+    }
+
+    #[test]
+    fn bounded_duration_preserves_reasonable_value() {
+        let d = Duration::from_millis(5_000);
+        assert_eq!(bounded_duration_from_ms(5_000), d);
     }
 }
