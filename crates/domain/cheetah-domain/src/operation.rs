@@ -61,25 +61,24 @@ impl std::str::FromStr for OperationStatus {
     type Err = DomainError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let status = if s.eq_ignore_ascii_case("pending") {
-            Self::Pending
+        if s.eq_ignore_ascii_case("pending") {
+            Ok(Self::Pending)
         } else if s.eq_ignore_ascii_case("running") {
-            Self::Running
+            Ok(Self::Running)
         } else if s.eq_ignore_ascii_case("succeeded") {
-            Self::Succeeded
+            Ok(Self::Succeeded)
         } else if s.eq_ignore_ascii_case("failed") {
-            Self::Failed
+            Ok(Self::Failed)
         } else if s.eq_ignore_ascii_case("cancelled") {
-            Self::Cancelled
+            Ok(Self::Cancelled)
         } else if s.eq_ignore_ascii_case("timed_out") {
-            Self::TimedOut
+            Ok(Self::TimedOut)
         } else {
-            let display = s.chars().take(64).collect::<String>();
-            return Err(DomainError::invalid_argument(format!(
-                "unknown status: {display}"
-            )));
-        };
-        Ok(status)
+            let display = crate::truncate_for_error(s);
+            Err(DomainError::invalid_argument(format!(
+                "unknown operation status: {display}"
+            )))
+        }
     }
 }
 

@@ -58,24 +58,26 @@ impl std::str::FromStr for ChannelKind {
     type Err = DomainError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let kind = if s.eq_ignore_ascii_case("video") {
-            Self::Video
+        if s.eq_ignore_ascii_case("video") {
+            Ok(Self::Video)
         } else if s.eq_ignore_ascii_case("audio") {
-            Self::Audio
+            Ok(Self::Audio)
         } else if s.eq_ignore_ascii_case("ptz") {
-            Self::Ptz
+            Ok(Self::Ptz)
         } else if s.eq_ignore_ascii_case("organization") {
-            Self::Organization
+            Ok(Self::Organization)
         } else if s.eq_ignore_ascii_case("event") {
-            Self::Event
+            Ok(Self::Event)
         } else if s.eq_ignore_ascii_case("io") {
-            Self::Io
+            Ok(Self::Io)
         } else if s.eq_ignore_ascii_case("composite") {
-            Self::Composite
+            Ok(Self::Composite)
         } else {
-            Self::Unknown
-        };
-        Ok(kind)
+            let display = crate::truncate_for_error(s);
+            Err(DomainError::invalid_argument(format!(
+                "unknown channel kind: {display}"
+            )))
+        }
     }
 }
 
@@ -113,16 +115,18 @@ impl std::str::FromStr for ChannelStatus {
     type Err = DomainError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let status = if s.eq_ignore_ascii_case("online") {
-            Self::Online
+        if s.eq_ignore_ascii_case("online") {
+            Ok(Self::Online)
         } else if s.eq_ignore_ascii_case("offline") {
-            Self::Offline
+            Ok(Self::Offline)
         } else if s.eq_ignore_ascii_case("fault") {
-            Self::Fault
+            Ok(Self::Fault)
         } else {
-            Self::Unknown
-        };
-        Ok(status)
+            let display = crate::truncate_for_error(s);
+            Err(DomainError::invalid_argument(format!(
+                "unknown channel status: {display}"
+            )))
+        }
     }
 }
 
