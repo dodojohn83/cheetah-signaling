@@ -20,6 +20,33 @@ impl UtcTimestamp {
         Self(value.to_offset(time::UtcOffset::UTC))
     }
 
+    /// Creates a timestamp from milliseconds since the Unix epoch.
+    ///
+    /// Values outside the representable `OffsetDateTime` range are clamped to
+    /// year -9999 or 9999 instead of panicking, so corrupt or extreme database
+    /// rows do not crash the process.
+    pub fn from_epoch_millis_saturating(ms: i64) -> Self {
+        Self::from_offset(
+            OffsetDateTime::UNIX_EPOCH
+                .checked_add(time::Duration::milliseconds(ms))
+                .unwrap_or_else(|| {
+                    if ms < 0 {
+                        OffsetDateTime::new_in_offset(
+                            time::Date::MIN,
+                            time::Time::MIDNIGHT,
+                            time::UtcOffset::UTC,
+                        )
+                    } else {
+                        OffsetDateTime::new_in_offset(
+                            time::Date::MAX,
+                            time::Time::MAX,
+                            time::UtcOffset::UTC,
+                        )
+                    }
+                }),
+        )
+    }
+
     /// Parses an RFC 3339 string into a timestamp.
     pub fn parse_rfc3339(value: &str) -> Result<Self> {
         let value = OffsetDateTime::parse(value, &Rfc3339).map_err(|e| {
@@ -249,5 +276,21 @@ mod tests {
     fn from_seconds_saturates_on_overflow() {
         assert_eq!(DurationMs::from_seconds(i64::MAX).as_millis(), i64::MAX);
         assert_eq!(DurationMs::from_seconds(i64::MIN).as_millis(), i64::MIN);
+    }
+
+    #[test]
+    fn from_epoch_millis_saturating_clamps_out_of_range_values() {
+        // Values within the representable range round-trip through epoch ms.
+        let ts = UtcTimestamp::from_epoch_millis_saturating(60_000);
+        assert_eq!(ts.as_offset().unix_timestamp() * 1000, 60_000);
+
+        // `i64::MAX` ms overflows `OffsetDateTime` and must clamp to year 9999
+        // instead of panicking.
+        let far = UtcTimestamp::from_epoch_millis_saturating(i64::MAX);
+        assert_eq!(far.as_offset().year(), 9999);
+
+        // `i64::MIN` ms underflows and must clamp to year -9999.
+        let past = UtcTimestamp::from_epoch_millis_saturating(i64::MIN);
+        assert_eq!(past.as_offset().year(), -9999);
     }
 }

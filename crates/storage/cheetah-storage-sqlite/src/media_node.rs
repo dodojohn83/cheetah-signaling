@@ -8,7 +8,7 @@ use cheetah_storage_api::{MediaNodeRepository, StorageError};
 use sqlx::types::Json;
 use sqlx::{FromRow, SqliteConnection, SqlitePool};
 use std::collections::BTreeMap;
-use time::{Duration, OffsetDateTime};
+use time::OffsetDateTime;
 
 fn to_millis(ts: UtcTimestamp) -> i64 {
     let offset = ts.as_offset();
@@ -16,7 +16,7 @@ fn to_millis(ts: UtcTimestamp) -> i64 {
 }
 
 fn from_millis(ms: i64) -> UtcTimestamp {
-    UtcTimestamp::from_offset(OffsetDateTime::UNIX_EPOCH + Duration::milliseconds(ms))
+    UtcTimestamp::from_epoch_millis_saturating(ms)
 }
 
 fn status_to_string(status: NodeStatus) -> &'static str {
