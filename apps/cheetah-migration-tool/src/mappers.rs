@@ -309,14 +309,20 @@ pub(crate) fn parse_protocol(value: &str) -> Result<Protocol, MigrationError> {
 }
 
 fn parse_device_kind(value: &str, entity_type: EntityType) -> DeviceKind {
-    let kind = match value.to_lowercase().as_str() {
-        "camera" => DeviceKind::Camera,
-        "nvr" => DeviceKind::Nvr,
-        "dvr" => DeviceKind::Dvr,
-        "encoder" => DeviceKind::Encoder,
-        "iot" => DeviceKind::Iot,
-        "platform" => DeviceKind::Platform,
-        _ => DeviceKind::Unknown,
+    let kind = if value.eq_ignore_ascii_case("camera") {
+        DeviceKind::Camera
+    } else if value.eq_ignore_ascii_case("nvr") {
+        DeviceKind::Nvr
+    } else if value.eq_ignore_ascii_case("dvr") {
+        DeviceKind::Dvr
+    } else if value.eq_ignore_ascii_case("encoder") {
+        DeviceKind::Encoder
+    } else if value.eq_ignore_ascii_case("iot") {
+        DeviceKind::Iot
+    } else if value.eq_ignore_ascii_case("platform") {
+        DeviceKind::Platform
+    } else {
+        DeviceKind::Unknown
     };
     if kind == DeviceKind::Unknown {
         match entity_type {
@@ -330,14 +336,20 @@ fn parse_device_kind(value: &str, entity_type: EntityType) -> DeviceKind {
 }
 
 fn parse_channel_kind(value: &str) -> ChannelKind {
-    match value.to_lowercase().as_str() {
-        "video" => ChannelKind::Video,
-        "audio" => ChannelKind::Audio,
-        "ptz" => ChannelKind::Ptz,
-        "organization" => ChannelKind::Organization,
-        "event" => ChannelKind::Event,
-        "io" => ChannelKind::Io,
-        _ => ChannelKind::Video,
+    if value.eq_ignore_ascii_case("video") {
+        ChannelKind::Video
+    } else if value.eq_ignore_ascii_case("audio") {
+        ChannelKind::Audio
+    } else if value.eq_ignore_ascii_case("ptz") {
+        ChannelKind::Ptz
+    } else if value.eq_ignore_ascii_case("organization") {
+        ChannelKind::Organization
+    } else if value.eq_ignore_ascii_case("event") {
+        ChannelKind::Event
+    } else if value.eq_ignore_ascii_case("io") {
+        ChannelKind::Io
+    } else {
+        ChannelKind::Video
     }
 }
 
