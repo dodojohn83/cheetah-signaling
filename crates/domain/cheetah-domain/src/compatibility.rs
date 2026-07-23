@@ -110,12 +110,15 @@ impl std::str::FromStr for BroadcastAddressSource {
     type Err = DomainError;
 
     fn from_str(s: &str) -> crate::Result<Self> {
-        match s.to_ascii_lowercase().replace('-', "_").as_str() {
-            "media_node" => Ok(Self::MediaNode),
-            "signaling_host" => Ok(Self::SignalingHost),
-            other => Err(DomainError::invalid_argument(format!(
-                "unknown broadcast address source: {other}"
-            ))),
+        if crate::from_str_helpers::eq_normalized_snake(s, "media_node") {
+            Ok(Self::MediaNode)
+        } else if crate::from_str_helpers::eq_normalized_snake(s, "signaling_host") {
+            Ok(Self::SignalingHost)
+        } else {
+            let display = crate::from_str_helpers::truncate_for_error(s);
+            Err(DomainError::invalid_argument(format!(
+                "unknown broadcast address source: {display}"
+            )))
         }
     }
 }

@@ -74,12 +74,15 @@ impl std::str::FromStr for PlatformDirection {
     type Err = DomainError;
 
     fn from_str(s: &str) -> crate::Result<Self> {
-        match s.to_ascii_lowercase().as_str() {
-            "upstream" => Ok(Self::Upstream),
-            "downstream" => Ok(Self::Downstream),
-            other => Err(DomainError::invalid_argument(format!(
-                "unknown platform direction: {other}"
-            ))),
+        if s.eq_ignore_ascii_case("upstream") {
+            Ok(Self::Upstream)
+        } else if s.eq_ignore_ascii_case("downstream") {
+            Ok(Self::Downstream)
+        } else {
+            let display = crate::from_str_helpers::truncate_for_error(s);
+            Err(DomainError::invalid_argument(format!(
+                "unknown platform direction: {display}"
+            )))
         }
     }
 }

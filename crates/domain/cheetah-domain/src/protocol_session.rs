@@ -51,12 +51,15 @@ impl std::str::FromStr for SipTransport {
     type Err = DomainError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_ascii_lowercase().as_str() {
-            "udp" => Ok(Self::Udp),
-            "tcp" => Ok(Self::Tcp),
-            other => Err(DomainError::invalid_argument(format!(
-                "unknown transport: {other}"
-            ))),
+        if s.eq_ignore_ascii_case("udp") {
+            Ok(Self::Udp)
+        } else if s.eq_ignore_ascii_case("tcp") {
+            Ok(Self::Tcp)
+        } else {
+            let display = crate::from_str_helpers::truncate_for_error(s);
+            Err(DomainError::invalid_argument(format!(
+                "unknown transport: {display}"
+            )))
         }
     }
 }
@@ -92,13 +95,17 @@ impl std::str::FromStr for PresenceState {
     type Err = DomainError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_ascii_lowercase().as_str() {
-            "unknown" => Ok(Self::Unknown),
-            "online" => Ok(Self::Online),
-            "offline" => Ok(Self::Offline),
-            other => Err(DomainError::invalid_argument(format!(
-                "unknown presence state: {other}"
-            ))),
+        if s.eq_ignore_ascii_case("unknown") {
+            Ok(Self::Unknown)
+        } else if s.eq_ignore_ascii_case("online") {
+            Ok(Self::Online)
+        } else if s.eq_ignore_ascii_case("offline") {
+            Ok(Self::Offline)
+        } else {
+            let display = crate::from_str_helpers::truncate_for_error(s);
+            Err(DomainError::invalid_argument(format!(
+                "unknown presence state: {display}"
+            )))
         }
     }
 }
@@ -243,31 +250,60 @@ impl std::str::FromStr for CompatibilityCapability {
     type Err = DomainError;
 
     fn from_str(s: &str) -> crate::Result<Self> {
-        match s.to_ascii_lowercase().replace('-', "_").as_str() {
-            "charset_fallback" => Ok(Self::CharsetFallback),
-            "mime_alias" => Ok(Self::MimeAlias),
-            "contact_rport_route" => Ok(Self::ContactRportRoute),
-            "header_normalization" => Ok(Self::HeaderNormalization),
-            "catalog_count_fragment" => Ok(Self::CatalogCountFragment),
-            "catalog_notify" => Ok(Self::CatalogNotify),
-            "alarm_subscription" => Ok(Self::AlarmSubscription),
-            "mobile_position" => Ok(Self::MobilePosition),
-            "gb2016" => Ok(Self::Gb2016),
-            "config_download" => Ok(Self::ConfigDownload),
-            "preset_query" => Ok(Self::PresetQuery),
-            "broadcast" => Ok(Self::Broadcast),
-            "media_status" => Ok(Self::MediaStatus),
-            "sdp_media_override" => Ok(Self::SdpMediaOverride),
-            "duplicate_register_allowed" => Ok(Self::DuplicateRegisterAllowed),
-            "strict_realm" => Ok(Self::StrictRealm),
-            "minimum_expiry" => Ok(Self::MinimumExpiry),
-            "udp_route" => Ok(Self::UdpRoute),
-            "tcp_route" => Ok(Self::TcpRoute),
-            "device_per_password" => Ok(Self::DevicePerPassword),
-            other => Err(DomainError::invalid_argument(format!(
-                "unknown compatibility capability: {other}"
-            ))),
+        const CAPABILITIES: &[(&str, CompatibilityCapability)] = &[
+            ("charset_fallback", CompatibilityCapability::CharsetFallback),
+            ("mime_alias", CompatibilityCapability::MimeAlias),
+            (
+                "contact_rport_route",
+                CompatibilityCapability::ContactRportRoute,
+            ),
+            (
+                "header_normalization",
+                CompatibilityCapability::HeaderNormalization,
+            ),
+            (
+                "catalog_count_fragment",
+                CompatibilityCapability::CatalogCountFragment,
+            ),
+            ("catalog_notify", CompatibilityCapability::CatalogNotify),
+            (
+                "alarm_subscription",
+                CompatibilityCapability::AlarmSubscription,
+            ),
+            ("mobile_position", CompatibilityCapability::MobilePosition),
+            ("gb2016", CompatibilityCapability::Gb2016),
+            ("config_download", CompatibilityCapability::ConfigDownload),
+            ("preset_query", CompatibilityCapability::PresetQuery),
+            ("broadcast", CompatibilityCapability::Broadcast),
+            ("media_status", CompatibilityCapability::MediaStatus),
+            (
+                "sdp_media_override",
+                CompatibilityCapability::SdpMediaOverride,
+            ),
+            (
+                "duplicate_register_allowed",
+                CompatibilityCapability::DuplicateRegisterAllowed,
+            ),
+            ("strict_realm", CompatibilityCapability::StrictRealm),
+            ("minimum_expiry", CompatibilityCapability::MinimumExpiry),
+            ("udp_route", CompatibilityCapability::UdpRoute),
+            ("tcp_route", CompatibilityCapability::TcpRoute),
+            (
+                "device_per_password",
+                CompatibilityCapability::DevicePerPassword,
+            ),
+        ];
+
+        for (target, variant) in CAPABILITIES {
+            if crate::from_str_helpers::eq_normalized_snake(s, target) {
+                return Ok(*variant);
+            }
         }
+
+        let display = crate::from_str_helpers::truncate_for_error(s);
+        Err(DomainError::invalid_argument(format!(
+            "unknown compatibility capability: {display}"
+        )))
     }
 }
 
