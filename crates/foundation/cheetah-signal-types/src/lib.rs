@@ -14,6 +14,7 @@ pub mod context;
 pub mod error;
 pub mod event;
 pub mod gb_metrics;
+pub mod hash;
 pub mod id;
 pub mod metrics;
 pub mod net;

@@ -1,9 +1,7 @@
 //! Event publishing service.
 
 use cheetah_domain::{EventPublisher, Outbox, OutboxEntry};
-use cheetah_signal_types::{DurationMs, UtcTimestamp};
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
+use cheetah_signal_types::{DurationMs, UtcTimestamp, hash::stable_hash_u64};
 use tracing::warn;
 
 const MAX_ATTEMPTS: u32 = 10;
@@ -78,9 +76,8 @@ impl EventService {
                         let backoff_ms = BASE_BACKOFF_MS * (1i64 << attempts.min(20));
                         let jitter_range = backoff_ms / 4;
                         let jitter_ms = if jitter_range > 0 {
-                            let mut hasher = DefaultHasher::new();
-                            entry.event.event_id.hash(&mut hasher);
-                            (hasher.finish() % jitter_range as u64) as i64
+                            let hash = stable_hash_u64(&entry.event.event_id);
+                            (hash % jitter_range as u64) as i64
                         } else {
                             0
                         };

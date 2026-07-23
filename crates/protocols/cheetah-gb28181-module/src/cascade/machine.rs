@@ -1,9 +1,8 @@
 //! `Gb28181Cascade` state machine implementation.
 
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex};
 
+use cheetah_signal_types::hash::stable_hash_u64;
 use secrecy::ExposeSecret;
 
 use cheetah_gb28181_core::{
@@ -418,10 +417,7 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
         if self.config.jitter_ms == 0 {
             return 0;
         }
-        let mut hasher = DefaultHasher::new();
-        self.platform_id().hash(&mut hasher);
-        attempt.hash(&mut hasher);
-        let hash = hasher.finish();
+        let hash = stable_hash_u64(&(self.platform_id(), attempt));
         hash % self.config.jitter_ms
     }
 

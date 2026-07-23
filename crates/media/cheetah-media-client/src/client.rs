@@ -473,14 +473,14 @@ impl MediaControlClient {
     }
 
     fn tls_identity_digest(&self) -> String {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-        let mut hasher = DefaultHasher::new();
-        self.config.tls_ca_pem.hash(&mut hasher);
-        self.config.tls_client_cert_pem.hash(&mut hasher);
-        self.config.tls_client_key_secret_name.hash(&mut hasher);
-        self.config.allow_insecure_http.hash(&mut hasher);
-        format!("{:x}", hasher.finish())
+        use cheetah_signal_types::hash::stable_hash_u64;
+        let hash = stable_hash_u64(&(
+            &self.config.tls_ca_pem,
+            &self.config.tls_client_cert_pem,
+            &self.config.tls_client_key_secret_name,
+            self.config.allow_insecure_http,
+        ));
+        format!("{:x}", hash)
     }
 
     async fn connect(&self, endpoint: &str) -> Result<Channel, MediaClientError> {

@@ -22,6 +22,7 @@ fastrand = { workspace = true }
 prost-types = { workspace = true }
 sha2 = { workspace = true }
 base64 = { workspace = true }
+fnv = { workspace = true }
 
 [features]
 test-support = []
