@@ -27,6 +27,22 @@ use tokio::time::{Instant, sleep, timeout};
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint, Identity, Uri};
 use tonic::{Code, Request, Status};
 
+/// Maximum cooldown duration used as a saturating upper bound when the
+/// configured cooldown would overflow the platform `Instant` range.
+const MAX_COOLDOWN_INSTANT: Duration = Duration::from_secs(60 * 60 * 24 * 365 * 100);
+
+/// Returns the earliest `Instant` at which an open circuit breaker may close.
+///
+/// If `cooldown` overflows the representable `Instant` range, the deadline is
+/// clamped to a large finite future so the breaker stays open instead of
+/// panicking.
+fn open_until(cooldown: Duration) -> Instant {
+    let now = Instant::now();
+    now.checked_add(cooldown)
+        .or_else(|| now.checked_add(MAX_COOLDOWN_INSTANT))
+        .unwrap_or(now)
+}
+
 /// A request to execute a media command on a media node.
 #[derive(Clone, Debug)]
 pub struct MediaControlRequest {
@@ -133,7 +149,7 @@ impl ChannelEntry {
                 } => {
                     let next = consecutive_failures + 1;
                     if next >= self.threshold {
-                        *state = CircuitState::Open(Instant::now() + self.cooldown);
+                        *state = CircuitState::Open(open_until(self.cooldown));
                     } else {
                         *state = CircuitState::Closed {
                             consecutive_failures: next,
@@ -141,7 +157,7 @@ impl ChannelEntry {
                     }
                 }
                 CircuitState::Open(_until) => {
-                    *state = CircuitState::Open(Instant::now() + self.cooldown);
+                    *state = CircuitState::Open(open_until(self.cooldown));
                 }
             }
         }
@@ -788,5 +804,21 @@ mod tests {
         // A huge timeout that overflows the OffsetDateTime range must be
         // reported as exceeded instead of panicking.
         assert!(deadline_exceeded(near, u64::MAX, u64::MAX));
+    }
+
+    #[test]
+    fn open_until_does_not_panic_with_huge_cooldown() {
+        let now = Instant::now();
+        let normal = open_until(Duration::from_millis(1_000));
+        assert!(
+            normal > now,
+            "normal cooldown must produce a future Instant"
+        );
+
+        let huge = open_until(Duration::from_millis(u64::MAX));
+        assert!(
+            huge >= now,
+            "huge cooldown must not panic and must not produce a past Instant"
+        );
     }
 }
