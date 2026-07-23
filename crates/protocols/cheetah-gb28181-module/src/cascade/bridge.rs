@@ -712,18 +712,26 @@ fn build_bye_from_bridge(
 }
 
 fn extract_tag(value: &str) -> Option<String> {
-    let lower = value.to_ascii_lowercase();
-    let start = lower.find(";tag=")? + 5;
-    let rest = &value[start..];
-    let end = rest
-        .find(|c: char| c == ';' || c == '<' || c == '>' || c.is_whitespace())
-        .unwrap_or(rest.len());
-    let tag = rest[..end].trim_matches('"');
-    if tag.is_empty() {
-        None
-    } else {
-        Some(tag.to_string())
+    const NEEDLE: &[u8] = b";tag=";
+    for (i, window) in value.as_bytes().windows(NEEDLE.len()).enumerate() {
+        if window
+            .iter()
+            .zip(NEEDLE)
+            .all(|(a, b)| a.eq_ignore_ascii_case(b))
+        {
+            let start = i + NEEDLE.len();
+            let rest = &value[start..];
+            let end = rest
+                .find(|c: char| c == ';' || c == '<' || c == '>' || c.is_whitespace())
+                .unwrap_or(rest.len());
+            let tag = rest[..end].trim_matches('"');
+            if tag.is_empty() {
+                return None;
+            }
+            return Some(tag.to_string());
+        }
     }
+    None
 }
 
 /// Removes abandoned bridges whose deadlines have expired and emits the

@@ -107,11 +107,14 @@ pub enum EndpointTransport {
 impl EndpointTransport {
     /// Parses a SIP `transport=` parameter value (case-insensitive).
     pub fn parse(value: &str) -> Option<Self> {
-        match value.to_ascii_lowercase().as_str() {
-            "udp" => Some(Self::Udp),
-            "tcp" => Some(Self::Tcp),
-            "tls" => Some(Self::Tls),
-            _ => None,
+        if value.eq_ignore_ascii_case("udp") {
+            Some(Self::Udp)
+        } else if value.eq_ignore_ascii_case("tcp") {
+            Some(Self::Tcp)
+        } else if value.eq_ignore_ascii_case("tls") {
+            Some(Self::Tls)
+        } else {
+            None
         }
     }
 }
