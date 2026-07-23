@@ -365,7 +365,18 @@ impl FromRequestParts<Arc<ApiState>> for IfMatchRevision {
     }
 }
 
+/// Maximum byte length of an `If-Match` header value. Revision ETags are at
+/// most a weak prefix, quotes and 20 decimal digits, so anything longer is
+/// either malformed or a DoS attempt.
+const MAX_IF_MATCH_BYTES: usize = 64;
+
 fn parse_if_match_revision(value: &str) -> Result<cheetah_signal_types::Revision, HttpError> {
+    if value.len() > MAX_IF_MATCH_BYTES {
+        return Err(HttpError::Signal(SignalError::new(
+            SignalErrorKind::InvalidArgument,
+            "If-Match header exceeds maximum length",
+        )));
+    }
     let trimmed = value.trim();
     if trimmed.is_empty() || trimmed == "*" {
         return Err(HttpError::Signal(SignalError::new(
@@ -430,6 +441,12 @@ mod tests {
         assert_eq!(parse_if_match_revision("W/\"9\"").unwrap().0, 9);
         assert!(parse_if_match_revision("*").is_err());
         assert!(parse_if_match_revision("").is_err());
+    }
+
+    #[test]
+    fn parse_if_match_revision_rejects_oversized_header() {
+        let oversized = "0".repeat(MAX_IF_MATCH_BYTES + 1);
+        assert!(parse_if_match_revision(&oversized).is_err());
     }
 
     fn auth_with_tenant(tenant_id: Option<TenantId>) -> AuthContext {
