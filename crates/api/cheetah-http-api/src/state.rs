@@ -16,7 +16,15 @@ use cheetah_signal_types::{AuditLog, Clock, MetricsExporter, NodeId, SecretStore
 use cheetah_storage_api::Storage;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio_util::sync::CancellationToken;
+
+/// Maximum webhook delivery interval; larger values overflow `tokio::time` deadlines.
+const MAX_WEBHOOK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
+
+fn clamp_webhook_interval(ms: u64) -> Duration {
+    Duration::from_millis(ms).min(MAX_WEBHOOK_INTERVAL)
+}
 
 /// Configuration subset used by the HTTP API.
 #[derive(Clone, Debug)]
@@ -277,8 +285,7 @@ impl ApiServer {
             && state.config.webhook_delivery_interval_ms > 0
         {
             let webhook_cancel = cancel.child_token();
-            let interval =
-                std::time::Duration::from_millis(state.config.webhook_delivery_interval_ms);
+            let interval = clamp_webhook_interval(state.config.webhook_delivery_interval_ms);
             tokio::spawn(async move {
                 crate::webhook::run_delivery_worker(webhook_service, webhook_cancel, interval)
                     .await;
