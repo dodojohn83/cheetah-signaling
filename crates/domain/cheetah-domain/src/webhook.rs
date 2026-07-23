@@ -3,6 +3,19 @@
 use crate::{Clock, DomainError, IdGenerator, Result};
 use cheetah_signal_types::{DeliveryId, EventId, Revision, TenantId, UtcTimestamp, WebhookId};
 
+/// Maximum byte length of a webhook target URL.
+const MAX_WEBHOOK_URL_BYTES: usize = 2048;
+/// Maximum byte length of a webhook secret reference.
+const MAX_WEBHOOK_SECRET_REF_BYTES: usize = 256;
+/// Maximum number of subscribed event types on a webhook.
+const MAX_WEBHOOK_EVENT_TYPES: usize = 64;
+/// Maximum byte length of a single webhook event type name.
+const MAX_WEBHOOK_EVENT_TYPE_BYTES: usize = 128;
+/// Maximum byte length of a webhook delivery payload.
+const MAX_WEBHOOK_PAYLOAD_BYTES: usize = 1_048_576;
+/// Maximum byte length of a webhook delivery last-error message.
+const MAX_WEBHOOK_LAST_ERROR_BYTES: usize = 1024;
+
 /// State of a webhook delivery attempt.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -55,6 +68,9 @@ impl std::str::FromStr for DeliveryStatus {
 /// cloud metadata endpoint. DNS-based SSRF checks are performed again at delivery
 /// time because the resolution may change.
 fn validate_webhook_url(url: &str) -> Result<()> {
+    if url.len() > MAX_WEBHOOK_URL_BYTES {
+        return Err(DomainError::invalid_argument("webhook url too long"));
+    }
     let parsed = url::Url::parse(url)
         .map_err(|e| DomainError::invalid_argument(format!("invalid webhook url: {e}")))?;
     if !matches!(parsed.scheme(), "http" | "https") {
@@ -116,6 +132,49 @@ fn is_disallowed_ipv6(v6: &std::net::Ipv6Addr) -> bool {
     false
 }
 
+fn validate_secret_ref(secret_ref: &str) -> Result<()> {
+    if secret_ref.is_empty() {
+        return Err(DomainError::invalid_argument(
+            "webhook secret_ref must not be empty",
+        ));
+    }
+    if secret_ref.len() > MAX_WEBHOOK_SECRET_REF_BYTES {
+        return Err(DomainError::invalid_argument("webhook secret_ref too long"));
+    }
+    Ok(())
+}
+
+fn validate_event_types(event_types: &[String]) -> Result<()> {
+    if event_types.len() > MAX_WEBHOOK_EVENT_TYPES {
+        return Err(DomainError::invalid_argument(
+            "too many webhook event types",
+        ));
+    }
+    for event_type in event_types {
+        if event_type.is_empty() {
+            return Err(DomainError::invalid_argument(
+                "webhook event type must not be empty",
+            ));
+        }
+        if event_type.len() > MAX_WEBHOOK_EVENT_TYPE_BYTES {
+            return Err(DomainError::invalid_argument("webhook event type too long"));
+        }
+    }
+    Ok(())
+}
+
+/// Maximum byte length of an HMAC-SHA256 hex signature.
+const MAX_WEBHOOK_SIGNATURE_BYTES: usize = 256;
+
+fn validate_last_error(error: &str) -> Result<()> {
+    if error.len() > MAX_WEBHOOK_LAST_ERROR_BYTES {
+        return Err(DomainError::invalid_argument(
+            "webhook last error message too long",
+        ));
+    }
+    Ok(())
+}
+
 /// A configured outbound webhook endpoint.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct WebhookConfig {
@@ -146,11 +205,8 @@ impl WebhookConfig {
             ));
         }
         validate_webhook_url(&url)?;
-        if secret_ref.is_empty() {
-            return Err(DomainError::invalid_argument(
-                "webhook secret_ref must not be empty",
-            ));
-        }
+        validate_secret_ref(&secret_ref)?;
+        validate_event_types(&event_types)?;
         let now = clock.now_wall();
         Ok(Self {
             webhook_id: id_generator.generate_webhook_id(),
@@ -184,14 +240,11 @@ impl WebhookConfig {
             self.url = url;
         }
         if let Some(secret_ref) = secret_ref {
-            if secret_ref.is_empty() {
-                return Err(DomainError::invalid_argument(
-                    "webhook secret_ref must not be empty",
-                ));
-            }
+            validate_secret_ref(&secret_ref)?;
             self.secret_ref = secret_ref;
         }
         if let Some(event_types) = event_types {
+            validate_event_types(&event_types)?;
             self.event_types = event_types;
         }
         if let Some(enabled) = enabled {
@@ -279,9 +332,12 @@ impl WebhookDelivery {
         webhook_id: WebhookId,
         event_id: EventId,
         payload: Vec<u8>,
-    ) -> Self {
+    ) -> Result<Self> {
+        if payload.len() > MAX_WEBHOOK_PAYLOAD_BYTES {
+            return Err(DomainError::invalid_argument("webhook payload too large"));
+        }
         let now = clock.now_wall();
-        Self {
+        Ok(Self {
             delivery_id: id_generator.generate_delivery_id(),
             tenant_id,
             webhook_id,
@@ -294,7 +350,7 @@ impl WebhookDelivery {
             last_error: None,
             created_at: now,
             updated_at: now,
-        }
+        })
     }
 
     /// Starts a delivery attempt, bumping the counter.
@@ -318,24 +374,32 @@ impl WebhookDelivery {
         clock: &dyn Clock,
         error: String,
         next_attempt_at: Option<UtcTimestamp>,
-    ) {
+    ) -> Result<()> {
+        validate_last_error(&error)?;
         self.status = DeliveryStatus::Failed;
         self.last_error = Some(error);
         self.next_attempt_at = next_attempt_at;
         self.updated_at = clock.now_wall();
+        Ok(())
     }
 
     /// Moves the delivery to the dead-letter state.
-    pub fn dead_letter(&mut self, clock: &dyn Clock, error: String) {
+    pub fn dead_letter(&mut self, clock: &dyn Clock, error: String) -> Result<()> {
+        validate_last_error(&error)?;
         self.status = DeliveryStatus::DeadLetter;
         self.last_error = Some(error);
         self.next_attempt_at = None;
         self.updated_at = clock.now_wall();
+        Ok(())
     }
 
     /// Sets the HMAC signature after the payload has been signed.
-    pub fn set_signature(&mut self, signature: String) {
+    pub fn set_signature(&mut self, signature: String) -> Result<()> {
+        if signature.len() > MAX_WEBHOOK_SIGNATURE_BYTES {
+            return Err(DomainError::invalid_argument("webhook signature too long"));
+        }
         self.signature = signature;
+        Ok(())
     }
 
     /// Delivery identifier.
@@ -419,4 +483,92 @@ pub fn sign_webhook_payload(
     mac.update(b"|");
     mac.update(body);
     Ok(hex::encode(mac.finalize().into_bytes()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::in_memory::{InMemoryClock, InMemoryIdGenerator};
+    use cheetah_signal_types::IdGenerator;
+
+    #[test]
+    fn webhook_config_rejects_oversized_url() {
+        let clock = InMemoryClock::new();
+        let ids = InMemoryIdGenerator::new();
+        let url = format!("http://example.com/{}", "x".repeat(2048));
+        let result = WebhookConfig::new(
+            &clock,
+            &ids,
+            ids.generate_tenant_id(),
+            url,
+            "ref".to_string(),
+            vec![],
+        );
+        assert!(matches!(result, Err(DomainError::InvalidArgument { .. })));
+    }
+
+    #[test]
+    fn webhook_config_rejects_oversized_secret_ref() {
+        let clock = InMemoryClock::new();
+        let ids = InMemoryIdGenerator::new();
+        let result = WebhookConfig::new(
+            &clock,
+            &ids,
+            ids.generate_tenant_id(),
+            "http://example.com/hook".to_string(),
+            "x".repeat(257),
+            vec![],
+        );
+        assert!(matches!(result, Err(DomainError::InvalidArgument { .. })));
+    }
+
+    #[test]
+    fn webhook_config_rejects_too_many_event_types() {
+        let clock = InMemoryClock::new();
+        let ids = InMemoryIdGenerator::new();
+        let event_types: Vec<String> = (0..65).map(|i| format!("event.{i}")).collect();
+        let result = WebhookConfig::new(
+            &clock,
+            &ids,
+            ids.generate_tenant_id(),
+            "http://example.com/hook".to_string(),
+            "ref".to_string(),
+            event_types,
+        );
+        assert!(matches!(result, Err(DomainError::InvalidArgument { .. })));
+    }
+
+    #[test]
+    fn webhook_delivery_rejects_oversized_payload() {
+        let clock = InMemoryClock::new();
+        let ids = InMemoryIdGenerator::new();
+        let result = WebhookDelivery::new(
+            &clock,
+            &ids,
+            ids.generate_tenant_id(),
+            ids.generate_webhook_id(),
+            ids.generate_event_id(),
+            vec![0u8; MAX_WEBHOOK_PAYLOAD_BYTES + 1],
+        );
+        assert!(matches!(result, Err(DomainError::InvalidArgument { .. })));
+    }
+
+    #[test]
+    fn webhook_delivery_rejects_oversized_error() {
+        let clock = InMemoryClock::new();
+        let ids = InMemoryIdGenerator::new();
+        let mut delivery = match WebhookDelivery::new(
+            &clock,
+            &ids,
+            ids.generate_tenant_id(),
+            ids.generate_webhook_id(),
+            ids.generate_event_id(),
+            Vec::new(),
+        ) {
+            Ok(d) => d,
+            Err(e) => panic!("{e}"),
+        };
+        let result = delivery.fail(&clock, "x".repeat(MAX_WEBHOOK_LAST_ERROR_BYTES + 1), None);
+        assert!(matches!(result, Err(DomainError::InvalidArgument { .. })));
+    }
 }
