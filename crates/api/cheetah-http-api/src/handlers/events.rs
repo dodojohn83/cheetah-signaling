@@ -28,12 +28,42 @@ pub struct EventQuery {
     pub event_type: Option<String>,
 }
 
+/// Maximum byte length of an SSE `device_id` query parameter.
+const MAX_EVENT_DEVICE_ID_BYTES: usize = 128;
+/// Maximum byte length of an SSE `event_type` query parameter.
+const MAX_EVENT_TYPE_BYTES: usize = 256;
+
+impl EventQuery {
+    /// Validates query parameter lengths to prevent unbounded allocation on
+    /// malformed or malicious SSE requests.
+    fn validate(&self) -> Result<(), HttpError> {
+        if let Some(device_id) = &self.device_id
+            && device_id.len() > MAX_EVENT_DEVICE_ID_BYTES
+        {
+            return Err(HttpError::Signal(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                "device_id query parameter exceeds maximum length",
+            )));
+        }
+        if let Some(event_type) = &self.event_type
+            && event_type.len() > MAX_EVENT_TYPE_BYTES
+        {
+            return Err(HttpError::Signal(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                "event_type query parameter exceeds maximum length",
+            )));
+        }
+        Ok(())
+    }
+}
+
 pub async fn event_stream(
     Query(query): Query<EventQuery>,
     State(state): State<Arc<ApiState>>,
     ctx: ApiRequestContext,
 ) -> Result<Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>>, HttpError> {
     ctx.require_scope("viewer")?;
+    query.validate()?;
     let tenant_filter = Some(ctx.tenant_id.to_string());
     let device_filter = query.device_id;
     let type_filter = query.event_type;
@@ -154,12 +184,35 @@ mod tests {
             Ok(_) => panic!("expected invalid cursor error"),
         }
     }
-
     #[test]
     fn resolve_start_cursor_rejects_oversized_cursor() {
         match resolve_start_cursor(Some("0".repeat(MAX_EVENT_CURSOR_BYTES + 1)), 42) {
             Err(err) => assert_eq!(err.status(), axum::http::StatusCode::BAD_REQUEST),
             Ok(_) => panic!("expected oversized cursor error"),
         }
+    }
+
+    #[test]
+    fn event_query_rejects_oversized_device_id() {
+        let query = EventQuery {
+            device_id: Some("x".repeat(MAX_EVENT_DEVICE_ID_BYTES + 1)),
+            ..Default::default()
+        };
+        assert!(query.validate().is_err());
+    }
+
+    #[test]
+    fn event_query_rejects_oversized_event_type() {
+        let query = EventQuery {
+            event_type: Some("x".repeat(MAX_EVENT_TYPE_BYTES + 1)),
+            ..Default::default()
+        };
+        assert!(query.validate().is_err());
+    }
+
+    #[test]
+    fn event_query_accepts_defaults() {
+        let query = EventQuery::default();
+        assert!(query.validate().is_ok());
     }
 }
