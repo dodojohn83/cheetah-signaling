@@ -332,6 +332,16 @@ impl SignalConfig {
             }
         }
         self.validate_gb28181_challenge_optional_policy(&inferred)?;
+        self.system.validate()?;
+        self.security.validate()?;
+        self.storage.validate()?;
+        self.media.validate()?;
+        self.grpc.validate()?;
+        self.messaging.validate()?;
+        self.plugins.validate()?;
+        self.observability.validate()?;
+        self.secret.validate()?;
+        self.onvif.validate()?;
         Ok(())
     }
 
