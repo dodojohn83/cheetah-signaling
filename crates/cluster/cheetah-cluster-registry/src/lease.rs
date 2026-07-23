@@ -10,6 +10,17 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{info, warn};
 
+/// Maximum byte length of a deployment zone string.
+const MAX_ZONE_BYTES: usize = 256;
+/// Maximum byte length of a node binary version string.
+const MAX_NODE_VERSION_BYTES: usize = 128;
+/// Maximum number of contract versions reported by a node.
+const MAX_NODE_CONTRACT_VERSIONS: usize = 64;
+/// Maximum byte length of a contract name in a node's reported versions.
+const MAX_NODE_CONTRACT_NAME_BYTES: usize = 128;
+/// Maximum byte length of a contract version string reported by a node.
+const MAX_NODE_CONTRACT_VERSION_BYTES: usize = 128;
+
 /// Manages the cluster node registration and lease for this process.
 pub struct NodeLeaseService {
     repository: Arc<Mutex<dyn NodeRepository>>,
@@ -79,6 +90,44 @@ impl NodeLeaseService {
         capacity: NodeCapacity,
         contract_versions: HashMap<String, String>,
     ) -> Result<ClusterNode, NodeLeaseError> {
+        if self.zone.len() > MAX_ZONE_BYTES {
+            return Err(NodeLeaseError::Domain(
+                cheetah_domain::DomainError::invalid_argument(format!(
+                    "zone must not exceed {MAX_ZONE_BYTES} bytes"
+                )),
+            ));
+        }
+        if self.version.len() > MAX_NODE_VERSION_BYTES {
+            return Err(NodeLeaseError::Domain(
+                cheetah_domain::DomainError::invalid_argument(format!(
+                    "version must not exceed {MAX_NODE_VERSION_BYTES} bytes"
+                )),
+            ));
+        }
+        if contract_versions.len() > MAX_NODE_CONTRACT_VERSIONS {
+            return Err(NodeLeaseError::Domain(
+                cheetah_domain::DomainError::invalid_argument(format!(
+                    "contract_versions must not exceed {MAX_NODE_CONTRACT_VERSIONS} entries"
+                )),
+            ));
+        }
+        for (name, value) in &contract_versions {
+            if name.len() > MAX_NODE_CONTRACT_NAME_BYTES {
+                return Err(NodeLeaseError::Domain(
+                    cheetah_domain::DomainError::invalid_argument(format!(
+                        "contract name must not exceed {MAX_NODE_CONTRACT_NAME_BYTES} bytes"
+                    )),
+                ));
+            }
+            if value.len() > MAX_NODE_CONTRACT_VERSION_BYTES {
+                return Err(NodeLeaseError::Domain(
+                    cheetah_domain::DomainError::invalid_argument(format!(
+                        "contract {name:?} version must not exceed {MAX_NODE_CONTRACT_VERSION_BYTES} bytes"
+                    )),
+                ));
+            }
+        }
+
         self.compatibility
             .check(&self.version, &contract_versions)?;
 
@@ -483,6 +532,77 @@ mod tests {
             .register(NodeCapacity { max_devices: 100 }, node_contracts)
             .await?;
         assert_eq!(node.version, "1.2.0");
+        Ok(())
+    }
+
+    fn oversized_service(zone: &str, version: &str) -> NodeLeaseService {
+        let clock = Arc::new(InMemoryClock::new());
+        let id_gen = Arc::new(InMemoryIdGenerator::new());
+        let repo = Arc::new(Mutex::new(InMemoryNodeRepository::new()));
+        let node_id = id_gen.generate_node_id();
+        NodeLeaseService::new(
+            repo,
+            clock,
+            id_gen,
+            node_id,
+            zone.to_string(),
+            version.to_string(),
+            DurationMs::from_millis(10_000),
+        )
+    }
+
+    #[tokio::test]
+    async fn register_rejects_oversized_zone() -> TestResult<()> {
+        let mut service = oversized_service(&"a".repeat(257), "0.1.0");
+        let result = service
+            .register(NodeCapacity { max_devices: 100 }, HashMap::new())
+            .await;
+        assert!(matches!(result, Err(NodeLeaseError::Domain(_))));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn register_rejects_oversized_version() -> TestResult<()> {
+        let mut service = oversized_service("zone-a", &"1.".repeat(65));
+        let result = service
+            .register(NodeCapacity { max_devices: 100 }, HashMap::new())
+            .await;
+        assert!(matches!(result, Err(NodeLeaseError::Domain(_))));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn register_rejects_too_many_contract_versions() -> TestResult<()> {
+        let mut service = oversized_service("zone-a", "0.1.0");
+        let contracts = (0..65)
+            .map(|i| (format!("contract-{i}"), "1.0.0".to_string()))
+            .collect();
+        let result = service
+            .register(NodeCapacity { max_devices: 100 }, contracts)
+            .await;
+        assert!(matches!(result, Err(NodeLeaseError::Domain(_))));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn register_rejects_oversized_contract_name() -> TestResult<()> {
+        let mut service = oversized_service("zone-a", "0.1.0");
+        let contracts = HashMap::from([("x".repeat(129), "1.0.0".to_string())]);
+        let result = service
+            .register(NodeCapacity { max_devices: 100 }, contracts)
+            .await;
+        assert!(matches!(result, Err(NodeLeaseError::Domain(_))));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn register_rejects_oversized_contract_version() -> TestResult<()> {
+        let mut service = oversized_service("zone-a", "0.1.0");
+        let contracts = HashMap::from([("cheetah.media.v1".to_string(), "x".repeat(129))]);
+        let result = service
+            .register(NodeCapacity { max_devices: 100 }, contracts)
+            .await;
+        assert!(matches!(result, Err(NodeLeaseError::Domain(_))));
         Ok(())
     }
 }
