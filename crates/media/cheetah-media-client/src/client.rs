@@ -31,6 +31,21 @@ use tonic::{Code, Request, Status};
 /// configured cooldown would overflow the platform `Instant` range.
 const MAX_COOLDOWN_INSTANT: Duration = Duration::from_secs(60 * 60 * 24 * 365 * 100);
 
+/// Maximum duration used for RPC/connect/DNS lookups so `tokio::time::timeout`
+/// does not overflow the platform `Instant` range.
+const MAX_RPC_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// Maximum backoff sleep between retry attempts.
+const MAX_BACKOFF: Duration = Duration::from_secs(24 * 60 * 60);
+
+fn clamp_timeout_ms(timeout_ms: u64) -> Duration {
+    Duration::from_millis(timeout_ms).min(MAX_RPC_TIMEOUT)
+}
+
+fn clamp_backoff_ms(delay_ms: u64) -> Duration {
+    Duration::from_millis(delay_ms).min(MAX_BACKOFF)
+}
+
 /// Returns the earliest `Instant` at which an open circuit breaker may close.
 ///
 /// If `cooldown` overflows the representable `Instant` range, the deadline is
@@ -244,7 +259,7 @@ impl MediaControlClient {
             }
 
             if delay > 0 {
-                sleep(Duration::from_millis(delay)).await;
+                sleep(clamp_backoff_ms(delay)).await;
             }
 
             let mut client = TonicMediaControlClient::new(entry.channel.clone());
@@ -253,7 +268,7 @@ impl MediaControlClient {
             };
             let grpc_request = Request::new(body);
             let result = timeout(
-                Duration::from_millis(self.config.request_timeout_ms),
+                clamp_timeout_ms(self.config.request_timeout_ms),
                 client.execute(grpc_request),
             )
             .await;
@@ -347,13 +362,13 @@ impl MediaControlClient {
             };
 
             if delay > 0 {
-                sleep(Duration::from_millis(delay)).await;
+                sleep(clamp_backoff_ms(delay)).await;
             }
 
             let mut client = TonicMediaQueryClient::new(entry.channel.clone());
             let grpc_request = Request::new(body.clone());
             let result = timeout(
-                Duration::from_millis(self.config.request_timeout_ms),
+                clamp_timeout_ms(self.config.request_timeout_ms),
                 client.list_sessions(grpc_request),
             )
             .await;
@@ -530,7 +545,7 @@ impl MediaControlClient {
             .map_err(|_| MediaClientError::InvalidEndpoint(endpoint.to_string()))?;
         let mut builder = Endpoint::new(literal_uri)
             .map_err(MediaClientError::Transport)?
-            .connect_timeout(Duration::from_millis(self.config.connect_timeout_ms));
+            .connect_timeout(clamp_timeout_ms(self.config.connect_timeout_ms));
 
         let authority = if host.contains(':') {
             format!("{scheme}://[{host}]:{port}")
@@ -596,7 +611,7 @@ impl MediaControlClient {
         }
 
         let lookup = timeout(
-            Duration::from_millis(self.config.endpoint_dns_lookup_timeout_ms),
+            clamp_timeout_ms(self.config.endpoint_dns_lookup_timeout_ms),
             tokio::net::lookup_host((host, port)),
         )
         .await
@@ -626,7 +641,7 @@ impl MediaControlClient {
         endpoint: &str,
     ) -> Result<OwnedSemaphorePermit, MediaClientError> {
         let permit = timeout(
-            Duration::from_millis(self.config.request_timeout_ms),
+            clamp_timeout_ms(self.config.request_timeout_ms),
             entry.semaphore.clone().acquire_owned(),
         )
         .await
@@ -820,5 +835,18 @@ mod tests {
             huge >= now,
             "huge cooldown must not panic and must not produce a past Instant"
         );
+    }
+
+    #[test]
+    fn clamp_timeout_ms_saturates_at_max() {
+        assert_eq!(clamp_timeout_ms(1_000), Duration::from_millis(1_000));
+        assert_eq!(clamp_timeout_ms(u64::MAX), MAX_RPC_TIMEOUT);
+    }
+
+    #[test]
+    fn clamp_backoff_ms_saturates_at_max() {
+        assert_eq!(clamp_backoff_ms(0), Duration::ZERO);
+        assert_eq!(clamp_backoff_ms(5_000), Duration::from_millis(5_000));
+        assert_eq!(clamp_backoff_ms(u64::MAX), MAX_BACKOFF);
     }
 }
