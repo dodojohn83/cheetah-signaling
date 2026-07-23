@@ -11,7 +11,7 @@ use axum::{
     extract::DefaultBodyLimit,
     http::{HeaderValue, Request, Response, StatusCode, header},
     middleware::{Next, from_fn, from_fn_with_state},
-    response::Json,
+    response::{IntoResponse, Json},
     routing::{delete, get, patch, post},
 };
 use cheetah_signal_types::{validate_traceparent, validate_tracestate};
@@ -33,8 +33,20 @@ const MAX_READ_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
 /// Values longer than this are ignored and replaced with a freshly generated UUID.
 const MAX_REQUEST_ID_BYTES: usize = 128;
 
+/// Maximum total URI (path + query) length in bytes accepted by the API.
+///
+/// Requests with a longer URI are rejected with HTTP 414 before any handler,
+/// extractor or trace span can allocate an unbounded copy of the path.
+const MAX_URI_BYTES: usize = 8192;
+
 fn clamp_read_timeout(ms: u64) -> Duration {
     Duration::from_millis(ms).min(MAX_READ_TIMEOUT)
+}
+
+fn uri_len(uri: &axum::http::Uri) -> usize {
+    let path = uri.path().len();
+    let query = uri.query().map_or(0, |q| q.len());
+    path + query
 }
 
 /// Extension carrying the request identifier for correlation.
@@ -203,8 +215,25 @@ pub fn build_router(state: ApiState) -> Router {
                 StatusCode::REQUEST_TIMEOUT,
                 timeout,
             ))
-            .layer(DefaultBodyLimit::max(body_limit)),
+            .layer(DefaultBodyLimit::max(body_limit))
+            .layer(from_fn(reject_uri_too_long)),
     )
+}
+
+/// Rejects requests whose URI (path + query) is unreasonably long before any
+/// extractor, handler or trace span can allocate an unbounded copy of it.
+async fn reject_uri_too_long(req: Request<Body>, next: Next) -> Response<Body> {
+    if uri_len(req.uri()) > MAX_URI_BYTES {
+        let problem = crate::ProblemDetails {
+            code: "URI_TOO_LONG".to_string(),
+            message: "request URI exceeds maximum length".to_string(),
+            status: StatusCode::URI_TOO_LONG.as_u16(),
+            request_id: None,
+            field_violations: Vec::new(),
+        };
+        return (StatusCode::URI_TOO_LONG, Json(problem)).into_response();
+    }
+    next.run(req).await
 }
 
 /// Propagates W3C trace headers, assigns a stable `x-request-id`, and injects
@@ -332,4 +361,15 @@ async fn fallback() -> (StatusCode, Json<crate::ProblemDetails>) {
         field_violations: Vec::new(),
     };
     (StatusCode::NOT_FOUND, Json(problem))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn uri_len_sums_path_and_query() {
+        let uri = axum::http::Uri::from_static("/api/v1/devices?foo=bar");
+        assert_eq!(uri_len(&uri), "/api/v1/devices".len() + "foo=bar".len());
+    }
 }
