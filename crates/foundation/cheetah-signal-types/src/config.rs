@@ -896,6 +896,20 @@ pub const MAX_COMPATIBILITY_OVERRIDE_ENTRIES: usize = 64;
 
 /// Maximum byte length of an individual compatibility override list entry.
 pub const MAX_COMPATIBILITY_OVERRIDE_ENTRY_BYTES: usize = 64;
+/// Maximum number of GB28181 listeners.
+const MAX_GB28181_LISTENERS: usize = 256;
+/// Maximum byte length of a GB28181 listener identifier.
+const MAX_GB28181_LISTENER_ID_BYTES: usize = 64;
+/// Maximum byte length of a GB28181 listener realm.
+const MAX_GB28181_LISTENER_REALM_BYTES: usize = 64;
+/// Maximum byte length of a GB28181 listener domain.
+const MAX_GB28181_LISTENER_DOMAIN_BYTES: usize = 64;
+/// Maximum byte length of a GB28181 listener local device id.
+const MAX_GB28181_LISTENER_LOCAL_DEVICE_ID_BYTES: usize = 64;
+/// Maximum byte length of a GB28181 listener tenant id string.
+const MAX_GB28181_LISTENER_TENANT_ID_BYTES: usize = 64;
+/// Maximum byte length of a GB28181 listener secret reference.
+const MAX_GB28181_LISTENER_SECRET_REF_BYTES: usize = 256;
 
 /// Controlled media-negotiation overrides for a GB28181 compatibility profile.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -1097,6 +1111,12 @@ impl Gb28181Config {
                  legacy fields into a listener entry",
             ));
         }
+        if self.listeners.len() > MAX_GB28181_LISTENERS {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                format!("gb28181.listeners must not exceed {MAX_GB28181_LISTENERS} entries"),
+            ));
+        }
 
         let mut ids = std::collections::HashSet::new();
         let mut domains = std::collections::HashSet::new();
@@ -1111,10 +1131,25 @@ impl Gb28181Config {
                     "gb28181.listeners[].id must not be empty",
                 ));
             }
+            if listener.id.len() > MAX_GB28181_LISTENER_ID_BYTES {
+                return Err(SignalError::new(
+                    SignalErrorKind::InvalidArgument,
+                    "gb28181.listeners[].id exceeds maximum length",
+                ));
+            }
             if listener.domain.trim().is_empty() {
                 return Err(SignalError::new(
                     SignalErrorKind::InvalidArgument,
                     format!("gb28181 listener '{}' requires a domain", listener.id),
+                ));
+            }
+            if listener.domain.len() > MAX_GB28181_LISTENER_DOMAIN_BYTES {
+                return Err(SignalError::new(
+                    SignalErrorKind::InvalidArgument,
+                    format!(
+                        "gb28181 listener '{}' domain exceeds maximum length",
+                        listener.id
+                    ),
                 ));
             }
             if listener.realm.trim().is_empty() {
@@ -1123,11 +1158,29 @@ impl Gb28181Config {
                     format!("gb28181 listener '{}' requires a realm", listener.id),
                 ));
             }
+            if listener.realm.len() > MAX_GB28181_LISTENER_REALM_BYTES {
+                return Err(SignalError::new(
+                    SignalErrorKind::InvalidArgument,
+                    format!(
+                        "gb28181 listener '{}' realm exceeds maximum length",
+                        listener.id
+                    ),
+                ));
+            }
             if listener.local_device_id.trim().is_empty() {
                 return Err(SignalError::new(
                     SignalErrorKind::InvalidArgument,
                     format!(
                         "gb28181 listener '{}' requires a local_device_id",
+                        listener.id
+                    ),
+                ));
+            }
+            if listener.local_device_id.len() > MAX_GB28181_LISTENER_LOCAL_DEVICE_ID_BYTES {
+                return Err(SignalError::new(
+                    SignalErrorKind::InvalidArgument,
+                    format!(
+                        "gb28181 listener '{}' local_device_id exceeds maximum length",
                         listener.id
                     ),
                 ));
@@ -1142,11 +1195,29 @@ impl Gb28181Config {
                     ),
                 ));
             }
+            if listener.tenant_id.len() > MAX_GB28181_LISTENER_TENANT_ID_BYTES {
+                return Err(SignalError::new(
+                    SignalErrorKind::InvalidArgument,
+                    format!(
+                        "gb28181 listener '{}' tenant_id exceeds maximum length",
+                        listener.id
+                    ),
+                ));
+            }
             if listener.digest_secret_ref.trim().is_empty() {
                 return Err(SignalError::new(
                     SignalErrorKind::InvalidArgument,
                     format!(
                         "gb28181 listener '{}' requires a digest_secret_ref",
+                        listener.id
+                    ),
+                ));
+            }
+            if listener.digest_secret_ref.len() > MAX_GB28181_LISTENER_SECRET_REF_BYTES {
+                return Err(SignalError::new(
+                    SignalErrorKind::InvalidArgument,
+                    format!(
+                        "gb28181 listener '{}' digest_secret_ref exceeds maximum length",
                         listener.id
                     ),
                 ));
@@ -1160,16 +1231,36 @@ impl Gb28181Config {
                     ),
                 ));
             }
-            if let Some(profile_id) = &listener.compatibility_profile
-                && !profile_ids.contains(profile_id.as_str())
+            if let Some(password_ref) = &listener.device_password_ref
+                && password_ref.len() > MAX_GB28181_LISTENER_SECRET_REF_BYTES
             {
                 return Err(SignalError::new(
                     SignalErrorKind::InvalidArgument,
                     format!(
-                        "gb28181 listener '{}' references unknown compatibility profile '{}'",
-                        listener.id, profile_id
+                        "gb28181 listener '{}' device_password_ref exceeds maximum length",
+                        listener.id
                     ),
                 ));
+            }
+            if let Some(profile_id) = &listener.compatibility_profile {
+                if profile_id.len() > MAX_COMPATIBILITY_FIELD_BYTES {
+                    return Err(SignalError::new(
+                        SignalErrorKind::InvalidArgument,
+                        format!(
+                            "gb28181 listener '{}' compatibility_profile exceeds maximum length",
+                            listener.id
+                        ),
+                    ));
+                }
+                if !profile_ids.contains(profile_id.as_str()) {
+                    return Err(SignalError::new(
+                        SignalErrorKind::InvalidArgument,
+                        format!(
+                            "gb28181 listener '{}' references unknown compatibility profile '{}'",
+                            listener.id, profile_id
+                        ),
+                    ));
+                }
             }
             if !ids.insert(listener.id.as_str()) {
                 return Err(SignalError::new(
@@ -1717,6 +1808,98 @@ mod gb28181_listener_tests {
         let (listeners, legacy) = cfg.resolve_listeners();
         assert!(!legacy);
         assert_eq!(listeners.len(), 2);
+    }
+
+    #[test]
+    fn too_many_listeners_is_rejected() {
+        let mut cfg = Gb28181Config::default();
+        for i in 0..=MAX_GB28181_LISTENERS {
+            let port = 5060 + (i % 65536) as u16;
+            cfg.listeners.push(listener(
+                &format!("listener-{i}"),
+                &format!("domain-{i}"),
+                &format!("realm-{i}"),
+                port,
+            ));
+        }
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn oversized_listener_id_is_rejected() {
+        let mut cfg = Gb28181Config::default();
+        let mut l = listener("x", "domain-a", "realm-a", 5060);
+        l.id = "x".repeat(MAX_GB28181_LISTENER_ID_BYTES + 1);
+        cfg.listeners.push(l);
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn oversized_listener_domain_is_rejected() {
+        let mut cfg = Gb28181Config::default();
+        let mut l = listener("x", "domain-a", "realm-a", 5060);
+        l.domain = "x".repeat(MAX_GB28181_LISTENER_DOMAIN_BYTES + 1);
+        cfg.listeners.push(l);
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn oversized_listener_realm_is_rejected() {
+        let mut cfg = Gb28181Config::default();
+        let mut l = listener("x", "domain-a", "realm-a", 5060);
+        l.realm = "x".repeat(MAX_GB28181_LISTENER_REALM_BYTES + 1);
+        cfg.listeners.push(l);
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn oversized_listener_local_device_id_is_rejected() {
+        let mut cfg = Gb28181Config::default();
+        let mut l = listener("x", "domain-a", "realm-a", 5060);
+        l.local_device_id = "x".repeat(MAX_GB28181_LISTENER_LOCAL_DEVICE_ID_BYTES + 1);
+        cfg.listeners.push(l);
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn oversized_listener_tenant_id_is_rejected() {
+        let mut cfg = Gb28181Config::default();
+        let mut l = listener("x", "domain-a", "realm-a", 5060);
+        l.tenant_id = "x".repeat(MAX_GB28181_LISTENER_TENANT_ID_BYTES + 1);
+        cfg.listeners.push(l);
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn oversized_listener_digest_secret_ref_is_rejected() {
+        let mut cfg = Gb28181Config::default();
+        let mut l = listener("x", "domain-a", "realm-a", 5060);
+        l.digest_secret_ref = "x".repeat(MAX_GB28181_LISTENER_SECRET_REF_BYTES + 1);
+        cfg.listeners.push(l);
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn oversized_listener_device_password_ref_is_rejected() {
+        let mut cfg = Gb28181Config::default();
+        let mut l = listener("x", "domain-a", "realm-a", 5060);
+        l.device_password_ref = Some("x".repeat(MAX_GB28181_LISTENER_SECRET_REF_BYTES + 1));
+        cfg.listeners.push(l);
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn oversized_listener_compatibility_profile_is_rejected() {
+        let mut cfg = Gb28181Config::default();
+        cfg.compatibility_profiles
+            .push(Gb28181CompatibilityProfileConfig {
+                id: "p1".to_string(),
+                ..Gb28181CompatibilityProfileConfig::default()
+            });
+        let mut l = listener("x", "domain-a", "realm-a", 5060);
+        l.compatibility_profile = Some("x".repeat(MAX_COMPATIBILITY_FIELD_BYTES + 1));
+        cfg.listeners.push(l);
+        assert!(cfg.validate().is_err());
     }
 }
 
