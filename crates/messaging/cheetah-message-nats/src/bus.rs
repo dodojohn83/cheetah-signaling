@@ -21,6 +21,11 @@ const COMMAND_SUBJECT_PATTERN: &str = "sig.v1.command.*.*";
 const EVENT_SUBJECT_PATTERN: &str = "sig.v1.event.*.*";
 /// Maximum timeout passed to `tokio::time::timeout` to avoid `Instant` overflow.
 const MAX_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
+/// Maximum encoded proto envelope size accepted from the NATS bus.
+///
+/// This is larger than the 4 MiB inner JSON payload limit to allow for proto
+/// envelope overhead while still preventing unbounded allocations.
+const MAX_PROTO_MESSAGE_BYTES: usize = 8 * 1024 * 1024;
 
 fn clamp_timeout(timeout: Duration) -> Duration {
     timeout.min(MAX_TIMEOUT).max(Duration::from_millis(1))
@@ -430,6 +435,11 @@ where
                 let subject = message.subject.to_string();
                 let message_id = header_message_id(&message.headers);
                 let payload = message.payload.clone();
+                if payload.len() > MAX_PROTO_MESSAGE_BYTES {
+                    return Err(BusError::InvalidPayload(format!(
+                        "NATS message payload exceeds {MAX_PROTO_MESSAGE_BYTES} bytes"
+                    )));
+                }
                 let (_, acker) = message.split();
 
                 let envelope = E::decode(&payload[..]).map_err(BusError::Decode)?;

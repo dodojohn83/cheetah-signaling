@@ -8,6 +8,19 @@ use cheetah_signal_types::{
 };
 use prost_types::Timestamp;
 
+/// Maximum byte size of the JSON payload carried inside a proto envelope.
+///
+/// This limits the memory used when serializing or deserializing command and
+/// event bodies, and prevents a malformed or malicious envelope from forcing
+/// an unbounded allocation.
+const MAX_ENVELOPE_PAYLOAD_BYTES: usize = 4 * 1024 * 1024;
+
+fn payload_too_large(size: usize) -> super::BusError {
+    super::BusError::InvalidPayload(format!(
+        "envelope payload exceeds {MAX_ENVELOPE_PAYLOAD_BYTES} bytes: {size}"
+    ))
+}
+
 fn to_uuid(id: impl std::fmt::Display) -> proto::Uuid {
     proto::Uuid {
         value: id.to_string(),
@@ -78,6 +91,9 @@ fn channel_id(command: &Command) -> String {
 /// domain command variant.
 pub fn encode_command(command: &Command) -> Result<proto::CommandEnvelope, super::BusError> {
     let payload = serde_json::to_vec(command)?;
+    if payload.len() > MAX_ENVELOPE_PAYLOAD_BYTES {
+        return Err(payload_too_large(payload.len()));
+    }
     let channel_command = control::ChannelCommand {
         device_id: command.device_id().to_string(),
         channel_id: channel_id(command),
@@ -131,6 +147,9 @@ pub fn decode_command(envelope: &proto::CommandEnvelope) -> Result<Command, supe
         }
     };
 
+    if channel.payload.len() > MAX_ENVELOPE_PAYLOAD_BYTES {
+        return Err(payload_too_large(channel.payload.len()));
+    }
     serde_json::from_slice(&channel.payload).map_err(super::BusError::Serialize)
 }
 
@@ -139,6 +158,9 @@ pub fn decode_command(envelope: &proto::CommandEnvelope) -> Result<Command, supe
 /// The whole event is serialized to JSON and carried inside a [`GenericEvent`].
 pub fn encode_event(event: &Event<DomainEvent>) -> Result<proto::EventEnvelope, super::BusError> {
     let payload = serde_json::to_vec(event)?;
+    if payload.len() > MAX_ENVELOPE_PAYLOAD_BYTES {
+        return Err(payload_too_large(payload.len()));
+    }
 
     Ok(proto::EventEnvelope {
         meta: Some(proto::EnvelopeMeta {
@@ -178,6 +200,9 @@ pub fn decode_event(
         }
     };
 
+    if generic.payload.len() > MAX_ENVELOPE_PAYLOAD_BYTES {
+        return Err(payload_too_large(generic.payload.len()));
+    }
     let mut event: Event<DomainEvent> =
         serde_json::from_slice(&generic.payload).map_err(super::BusError::Serialize)?;
     if event.traceparent.is_none()
@@ -193,4 +218,57 @@ pub fn decode_event(
         event.tracestate = Some(meta.tracestate.clone());
     }
     Ok(event)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::BusError;
+    use cheetah_signal_contracts::cheetah::common::v1 as proto;
+    use cheetah_signal_contracts::cheetah::control::v1 as control;
+
+    fn oversized_payload() -> Vec<u8> {
+        vec![b'x'; MAX_ENVELOPE_PAYLOAD_BYTES + 1]
+    }
+
+    #[test]
+    fn decode_command_rejects_oversized_payload() {
+        let envelope = proto::CommandEnvelope {
+            command: Some(proto::command_envelope::Command::ControlCommand(
+                control::ControlCommand {
+                    command: Some(control::control_command::Command::ChannelCommand(
+                        control::ChannelCommand {
+                            device_id: "d".to_string(),
+                            channel_id: "c".to_string(),
+                            command_type: "noop".to_string(),
+                            payload: oversized_payload(),
+                            detail: None,
+                        },
+                    )),
+                },
+            )),
+            ..Default::default()
+        };
+        assert!(matches!(
+            decode_command(&envelope),
+            Err(BusError::InvalidPayload(_))
+        ));
+    }
+
+    #[test]
+    fn decode_event_rejects_oversized_payload() {
+        let envelope = proto::EventEnvelope {
+            event: Some(proto::event_envelope::Event::GenericEvent(
+                proto::GenericEvent {
+                    event_type: "domain_event".to_string(),
+                    payload: oversized_payload(),
+                },
+            )),
+            ..Default::default()
+        };
+        assert!(matches!(
+            decode_event(&envelope),
+            Err(BusError::InvalidPayload(_))
+        ));
+    }
 }
