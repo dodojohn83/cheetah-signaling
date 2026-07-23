@@ -201,6 +201,13 @@ impl MediaClusterRegistry for MediaClusterRegistryService {
         }
         check_identity(&identity, &self.config, &heartbeat.node_id)?;
 
+        if heartbeat.lease_id.len() > self.config.max_string_field_length {
+            return Err(Status::invalid_argument(format!(
+                "lease_id exceeds {} bytes",
+                self.config.max_string_field_length
+            )));
+        }
+
         let node_id = parse_node_id(&heartbeat.node_id)?;
         let node = self
             .registry
@@ -506,10 +513,22 @@ fn validate_registration_fields(
                 "capacity.max_sessions must be greater than 0".to_string(),
             ));
         }
+        if capacity.max_sessions > config.max_capacity_sessions {
+            return Err(Status::invalid_argument(format!(
+                "capacity.max_sessions exceeds {}",
+                config.max_capacity_sessions
+            )));
+        }
         if capacity.max_cpu_percent > config.max_reported_load_percent {
             return Err(Status::invalid_argument(format!(
                 "capacity.max_cpu_percent exceeds {}%",
                 config.max_reported_load_percent
+            )));
+        }
+        if capacity.max_bandwidth_mbps > config.max_capacity_bandwidth_mbps {
+            return Err(Status::invalid_argument(format!(
+                "capacity.max_bandwidth_mbps exceeds {}",
+                config.max_capacity_bandwidth_mbps
             )));
         }
     }

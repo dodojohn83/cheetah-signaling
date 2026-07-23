@@ -38,6 +38,10 @@ pub struct MediaRegistryConfig {
     pub max_reported_load_percent: u64,
     /// Maximum session count a heartbeat may report.
     pub max_reported_session_count: u64,
+    /// Maximum `capacity.max_sessions` a media node may register.
+    pub max_capacity_sessions: u64,
+    /// Maximum `capacity.max_bandwidth_mbps` a media node may register.
+    pub max_capacity_bandwidth_mbps: u64,
     /// Duration a reservation remains valid without being activated.
     pub reservation_ttl_ms: u64,
     /// Duration a deregistered node remains visible to the reconciler before
@@ -71,6 +75,8 @@ impl MediaRegistryConfig {
             endpoint_dns_lookup_timeout_ms: 1_000,
             max_reported_load_percent: 100,
             max_reported_session_count: 100_000,
+            max_capacity_sessions: 1_000_000,
+            max_capacity_bandwidth_mbps: 100_000,
             reservation_ttl_ms: 10_000,
             deregister_protection_ttl_ms: 60_000,
         }
