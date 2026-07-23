@@ -1,10 +1,12 @@
 //! Media node repository for PostgreSQL.
 
-use cheetah_domain::{MediaCapability, MediaNode, MediaNodeCapacity, MediaNodeHealth, NodeStatus};
-use cheetah_signal_types::{ListCursor, NodeId, Page, PageRequest, UtcTimestamp};
+use cheetah_domain::{
+    DomainEvent, MediaCapability, MediaNode, MediaNodeCapacity, MediaNodeHealth, NodeStatus,
+};
+use cheetah_signal_types::{Event, ListCursor, NodeId, Page, PageRequest, UtcTimestamp};
 use cheetah_storage_api::{MediaNodeRepository, StorageError};
 use sqlx::types::Json;
-use sqlx::{FromRow, PgPool};
+use sqlx::{FromRow, PgConnection, PgPool};
 use std::collections::BTreeMap;
 use time::{Duration, OffsetDateTime};
 
@@ -40,6 +42,49 @@ fn media_node_columns() -> &'static str {
     "node_id, instance_id, instance_epoch, zone, region, network_zones, labels,
      control_endpoint, media_addresses, capabilities, capacity, load, session_count,
      draining, status, last_heartbeat_at, lease_until, generation, contract_version, revision, updated_at"
+}
+
+/// Overwrites `MediaNodeUpdated` payloads with the persisted node snapshot and
+/// appends the events to the outbox in the current transaction.
+#[allow(clippy::explicit_auto_deref)]
+async fn append_outbox_events(
+    conn: &mut PgConnection,
+    events: &mut [Event<DomainEvent>],
+    persisted: &MediaNode,
+) -> Result<(), StorageError> {
+    for event in events.iter_mut() {
+        event.aggregate_sequence = persisted.revision;
+        if let DomainEvent::MediaNodeUpdated { ref mut node } = event.payload {
+            *node = persisted.clone();
+        }
+
+        sqlx::query(
+            "INSERT INTO outbox_events (
+                event_id, tenant_id, aggregate_ref, aggregate_sequence, payload, published,
+                attempts, failed, next_attempt_at, error,
+                occurred_at, correlation_id, causation_id, source
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            ON CONFLICT (event_id) DO NOTHING",
+        )
+        .bind(event.event_id.as_uuid())
+        .bind(event.tenant_id.as_uuid())
+        .bind(Json(&event.aggregate_ref))
+        .bind(event.aggregate_sequence as i64)
+        .bind(Json(&event))
+        .bind(false)
+        .bind(0i64)
+        .bind(false)
+        .bind(Option::<OffsetDateTime>::None)
+        .bind(Option::<String>::None)
+        .bind(event.occurred_at.as_offset())
+        .bind(event.correlation_id.as_uuid())
+        .bind(event.causation_id.as_uuid())
+        .bind(event.source.as_uuid())
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| StorageError::backend(e.to_string()))?;
+    }
+    Ok(())
 }
 
 #[derive(FromRow)]
@@ -118,7 +163,11 @@ impl PostgresMediaNodeRepository {
 
 #[async_trait::async_trait]
 impl MediaNodeRepository for PostgresMediaNodeRepository {
-    async fn register(&mut self, node: MediaNode) -> Result<MediaNode, StorageError> {
+    async fn register(
+        &mut self,
+        node: MediaNode,
+        mut events: Vec<Event<DomainEvent>>,
+    ) -> Result<MediaNode, StorageError> {
         let updated_at = node.last_heartbeat_at.map_or(0, to_millis);
 
         let mut tx = self
@@ -226,10 +275,13 @@ impl MediaNodeRepository for PostgresMediaNodeRepository {
         .await
         .map_err(|e| StorageError::backend(e.to_string()))?;
 
+        let persisted: MediaNode = row.try_into()?;
+        append_outbox_events(&mut tx, &mut events, &persisted).await?;
+
         tx.commit()
             .await
             .map_err(|e| StorageError::backend(e.to_string()))?;
-        row.try_into()
+        Ok(persisted)
     }
 
     async fn heartbeat(
@@ -240,7 +292,14 @@ impl MediaNodeRepository for PostgresMediaNodeRepository {
         updated_at: UtcTimestamp,
         load: u64,
         session_count: u64,
+        mut events: Vec<Event<DomainEvent>>,
     ) -> Result<Option<MediaNode>, StorageError> {
+        let mut tx = self
+            .write_pool
+            .begin()
+            .await
+            .map_err(|e| StorageError::backend(e.to_string()))?;
+
         let row: Option<MediaNodeRow> = sqlx::query_as::<sqlx::Postgres, MediaNodeRow>(&format!(
             "UPDATE media_nodes SET
                     lease_until = $1, last_heartbeat_at = $2, load = $3, session_count = $4,
@@ -256,11 +315,23 @@ impl MediaNodeRepository for PostgresMediaNodeRepository {
         .bind(to_millis(updated_at))
         .bind(node_id.as_uuid())
         .bind(&instance_id)
-        .fetch_optional(&self.write_pool)
+        .fetch_optional(&mut *tx)
         .await
         .map_err(|e| StorageError::backend(e.to_string()))?;
 
-        row.map(TryInto::try_into).transpose()
+        let result = match row {
+            Some(row) => {
+                let persisted: MediaNode = row.try_into()?;
+                append_outbox_events(&mut tx, &mut events, &persisted).await?;
+                Some(persisted)
+            }
+            None => None,
+        };
+
+        tx.commit()
+            .await
+            .map_err(|e| StorageError::backend(e.to_string()))?;
+        Ok(result)
     }
 
     async fn get(&self, node_id: NodeId) -> Result<Option<MediaNode>, StorageError> {
@@ -343,8 +414,15 @@ impl MediaNodeRepository for PostgresMediaNodeRepository {
         instance_id: String,
         draining: bool,
         updated_at: UtcTimestamp,
+        mut events: Vec<Event<DomainEvent>>,
     ) -> Result<Option<MediaNode>, StorageError> {
         let status = if draining { "draining" } else { "active" };
+        let mut tx = self
+            .write_pool
+            .begin()
+            .await
+            .map_err(|e| StorageError::backend(e.to_string()))?;
+
         let row: Option<MediaNodeRow> = sqlx::query_as::<sqlx::Postgres, MediaNodeRow>(
             &format!(
                 "UPDATE media_nodes SET draining = $1, status = $2, updated_at = $3, revision = revision + 1
@@ -358,11 +436,23 @@ impl MediaNodeRepository for PostgresMediaNodeRepository {
         .bind(to_millis(updated_at))
         .bind(node_id.as_uuid())
         .bind(&instance_id)
-        .fetch_optional(&self.write_pool)
+        .fetch_optional(&mut *tx)
         .await
         .map_err(|e| StorageError::backend(e.to_string()))?;
 
-        row.map(TryInto::try_into).transpose()
+        let result = match row {
+            Some(row) => {
+                let persisted: MediaNode = row.try_into()?;
+                append_outbox_events(&mut tx, &mut events, &persisted).await?;
+                Some(persisted)
+            }
+            None => None,
+        };
+
+        tx.commit()
+            .await
+            .map_err(|e| StorageError::backend(e.to_string()))?;
+        Ok(result)
     }
 
     async fn deregister(
@@ -371,7 +461,14 @@ impl MediaNodeRepository for PostgresMediaNodeRepository {
         instance_id: String,
         updated_at: UtcTimestamp,
         lease_until: Option<UtcTimestamp>,
+        mut events: Vec<Event<DomainEvent>>,
     ) -> Result<Option<MediaNode>, StorageError> {
+        let mut tx = self
+            .write_pool
+            .begin()
+            .await
+            .map_err(|e| StorageError::backend(e.to_string()))?;
+
         let row: Option<MediaNodeRow> = sqlx::query_as::<sqlx::Postgres, MediaNodeRow>(
             &format!(
                 "UPDATE media_nodes SET status = 'left', lease_until = $1, updated_at = $2, revision = revision + 1
@@ -384,10 +481,22 @@ impl MediaNodeRepository for PostgresMediaNodeRepository {
         .bind(to_millis(updated_at))
         .bind(node_id.as_uuid())
         .bind(&instance_id)
-        .fetch_optional(&self.write_pool)
+        .fetch_optional(&mut *tx)
         .await
         .map_err(|e| StorageError::backend(e.to_string()))?;
 
-        row.map(TryInto::try_into).transpose()
+        let result = match row {
+            Some(row) => {
+                let persisted: MediaNode = row.try_into()?;
+                append_outbox_events(&mut tx, &mut events, &persisted).await?;
+                Some(persisted)
+            }
+            None => None,
+        };
+
+        tx.commit()
+            .await
+            .map_err(|e| StorageError::backend(e.to_string()))?;
+        Ok(result)
     }
 }

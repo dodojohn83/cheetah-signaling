@@ -49,6 +49,7 @@ enum ResourceKind {
   RESOURCE_KIND_PLUGIN = 9;
   RESOURCE_KIND_NODE = 10;
   RESOURCE_KIND_MEDIA_BINDING = 11;
+  RESOURCE_KIND_MEDIA_NODE = 12;
 }
 
 // A reference to a resource in the system.

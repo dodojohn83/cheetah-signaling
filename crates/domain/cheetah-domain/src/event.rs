@@ -3,8 +3,8 @@
 use crate::Protocol;
 use crate::{
     Capability, Command, Connectivity, DeviceKind, DeviceLifecycle, IdempotencyScope,
-    MediaBindingState, MediaPurpose, MediaSessionDesiredState, MediaSessionState, OperationResult,
-    OperationStatus,
+    MediaBindingState, MediaNode, MediaPurpose, MediaSessionDesiredState, MediaSessionState,
+    OperationResult, OperationStatus,
 };
 use cheetah_signal_types::{
     ChannelId, Deadline, DeviceId, MediaBindingId, MediaSessionId, NodeId, OperationId, OwnerEpoch,
@@ -329,5 +329,10 @@ pub enum DomainEvent {
         external_id: Option<String>,
         /// Payload fields as key/value pairs. Complex values are JSON-encoded.
         payload: std::collections::BTreeMap<String, String>,
+    },
+    /// A media node registration was created or updated.
+    MediaNodeUpdated {
+        /// Current media node snapshot.
+        node: MediaNode,
     },
 }

@@ -97,6 +97,8 @@ pub enum ResourceKind {
     Plugin,
     /// Node.
     Node,
+    /// Media node (media plane worker).
+    MediaNode,
 }
 
 /// Identifier for a resource, grouped by the resource kind.
@@ -126,6 +128,8 @@ pub enum ResourceId {
     Plugin(crate::PluginId),
     /// Node scoped.
     Node(NodeId),
+    /// Media node scoped.
+    MediaNode(NodeId),
 }
 
 /// Context carried with every mutating media request.
