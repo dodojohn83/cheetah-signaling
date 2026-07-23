@@ -7,6 +7,24 @@
 
 use std::fmt;
 
+/// Maximum byte length of a `SafeDetails` string.
+const MAX_SAFE_DETAILS_BYTES: usize = 4096;
+
+/// Truncates `s` to at most `max` bytes, never splitting a multi-byte character.
+fn clamp_string_bytes(s: String, max: usize) -> String {
+    if s.len() <= max {
+        return s;
+    }
+    let mut end = 0;
+    for (i, c) in s.char_indices() {
+        if i + c.len_utf8() > max {
+            break;
+        }
+        end = i + c.len_utf8();
+    }
+    s[..end].to_string()
+}
+
 /// Patterns whose line/element contents are replaced with `[REDACTED]`.
 const SENSITIVE_KEYS: &[&str] = &[
     "Authorization",
@@ -70,7 +88,11 @@ pub struct SafeDetails(pub String);
 impl SafeDetails {
     /// Create a new `SafeDetails` by redacting `input`.
     pub fn new(input: impl Into<String>) -> Self {
-        Self(redact_details(&input.into()))
+        // Clamp before redaction so the redactor only ever sees a bounded buffer,
+        // while still being able to redact sensitive values that fit within the
+        // final output limit.
+        let input = clamp_string_bytes(input.into(), MAX_SAFE_DETAILS_BYTES);
+        Self(redact_details(&input))
     }
 
     /// Borrow the redacted string.
@@ -152,5 +174,27 @@ mod tests {
         assert_eq!(format!("{r}"), "[REDACTED]");
         assert_eq!(format!("{r:?}"), "[REDACTED]");
         assert_eq!(r.expose_secret(), "secret");
+    }
+
+    #[test]
+    fn safe_details_clamps_oversized_input() {
+        let oversized = "x".repeat(MAX_SAFE_DETAILS_BYTES + 1);
+        let safe = SafeDetails::new(oversized);
+        assert_eq!(safe.as_str().len(), MAX_SAFE_DETAILS_BYTES);
+    }
+
+    #[test]
+    fn safe_details_clamps_on_utf8_boundary() {
+        let s = "α".repeat(MAX_SAFE_DETAILS_BYTES);
+        let safe = SafeDetails::new(s);
+        assert!(safe.as_str().is_char_boundary(safe.as_str().len()));
+        assert!(safe.as_str().len() <= MAX_SAFE_DETAILS_BYTES);
+    }
+
+    #[test]
+    fn safe_details_redaction_survives_after_clamp() {
+        let input = format!("password={}", "x".repeat(MAX_SAFE_DETAILS_BYTES));
+        let safe = SafeDetails::new(input);
+        assert_eq!(safe.as_str(), "password=[REDACTED]");
     }
 }
