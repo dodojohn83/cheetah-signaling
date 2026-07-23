@@ -239,7 +239,7 @@ impl OwnerRepository for SqliteOwnerRepository {
         node_id: cheetah_signal_types::NodeId,
         page: PageRequest,
     ) -> Result<Page<OwnedDevice>, StorageError> {
-        let page_size = page.page_size.max(1) as i64;
+        let page_size = page.clamped_page_size();
         let cursor = match &page.cursor {
             None => None,
             Some(value) => {
@@ -262,7 +262,7 @@ impl OwnerRepository for SqliteOwnerRepository {
                      LIMIT ?",
             )
             .bind(node_id.as_uuid())
-            .bind(page_size + 1)
+            .bind(i64::from(page_size).saturating_add(1))
             .fetch_all(&self.read_pool)
             .await,
             Some((updated_at, device_id)) => sqlx::query_as::<sqlx::Sqlite, OwnedDeviceRow>(
@@ -277,15 +277,16 @@ impl OwnerRepository for SqliteOwnerRepository {
             .bind(updated_at.as_offset())
             .bind(updated_at.as_offset())
             .bind(device_id)
-            .bind(page_size + 1)
+            .bind(i64::from(page_size).saturating_add(1))
             .fetch_all(&self.read_pool)
             .await,
         }
         .map_err(|e| StorageError::backend(e.to_string()))?;
 
-        let has_more = rows.len() > page_size as usize;
+        let page_size = page_size as usize;
+        let has_more = rows.len() > page_size;
         let next_cursor = if has_more {
-            let last = &rows[page_size as usize - 1];
+            let last = &rows[page_size - 1];
             Some(
                 ListCursor::new(UtcTimestamp::from_offset(last.updated_at), last.device_id)
                     .map_err(|e| StorageError::internal(format!("failed to encode cursor: {e}")))?
@@ -298,7 +299,7 @@ impl OwnerRepository for SqliteOwnerRepository {
 
         let items: Vec<OwnedDevice> = rows
             .into_iter()
-            .take(page_size as usize)
+            .take(page_size)
             .map(|r| OwnedDevice {
                 tenant_id: r.tenant_id.into(),
                 device_id: r.device_id.into(),

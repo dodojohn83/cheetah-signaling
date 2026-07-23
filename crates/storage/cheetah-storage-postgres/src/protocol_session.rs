@@ -226,16 +226,15 @@ impl ProtocolSessionRepository for PostgresProtocolSessionRepository {
             qb.push(")");
         }
 
+        let page_size = page.page_size_as_usize_clamped();
         qb.push(" ORDER BY updated_at, protocol_session_id LIMIT ");
-        qb.push_bind((page.page_size + 1) as i64);
+        qb.push_bind(page.limit_plus_one());
 
         let rows: Vec<ProtocolSessionRow> = qb
             .build_query_as::<ProtocolSessionRow>()
             .fetch_all(&self.read_pool)
             .await
             .map_err(sqlx_to_domain)?;
-
-        let page_size = page.page_size_as_usize();
         let has_more = rows.len() > page_size;
         let next_cursor = if has_more {
             let last = rows

@@ -273,7 +273,8 @@ mod tests {
                 };
             }
 
-            let end = (start + page.page_size as usize).min(alive.len());
+            let page_size = page.page_size_as_usize_clamped();
+            let end = start.saturating_add(page_size).min(alive.len());
             let has_more = alive.len() > end;
             let items: Vec<ClusterNode> = alive.drain(start..end).collect();
             let next_cursor = if has_more {

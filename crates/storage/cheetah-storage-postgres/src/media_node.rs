@@ -371,8 +371,9 @@ impl MediaNodeRepository for PostgresMediaNodeRepository {
             qb.push(")");
         }
 
+        let page_size = page.page_size_as_usize_clamped();
         qb.push(" ORDER BY updated_at, node_id LIMIT ");
-        qb.push_bind((page.page_size + 1) as i64);
+        qb.push_bind(page.limit_plus_one());
 
         let rows: Vec<MediaNodeRow> = qb
             .build_query_as::<MediaNodeRow>()
@@ -380,10 +381,10 @@ impl MediaNodeRepository for PostgresMediaNodeRepository {
             .await
             .map_err(|e| StorageError::backend(e.to_string()))?;
 
-        let has_more = rows.len() > page.page_size as usize;
+        let has_more = rows.len() > page_size;
         let next_cursor = if has_more {
             let last = rows
-                .get(page.page_size as usize - 1)
+                .get(page_size - 1)
                 .ok_or_else(|| StorageError::internal("empty page"))?;
             Some(
                 ListCursor::new(from_millis(last.updated_at), last.node_id)
@@ -397,7 +398,7 @@ impl MediaNodeRepository for PostgresMediaNodeRepository {
 
         let nodes: Vec<MediaNode> = rows
             .into_iter()
-            .take(page.page_size as usize)
+            .take(page_size)
             .map(TryInto::try_into)
             .collect::<Result<Vec<_>, _>>()?;
 

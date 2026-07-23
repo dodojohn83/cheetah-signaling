@@ -37,8 +37,7 @@ fn decode_cursor(page: &PageRequest) -> Result<Option<::uuid::Uuid>> {
     }
 }
 
-fn to_config_page(rows: Vec<WebhookConfigRow>, page_size: u32) -> Result<Page<WebhookConfig>> {
-    let page_size = page_size as usize;
+fn to_config_page(rows: Vec<WebhookConfigRow>, page_size: usize) -> Result<Page<WebhookConfig>> {
     let next_cursor = if rows.len() > page_size {
         let last = &rows[page_size - 1];
         let ts = UtcTimestamp::from_offset(last.updated_at);
@@ -63,8 +62,7 @@ fn to_config_page(rows: Vec<WebhookConfigRow>, page_size: u32) -> Result<Page<We
     Ok(page)
 }
 
-fn to_delivery_page(rows: Vec<WebhookDeliveryRow>, page_size: u32) -> Result<Page<WebhookDelivery>> {
-    let page_size = page_size as usize;
+fn to_delivery_page(rows: Vec<WebhookDeliveryRow>, page_size: usize) -> Result<Page<WebhookDelivery>> {
     let next_cursor = if rows.len() > page_size {
         let last = &rows[page_size - 1];
         let ts = UtcTimestamp::from_offset(last.updated_at);
@@ -227,7 +225,7 @@ pub(crate) async fn list_webhook_configs(
     }
 
     qb.push(" ORDER BY webhook_id LIMIT ");
-    qb.push_bind((page.page_size + 1) as i64);
+    qb.push_bind(page.limit_plus_one());
 
     let rows: Vec<WebhookConfigRow> = qb
         .build_query_as::<WebhookConfigRow>()
@@ -235,7 +233,7 @@ pub(crate) async fn list_webhook_configs(
         .await
         .map_err(crate::error::sqlx_to_domain)?;
 
-    to_config_page(rows, page.page_size)
+    to_config_page(rows, page.page_size_as_usize_clamped())
 }
 
 pub(crate) async fn get_webhook_delivery(
@@ -311,7 +309,7 @@ pub(crate) async fn list_webhook_deliveries(
     }
 
     qb.push(" ORDER BY delivery_id LIMIT ");
-    qb.push_bind((page.page_size + 1) as i64);
+    qb.push_bind(page.limit_plus_one());
 
     let rows: Vec<WebhookDeliveryRow> = qb
         .build_query_as::<WebhookDeliveryRow>()
@@ -319,7 +317,7 @@ pub(crate) async fn list_webhook_deliveries(
         .await
         .map_err(crate::error::sqlx_to_domain)?;
 
-    to_delivery_page(rows, page.page_size)
+    to_delivery_page(rows, page.page_size_as_usize_clamped())
 }
 
 pub(crate) async fn pending_webhook_deliveries(
