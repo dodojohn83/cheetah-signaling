@@ -10,6 +10,7 @@
 pub mod admission;
 pub mod audit;
 pub mod config;
+mod config_validate;
 pub mod context;
 pub mod error;
 pub mod event;
