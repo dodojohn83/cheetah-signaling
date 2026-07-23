@@ -14,8 +14,13 @@ use cheetah_signal_application::dto::{
     ControlPlaybackRequest, MediaSessionDto, StartBroadcastRequest, StartLiveRequest,
     StartPlaybackRequest, StartTalkRequest, StopLiveRequest,
 };
-use cheetah_signal_types::{AuditOutcome, DeviceId, MediaSessionId, Page, UtcTimestamp};
+use cheetah_signal_types::{
+    AuditOutcome, DeviceId, MediaSessionId, Page, SignalError, SignalErrorKind, UtcTimestamp,
+};
 use std::sync::Arc;
+
+/// Maximum byte length of the `purpose` discriminator in a media session creation request.
+const MAX_MEDIA_PURPOSE_BYTES: usize = 64;
 
 pub async fn list_sessions(
     Query(query): Query<ListQuery>,
@@ -60,52 +65,78 @@ pub async fn create_session(
 ) -> Result<axum::response::Response, HttpError> {
     ctx.require_scope("operator")?;
     let mut uow = state.storage.begin().await.map_err(HttpError::from)?;
-    let purpose = body
-        .get("purpose")
-        .and_then(|v| v.as_str())
-        .unwrap_or("live");
-    let result = if purpose.eq_ignore_ascii_case("live") {
-        let mut request: StartLiveRequest =
-            serde_json::from_value(body).map_err(HttpError::from)?;
-        request.idempotency_key = idempotency.0.clone();
-        state
-            .media_service
-            .start_live(&ctx.0, &mut *uow, request)
-            .await
-            .map_err(HttpError::from)?
-    } else if purpose.eq_ignore_ascii_case("playback") {
-        let mut request: StartPlaybackRequest =
-            serde_json::from_value(body).map_err(HttpError::from)?;
-        request.idempotency_key = idempotency.0.clone();
-        state
-            .media_service
-            .start_playback(&ctx.0, &mut *uow, request)
-            .await
-            .map_err(HttpError::from)?
-    } else if purpose.eq_ignore_ascii_case("talk") {
-        let mut request: StartTalkRequest =
-            serde_json::from_value(body).map_err(HttpError::from)?;
-        request.idempotency_key = idempotency.0.clone();
-        state
-            .media_service
-            .start_talk(&ctx.0, &mut *uow, request)
-            .await
-            .map_err(HttpError::from)?
-    } else if purpose.eq_ignore_ascii_case("broadcast") {
-        let mut request: StartBroadcastRequest =
-            serde_json::from_value(body).map_err(HttpError::from)?;
-        request.idempotency_key = idempotency.0.clone();
-        state
-            .media_service
-            .start_broadcast(&ctx.0, &mut *uow, request)
-            .await
-            .map_err(HttpError::from)?
-    } else {
-        let display = purpose.chars().take(64).collect::<String>();
-        return Err(HttpError::Signal(cheetah_signal_types::SignalError::new(
-            cheetah_signal_types::SignalErrorKind::InvalidArgument,
-            format!("unsupported media purpose: {display}"),
+    let purpose = match body.get("purpose") {
+        Some(v) => v.as_str().ok_or_else(|| {
+            HttpError::Signal(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                "purpose must be a string",
+            ))
+        })?,
+        None => "live",
+    };
+    if purpose.len() > MAX_MEDIA_PURPOSE_BYTES {
+        return Err(HttpError::Signal(SignalError::new(
+            SignalErrorKind::InvalidArgument,
+            "purpose exceeds maximum length",
         )));
+    }
+    let purpose_kind = if purpose.eq_ignore_ascii_case("live") {
+        "live"
+    } else if purpose.eq_ignore_ascii_case("playback") {
+        "playback"
+    } else if purpose.eq_ignore_ascii_case("talk") {
+        "talk"
+    } else if purpose.eq_ignore_ascii_case("broadcast") {
+        "broadcast"
+    } else {
+        return Err(HttpError::Signal(SignalError::new(
+            SignalErrorKind::InvalidArgument,
+            "unsupported media purpose",
+        )));
+    };
+
+    let result = match purpose_kind {
+        "live" => {
+            let mut request: StartLiveRequest =
+                serde_json::from_value(body).map_err(HttpError::from)?;
+            request.idempotency_key = idempotency.0.clone();
+            state
+                .media_service
+                .start_live(&ctx.0, &mut *uow, request)
+                .await
+                .map_err(HttpError::from)?
+        }
+        "playback" => {
+            let mut request: StartPlaybackRequest =
+                serde_json::from_value(body).map_err(HttpError::from)?;
+            request.idempotency_key = idempotency.0.clone();
+            state
+                .media_service
+                .start_playback(&ctx.0, &mut *uow, request)
+                .await
+                .map_err(HttpError::from)?
+        }
+        "talk" => {
+            let mut request: StartTalkRequest =
+                serde_json::from_value(body).map_err(HttpError::from)?;
+            request.idempotency_key = idempotency.0.clone();
+            state
+                .media_service
+                .start_talk(&ctx.0, &mut *uow, request)
+                .await
+                .map_err(HttpError::from)?
+        }
+        "broadcast" => {
+            let mut request: StartBroadcastRequest =
+                serde_json::from_value(body).map_err(HttpError::from)?;
+            request.idempotency_key = idempotency.0.clone();
+            state
+                .media_service
+                .start_broadcast(&ctx.0, &mut *uow, request)
+                .await
+                .map_err(HttpError::from)?
+        }
+        _ => unreachable!(),
     };
     let session_id = result.media_session_id.to_string();
     let body = serde_json::to_value(result).map_err(HttpError::from)?;
