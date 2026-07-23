@@ -318,7 +318,13 @@ fn ascii_contains_ignore_case(haystack: &str, needle: &str) -> bool {
     false
 }
 
+const MAX_VENDOR_TOPIC_CHARS: usize = 256;
+
 /// Maps a known ONVIF topic to a stable northbound event type, or vendor fallback.
+///
+/// Matching is case-insensitive and does not allocate a lower-case copy of the
+/// topic. Unknown topics are truncated to [`MAX_VENDOR_TOPIC_CHARS`] so the
+/// resulting event type cannot grow without bound.
 pub fn normalize_topic(topic: &str) -> String {
     if ascii_contains_ignore_case(topic, "motion")
         || ascii_contains_ignore_case(topic, "cellmotion")
@@ -334,7 +340,8 @@ pub fn normalize_topic(topic: &str) -> String {
     {
         "device.video_loss".into()
     } else {
-        format!("vendor.onvif:{topic}")
+        let truncated: String = topic.chars().take(MAX_VENDOR_TOPIC_CHARS).collect();
+        format!("vendor.onvif:{truncated}")
     }
 }
 
@@ -375,6 +382,7 @@ mod tests {
         let huge = "A".repeat(100_000);
         let result = normalize_topic(&format!("tns1:Vendor/{huge}"));
         assert!(result.starts_with("vendor.onvif:"));
+        assert_eq!(result.len(), "vendor.onvif:".len() + MAX_VENDOR_TOPIC_CHARS);
     }
 
     #[test]
