@@ -133,7 +133,8 @@ impl RequestMetrics {
 
     /// Records the duration of a completed response for the histogram.
     pub fn record_duration(&self, duration: Duration) {
-        let ns = duration.as_nanos() as u64;
+        let nanos = duration.as_nanos().min(u64::MAX as u128);
+        let ns = nanos as u64;
         self.response_duration_sum_ns
             .fetch_add(ns, Ordering::Relaxed);
 
@@ -246,4 +247,31 @@ pub fn metrics_response(
     }
 
     ([("content-type", "text/plain; version=0.0.4")], body).into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use super::*;
+
+    #[test]
+    fn record_duration_caps_nanoseconds_at_u64_max() {
+        let metrics = RequestMetrics::default();
+        metrics.record_duration(Duration::from_secs(u64::MAX));
+        let sum_ns = metrics
+            .response_duration_sum_ns
+            .load(std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(
+            sum_ns,
+            u64::MAX,
+            "huge durations must clamp to u64::MAX instead of wrapping"
+        );
+        let inf = metrics.response_duration_buckets.last().unwrap();
+        assert_eq!(
+            inf.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "huge durations must fall into the +Inf histogram bucket"
+        );
+    }
 }

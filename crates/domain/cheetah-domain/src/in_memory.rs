@@ -131,7 +131,7 @@ impl InMemoryClock {
 
     /// Advances the clock by the given duration.
     pub fn advance(&self, duration: DurationMs) {
-        let ms = duration.as_millis() as u64;
+        let ms = duration.as_millis().max(0) as u64;
         self.wall_ms.fetch_add(ms, Ordering::SeqCst);
         self.mono_ms.fetch_add(ms, Ordering::SeqCst);
     }
@@ -155,12 +155,16 @@ impl Default for InMemoryClock {
 
 impl Clock for InMemoryClock {
     fn now_wall(&self) -> UtcTimestamp {
-        let ms = self.wall_ms.load(Ordering::SeqCst) as i64;
-        UtcTimestamp::from_offset(OffsetDateTime::UNIX_EPOCH + TimeDuration::milliseconds(ms))
+        let ms = i64::try_from(self.wall_ms.load(Ordering::SeqCst)).unwrap_or(i64::MAX);
+        let duration = TimeDuration::milliseconds(ms);
+        let ts = OffsetDateTime::UNIX_EPOCH
+            .checked_add(duration)
+            .unwrap_or(OffsetDateTime::UNIX_EPOCH);
+        UtcTimestamp::from_offset(ts)
     }
 
     fn now_monotonic(&self) -> DurationMs {
-        let ms = self.mono_ms.load(Ordering::SeqCst) as i64;
+        let ms = i64::try_from(self.mono_ms.load(Ordering::SeqCst)).unwrap_or(i64::MAX);
         DurationMs::from_millis(ms)
     }
 }
@@ -1881,6 +1885,28 @@ pub fn media_session_resource_ref(
 mod tests {
     use super::*;
     use crate::MediaPort;
+
+    #[test]
+    fn advance_rejects_negative_duration() {
+        let clock = InMemoryClock::new();
+        clock.advance(DurationMs::from_millis(-500));
+        let mono = clock.now_monotonic().as_millis();
+        assert_eq!(mono, 0, "negative advances must not wrap to u64::MAX");
+    }
+
+    #[test]
+    fn huge_wall_ms_does_not_wrap_or_panic() {
+        let clock = InMemoryClock::new();
+        clock.set_wall_ms(u64::MAX);
+        let _ = clock.now_wall();
+    }
+
+    #[test]
+    fn huge_mono_ms_does_not_wrap_negative() {
+        let clock = InMemoryClock::new();
+        clock.set_mono_ms(u64::MAX);
+        assert!(clock.now_monotonic().as_millis() > 0);
+    }
 
     #[test]
     fn list_sessions_rejects_invalid_cursor() {
