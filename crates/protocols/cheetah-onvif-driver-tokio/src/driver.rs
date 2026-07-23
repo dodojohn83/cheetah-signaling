@@ -65,6 +65,10 @@ impl OnvifHttpDriver {
         endpoint: &str,
         timeout: Option<Duration>,
     ) -> DriverResult<OwnedSemaphorePermit> {
+        // Reject malformed or credential-bearing endpoints before they can be
+        // used as cache keys or embedded in timeout/overload error messages.
+        let _ = validate_endpoint(endpoint, &self.policy)?;
+
         let semaphore = {
             let mut guard = self
                 .device_permits

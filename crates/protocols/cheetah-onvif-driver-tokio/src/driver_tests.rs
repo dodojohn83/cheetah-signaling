@@ -9,7 +9,7 @@ async fn per_device_concurrency_limits_concurrent_calls() {
         ..Default::default()
     };
     let driver = OnvifHttpDriver::new(&config).expect("driver should build");
-    let endpoint = "http://example.com/onvif/device_service";
+    let endpoint = "http://192.168.1.1/onvif/device_service";
 
     let _first = driver
         .acquire_device_permit(endpoint, None)
@@ -33,8 +33,8 @@ async fn idle_device_permits_are_evicted_when_map_exceeds_capacity() {
         ..Default::default()
     };
     let driver = OnvifHttpDriver::new(&config).expect("driver should build");
-    let first_endpoint = "http://a.onvif/device_service";
-    let second_endpoint = "http://b.onvif/device_service";
+    let first_endpoint = "http://192.168.1.1/onvif/device_service";
+    let second_endpoint = "http://192.168.1.2/onvif/device_service";
 
     let first = driver
         .acquire_device_permit(first_endpoint, None)
