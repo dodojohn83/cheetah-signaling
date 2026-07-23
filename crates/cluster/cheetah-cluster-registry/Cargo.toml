@@ -13,9 +13,9 @@ cheetah-domain = { path = "../../domain/cheetah-domain" }
 cheetah-signal-types = { path = "../../foundation/cheetah-signal-types" }
 cheetah-storage-api = { path = "../../storage/cheetah-storage-api" }
 async-trait = { workspace = true }
+futures = { workspace = true }
 semver = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["sync"] }
 tracing = { workspace = true }
 
 [dev-dependencies]

@@ -1040,8 +1040,8 @@ pub async fn start(
     // Cluster node registration + heartbeat against cluster_nodes table.
     #[cfg(feature = "cluster")]
     {
-        let node_repo: Arc<tokio::sync::Mutex<dyn cheetah_storage_api::NodeRepository>> =
-            Arc::new(tokio::sync::Mutex::new(StorageBackedNodeRepo {
+        let node_repo: Arc<futures::lock::Mutex<dyn cheetah_storage_api::NodeRepository>> =
+            Arc::new(futures::lock::Mutex::new(StorageBackedNodeRepo {
                 storage: storage.clone(),
             }));
         let heartbeat_ms = if config.cluster.heartbeat_interval_ms.as_millis() > 0 {
