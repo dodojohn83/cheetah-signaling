@@ -464,14 +464,24 @@ impl ProtocolDriver for OutOfProcessDriver {
     }
 }
 
+const MAX_PLUGIN_STARTUP_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
+const MIN_POLL_INTERVAL: Duration = Duration::from_millis(1);
+
+fn startup_deadline_from_now(timeout_ms: DurationMs) -> std::time::Instant {
+    let now = std::time::Instant::now();
+    let timeout =
+        Duration::from_millis(timeout_ms.as_millis().max(0) as u64).min(MAX_PLUGIN_STARTUP_TIMEOUT);
+    now.checked_add(timeout).unwrap_or(now)
+}
+
 async fn wait_for_ready(
     address: &str,
     startup_timeout: DurationMs,
     poll_interval: DurationMs,
 ) -> Result<(), PluginError> {
-    let deadline = std::time::Instant::now()
-        + Duration::from_millis(startup_timeout.as_millis().max(0) as u64);
-    let poll = Duration::from_millis(poll_interval.as_millis().max(0) as u64);
+    let deadline = startup_deadline_from_now(startup_timeout);
+    let poll =
+        Duration::from_millis(poll_interval.as_millis().max(1) as u64).max(MIN_POLL_INTERVAL);
 
     while std::time::Instant::now() < deadline {
         let remaining = deadline.saturating_duration_since(std::time::Instant::now());
@@ -766,5 +776,19 @@ mod tests {
         let value = decode_response(&response, "shutdown")?;
         assert_eq!(value, serde_json::Value::Null);
         Ok(())
+    }
+
+    #[test]
+    fn startup_deadline_from_now_does_not_panic_with_huge_timeout() {
+        let now = std::time::Instant::now();
+        let deadline = startup_deadline_from_now(DurationMs::from_millis(i64::MAX));
+        assert!(deadline >= now, "deadline must not be in the past");
+    }
+
+    #[test]
+    fn poll_interval_zero_is_clamped_to_one_millisecond() {
+        let interval_ms = DurationMs::from_millis(0).as_millis().max(1);
+        let poll = Duration::from_millis(interval_ms as u64).max(MIN_POLL_INTERVAL);
+        assert_eq!(poll, MIN_POLL_INTERVAL);
     }
 }
