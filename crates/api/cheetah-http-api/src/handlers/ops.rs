@@ -1,6 +1,6 @@
 //! Administrative operations handlers.
 
-use crate::{ApiRequestContext, ApiState, AuthContext, HttpError};
+use crate::{ApiRequestContext, ApiState, AuthContext, HttpError, JsonBody};
 use axum::{
     Json,
     extract::{Path, State},
@@ -14,7 +14,7 @@ use std::sync::Arc;
 /// Validates a submitted configuration without applying it.
 pub async fn validate_config(
     ctx: AuthContext,
-    Json(config): Json<SignalConfig>,
+    JsonBody(config): JsonBody<SignalConfig>,
 ) -> Result<impl IntoResponse, HttpError> {
     ctx.require_scope("system_admin")?;
     config.validate().map_err(HttpError::Signal)?;
