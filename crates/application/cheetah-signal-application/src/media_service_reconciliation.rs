@@ -10,9 +10,21 @@ use cheetah_domain::{
     MediaSessionError, MediaSessionState, NodeStatus, UnitOfWork,
 };
 use cheetah_signal_types::{
-    DurationMs, MediaBindingId, MediaSessionId, NodeId, PageRequest, RequestContext,
+    DurationMs, MediaBindingId, MediaSessionId, NodeId, PageRequest, RequestContext, UtcTimestamp,
 };
 use std::collections::{BTreeMap, BTreeSet};
+
+/// Returns the latest representable UTC timestamp (year 9999).
+///
+/// Used as a saturating upper bound when a configured duration overflows the
+/// `OffsetDateTime` range, so the comparison logic remains well-defined.
+fn far_future_timestamp() -> UtcTimestamp {
+    UtcTimestamp::from_offset(time::OffsetDateTime::new_in_offset(
+        time::Date::from_calendar_date(9999, time::Month::December, 31).unwrap_or(time::Date::MAX),
+        time::Time::from_hms(23, 59, 59).unwrap_or(time::Time::MIDNIGHT),
+        time::UtcOffset::UTC,
+    ))
+}
 
 impl MediaService {
     /// Forces cleanup of all active sessions on the given media node by marking
@@ -360,11 +372,13 @@ impl MediaService {
                         // Already verifying. Escalate to migrate/fail once the grace window
                         // expires so a crashed-but-not-deregistered node cannot leave
                         // sessions stuck indefinitely.
-                        let grace_deadline =
-                            binding.updated_at().checked_add(DurationMs::from_millis(
+                        let grace_deadline = binding
+                            .updated_at()
+                            .checked_add(DurationMs::from_millis(
                                 i64::try_from(self.needs_verification_grace_ms).unwrap_or(i64::MAX),
-                            ));
-                        if grace_deadline.is_some_and(|deadline| now >= deadline) {
+                            ))
+                            .unwrap_or_else(far_future_timestamp);
+                        if now >= grace_deadline {
                             self.migrate_or_fail(
                                 context,
                                 uow,
@@ -686,5 +700,19 @@ impl MediaService {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use time::OffsetDateTime;
+
+    #[test]
+    fn far_future_timestamp_is_after_now_and_representable() {
+        let now = UtcTimestamp::from_offset(OffsetDateTime::now_utc());
+        let far = far_future_timestamp();
+        assert!(far.as_offset() > now.as_offset());
+        assert_eq!(far.as_offset().year(), 9999);
     }
 }
