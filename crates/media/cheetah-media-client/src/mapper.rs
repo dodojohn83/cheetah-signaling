@@ -5,9 +5,9 @@ use cheetah_domain::{
     CommandPayload, DomainError, MediaNodeCallback, MediaNodeCallbackKind, MediaNodeCommand,
     MediaNodeCommandResult, MediaNodeEvent, MediaNodeSessionRef,
 };
-use cheetah_signal_contracts::cheetah::common::v1::{CommandStatus, MediaControlExecuteResponse};
-use cheetah_signal_contracts::cheetah::media::v1::media_event::Event as MediaEventPayload;
-use cheetah_signal_contracts::cheetah::media::v1::{
+use cheetah_signal_grpc::cheetah::common::v1::{CommandStatus, MediaControlExecuteResponse};
+use cheetah_signal_grpc::cheetah::media::v1::media_event::Event as MediaEventPayload;
+use cheetah_signal_grpc::cheetah::media::v1::{
     MediaCommand, MediaControlPayload, MediaEvent, MediaMutationContext, MediaSessionRef,
     SubscribeRequest, media_command,
 };
@@ -363,7 +363,7 @@ fn map_event_payload(event: &MediaEvent) -> Result<MediaNodeCallbackKind, Domain
 
 #[allow(deprecated)]
 fn map_media_error(
-    error: &cheetah_signal_contracts::cheetah::media::v1::MediaError,
+    error: &cheetah_signal_grpc::cheetah::media::v1::MediaError,
 ) -> Result<MediaNodeCallbackKind, DomainError> {
     if let Some(status) = &error.status {
         return Ok(MediaNodeCallbackKind::Failed {
