@@ -5,23 +5,42 @@ use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+/// Maximum byte length of the protocol or resource family string used in
+/// rate-limit keys. Keeps per-path memory bounded even if the request URI is
+/// extremely long.
+const MAX_PROTOCOL_BYTES: usize = 64;
+
+/// Truncates `s` to at most `max` bytes without splitting a multi-byte
+/// UTF-8 character.
+fn clamp_str_bytes(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        return s.to_string();
+    }
+    let mut end = max;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    s[..end].to_string()
+}
+
 /// Extracts the protocol or resource family from an HTTP path.
 ///
 /// For `/api/v1/<resource>/...` the resource segment is used so that
 /// rate limits are scoped per API family instead of all falling under the
 /// literal `api` segment. Non-API paths fall back to the first non-empty
-/// segment.
+/// segment. The returned string is truncated to `MAX_PROTOCOL_BYTES`.
 pub(crate) fn request_protocol(path: &str) -> String {
     let mut parts = path.split('/').filter(|s| !s.is_empty());
-    match parts.next() {
+    let raw = match parts.next() {
         Some("api") => match parts.next() {
-            Some("v1") => parts.next().unwrap_or("api").to_string(),
-            Some(second) => second.to_string(),
-            None => "api".to_string(),
+            Some("v1") => parts.next().unwrap_or("api"),
+            Some(second) => second,
+            None => "api",
         },
-        Some(first) => first.to_string(),
-        None => String::new(),
-    }
+        Some(first) => first,
+        None => "",
+    };
+    clamp_str_bytes(raw, MAX_PROTOCOL_BYTES)
 }
 
 /// Composite key for the token bucket.
@@ -190,7 +209,9 @@ mod tests {
 
     #[test]
     fn check_does_not_panic_with_fresh_bucket_and_performs_cleanup() {
-        let limiter = RateLimiter::new(1, 1_000);
+        // Use a very low refill rate so the test is deterministic; the real-time
+        // elapsed between calls is far less than one second.
+        let limiter = RateLimiter::new(1, 1);
         let key = RateKey {
             source: [127, 0, 0, 1].into(),
             tenant: "t".to_string(),
@@ -202,5 +223,23 @@ mod tests {
         assert!(!limiter.check(&key));
         // Cleanup path is exercised (runs only once per 60s window); no panic.
         assert!(!limiter.check(&key));
+    }
+
+    #[test]
+    fn request_protocol_extracts_api_v1_resource() {
+        assert_eq!(request_protocol("/api/v1/devices"), "devices");
+        assert_eq!(request_protocol("/api/v1/devices/123"), "devices");
+        assert_eq!(request_protocol("/api/health"), "health");
+        assert_eq!(request_protocol("/metrics"), "metrics");
+        assert_eq!(request_protocol("/"), "");
+    }
+
+    #[test]
+    fn request_protocol_clamps_long_segment_at_char_boundary() {
+        let huge = "α".repeat(100);
+        let path = format!("/api/v1/{huge}");
+        let protocol = request_protocol(&path);
+        assert!(protocol.len() <= MAX_PROTOCOL_BYTES);
+        assert!(protocol.is_char_boundary(protocol.len()));
     }
 }
