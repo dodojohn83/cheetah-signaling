@@ -13,6 +13,8 @@ use secrecy::{ExposeSecret, SecretString};
 fn parse_dialect_values() {
     assert_eq!(parse_dialect(Some("media1")), MediaDialect::Media1);
     assert_eq!(parse_dialect(Some("media2")), MediaDialect::Media2);
+    assert_eq!(parse_dialect(Some("Media1")), MediaDialect::Media1);
+    assert_eq!(parse_dialect(Some("MEDIA2")), MediaDialect::Media2);
     assert_eq!(parse_dialect(None), MediaDialect::Media2);
     assert_eq!(parse_dialect(Some("unknown")), MediaDialect::Media2);
 }
