@@ -428,14 +428,15 @@ impl MediaNodeRegistry for PersistentMediaNodeRegistry {
 
     async fn list_active(&self, clock: &dyn Clock) -> Vec<MediaNode> {
         let now = clock.now_wall();
-        let needs_load = {
+        let should_load = {
             let nodes = self.nodes.read().await;
             nodes.is_empty()
         };
 
-        if needs_load {
+        if should_load {
             let mut collected = BTreeMap::new();
             let mut cursor = None;
+            let mut load_ok = true;
             loop {
                 let page_request = PageRequest {
                     cursor,
@@ -458,12 +459,22 @@ impl MediaNodeRegistry for PersistentMediaNodeRegistry {
                             break;
                         }
                     }
-                    Err(_) => break,
+                    Err(_) => {
+                        load_ok = false;
+                        break;
+                    }
                 }
             }
-            let mut nodes = self.nodes.write().await;
-            if nodes.is_empty() {
-                nodes.extend(collected);
+
+            if load_ok {
+                let mut nodes = self.nodes.write().await;
+                if nodes.is_empty() {
+                    nodes.extend(collected);
+                }
+            } else {
+                tracing::warn!(
+                    "failed to load active media nodes from repository; not caching partial results"
+                );
             }
         }
 
@@ -833,3 +844,7 @@ mod tests {
         assert!(!active.draining);
     }
 }
+
+#[cfg(test)]
+#[path = "persistent_registry_test.rs"]
+mod persistent_registry_test;
