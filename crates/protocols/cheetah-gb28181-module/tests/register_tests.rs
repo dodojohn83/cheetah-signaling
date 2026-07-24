@@ -464,9 +464,7 @@ fn challenge_optional_rejects_credential_backend_error() {
         .unwrap()
         .with_auth_policy(AuthPolicy::ChallengeOptional);
     let provider = |_device: &DeviceId| -> Result<Option<SecretString>, CredentialError> {
-        Err(CredentialError::Backend(
-            "secret store unavailable".to_string(),
-        ))
+        Err(CredentialError::backend("secret store unavailable"))
     };
     let mut access = Gb28181Access::new(config, provider).unwrap();
 
