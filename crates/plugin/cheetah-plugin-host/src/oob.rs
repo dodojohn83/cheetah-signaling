@@ -33,6 +33,7 @@ use tls_verifier::build_plugin_identity_verifier;
 
 use crate::startup::wait_for_ready;
 use tokio::fs;
+use tokio::io::AsyncReadExt;
 use tokio::process::{Child, Command};
 use tokio::sync::{Mutex, oneshot};
 #[cfg(test)]
@@ -213,22 +214,22 @@ impl OutOfProcessDriver {
         plugin_name: PluginName,
     ) -> Result<Self, PluginError> {
         if runtime.listen_address.is_empty() {
-            return Err(PluginError::InvalidManifest(
+            return Err(PluginError::invalid_manifest(
                 "listen_address must be configured".to_string(),
             ));
         }
         let socket_addr = runtime
             .listen_address
             .parse::<std::net::SocketAddr>()
-            .map_err(|e| PluginError::InvalidManifest(format!("invalid listen_address: {e}")))?;
+            .map_err(|e| PluginError::invalid_manifest(format!("invalid listen_address: {e}")))?;
         if socket_addr.port() == 0 {
-            return Err(PluginError::InvalidManifest(
+            return Err(PluginError::invalid_manifest(
                 "listen_address port 0 is not supported; configure a concrete port".to_string(),
             ));
         }
 
         let tls = runtime.tls.as_ref().ok_or_else(|| {
-            PluginError::InvalidManifest(
+            PluginError::invalid_manifest(
                 "out-of-process plugin communication requires TLS/mTLS".to_string(),
             )
         })?;
@@ -236,24 +237,9 @@ impl OutOfProcessDriver {
         // Ensure a rustls crypto provider is installed before tonic builds the TLS connector.
         let _ = rustls::crypto::ring::default_provider().install_default();
 
-        let ca_pem = fs::read(&tls.ca_cert_pem_path).await.map_err(|e| {
-            PluginError::Driver(format!(
-                "failed to read plugin CA certificate {}: {e}",
-                tls.ca_cert_pem_path.display()
-            ))
-        })?;
-        let client_cert_pem = fs::read(&tls.client_cert_pem_path).await.map_err(|e| {
-            PluginError::Driver(format!(
-                "failed to read plugin client certificate {}: {e}",
-                tls.client_cert_pem_path.display()
-            ))
-        })?;
-        let client_key_pem = fs::read(&tls.client_key_pem_path).await.map_err(|e| {
-            PluginError::Driver(format!(
-                "failed to read plugin client key {}: {e}",
-                tls.client_key_pem_path.display()
-            ))
-        })?;
+        let ca_pem = read_pem_file(&tls.ca_cert_pem_path).await?;
+        let client_cert_pem = read_pem_file(&tls.client_cert_pem_path).await?;
+        let client_key_pem = read_pem_file(&tls.client_key_pem_path).await?;
 
         let verifier = build_plugin_identity_verifier(&ca_pem, plugin_name.as_ref())?;
         let identity = Identity::from_pem(client_cert_pem, client_key_pem);
@@ -272,16 +258,16 @@ impl OutOfProcessDriver {
 
         let mut child = cmd
             .spawn()
-            .map_err(|e| PluginError::Driver(format!("failed to spawn plugin: {e}")))?;
+            .map_err(|e| PluginError::driver(format!("failed to spawn plugin: {e}")))?;
 
         let stdout = child
             .stdout
             .take()
-            .ok_or_else(|| PluginError::Driver("plugin stdout was not captured".to_string()))?;
+            .ok_or_else(|| PluginError::driver("plugin stdout was not captured".to_string()))?;
         let stderr = child
             .stderr
             .take()
-            .ok_or_else(|| PluginError::Driver("plugin stderr was not captured".to_string()))?;
+            .ok_or_else(|| PluginError::driver("plugin stderr was not captured".to_string()))?;
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
         let log_plugin_name = runtime.command.display().to_string();
@@ -307,16 +293,16 @@ impl OutOfProcessDriver {
         let endpoint = format!("https://{}", runtime.listen_address);
         let connect_timeout = clamp_timeout(runtime.connect_timeout);
         let channel = Channel::from_shared(endpoint.clone())
-            .map_err(|e| PluginError::Driver(format!("invalid plugin endpoint {endpoint}: {e}")))?
+            .map_err(|e| PluginError::driver(format!("invalid plugin endpoint {endpoint}: {e}")))?
             .tls_config_with_verifier(client_tls_config, verifier)
-            .map_err(|e| PluginError::Driver(format!("invalid TLS config: {e}")))?
+            .map_err(|e| PluginError::driver(format!("invalid TLS config: {e}")))?
             .connect_timeout(connect_timeout);
 
         let channel = tokio::time::timeout(connect_timeout, channel.connect())
             .await
             .map_err(|_| PluginError::Cancelled)?
             .map_err(|e| {
-                PluginError::Driver(format!("failed to connect to plugin at {endpoint}: {e}"))
+                PluginError::driver(format!("failed to connect to plugin at {endpoint}: {e}"))
             })?;
 
         let max_message_size = clamp_message_size(runtime.max_message_size);
@@ -342,7 +328,7 @@ impl OutOfProcessDriver {
     ) -> Result<serde_json::Value, PluginError> {
         let correlation_id = Uuid::now_v7().to_string();
         let payload_bytes = serde_json::to_vec(&payload)
-            .map_err(|e| PluginError::Driver(format!("failed to encode {method} payload: {e}")))?;
+            .map_err(|e| PluginError::driver(format!("failed to encode {method} payload: {e}")))?;
 
         let request = PluginRuntimeCallDriverRequest {
             correlation_id,
@@ -356,7 +342,7 @@ impl OutOfProcessDriver {
         let response = tokio::time::timeout(rpc_timeout, client.call_driver(request))
             .await
             .map_err(|_| PluginError::Cancelled)?
-            .map_err(|e| PluginError::Driver(format!("{method} RPC failed: {e}")))?;
+            .map_err(|e| PluginError::driver(format!("{method} RPC failed: {e}")))?;
 
         decode_response(&response.into_inner(), method)
     }
@@ -421,7 +407,7 @@ impl ProtocolDriver for OutOfProcessDriver {
 
         let events: Vec<ProtocolEvent> = match response.get("events") {
             Some(v) => serde_json::from_value(v.clone()).map_err(|e| {
-                PluginError::Driver(format!("handle_command events malformed: {e}"))
+                PluginError::driver(format!("handle_command events malformed: {e}"))
             })?,
             None => Vec::new(),
         };
@@ -430,7 +416,7 @@ impl ProtocolDriver for OutOfProcessDriver {
             ctx.device_sink()
                 .emit_event(event)
                 .await
-                .map_err(|e| PluginError::Driver(format!("event sink error: {e}")))?;
+                .map_err(|e| PluginError::driver(format!("event sink error: {e}")))?;
         }
 
         Ok(())
@@ -448,7 +434,7 @@ impl ProtocolDriver for OutOfProcessDriver {
         });
         let response = self.call_method("probe", payload, timeout).await?;
         serde_json::from_value(response)
-            .map_err(|e| PluginError::Driver(format!("probe response malformed: {e}")))
+            .map_err(|e| PluginError::driver(format!("probe response malformed: {e}")))
     }
 
     async fn health(
@@ -459,7 +445,7 @@ impl ProtocolDriver for OutOfProcessDriver {
         let payload = serde_json::json!({});
         let response = self.call_method("health", payload, timeout).await?;
         serde_json::from_value(response)
-            .map_err(|e| PluginError::Driver(format!("health response malformed: {e}")))
+            .map_err(|e| PluginError::driver(format!("health response malformed: {e}")))
     }
 }
 
@@ -472,6 +458,10 @@ const MAX_LOG_LINE_LEN: usize = 1024 * 1024;
 const MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 const MIN_LOG_LINE_LEN: usize = 1;
 const MIN_MESSAGE_SIZE: usize = 1024;
+/// Maximum bytes to read for a single plugin TLS PEM file. A misconfigured
+/// path pointing to a huge file would otherwise be loaded into memory before
+/// rustls can validate it.
+const MAX_PLUGIN_PEM_BYTES: usize = 1024 * 1024;
 
 fn clamp_timeout(timeout: DurationMs) -> Duration {
     Duration::from_millis(timeout.as_millis().max(0) as u64).min(MAX_RPC_TIMEOUT)
@@ -485,6 +475,28 @@ fn clamp_message_size(value: usize) -> usize {
     value.clamp(MIN_MESSAGE_SIZE, MAX_MESSAGE_SIZE)
 }
 
+/// Reads a plugin TLS PEM file and rejects files larger than [`MAX_PLUGIN_PEM_BYTES`].
+async fn read_pem_file(path: &std::path::Path) -> Result<Vec<u8>, PluginError> {
+    let metadata = fs::metadata(path).await.map_err(|e| {
+        PluginError::driver(format!("failed to read {} metadata: {e}", path.display()))
+    })?;
+    if metadata.len() > MAX_PLUGIN_PEM_BYTES as u64 {
+        return Err(PluginError::driver(format!(
+            "plugin PEM file {} exceeds {} bytes",
+            path.display(),
+            MAX_PLUGIN_PEM_BYTES
+        )));
+    }
+    let mut buf = Vec::with_capacity(metadata.len() as usize);
+    let mut file = fs::File::open(path)
+        .await
+        .map_err(|e| PluginError::driver(format!("failed to open {}: {e}", path.display())))?;
+    file.read_to_end(&mut buf)
+        .await
+        .map_err(|e| PluginError::driver(format!("failed to read {}: {e}", path.display())))?;
+    Ok(buf)
+}
+
 fn decode_response(
     response: &PluginRuntimeCallDriverResponse,
     method: &str,
@@ -494,7 +506,7 @@ fn decode_response(
             return Ok(serde_json::Value::Null);
         }
         serde_json::from_slice(&response.payload)
-            .map_err(|e| PluginError::Driver(format!("{method} response is not valid JSON: {e}")))
+            .map_err(|e| PluginError::driver(format!("{method} response is not valid JSON: {e}")))
     } else {
         Err(map_error_code(
             &response.error_code,
@@ -505,15 +517,15 @@ fn decode_response(
 
 fn map_error_code(code: &str, message: &str) -> PluginError {
     match code {
-        "invalid_manifest" => PluginError::InvalidManifest(message.to_string()),
-        "incompatible_sdk" => PluginError::Driver(format!("incompatible SDK: {message}")),
+        "invalid_manifest" => PluginError::invalid_manifest(message),
+        "incompatible_sdk" => PluginError::driver(format!("incompatible SDK: {message}")),
         "invalid_checksum" => PluginError::InvalidChecksum,
-        "unsupported_protocol" => PluginError::UnsupportedProtocol(message.to_string()),
-        "resource_budget_exceeded" => PluginError::ResourceBudgetExceeded(message.to_string()),
-        "unsupported" => PluginError::Unsupported(message.to_string()),
+        "unsupported_protocol" => PluginError::unsupported_protocol(message),
+        "resource_budget_exceeded" => PluginError::resource_budget_exceeded(message),
+        "unsupported" => PluginError::unsupported(message),
         "cancelled" => PluginError::Cancelled,
-        "transient" => PluginError::Transient(message.to_string()),
-        _ => PluginError::Driver(format!("{code}: {message}")),
+        "transient" => PluginError::transient(message),
+        _ => PluginError::driver(format!("{code}: {message}")),
     }
 }
 
@@ -650,7 +662,7 @@ mod tests {
     fn generate_test_tls_pair() -> Result<(String, String), PluginError> {
         let certified =
             rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).map_err(|e| {
-                PluginError::Driver(format!("failed to generate test certificate: {e}"))
+                PluginError::driver(format!("failed to generate test certificate: {e}"))
             })?;
         Ok((certified.cert.pem(), certified.signing_key.serialize_pem()))
     }
@@ -667,18 +679,18 @@ mod tests {
 
         let addr: std::net::SocketAddr = "127.0.0.1:0"
             .parse()
-            .map_err(|e| PluginError::Driver(format!("invalid socket address: {e}")))?;
+            .map_err(|e| PluginError::driver(format!("invalid socket address: {e}")))?;
         let listener = TcpListener::bind(addr)
             .await
-            .map_err(|e| PluginError::Driver(format!("failed to bind listener: {e}")))?;
+            .map_err(|e| PluginError::driver(format!("failed to bind listener: {e}")))?;
         let port = listener
             .local_addr()
-            .map_err(|e| PluginError::Driver(format!("failed to read local address: {e}")))?
+            .map_err(|e| PluginError::driver(format!("failed to read local address: {e}")))?
             .port();
 
         let mut server = tonic::transport::Server::builder()
             .tls_config(server_tls)
-            .map_err(|e| PluginError::Driver(format!("invalid test server TLS config: {e}")))?;
+            .map_err(|e| PluginError::driver(format!("invalid test server TLS config: {e}")))?;
 
         tokio::spawn(async move {
             let svc = PluginRuntimeServer::new(FakePlugin);
@@ -698,12 +710,12 @@ mod tests {
 
         let endpoint = format!("https://127.0.0.1:{port}");
         let channel = Channel::from_shared(endpoint.clone())
-            .map_err(|e| PluginError::Driver(format!("invalid endpoint {endpoint}: {e}")))?
+            .map_err(|e| PluginError::driver(format!("invalid endpoint {endpoint}: {e}")))?
             .tls_config(client_tls)
-            .map_err(|e| PluginError::Driver(format!("invalid TLS config: {e}")))?
+            .map_err(|e| PluginError::driver(format!("invalid TLS config: {e}")))?
             .connect()
             .await
-            .map_err(|e| PluginError::Driver(format!("failed to connect to {endpoint}: {e}")))?;
+            .map_err(|e| PluginError::driver(format!("failed to connect to {endpoint}: {e}")))?;
         let client = PluginRuntimeClient::new(channel)
             .max_decoding_message_size(4 * 1024 * 1024)
             .max_encoding_message_size(4 * 1024 * 1024);
@@ -713,7 +725,7 @@ mod tests {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
-            .map_err(|e| PluginError::Driver(format!("failed to spawn placeholder child: {e}")))?;
+            .map_err(|e| PluginError::driver(format!("failed to spawn placeholder child: {e}")))?;
 
         let (shutdown_tx, _shutdown_rx) = oneshot::channel();
 
@@ -779,5 +791,37 @@ mod tests {
         assert_eq!(clamp_message_size(0), MIN_MESSAGE_SIZE);
         assert_eq!(clamp_message_size(4 * 1024 * 1024), 4 * 1024 * 1024);
         assert_eq!(clamp_message_size(usize::MAX), MAX_MESSAGE_SIZE);
+    }
+
+    #[tokio::test]
+    #[allow(clippy::unwrap_used)]
+    async fn read_pem_file_rejects_oversized_file() {
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "cheetah-oversized-pem-{}.{}",
+            std::process::id(),
+            uuid::Uuid::now_v7()
+        ));
+        let oversized = vec![b' '; MAX_PLUGIN_PEM_BYTES + 1];
+        tokio::fs::write(&path, &oversized).await.unwrap();
+        let result = read_pem_file(&path).await;
+        assert!(result.is_err());
+        let _ = tokio::fs::remove_file(&path).await;
+    }
+
+    #[tokio::test]
+    #[allow(clippy::unwrap_used)]
+    async fn read_pem_file_reads_small_file() {
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "cheetah-small-pem-{}.{}",
+            std::process::id(),
+            uuid::Uuid::now_v7()
+        ));
+        let content = b"-----BEGIN CERTIFICATE-----\nMIIBkQ==\n-----END CERTIFICATE-----\n";
+        tokio::fs::write(&path, content).await.unwrap();
+        let result = read_pem_file(&path).await.unwrap();
+        assert_eq!(result, content);
+        let _ = tokio::fs::remove_file(&path).await;
     }
 }
