@@ -8,6 +8,8 @@ use std::collections::BTreeMap;
 
 /// Maximum byte length of a SIP header name stored in `HeaderName::Other`.
 const MAX_HEADER_NAME_BYTES: usize = 128;
+/// Maximum byte length of a SIP header value stored in `HeaderValue`.
+const MAX_HEADER_VALUE_BYTES: usize = 4096;
 
 /// Truncates `s` at a UTF-8 character boundary so it is at most `max` bytes.
 fn truncate_at_char_boundary(s: &str, max: usize) -> &str {
@@ -37,8 +39,13 @@ pub struct HeaderValue(String);
 
 impl HeaderValue {
     /// Creates a header value from text.
+    ///
+    /// The text is clamped to [`MAX_HEADER_VALUE_BYTES`] so that a single
+    /// `HeaderValue` cannot carry an arbitrarily large string into headers or
+    /// encoding output.
     pub fn new(value: impl Into<String>) -> Self {
-        Self(value.into())
+        let value = value.into();
+        Self(truncate_at_char_boundary(&value, MAX_HEADER_VALUE_BYTES).to_string())
     }
 
     /// Raw value bytes.
@@ -478,5 +485,19 @@ mod tests {
         assert_eq!(to.as_str(), "<sip:alice@example.com:5060>");
         assert_eq!(contact.as_str(), "<sip:alice@example.com:5060>");
         assert_eq!(cseq.as_str(), "42 REGISTER");
+    }
+
+    #[test]
+    fn header_value_clamps_oversized_text() {
+        let huge = "x".repeat(MAX_HEADER_VALUE_BYTES + 10);
+        let value = HeaderValue::new(&huge);
+        assert!(value.as_str().len() <= MAX_HEADER_VALUE_BYTES);
+        assert!(value.as_str().is_char_boundary(value.as_str().len()));
+    }
+
+    #[test]
+    fn header_value_preserves_short_text() {
+        let value = HeaderValue::new("call-1");
+        assert_eq!(value.as_str(), "call-1");
     }
 }
