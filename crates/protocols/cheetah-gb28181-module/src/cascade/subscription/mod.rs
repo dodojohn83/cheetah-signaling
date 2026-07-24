@@ -471,10 +471,9 @@ fn extract_tag(header: &HeaderValue) -> Option<String> {
 
 fn canonical_event_package(raw: &str) -> Option<String> {
     let base = raw.split(';').next().unwrap_or("").trim();
-    let lower = base.to_ascii_lowercase();
     SUPPORTED_PACKAGES
         .iter()
-        .find(|p| p.to_ascii_lowercase() == lower)
+        .find(|p| p.eq_ignore_ascii_case(base))
         .copied()
         .map(String::from)
 }

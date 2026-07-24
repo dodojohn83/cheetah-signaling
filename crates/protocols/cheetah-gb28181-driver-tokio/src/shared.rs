@@ -497,12 +497,21 @@ fn is_success_response(message: &SipMessage) -> bool {
 
 /// Extracts the `tag` parameter from a response's `To` header, if present.
 fn response_to_tag(message: &SipMessage) -> Option<String> {
-    let value = message.headers().get(&HeaderName::To)?.as_str();
-    let lower = value.to_ascii_lowercase();
-    let start = lower.find(";tag=")? + 5;
-    let rest = &value[start..];
-    let end = rest
-        .find(|c: char| c == ';' || c.is_whitespace())
-        .unwrap_or(rest.len());
-    Some(rest[..end].trim_matches('"').to_string())
+    let value = message.headers().get(&HeaderName::To)?.as_str().trim();
+    const NEEDLE: &[u8] = b";tag=";
+    for (i, window) in value.as_bytes().windows(NEEDLE.len()).enumerate() {
+        if window
+            .iter()
+            .zip(NEEDLE)
+            .all(|(a, b)| a.eq_ignore_ascii_case(b))
+        {
+            let start = i + NEEDLE.len();
+            let rest = &value[start..];
+            let end = rest
+                .find(|c: char| c == ';' || c.is_whitespace())
+                .unwrap_or(rest.len());
+            return Some(rest[..end].trim_matches('"').to_string());
+        }
+    }
+    None
 }
