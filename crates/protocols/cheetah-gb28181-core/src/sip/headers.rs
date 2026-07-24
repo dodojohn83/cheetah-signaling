@@ -216,6 +216,24 @@ impl HeaderName {
         }
     }
 
+    /// Returns `true` for headers that may contain credentials, URIs with
+    /// userinfo, or other sensitive wire values that must not appear in logs.
+    fn is_redacted_for_debug(&self) -> bool {
+        matches!(
+            self,
+            HeaderName::From
+                | HeaderName::To
+                | HeaderName::Contact
+                | HeaderName::Route
+                | HeaderName::RecordRoute
+                | HeaderName::Authorization
+                | HeaderName::WwwAuthenticate
+                | HeaderName::ProxyAuthenticate
+                | HeaderName::ProxyAuthorization
+                | HeaderName::Other(_)
+        )
+    }
+
     /// Returns the canonical wire form of the header name.
     pub fn as_str(&self) -> &str {
         match self {
@@ -330,7 +348,7 @@ impl PartialEq<str> for HeaderName {
 }
 
 /// Ordered collection of SIP headers preserving insertion order and duplicates.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Default, Eq, PartialEq)]
 pub struct SipHeaders {
     headers: Vec<(HeaderName, HeaderValue)>,
     index: BTreeMap<HeaderName, Vec<usize>>,
@@ -395,6 +413,21 @@ impl SipHeaders {
             out.push_str("\r\n");
         }
         out
+    }
+}
+
+impl std::fmt::Debug for SipHeaders {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut list = f.debug_list();
+        for (name, value) in &self.headers {
+            let value = if name.is_redacted_for_debug() {
+                "<redacted>"
+            } else {
+                value.as_str()
+            };
+            list.entry(&format_args!("{}: {}", name.as_str(), value));
+        }
+        list.finish()
     }
 }
 
@@ -478,5 +511,30 @@ mod tests {
         assert_eq!(to.as_str(), "<sip:alice@example.com:5060>");
         assert_eq!(contact.as_str(), "<sip:alice@example.com:5060>");
         assert_eq!(cseq.as_str(), "42 REGISTER");
+    }
+
+    #[test]
+    fn debug_redacts_sensitive_headers() {
+        let mut headers = SipHeaders::new();
+        headers.append(HeaderName::CallId, HeaderValue::new("call-1"));
+        headers.append(
+            HeaderName::Via,
+            HeaderValue::new("SIP/2.0/UDP 192.0.2.1:5060"),
+        );
+        headers.append(
+            HeaderName::From,
+            HeaderValue::new("<sip:alice:secret@example.com>;tag=1"),
+        );
+        headers.append(
+            HeaderName::Authorization,
+            HeaderValue::new("Digest username=\"alice\", response=\"deadbeef\""),
+        );
+
+        let debug = format!("{:?}", headers);
+        assert!(debug.contains("Call-ID: call-1"));
+        assert!(debug.contains("Via: SIP/2.0/UDP 192.0.2.1:5060"));
+        assert!(!debug.contains("secret"));
+        assert!(!debug.contains("deadbeef"));
+        assert!(debug.contains("<redacted>"));
     }
 }
