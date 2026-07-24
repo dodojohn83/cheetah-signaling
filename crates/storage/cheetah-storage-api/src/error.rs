@@ -130,20 +130,17 @@ impl From<StorageError> for DomainError {
         match err {
             StorageError::Backend { message }
             | StorageError::Connection { message }
-            | StorageError::Unavailable { message } => Self::Unavailable { message },
-            StorageError::Migration { version, message } => Self::Internal {
-                message: clamp_str(
-                    &format!("migration {version}: {message}"),
-                    MAX_STORAGE_ERROR_BYTES,
-                ),
-            },
+            | StorageError::Unavailable { message } => Self::unavailable(message),
+            StorageError::Migration { version, message } => {
+                Self::internal(format!("migration {version}: {message}"))
+            }
             StorageError::Config { message } | StorageError::Internal { message } => {
-                Self::Internal { message }
+                Self::internal(message)
             }
             StorageError::ConcurrentModification { expected, found } => {
                 Self::ConcurrentModification { expected, found }
             }
-            StorageError::InvalidArgument { message } => Self::InvalidArgument { message },
+            StorageError::InvalidArgument { message } => Self::invalid_argument(message),
         }
     }
 }
