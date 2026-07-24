@@ -5,7 +5,11 @@ use super::limits::XmlLimits;
 use super::reader::parse_xml;
 use super::writer::encode_xml;
 use crate::error::AccessError;
+use cheetah_signal_types::clamp_str;
 use std::collections::HashMap;
+
+/// Maximum byte length of a single `Keepalive`/`KeepaliveResponse` string field.
+const MAX_KEEPALIVE_FIELD_BYTES: usize = 4096;
 
 /// Parsed content of a GB28181 `Keepalive` NOTIFY message.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -53,11 +57,15 @@ fn child_element(name: &str, text: &str) -> XmlElement {
 
 /// Encodes a `Keepalive` NOTIFY payload for an upstream platform.
 pub fn build_keepalive(sn: &str, device_id: &str, status: &str) -> Result<String, AccessError> {
+    let sn = clamp_str(sn, MAX_KEEPALIVE_FIELD_BYTES);
+    let device_id = clamp_str(device_id, MAX_KEEPALIVE_FIELD_BYTES);
+    let status = clamp_str(status, MAX_KEEPALIVE_FIELD_BYTES);
+
     let mut root = child_element("Notify", "");
     root.children.push(child_element("CmdType", "Keepalive"));
-    root.children.push(child_element("SN", sn));
-    root.children.push(child_element("DeviceID", device_id));
-    root.children.push(child_element("Status", status));
+    root.children.push(child_element("SN", &sn));
+    root.children.push(child_element("DeviceID", &device_id));
+    root.children.push(child_element("Status", &status));
     encode_xml(&root, true)
 }
 
@@ -84,9 +92,15 @@ pub(crate) fn extract_keepalive_response(
     }
 
     Ok(KeepaliveResponse {
-        sn: root.require_child_text("SN")?,
-        device_id: root.require_child_text("DeviceID")?,
-        result: root.require_child_text("Result")?,
+        sn: clamp_str(&root.require_child_text("SN")?, MAX_KEEPALIVE_FIELD_BYTES),
+        device_id: clamp_str(
+            &root.require_child_text("DeviceID")?,
+            MAX_KEEPALIVE_FIELD_BYTES,
+        ),
+        result: clamp_str(
+            &root.require_child_text("Result")?,
+            MAX_KEEPALIVE_FIELD_BYTES,
+        ),
         extensions: root.extension_map(KNOWN_KEEPALIVE_RESPONSE_FIELDS),
     })
 }
@@ -100,9 +114,32 @@ pub(crate) fn extract_keepalive(root: &XmlElement) -> Result<KeepaliveInfo, Acce
     }
 
     Ok(KeepaliveInfo {
-        sn: root.require_child_text("SN")?,
-        device_id: root.require_child_text("DeviceID")?,
-        status: root.require_child_text("Status")?,
+        sn: clamp_str(&root.require_child_text("SN")?, MAX_KEEPALIVE_FIELD_BYTES),
+        device_id: clamp_str(
+            &root.require_child_text("DeviceID")?,
+            MAX_KEEPALIVE_FIELD_BYTES,
+        ),
+        status: clamp_str(
+            &root.require_child_text("Status")?,
+            MAX_KEEPALIVE_FIELD_BYTES,
+        ),
         extensions: root.extension_map(KNOWN_KEEPALIVE_FIELDS),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::*;
+
+    #[test]
+    fn build_keepalive_clamps_oversized_inputs() {
+        let long = "x".repeat(8192);
+        let xml = build_keepalive(&long, &long, &long).unwrap();
+        assert!(xml.contains("<SN>"));
+        assert!(xml.contains("<DeviceID>"));
+        assert!(xml.contains("<Status>"));
+        assert!(!xml.contains(&"x".repeat(4097)));
+    }
 }
