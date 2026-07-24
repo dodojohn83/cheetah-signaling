@@ -619,3 +619,12 @@ async fn register_rejects_oversized_capacity()
     }
     Ok(())
 }
+
+#[test]
+fn map_scheduler_error_clamps_long_messages() {
+    let huge = "x".repeat(10_000);
+    let status = map_scheduler_error(SchedulerError::Backend(huge));
+    assert_eq!(status.code(), tonic::Code::Internal);
+    assert!(status.message().len() <= MAX_SCHEDULER_STATUS_BYTES);
+    assert!(status.message().is_char_boundary(status.message().len()));
+}
