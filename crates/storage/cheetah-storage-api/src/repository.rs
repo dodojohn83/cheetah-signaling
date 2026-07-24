@@ -29,15 +29,14 @@ pub trait OwnerRepository: Send + Sync {
 
     /// Sets the owner for a device.
     async fn set(
-        &mut self,
+        &self,
         tenant_id: TenantId,
         device_id: DeviceId,
         owner: OwnerInfo,
     ) -> Result<(), StorageError>;
 
     /// Clears the owner for a device.
-    async fn clear(&mut self, tenant_id: TenantId, device_id: DeviceId)
-    -> Result<(), StorageError>;
+    async fn clear(&self, tenant_id: TenantId, device_id: DeviceId) -> Result<(), StorageError>;
 
     /// Atomically acquires or re-acquires ownership of a device.
     ///
@@ -45,7 +44,7 @@ pub trait OwnerRepository: Send + Sync {
     /// owner's node lease is dead, or the same node already owns the device, the
     /// `node_id` becomes the new owner and the epoch is incremented.
     async fn acquire(
-        &mut self,
+        &self,
         tenant_id: TenantId,
         device_id: DeviceId,
         node_id: NodeId,
@@ -56,7 +55,7 @@ pub trait OwnerRepository: Send + Sync {
     /// Extends an existing lease if `node_id` still owns the device and the
     /// lease has not expired.
     async fn renew(
-        &mut self,
+        &self,
         tenant_id: TenantId,
         device_id: DeviceId,
         node_id: NodeId,
@@ -65,7 +64,7 @@ pub trait OwnerRepository: Send + Sync {
 
     /// Releases ownership if `node_id` and `epoch` match the current record.
     async fn release(
-        &mut self,
+        &self,
         tenant_id: TenantId,
         device_id: DeviceId,
         node_id: NodeId,
@@ -141,13 +140,13 @@ pub trait OperationStepRepository: Send + Sync {
 pub trait NodeRepository: Send + Sync {
     /// Registers or re-registers a node. A re-registration with a new
     /// `instance_id` overwrites the previous incarnation, fencing it.
-    async fn register(&mut self, node: ClusterNode) -> Result<(), StorageError>;
+    async fn register(&self, node: ClusterNode) -> Result<(), StorageError>;
 
     /// Extends the lease and updates load for `node_id`, but only if the
     /// current `instance_id` matches. Returns the updated node, or `None` if
     /// the node is unknown or has been fenced by another instance.
     async fn heartbeat(
-        &mut self,
+        &self,
         node_id: NodeId,
         instance_id: NodeInstanceId,
         lease_until: UtcTimestamp,
@@ -169,7 +168,7 @@ pub trait NodeRepository: Send + Sync {
     /// Returns `true` if the row was updated, or `false` if the node is
     /// unknown or has been fenced by another instance.
     async fn mark_draining(
-        &mut self,
+        &self,
         node_id: NodeId,
         instance_id: NodeInstanceId,
         updated_at: UtcTimestamp,

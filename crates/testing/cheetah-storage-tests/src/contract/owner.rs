@@ -21,7 +21,7 @@ pub async fn run(storage: &dyn Storage, fixtures: &Fixtures) -> TestResult<()> {
         lease_until: None,
     };
 
-    let mut owner_repo = storage.owner_repository();
+    let owner_repo = storage.owner_repository();
     owner_repo.set(tenant_id, device_id, owner.clone()).await?;
 
     let loaded = owner_repo.get(tenant_id, device_id).await?;

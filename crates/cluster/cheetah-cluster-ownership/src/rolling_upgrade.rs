@@ -7,7 +7,6 @@ use cheetah_signal_types::{DeviceId, MAX_PAGE_SIZE, NodeId, PageRequest, TenantI
 use cheetah_storage_api::{NodeRepository, OwnerRepository};
 use std::collections::HashSet;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tracing::{info, warn};
 
 /// Lookup for the protocol of a device during drain-driven migration.
@@ -38,8 +37,8 @@ pub struct DrainReport {
 /// Migrates devices off a draining node.
 pub struct DrainingMigrationService {
     assignment_service: DeviceAssignmentService,
-    owner_repository: Arc<Mutex<dyn OwnerRepository>>,
-    node_repository: Arc<Mutex<dyn NodeRepository>>,
+    owner_repository: Arc<dyn OwnerRepository>,
+    node_repository: Arc<dyn NodeRepository>,
     clock: Arc<dyn Clock>,
     batch_size: u32,
     max_devices: u64,
@@ -53,8 +52,8 @@ impl DrainingMigrationService {
     /// remain and the caller should resume draining later.
     pub fn new(
         assignment_service: DeviceAssignmentService,
-        owner_repository: Arc<Mutex<dyn OwnerRepository>>,
-        node_repository: Arc<Mutex<dyn NodeRepository>>,
+        owner_repository: Arc<dyn OwnerRepository>,
+        node_repository: Arc<dyn NodeRepository>,
         clock: Arc<dyn Clock>,
         batch_size: u32,
         max_devices: u64,
@@ -84,8 +83,6 @@ impl DrainingMigrationService {
         let now = self.clock.now_wall();
         let node = self
             .node_repository
-            .lock()
-            .await
             .get(node_id)
             .await
             .map_err(RollingUpgradeError::Storage)?
@@ -93,8 +90,6 @@ impl DrainingMigrationService {
 
         let marked = self
             .node_repository
-            .lock()
-            .await
             .mark_draining(node_id, node.instance_id, now)
             .await
             .map_err(RollingUpgradeError::Storage)?;
@@ -114,8 +109,6 @@ impl DrainingMigrationService {
             request.cursor = cursor;
             let page = self
                 .owner_repository
-                .lock()
-                .await
                 .list_by_node(node_id, request)
                 .await
                 .map_err(RollingUpgradeError::Storage)?;
@@ -195,8 +188,6 @@ impl DrainingMigrationService {
     ) -> Result<OwnerInfo, RollingUpgradeError> {
         let node = self
             .node_repository
-            .lock()
-            .await
             .get(from_node)
             .await
             .map_err(RollingUpgradeError::Storage)?
@@ -207,8 +198,6 @@ impl DrainingMigrationService {
 
         let current = self
             .owner_repository
-            .lock()
-            .await
             .get(tenant_id, device_id)
             .await
             .map_err(RollingUpgradeError::Storage)?;
@@ -221,8 +210,6 @@ impl DrainingMigrationService {
         let previous = current.clone();
         if previous.is_some() {
             self.owner_repository
-                .lock()
-                .await
                 .clear(tenant_id, device_id)
                 .await
                 .map_err(RollingUpgradeError::Storage)?;
@@ -236,12 +223,8 @@ impl DrainingMigrationService {
             Ok(owner) => Ok(owner),
             Err(e) => {
                 if let Some(owner) = previous {
-                    if let Err(restore_err) = self
-                        .owner_repository
-                        .lock()
-                        .await
-                        .set(tenant_id, device_id, owner)
-                        .await
+                    if let Err(restore_err) =
+                        self.owner_repository.set(tenant_id, device_id, owner).await
                     {
                         warn!(
                             tenant_id = %tenant_id.as_uuid(),
@@ -286,7 +269,6 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Arc, Mutex as StdMutex};
-    use tokio::sync::Mutex as AsyncMutex;
 
     type TestResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -345,15 +327,12 @@ mod tests {
 
     #[async_trait::async_trait]
     impl NodeRepository for FakeNodeRepository {
-        async fn register(
-            &mut self,
-            _node: cheetah_domain::ClusterNode,
-        ) -> Result<(), StorageError> {
+        async fn register(&self, _node: cheetah_domain::ClusterNode) -> Result<(), StorageError> {
             Err(StorageError::internal("test fake: not implemented"))
         }
 
         async fn heartbeat(
-            &mut self,
+            &self,
             _node_id: NodeId,
             _instance_id: NodeInstanceId,
             _lease_until: UtcTimestamp,
@@ -385,7 +364,7 @@ mod tests {
         }
 
         async fn mark_draining(
-            &mut self,
+            &self,
             node_id: NodeId,
             instance_id: NodeInstanceId,
             _updated_at: UtcTimestamp,
@@ -433,7 +412,7 @@ mod tests {
         }
 
         async fn set(
-            &mut self,
+            &self,
             tenant_id: TenantId,
             device_id: DeviceId,
             owner: OwnerInfo,
@@ -443,7 +422,7 @@ mod tests {
         }
 
         async fn clear(
-            &mut self,
+            &self,
             tenant_id: TenantId,
             device_id: DeviceId,
         ) -> Result<(), StorageError> {
@@ -452,7 +431,7 @@ mod tests {
         }
 
         async fn acquire(
-            &mut self,
+            &self,
             tenant_id: TenantId,
             device_id: DeviceId,
             node_id: NodeId,
@@ -491,7 +470,7 @@ mod tests {
         }
 
         async fn renew(
-            &mut self,
+            &self,
             _tenant_id: TenantId,
             _device_id: DeviceId,
             _node_id: NodeId,
@@ -501,7 +480,7 @@ mod tests {
         }
 
         async fn release(
-            &mut self,
+            &self,
             _tenant_id: TenantId,
             _device_id: DeviceId,
             _node_id: NodeId,
@@ -553,13 +532,13 @@ mod tests {
     fn setup() -> (
         DrainingMigrationService,
         Arc<InMemoryClock>,
-        Arc<AsyncMutex<FakeNodeRepository>>,
-        Arc<AsyncMutex<FakeOwnerRepository>>,
+        Arc<FakeNodeRepository>,
+        Arc<FakeOwnerRepository>,
         InMemoryIdGenerator,
     ) {
         let clock = Arc::new(InMemoryClock::new());
-        let node_repo = Arc::new(AsyncMutex::new(FakeNodeRepository::new()));
-        let owner_repo = Arc::new(AsyncMutex::new(FakeOwnerRepository::new()));
+        let node_repo = Arc::new(FakeNodeRepository::new());
+        let owner_repo = Arc::new(FakeOwnerRepository::new());
         let assignment_service = DeviceAssignmentService::new(
             node_repo.clone(),
             owner_repo.clone(),
@@ -593,14 +572,12 @@ mod tests {
         let draining_id = draining_node.node_id;
         let spare_node = make_node(&id_gen, "zone-a", &["gb28181"], 0, 10, lease);
         let spare_id = spare_node.node_id;
-        node_repo.lock().await.insert(draining_node);
-        node_repo.lock().await.insert(spare_node);
+        node_repo.insert(draining_node);
+        node_repo.insert(spare_node);
 
         let tenant = id_gen.generate_tenant_id();
         let device = id_gen.generate_device_id();
         owner_repo
-            .lock()
-            .await
             .set(
                 tenant,
                 device,
@@ -633,14 +610,12 @@ mod tests {
         let draining_id = draining_node.node_id;
         let spare_node = make_node(&id_gen, "zone-a", &["gb28181"], 0, 10, lease);
         let spare_id = spare_node.node_id;
-        node_repo.lock().await.insert(draining_node);
-        node_repo.lock().await.insert(spare_node);
+        node_repo.insert(draining_node);
+        node_repo.insert(spare_node);
 
         let tenant = id_gen.generate_tenant_id();
         let device = id_gen.generate_device_id();
         owner_repo
-            .lock()
-            .await
             .set(
                 tenant,
                 device,
@@ -665,7 +640,7 @@ mod tests {
         assert_eq!(report.failed, 0);
         assert_eq!(report.skipped, 0);
 
-        let owner = owner_repo.lock().await.get(tenant, device).await?;
+        let owner = owner_repo.get(tenant, device).await?;
         assert!(owner.is_some_and(|o| o.owner_node_id == spare_id));
         Ok(())
     }
@@ -682,7 +657,7 @@ mod tests {
         let mut draining_node = make_node(&id_gen, "zone-a", &["gb28181"], 1, 10, lease);
         draining_node.draining = true;
         let draining_id = draining_node.node_id;
-        node_repo.lock().await.insert(draining_node);
+        node_repo.insert(draining_node);
 
         let tenant = id_gen.generate_tenant_id();
         let device = id_gen.generate_device_id();
@@ -691,18 +666,14 @@ mod tests {
             owner_epoch: OwnerEpoch(7),
             lease_until: Some(lease),
         };
-        owner_repo
-            .lock()
-            .await
-            .set(tenant, device, original.clone())
-            .await?;
+        owner_repo.set(tenant, device, original.clone()).await?;
 
         let result = service
             .migrate_device(tenant, device, "gb28181", draining_id)
             .await;
         assert!(matches!(result, Err(RollingUpgradeError::Assignment(_))));
 
-        let owner = owner_repo.lock().await.get(tenant, device).await?;
+        let owner = owner_repo.get(tenant, device).await?;
         assert_eq!(owner, Some(original));
         Ok(())
     }
@@ -718,13 +689,11 @@ mod tests {
 
         let node = make_node(&id_gen, "zone-a", &["gb28181"], 0, 10, lease);
         let node_id = node.node_id;
-        node_repo.lock().await.insert(node);
+        node_repo.insert(node);
 
         let tenant = id_gen.generate_tenant_id();
         let device = id_gen.generate_device_id();
         owner_repo
-            .lock()
-            .await
             .set(
                 tenant,
                 device,
@@ -748,16 +717,16 @@ mod tests {
     /// The first page returns the device with a cursor; the second page returns
     /// the same device with no cursor.
     struct ReStampOwnerRepository {
-        owner: AsyncMutex<Option<OwnerInfo>>,
-        tenant_device: AsyncMutex<Option<(TenantId, DeviceId)>>,
+        owner: StdMutex<Option<OwnerInfo>>,
+        tenant_device: StdMutex<Option<(TenantId, DeviceId)>>,
         calls: AtomicU64,
     }
 
     impl ReStampOwnerRepository {
         fn new(tenant: TenantId, device: DeviceId, owner: OwnerInfo) -> Self {
             Self {
-                owner: AsyncMutex::new(Some(owner)),
-                tenant_device: AsyncMutex::new(Some((tenant, device))),
+                owner: StdMutex::new(Some(owner)),
+                tenant_device: StdMutex::new(Some((tenant, device))),
                 calls: AtomicU64::new(0),
             }
         }
@@ -770,30 +739,30 @@ mod tests {
             _tenant_id: TenantId,
             _device_id: DeviceId,
         ) -> Result<Option<OwnerInfo>, StorageError> {
-            Ok(self.owner.lock().await.clone())
+            Ok(self.owner.lock().unwrap_or_else(|e| e.into_inner()).clone())
         }
 
         async fn set(
-            &mut self,
+            &self,
             _tenant_id: TenantId,
             _device_id: DeviceId,
             owner: OwnerInfo,
         ) -> Result<(), StorageError> {
-            *self.owner.lock().await = Some(owner);
+            *self.owner.lock().unwrap_or_else(|e| e.into_inner()) = Some(owner);
             Ok(())
         }
 
         async fn clear(
-            &mut self,
+            &self,
             _tenant_id: TenantId,
             _device_id: DeviceId,
         ) -> Result<(), StorageError> {
-            *self.owner.lock().await = None;
+            *self.owner.lock().unwrap_or_else(|e| e.into_inner()) = None;
             Ok(())
         }
 
         async fn acquire(
-            &mut self,
+            &self,
             _tenant_id: TenantId,
             _device_id: DeviceId,
             _node_id: NodeId,
@@ -804,7 +773,7 @@ mod tests {
         }
 
         async fn renew(
-            &mut self,
+            &self,
             _tenant_id: TenantId,
             _device_id: DeviceId,
             _node_id: NodeId,
@@ -814,7 +783,7 @@ mod tests {
         }
 
         async fn release(
-            &mut self,
+            &self,
             _tenant_id: TenantId,
             _device_id: DeviceId,
             _node_id: NodeId,
@@ -829,9 +798,9 @@ mod tests {
             _page: PageRequest,
         ) -> Result<Page<OwnedDevice>, StorageError> {
             let calls = self.calls.fetch_add(1, Ordering::SeqCst);
-            let guard = self.tenant_device.lock().await;
-            let owner = self.owner.lock().await.clone();
-            let Some((tenant_id, device_id)) = *guard else {
+            let tenant_device = *self.tenant_device.lock().unwrap_or_else(|e| e.into_inner());
+            let owner = self.owner.lock().unwrap_or_else(|e| e.into_inner()).clone();
+            let Some((tenant_id, device_id)) = tenant_device else {
                 return Ok(Page::new(vec![]));
             };
             let Some(owner) = owner else {
@@ -862,8 +831,8 @@ mod tests {
         let mut draining_node = make_node(&id_gen, "zone-a", &["gb28181"], 1, 10, lease);
         draining_node.draining = true;
         let draining_id = draining_node.node_id;
-        let node_repo = Arc::new(AsyncMutex::new(FakeNodeRepository::new()));
-        node_repo.lock().await.insert(draining_node);
+        let node_repo = Arc::new(FakeNodeRepository::new());
+        node_repo.insert(draining_node);
 
         let tenant = id_gen.generate_tenant_id();
         let device = id_gen.generate_device_id();
@@ -872,9 +841,7 @@ mod tests {
             owner_epoch: OwnerEpoch(1),
             lease_until: Some(lease),
         };
-        let owner_repo = Arc::new(AsyncMutex::new(ReStampOwnerRepository::new(
-            tenant, device, owner,
-        )));
+        let owner_repo = Arc::new(ReStampOwnerRepository::new(tenant, device, owner));
         let assignment_service = DeviceAssignmentService::new(
             node_repo.clone(),
             owner_repo.clone(),
@@ -903,7 +870,7 @@ mod tests {
         assert_eq!(report.migrated, 0);
         assert_eq!(report.failed, 1);
 
-        let owner = owner_repo.lock().await.get(tenant, device).await?;
+        let owner = owner_repo.get(tenant, device).await?;
         assert_eq!(owner.map(|o| o.owner_node_id), Some(draining_id));
         Ok(())
     }

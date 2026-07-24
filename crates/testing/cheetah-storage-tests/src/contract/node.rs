@@ -11,7 +11,7 @@ pub async fn run(storage: &dyn Storage, fixtures: &Fixtures) -> TestResult<()> {
     let instance_id = fixtures.node_instance_id();
     let node = fixtures.node(node_id, instance_id)?;
 
-    let mut repo = storage.node_repository();
+    let repo = storage.node_repository();
     repo.register(node.clone()).await?;
 
     let loaded = repo.get(node_id).await?;

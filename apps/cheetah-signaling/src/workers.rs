@@ -716,8 +716,8 @@ impl DeviceOwnerResolver for SingleNodeOwnerResolver {
 
 /// Builds a cluster assignment service used by drain/migration.
 pub fn build_assignment_service(
-    node_repo: Arc<tokio::sync::Mutex<dyn NodeRepository>>,
-    owner_repo: Arc<tokio::sync::Mutex<dyn OwnerRepository>>,
+    node_repo: Arc<dyn NodeRepository>,
+    owner_repo: Arc<dyn OwnerRepository>,
     clock: Arc<dyn Clock>,
     lease_duration: DurationMs,
 ) -> DeviceAssignmentService {
@@ -733,8 +733,8 @@ pub fn build_assignment_service(
 /// Builds a draining migration service.
 pub fn build_drain_service(
     assignment: DeviceAssignmentService,
-    owner_repo: Arc<tokio::sync::Mutex<dyn OwnerRepository>>,
-    node_repo: Arc<tokio::sync::Mutex<dyn NodeRepository>>,
+    owner_repo: Arc<dyn OwnerRepository>,
+    node_repo: Arc<dyn NodeRepository>,
     clock: Arc<dyn Clock>,
 ) -> DrainingMigrationService {
     DrainingMigrationService::new(assignment, owner_repo, node_repo, clock, 64, 10_000)

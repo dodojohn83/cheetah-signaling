@@ -124,19 +124,16 @@ async fn cluster_chaos_drain_migrate_timeout_and_restart() {
         .checked_add(DurationMs::from_seconds(3600))
         .unwrap();
 
-    let node_repo = Arc::new(tokio::sync::Mutex::new(PostgresNodeRepository::new(
+    let node_repo: Arc<dyn cheetah_storage_api::NodeRepository> = Arc::new(
+        PostgresNodeRepository::new(storage.read_pool().clone(), storage.write_pool().clone()),
+    );
+    let owner_repo: Arc<dyn OwnerRepository> = Arc::new(PostgresOwnerRepository::new(
         storage.read_pool().clone(),
         storage.write_pool().clone(),
-    ))) as Arc<tokio::sync::Mutex<dyn cheetah_storage_api::NodeRepository>>;
-    let owner_repo = Arc::new(tokio::sync::Mutex::new(PostgresOwnerRepository::new(
-        storage.read_pool().clone(),
-        storage.write_pool().clone(),
-    ))) as Arc<tokio::sync::Mutex<dyn OwnerRepository>>;
+    ));
 
     // Register node A only, so both devices deterministically land on it.
     node_repo
-        .lock()
-        .await
         .register(make_node(
             node_a,
             id_generator.generate_node_instance_id(),
@@ -167,8 +164,6 @@ async fn cluster_chaos_drain_migrate_timeout_and_restart() {
 
     // Bring node B online as the migration target.
     node_repo
-        .lock()
-        .await
         .register(make_node(
             node_b,
             id_generator.generate_node_instance_id(),
@@ -207,8 +202,6 @@ async fn cluster_chaos_drain_migrate_timeout_and_restart() {
     // Both devices are now owned by the surviving node, off the drained node.
     for device in [device_1, device_2] {
         let owner = owner_repo
-            .lock()
-            .await
             .get(tenant, device)
             .await
             .unwrap()
@@ -220,8 +213,6 @@ async fn cluster_chaos_drain_migrate_timeout_and_restart() {
     }
 
     let migrated_epoch = owner_repo
-        .lock()
-        .await
         .get(tenant, device_1)
         .await
         .unwrap()

@@ -5,7 +5,6 @@ use crate::error::NodeLeaseError;
 use cheetah_domain::{Clock, ClusterNode, NodeCapacity, NodeLoad};
 use cheetah_signal_types::{DurationMs, IdGenerator, NodeId, NodeInstanceId};
 use cheetah_storage_api::NodeRepository;
-use futures::lock::Mutex;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{info, warn};
@@ -23,7 +22,7 @@ const MAX_NODE_CONTRACT_VERSION_BYTES: usize = 128;
 
 /// Manages the cluster node registration and lease for this process.
 pub struct NodeLeaseService {
-    repository: Arc<Mutex<dyn NodeRepository>>,
+    repository: Arc<dyn NodeRepository>,
     clock: Arc<dyn Clock>,
     id_generator: Arc<dyn IdGenerator>,
     this_node: NodeId,
@@ -37,7 +36,7 @@ pub struct NodeLeaseService {
 impl NodeLeaseService {
     /// Creates a new lease service for `this_node`.
     pub fn new(
-        repository: Arc<Mutex<dyn NodeRepository>>,
+        repository: Arc<dyn NodeRepository>,
         clock: Arc<dyn Clock>,
         id_generator: Arc<dyn IdGenerator>,
         this_node: NodeId,
@@ -60,7 +59,7 @@ impl NodeLeaseService {
     /// Creates a new lease service with a custom compatibility matrix.
     #[allow(clippy::too_many_arguments)]
     pub fn with_compatibility(
-        repository: Arc<Mutex<dyn NodeRepository>>,
+        repository: Arc<dyn NodeRepository>,
         clock: Arc<dyn Clock>,
         id_generator: Arc<dyn IdGenerator>,
         this_node: NodeId,
@@ -144,7 +143,7 @@ impl NodeLeaseService {
         node.capacity = capacity;
         node.contract_versions = contract_versions;
 
-        self.repository.lock().await.register(node.clone()).await?;
+        self.repository.register(node.clone()).await?;
 
         self.instance_id = Some(instance_id);
         info!(
@@ -166,8 +165,6 @@ impl NodeLeaseService {
 
         let node = self
             .repository
-            .lock()
-            .await
             .heartbeat(self.this_node, instance_id, lease_until, now, load)
             .await
             .map_err(NodeLeaseError::Storage)?;
@@ -187,8 +184,6 @@ impl NodeLeaseService {
         let now = self.clock.now_wall();
         let updated = self
             .repository
-            .lock()
-            .await
             .mark_draining(self.this_node, instance_id, now)
             .await
             .map_err(NodeLeaseError::Storage)?;
@@ -202,8 +197,6 @@ impl NodeLeaseService {
     /// Returns the currently registered node, if any.
     pub async fn registered_node(&self) -> Result<Option<ClusterNode>, NodeLeaseError> {
         self.repository
-            .lock()
-            .await
             .get(self.this_node)
             .await
             .map_err(NodeLeaseError::Storage)
@@ -257,13 +250,13 @@ mod tests {
 
     #[async_trait::async_trait]
     impl NodeRepository for InMemoryNodeRepository {
-        async fn register(&mut self, node: ClusterNode) -> Result<(), StorageError> {
+        async fn register(&self, node: ClusterNode) -> Result<(), StorageError> {
             self.lock_nodes()?.insert(node.node_id, node);
             Ok(())
         }
 
         async fn heartbeat(
-            &mut self,
+            &self,
             node_id: NodeId,
             instance_id: NodeInstanceId,
             lease_until: UtcTimestamp,
@@ -348,7 +341,7 @@ mod tests {
         }
 
         async fn mark_draining(
-            &mut self,
+            &self,
             node_id: NodeId,
             instance_id: NodeInstanceId,
             updated_at: UtcTimestamp,
@@ -370,11 +363,11 @@ mod tests {
         NodeLeaseService,
         Arc<InMemoryClock>,
         Arc<InMemoryIdGenerator>,
-        Arc<Mutex<InMemoryNodeRepository>>,
+        Arc<InMemoryNodeRepository>,
     ) {
         let clock = Arc::new(InMemoryClock::new());
         let id_gen = Arc::new(InMemoryIdGenerator::new());
-        let repo = Arc::new(Mutex::new(InMemoryNodeRepository::new()));
+        let repo = Arc::new(InMemoryNodeRepository::new());
         let node_id = id_gen.generate_node_id();
         let service = NodeLeaseService::new(
             repo.clone(),
@@ -397,7 +390,7 @@ mod tests {
         assert_eq!(node.node_id, service.this_node);
         assert!(node.lease_until > clock.now_wall());
 
-        let stored = repo.lock().await.get(node.node_id).await?;
+        let stored = repo.get(node.node_id).await?;
         assert!(stored.is_some());
         Ok(())
     }
@@ -441,7 +434,7 @@ mod tests {
 
         service.mark_draining().await?;
 
-        let stored = repo.lock().await.get(service.this_node).await?;
+        let stored = repo.get(service.this_node).await?;
         assert!(stored.ok_or("node should exist")?.draining);
         Ok(())
     }
@@ -475,7 +468,7 @@ mod tests {
     async fn register_rejects_incompatible_version() -> TestResult<()> {
         let clock = Arc::new(InMemoryClock::new());
         let id_gen = Arc::new(InMemoryIdGenerator::new());
-        let repo = Arc::new(Mutex::new(InMemoryNodeRepository::new()));
+        let repo = Arc::new(InMemoryNodeRepository::new());
         let node_id = id_gen.generate_node_id();
 
         let matrix = crate::compatibility::CompatibilityMatrix::new(
@@ -505,7 +498,7 @@ mod tests {
     async fn register_accepts_compatible_version() -> TestResult<()> {
         let clock = Arc::new(InMemoryClock::new());
         let id_gen = Arc::new(InMemoryIdGenerator::new());
-        let repo = Arc::new(Mutex::new(InMemoryNodeRepository::new()));
+        let repo = Arc::new(InMemoryNodeRepository::new());
         let node_id = id_gen.generate_node_id();
 
         let mut contracts = HashMap::new();
@@ -538,7 +531,7 @@ mod tests {
     fn oversized_service(zone: &str, version: &str) -> NodeLeaseService {
         let clock = Arc::new(InMemoryClock::new());
         let id_gen = Arc::new(InMemoryIdGenerator::new());
-        let repo = Arc::new(Mutex::new(InMemoryNodeRepository::new()));
+        let repo = Arc::new(InMemoryNodeRepository::new());
         let node_id = id_gen.generate_node_id();
         NodeLeaseService::new(
             repo,

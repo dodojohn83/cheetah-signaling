@@ -16,8 +16,8 @@ const MAX_TRACKED_NODES: usize = 1_000_000;
 /// Assigns devices to cluster nodes while preserving existing owners when
 /// possible and respecting node health, zone, protocol support and load.
 pub struct DeviceAssignmentService {
-    node_repository: Arc<tokio::sync::Mutex<dyn NodeRepository>>,
-    owner_repository: Arc<tokio::sync::Mutex<dyn OwnerRepository>>,
+    node_repository: Arc<dyn NodeRepository>,
+    owner_repository: Arc<dyn OwnerRepository>,
     clock: Arc<dyn Clock>,
     lease_duration: DurationMs,
     rate_limiter: Arc<Mutex<RateLimiter>>,
@@ -26,8 +26,8 @@ pub struct DeviceAssignmentService {
 impl DeviceAssignmentService {
     /// Creates a new assignment service.
     pub fn new(
-        node_repository: Arc<tokio::sync::Mutex<dyn NodeRepository>>,
-        owner_repository: Arc<tokio::sync::Mutex<dyn OwnerRepository>>,
+        node_repository: Arc<dyn NodeRepository>,
+        owner_repository: Arc<dyn OwnerRepository>,
         clock: Arc<dyn Clock>,
         lease_duration: DurationMs,
         rate_limit: RateLimitConfig,
@@ -59,12 +59,8 @@ impl DeviceAssignmentService {
             .ok_or_else(|| cheetah_domain::DomainError::internal("owner lease overflow"))?;
 
         // Fast path: keep the current owner if its lease is still valid and the
-        // node is alive and eligible. Drop the owner lock before looking up the
-        // node to avoid holding two async mutex guards across an await.
-        let maybe_owner = {
-            let owner_repo = self.owner_repository.lock().await;
-            owner_repo.get(tenant_id, device_id).await?
-        };
+        // node is alive and eligible.
+        let maybe_owner = self.owner_repository.get(tenant_id, device_id).await?;
         if let Some(owner) = maybe_owner.clone()
             && owner.lease_until.is_none_or(|lease| lease > now)
             && let Some(node) = self.get_node(owner.owner_node_id).await?
@@ -95,8 +91,8 @@ impl DeviceAssignmentService {
 
         // Acquire ownership on the selected node. If another node won the
         // race, return the owner it established.
-        let mut owner_repo = self.owner_repository.lock().await;
-        match owner_repo
+        match self
+            .owner_repository
             .acquire(tenant_id, device_id, candidate.node_id, now, lease_until)
             .await
         {
@@ -120,7 +116,7 @@ impl DeviceAssignmentService {
                 Ok(owner)
             }
             Err(ref e) if matches!(e, StorageError::Unavailable { .. }) => {
-                if let Some(owner) = owner_repo.get(tenant_id, device_id).await? {
+                if let Some(owner) = self.owner_repository.get(tenant_id, device_id).await? {
                     warn!(
                         tenant_id = %tenant_id.as_uuid(),
                         device_id = %device_id.as_uuid(),
@@ -136,7 +132,7 @@ impl DeviceAssignmentService {
     }
 
     async fn get_node(&self, node_id: NodeId) -> Result<Option<ClusterNode>, StorageError> {
-        self.node_repository.lock().await.get(node_id).await
+        self.node_repository.get(node_id).await
     }
 
     async fn select_node(
@@ -154,12 +150,7 @@ impl DeviceAssignmentService {
             if let Some(c) = &cursor {
                 req = req.with_cursor(c.clone());
             }
-            let page = self
-                .node_repository
-                .lock()
-                .await
-                .list_alive(now, req)
-                .await?;
+            let page = self.node_repository.list_alive(now, req).await?;
             for node in page.items {
                 if is_eligible(&node, protocol, now) {
                     candidates.push(node);
@@ -457,7 +448,6 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Arc, Mutex as StdMutex};
-    use tokio::sync::Mutex as AsyncMutex;
 
     type TestResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -491,12 +481,12 @@ mod tests {
 
     #[async_trait::async_trait]
     impl NodeRepository for FakeNodeRepository {
-        async fn register(&mut self, _node: ClusterNode) -> Result<(), StorageError> {
+        async fn register(&self, _node: ClusterNode) -> Result<(), StorageError> {
             Err(StorageError::internal("test fake: not implemented"))
         }
 
         async fn heartbeat(
-            &mut self,
+            &self,
             _node_id: NodeId,
             _instance_id: NodeInstanceId,
             _lease_until: UtcTimestamp,
@@ -525,7 +515,7 @@ mod tests {
         }
 
         async fn mark_draining(
-            &mut self,
+            &self,
             _node_id: NodeId,
             _instance_id: NodeInstanceId,
             _updated_at: UtcTimestamp,
@@ -568,7 +558,7 @@ mod tests {
         }
 
         async fn set(
-            &mut self,
+            &self,
             tenant_id: TenantId,
             device_id: DeviceId,
             owner: OwnerInfo,
@@ -578,7 +568,7 @@ mod tests {
         }
 
         async fn clear(
-            &mut self,
+            &self,
             tenant_id: TenantId,
             device_id: DeviceId,
         ) -> Result<(), StorageError> {
@@ -587,7 +577,7 @@ mod tests {
         }
 
         async fn acquire(
-            &mut self,
+            &self,
             tenant_id: TenantId,
             device_id: DeviceId,
             node_id: NodeId,
@@ -626,7 +616,7 @@ mod tests {
         }
 
         async fn renew(
-            &mut self,
+            &self,
             _tenant_id: TenantId,
             _device_id: DeviceId,
             _node_id: NodeId,
@@ -636,7 +626,7 @@ mod tests {
         }
 
         async fn release(
-            &mut self,
+            &self,
             _tenant_id: TenantId,
             _device_id: DeviceId,
             _node_id: NodeId,
@@ -742,13 +732,13 @@ mod tests {
     fn setup() -> (
         DeviceAssignmentService,
         Arc<InMemoryClock>,
-        Arc<AsyncMutex<FakeNodeRepository>>,
-        Arc<AsyncMutex<FakeOwnerRepository>>,
+        Arc<FakeNodeRepository>,
+        Arc<FakeOwnerRepository>,
         InMemoryIdGenerator,
     ) {
         let clock = Arc::new(InMemoryClock::new());
-        let node_repo = Arc::new(AsyncMutex::new(FakeNodeRepository::new()));
-        let owner_repo = Arc::new(AsyncMutex::new(FakeOwnerRepository::new()));
+        let node_repo = Arc::new(FakeNodeRepository::new());
+        let owner_repo = Arc::new(FakeOwnerRepository::new());
         let id_gen = InMemoryIdGenerator::new();
         let service = DeviceAssignmentService::new(
             node_repo.clone(),
@@ -770,7 +760,7 @@ mod tests {
             .ok_or("lease overflow")?;
         let node = make_node(&id_gen, "zone-a", &["gb28181"], 0, 10, lease);
         let node_id = node.node_id;
-        node_repo.lock().await.insert(node);
+        node_repo.insert(node);
 
         let tenant = id_gen.generate_tenant_id();
         let device = id_gen.generate_device_id();
@@ -789,7 +779,7 @@ mod tests {
             .ok_or("lease overflow")?;
         let node = make_node(&id_gen, "zone-a", &["gb28181"], 0, 10, lease);
         let node_id = node.node_id;
-        node_repo.lock().await.insert(node);
+        node_repo.insert(node);
 
         let tenant = id_gen.generate_tenant_id();
         let device = id_gen.generate_device_id();
@@ -798,11 +788,7 @@ mod tests {
             owner_epoch: OwnerEpoch(1),
             lease_until: Some(lease),
         };
-        owner_repo
-            .lock()
-            .await
-            .set(tenant, device, existing)
-            .await?;
+        owner_repo.set(tenant, device, existing).await?;
 
         let owner = service.assign(tenant, device, "gb28181", None).await?;
         assert_eq!(owner.owner_node_id, node_id);
@@ -820,8 +806,8 @@ mod tests {
             .ok_or("lease overflow")?;
         let old_node = make_node(&id_gen, "zone-a", &["gb28181"], 0, 10, now);
         let new_node = make_node(&id_gen, "zone-b", &["gb28181"], 0, 10, lease);
-        node_repo.lock().await.insert(old_node.clone());
-        node_repo.lock().await.insert(new_node.clone());
+        node_repo.insert(old_node.clone());
+        node_repo.insert(new_node.clone());
 
         let tenant = id_gen.generate_tenant_id();
         let device = id_gen.generate_device_id();
@@ -830,11 +816,7 @@ mod tests {
             owner_epoch: OwnerEpoch(1),
             lease_until: Some(now),
         };
-        owner_repo
-            .lock()
-            .await
-            .set(tenant, device, existing)
-            .await?;
+        owner_repo.set(tenant, device, existing).await?;
 
         clock.advance(DurationMs::from_millis(1));
         let owner = service.assign(tenant, device, "gb28181", None).await?;
@@ -854,8 +836,8 @@ mod tests {
         let gb_node = make_node(&id_gen, "zone-a", &["gb28181"], 0, 10, lease);
         let gb_node_id = gb_node.node_id;
         let onvif_node = make_node(&id_gen, "zone-a", &["onvif"], 0, 10, lease);
-        node_repo.lock().await.insert(gb_node);
-        node_repo.lock().await.insert(onvif_node);
+        node_repo.insert(gb_node);
+        node_repo.insert(onvif_node);
 
         let tenant = id_gen.generate_tenant_id();
         let device = id_gen.generate_device_id();
@@ -874,8 +856,8 @@ mod tests {
             .ok_or("lease overflow")?;
         let zone_a = make_node(&id_gen, "zone-a", &["gb28181"], 0, 10, lease);
         let zone_b = make_node(&id_gen, "zone-b", &["gb28181"], 0, 10, lease);
-        node_repo.lock().await.insert(zone_a.clone());
-        node_repo.lock().await.insert(zone_b.clone());
+        node_repo.insert(zone_a.clone());
+        node_repo.insert(zone_b.clone());
 
         let tenant = id_gen.generate_tenant_id();
         let device = id_gen.generate_device_id();
@@ -889,8 +871,8 @@ mod tests {
     #[tokio::test]
     async fn enforces_rate_limit() -> TestResult<()> {
         let clock = Arc::new(InMemoryClock::new());
-        let node_repo = Arc::new(AsyncMutex::new(FakeNodeRepository::new()));
-        let owner_repo = Arc::new(AsyncMutex::new(FakeOwnerRepository::new()));
+        let node_repo = Arc::new(FakeNodeRepository::new());
+        let owner_repo = Arc::new(FakeOwnerRepository::new());
         let id_gen = InMemoryIdGenerator::new();
         let service = DeviceAssignmentService::new(
             node_repo.clone(),
@@ -910,7 +892,7 @@ mod tests {
             .checked_add(DurationMs::from_millis(60_000))
             .ok_or("lease overflow")?;
         let node = make_node(&id_gen, "zone-a", &["gb28181"], 0, 10, lease);
-        node_repo.lock().await.insert(node);
+        node_repo.insert(node);
 
         let tenant = id_gen.generate_tenant_id();
         let device1 = id_gen.generate_device_id();

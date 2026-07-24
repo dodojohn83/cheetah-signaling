@@ -20,7 +20,7 @@ pub async fn run(storage: &dyn Storage, fixtures: &Fixtures) -> TestResult<()> {
     let other_node = fixtures.node_id();
     let other_instance = fixtures.node_instance_id();
 
-    let mut node_repo = storage.node_repository();
+    let node_repo = storage.node_repository();
     node_repo
         .register(fixtures.node(this_node, this_instance)?)
         .await?;

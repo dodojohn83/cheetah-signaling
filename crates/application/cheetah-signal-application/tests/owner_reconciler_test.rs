@@ -84,7 +84,7 @@ fn far_past(ctx: &TestContext) -> UtcTimestamp {
 }
 
 async fn set_owner(ctx: &TestContext, device_id: DeviceId, owner: OwnerInfo) {
-    let mut repo = ctx.storage.owner_repository();
+    let repo = ctx.storage.owner_repository();
     repo.set(ctx.tenant_id, device_id, owner).await.unwrap();
 }
 

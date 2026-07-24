@@ -9,7 +9,7 @@ use tracing::{info, warn};
 
 /// Manages device owner leases for a single node.
 pub struct OwnerLeaseService {
-    repository: Arc<tokio::sync::Mutex<dyn OwnerRepository>>,
+    repository: Arc<dyn OwnerRepository>,
     clock: Arc<dyn Clock>,
     this_node: NodeId,
     lease_duration: DurationMs,
@@ -18,7 +18,7 @@ pub struct OwnerLeaseService {
 impl OwnerLeaseService {
     /// Creates a new lease service.
     pub fn new(
-        repository: Arc<tokio::sync::Mutex<dyn OwnerRepository>>,
+        repository: Arc<dyn OwnerRepository>,
         clock: Arc<dyn Clock>,
         this_node: NodeId,
         lease_duration: DurationMs,
@@ -46,8 +46,8 @@ impl OwnerLeaseService {
     ) -> Result<OwnerInfo, StorageError> {
         let now = self.clock.now_wall();
         let lease_until = self.lease_until()?;
-        let mut repo = self.repository.lock().await;
-        let owner = repo
+        let owner = self
+            .repository
             .acquire(tenant_id, device_id, self.this_node, now, lease_until)
             .await?;
         info!(
@@ -67,8 +67,8 @@ impl OwnerLeaseService {
         device_id: DeviceId,
     ) -> Result<Option<OwnerInfo>, StorageError> {
         let lease_until = self.lease_until()?;
-        let mut repo = self.repository.lock().await;
-        repo.renew(tenant_id, device_id, self.this_node, lease_until)
+        self.repository
+            .renew(tenant_id, device_id, self.this_node, lease_until)
             .await
     }
 
@@ -91,8 +91,8 @@ impl OwnerLeaseService {
         device_id: DeviceId,
         epoch: OwnerEpoch,
     ) -> Result<(), StorageError> {
-        let mut repo = self.repository.lock().await;
-        repo.release(tenant_id, device_id, self.this_node, epoch)
+        self.repository
+            .release(tenant_id, device_id, self.this_node, epoch)
             .await
     }
 }
