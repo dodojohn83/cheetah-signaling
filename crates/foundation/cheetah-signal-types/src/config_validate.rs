@@ -389,7 +389,7 @@ impl ClusterConfig {
                 self.lease_ttl_ms.as_millis(),
                 MAX_CLUSTER_LEASE_TTL_MS,
             )?;
-            validate_nonnegative_i64(
+            validate_positive_i64(
                 "cluster.heartbeat_interval_ms",
                 self.heartbeat_interval_ms.as_millis(),
                 MAX_CLUSTER_HEARTBEAT_INTERVAL_MS,
@@ -798,6 +798,16 @@ mod tests {
         let config = ClusterConfig {
             enabled: true,
             lease_ttl_ms: crate::DurationMs::from_millis(MAX_CLUSTER_LEASE_TTL_MS + 1),
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn cluster_config_rejects_zero_heartbeat_interval_when_enabled() {
+        let config = ClusterConfig {
+            enabled: true,
+            heartbeat_interval_ms: crate::DurationMs::from_millis(0),
             ..Default::default()
         };
         assert!(config.validate().is_err());
