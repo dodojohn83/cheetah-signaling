@@ -31,21 +31,31 @@ use tonic::{Code, Request, Status};
 /// configured cooldown would overflow the platform `Instant` range.
 const MAX_COOLDOWN_INSTANT: Duration = Duration::from_secs(60 * 60 * 24 * 365 * 100);
 
+/// Minimum duration used for RPC/connect/DNS lookups so `tokio::time::timeout`
+/// does not expire before the kernel can schedule the I/O.
+const MIN_RPC_TIMEOUT: Duration = Duration::from_millis(1);
 /// Maximum duration used for RPC/connect/DNS lookups so `tokio::time::timeout`
 /// does not overflow the platform `Instant` range.
 const MAX_RPC_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
 
+/// Minimum backoff sleep between retry attempts so a misconfigured `0` delay
+/// does not turn retries into a busy loop.
+const MIN_BACKOFF: Duration = Duration::from_millis(1);
 /// Maximum backoff sleep between retry attempts.
 const MAX_BACKOFF: Duration = Duration::from_secs(24 * 60 * 60);
 /// Maximum encoded/decoded gRPC message size for media control traffic.
 const MAX_GRPC_MESSAGE_BYTES: usize = 8 * 1024 * 1024;
 
 fn clamp_timeout_ms(timeout_ms: u64) -> Duration {
-    Duration::from_millis(timeout_ms).min(MAX_RPC_TIMEOUT)
+    Duration::from_millis(timeout_ms)
+        .max(MIN_RPC_TIMEOUT)
+        .min(MAX_RPC_TIMEOUT)
 }
 
 fn clamp_backoff_ms(delay_ms: u64) -> Duration {
-    Duration::from_millis(delay_ms).min(MAX_BACKOFF)
+    Duration::from_millis(delay_ms)
+        .max(MIN_BACKOFF)
+        .min(MAX_BACKOFF)
 }
 
 fn clamp_cooldown_ms(cooldown_ms: u64) -> Duration {
@@ -881,14 +891,15 @@ mod tests {
     }
 
     #[test]
-    fn clamp_timeout_ms_saturates_at_max() {
+    fn clamp_timeout_ms_saturates_at_max_and_clamps_zero() {
+        assert_eq!(clamp_timeout_ms(0), MIN_RPC_TIMEOUT);
         assert_eq!(clamp_timeout_ms(1_000), Duration::from_millis(1_000));
         assert_eq!(clamp_timeout_ms(u64::MAX), MAX_RPC_TIMEOUT);
     }
 
     #[test]
-    fn clamp_backoff_ms_saturates_at_max() {
-        assert_eq!(clamp_backoff_ms(0), Duration::ZERO);
+    fn clamp_backoff_ms_saturates_at_max_and_clamps_zero() {
+        assert_eq!(clamp_backoff_ms(0), MIN_BACKOFF);
         assert_eq!(clamp_backoff_ms(5_000), Duration::from_millis(5_000));
         assert_eq!(clamp_backoff_ms(u64::MAX), MAX_BACKOFF);
     }
