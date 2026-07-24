@@ -203,19 +203,16 @@ fn handle_invite<P: super::CascadeCredentialProvider>(
     // Validate the remote SDP offer. We only need to parse it; the actual
     // media negotiation and answer construction are performed by the media
     // scheduler in the application layer.
-    let remote_sdp = match String::from_utf8(body.to_vec()) {
-        Ok(s) => s,
-        Err(_) => {
-            return vec![CascadeOutput::SendResponse(build_response(
-                &msg,
-                400,
-                "Bad Request",
-                &cascade.next_local_tag(now),
-                Vec::new(),
-            ))];
-        }
-    };
-    let session = match parse_sdp(remote_sdp.as_bytes(), &UPSTREAM_SDP_CONFIG) {
+    if std::str::from_utf8(body).is_err() {
+        return vec![CascadeOutput::SendResponse(build_response(
+            &msg,
+            400,
+            "Bad Request",
+            &cascade.next_local_tag(now),
+            Vec::new(),
+        ))];
+    }
+    let session = match parse_sdp(body, &UPSTREAM_SDP_CONFIG) {
         Ok(session) => session,
         Err(_) => {
             return vec![CascadeOutput::SendResponse(build_response(
@@ -304,7 +301,6 @@ fn handle_invite<P: super::CascadeCredentialProvider>(
                 .map(|v| v.as_str().to_string())
                 .unwrap_or_default(),
             target_user,
-            remote_sdp,
         }),
     ]
 }

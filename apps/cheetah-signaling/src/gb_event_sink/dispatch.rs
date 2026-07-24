@@ -284,9 +284,6 @@ pub(super) async fn process_event(
             device_id,
             channel_id,
             source,
-            // Raw negotiated SDP body is intentionally not persisted; only
-            // bounded, desensitized control fields are recorded (AGENTS.md §8).
-            remote_sdp: _,
             remote_ssrc,
             remote_port,
             remote_proto,
@@ -461,9 +458,6 @@ pub(super) async fn process_event(
             upstream_from,
             upstream_to,
             target_user,
-            // Raw negotiated SDP body is intentionally not persisted; only
-            // bounded, desensitized control fields are recorded (AGENTS.md §8).
-            remote_sdp: _,
         } => {
             let mut payload = BTreeMap::new();
             payload.insert("domain_id".to_string(), domain_id.to_string());
