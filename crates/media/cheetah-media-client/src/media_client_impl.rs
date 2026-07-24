@@ -83,7 +83,7 @@ impl MediaClient for MediaControlClient {
         let mapped = stream.map(|result| {
             result
                 .map(|event| map_media_event(&event))
-                .map_err(|status| DomainError::from(MediaClientError::Grpc(status)))
+                .map_err(|status| DomainError::from(MediaClientError::grpc(status)))
         });
 
         Ok(Box::pin(mapped))

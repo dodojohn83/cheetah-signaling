@@ -135,7 +135,7 @@ struct ChannelEntry {
 impl ChannelEntry {
     fn can_attempt(&self) -> Result<(), MediaClientError> {
         let mut state = self.circuit.lock().map_err(|_| {
-            MediaClientError::Grpc(Status::internal("circuit breaker lock poisoned"))
+            MediaClientError::grpc(Status::internal("circuit breaker lock poisoned"))
         })?;
         match *state {
             CircuitState::Closed { .. } => Ok(()),
@@ -146,7 +146,7 @@ impl ChannelEntry {
                     };
                     Ok(())
                 } else {
-                    Err(MediaClientError::CircuitOpen("endpoint".to_string()))
+                    Err(MediaClientError::circuit_open("endpoint"))
                 }
             }
         }
@@ -267,7 +267,7 @@ impl MediaControlClient {
             if let Some(deadline) = deadline
                 && deadline_exceeded(deadline, self.config.request_timeout_ms, delay)
             {
-                return Err(MediaClientError::Grpc(last_error.unwrap_or_else(|| {
+                return Err(MediaClientError::grpc(last_error.unwrap_or_else(|| {
                     Status::deadline_exceeded("media command deadline exceeded")
                 })));
             }
@@ -304,7 +304,7 @@ impl MediaControlClient {
                     if is_retryable(status.code()) {
                         entry.record_failure();
                     }
-                    return Err(MediaClientError::Grpc(status));
+                    return Err(MediaClientError::grpc(status));
                 }
                 Err(_) => {
                     let status = Status::deadline_exceeded("media command timed out");
@@ -316,14 +316,14 @@ impl MediaControlClient {
                     if is_retryable(status.code()) {
                         entry.record_failure();
                     }
-                    return Err(MediaClientError::Grpc(status));
+                    return Err(MediaClientError::grpc(status));
                 }
             }
         }
 
         drop(permit);
         entry.record_failure();
-        Err(MediaClientError::Grpc(last_error.unwrap_or_else(|| {
+        Err(MediaClientError::grpc(last_error.unwrap_or_else(|| {
             Status::unavailable("media command failed after retries")
         })))
     }
@@ -406,7 +406,7 @@ impl MediaControlClient {
                     if is_retryable(status.code()) {
                         entry.record_failure();
                     }
-                    return Err(MediaClientError::Grpc(status));
+                    return Err(MediaClientError::grpc(status));
                 }
                 Err(_) => {
                     let status = Status::deadline_exceeded("media session list timed out");
@@ -418,14 +418,14 @@ impl MediaControlClient {
                     if is_retryable(status.code()) {
                         entry.record_failure();
                     }
-                    return Err(MediaClientError::Grpc(status));
+                    return Err(MediaClientError::grpc(status));
                 }
             }
         }
 
         drop(permit);
         entry.record_failure();
-        Err(MediaClientError::Grpc(last_error.unwrap_or_else(|| {
+        Err(MediaClientError::grpc(last_error.unwrap_or_else(|| {
             Status::unavailable("media session list failed after retries")
         })))
     }
@@ -439,7 +439,7 @@ impl MediaControlClient {
     ) -> Result<Arc<ChannelEntry>, MediaClientError> {
         {
             let pool = self.pool.lock().map_err(|_| {
-                MediaClientError::Grpc(Status::internal("connection pool lock poisoned"))
+                MediaClientError::grpc(Status::internal("connection pool lock poisoned"))
             })?;
             if let Some(entry) = pool.get(key) {
                 entry.touch();
@@ -467,7 +467,7 @@ impl MediaControlClient {
         });
 
         let mut pool = self.pool.lock().map_err(|_| {
-            MediaClientError::Grpc(Status::internal("connection pool lock poisoned"))
+            MediaClientError::grpc(Status::internal("connection pool lock poisoned"))
         })?;
         if let Some(existing) = pool.get(key) {
             existing.touch();
@@ -538,26 +538,26 @@ impl MediaControlClient {
     async fn connect(&self, endpoint: &str) -> Result<Channel, MediaClientError> {
         let uri = endpoint
             .parse::<Uri>()
-            .map_err(|_| MediaClientError::InvalidEndpoint(endpoint.to_string()))?;
+            .map_err(|_| MediaClientError::invalid_endpoint(endpoint))?;
         let scheme = uri
             .scheme_str()
-            .ok_or_else(|| MediaClientError::InvalidEndpoint(endpoint.to_string()))?;
+            .ok_or_else(|| MediaClientError::invalid_endpoint(endpoint))?;
         let host = uri
             .host()
-            .ok_or_else(|| MediaClientError::InvalidEndpoint(endpoint.to_string()))?;
+            .ok_or_else(|| MediaClientError::invalid_endpoint(endpoint))?;
         if host.is_empty() {
-            return Err(MediaClientError::InvalidEndpoint(endpoint.to_string()));
+            return Err(MediaClientError::invalid_endpoint(endpoint));
         }
 
         let is_http = scheme.eq_ignore_ascii_case("http");
         let is_https = scheme.eq_ignore_ascii_case("https");
         if !is_http && !is_https {
-            return Err(MediaClientError::InvalidEndpoint(format!(
+            return Err(MediaClientError::invalid_endpoint(format!(
                 "unsupported scheme '{scheme}'"
             )));
         }
         if is_http && !self.config.allow_insecure_http {
-            return Err(MediaClientError::InsecureEndpoint(endpoint.to_string()));
+            return Err(MediaClientError::insecure_endpoint(endpoint));
         }
 
         let default_port = if is_https { 443 } else { 80 };
@@ -567,7 +567,7 @@ impl MediaControlClient {
 
         let literal_uri = format!("{scheme}://{target_addr}")
             .parse::<Uri>()
-            .map_err(|_| MediaClientError::InvalidEndpoint(endpoint.to_string()))?;
+            .map_err(|_| MediaClientError::invalid_endpoint(endpoint))?;
         let mut builder = Endpoint::new(literal_uri)
             .map_err(MediaClientError::Transport)?
             .connect_timeout(clamp_timeout_ms(self.config.connect_timeout_ms));
@@ -579,7 +579,7 @@ impl MediaControlClient {
         };
         let authority_uri = authority
             .parse::<Uri>()
-            .map_err(|_| MediaClientError::InvalidEndpoint(endpoint.to_string()))?;
+            .map_err(|_| MediaClientError::invalid_endpoint(endpoint))?;
         builder = builder.origin(authority_uri);
 
         if is_https {
@@ -591,14 +591,14 @@ impl MediaControlClient {
                 let key_pem = match &self.config.tls_client_key_secret_name {
                     Some(key_name) => {
                         let store = self.secret_store.as_ref().ok_or_else(|| {
-                            MediaClientError::TlsConfig(
-                                "secret store not configured for mTLS client key".to_string(),
+                            MediaClientError::tls_config(
+                                "secret store not configured for mTLS client key",
                             )
                         })?;
                         store
                             .get(key_name)
                             .map_err(|e| {
-                                MediaClientError::TlsConfig(format!(
+                                MediaClientError::tls_config(format!(
                                     "failed to load client key secret: {e}"
                                 ))
                             })?
@@ -606,8 +606,8 @@ impl MediaControlClient {
                             .to_string()
                     }
                     None => {
-                        return Err(MediaClientError::TlsConfig(
-                            "mTLS client certificate provided without secret key name".to_string(),
+                        return Err(MediaClientError::tls_config(
+                            "mTLS client certificate provided without secret key name",
                         ));
                     }
                 };
@@ -630,7 +630,9 @@ impl MediaControlClient {
     ) -> Result<SocketAddr, MediaClientError> {
         if let Ok(ip) = IpAddr::from_str(host) {
             if !self.config.allow_internal_endpoints && is_internal_ip(ip) {
-                return Err(MediaClientError::InternalEndpoint(format!("{host}:{port}")));
+                return Err(MediaClientError::internal_endpoint(format!(
+                    "{host}:{port}"
+                )));
             }
             return Ok(SocketAddr::new(ip, port));
         }
@@ -640,9 +642,11 @@ impl MediaControlClient {
             tokio::net::lookup_host((host, port)),
         )
         .await
-        .map_err(|_| MediaClientError::InvalidEndpoint(format!("DNS lookup timed out for {host}")))?
+        .map_err(|_| {
+            MediaClientError::invalid_endpoint(format!("DNS lookup timed out for {host}"))
+        })?
         .map_err(|e| {
-            MediaClientError::InvalidEndpoint(format!("DNS lookup failed for {host}: {e}"))
+            MediaClientError::invalid_endpoint(format!("DNS lookup failed for {host}: {e}"))
         })?;
 
         let mut chosen = None;
@@ -654,7 +658,7 @@ impl MediaControlClient {
         }
 
         chosen.ok_or_else(|| {
-            MediaClientError::InternalEndpoint(format!(
+            MediaClientError::internal_endpoint(format!(
                 "{host}:{port} resolved only to internal addresses"
             ))
         })
@@ -671,11 +675,11 @@ impl MediaControlClient {
         )
         .await
         .map_err(|_| {
-            MediaClientError::Grpc(Status::resource_exhausted(format!(
+            MediaClientError::grpc(Status::resource_exhausted(format!(
                 "media node {endpoint} concurrency limit timeout"
             )))
         })?
-        .map_err(|_| MediaClientError::Grpc(Status::internal("semaphore closed")))?;
+        .map_err(|_| MediaClientError::grpc(Status::internal("semaphore closed")))?;
         Ok(permit)
     }
 
@@ -692,7 +696,7 @@ impl MediaControlClient {
         let response = client
             .subscribe(request)
             .await
-            .map_err(MediaClientError::Grpc)?;
+            .map_err(MediaClientError::grpc)?;
         Ok(response.into_inner())
     }
 }
@@ -712,30 +716,30 @@ pub(crate) fn validate_media_target(
     instance_epoch: MediaNodeInstanceEpoch,
 ) -> Result<(), MediaClientError> {
     if endpoint.trim().is_empty() {
-        return Err(MediaClientError::InvalidEndpoint(
-            "endpoint must not be empty".to_string(),
+        return Err(MediaClientError::invalid_endpoint(
+            "endpoint must not be empty",
         ));
     }
     if media_node_id.as_uuid().is_nil() {
-        return Err(MediaClientError::MissingIdentifier {
-            field: "media_node_id",
-            reason: "must not be nil".to_string(),
-        });
+        return Err(MediaClientError::missing_identifier(
+            "media_node_id",
+            "must not be nil",
+        ));
     }
     if instance_epoch.0 == 0 {
-        return Err(MediaClientError::MissingIdentifier {
-            field: "media_node_instance_epoch",
-            reason: "must be non-zero for fencing".to_string(),
-        });
+        return Err(MediaClientError::missing_identifier(
+            "media_node_instance_epoch",
+            "must be non-zero for fencing",
+        ));
     }
     let uri = endpoint
         .parse::<Uri>()
-        .map_err(|_| MediaClientError::InvalidEndpoint(endpoint.to_string()))?;
+        .map_err(|_| MediaClientError::invalid_endpoint(endpoint))?;
     let scheme = uri
         .scheme_str()
-        .ok_or_else(|| MediaClientError::InvalidEndpoint(endpoint.to_string()))?;
+        .ok_or_else(|| MediaClientError::invalid_endpoint(endpoint))?;
     if !(scheme.eq_ignore_ascii_case("https") || scheme.eq_ignore_ascii_case("http")) {
-        return Err(MediaClientError::InvalidEndpoint(format!(
+        return Err(MediaClientError::invalid_endpoint(format!(
             "unsupported scheme '{scheme}'"
         )));
     }
