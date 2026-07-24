@@ -343,14 +343,14 @@ impl OutOfProcessDriver {
         let payload_bytes = serde_json::to_vec(&payload)
             .map_err(|e| PluginError::driver(format!("failed to encode {method} payload: {e}")))?;
 
+        let rpc_timeout = clamp_timeout(timeout);
+
         let request = PluginRuntimeCallDriverRequest {
             correlation_id,
             method: method.to_string(),
             payload: payload_bytes,
-            timeout_ms: timeout.as_millis().max(0) as u64,
+            timeout_ms: rpc_timeout.as_millis() as u64,
         };
-
-        let rpc_timeout = clamp_timeout(timeout);
         let mut client = self.client.lock().await.clone();
         let response = tokio::time::timeout(rpc_timeout, client.call_driver(request))
             .await
@@ -463,9 +463,12 @@ impl ProtocolDriver for OutOfProcessDriver {
 }
 
 const MAX_RPC_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
+const MIN_RPC_TIMEOUT: Duration = Duration::from_millis(1);
 
 fn clamp_timeout(timeout: DurationMs) -> Duration {
-    Duration::from_millis(timeout.as_millis().max(0) as u64).min(MAX_RPC_TIMEOUT)
+    Duration::from_millis(timeout.as_millis().max(0) as u64)
+        .max(MIN_RPC_TIMEOUT)
+        .min(MAX_RPC_TIMEOUT)
 }
 
 fn decode_response(
@@ -742,9 +745,15 @@ mod tests {
     }
 
     #[test]
-    fn clamp_timeout_saturates_at_max() {
+    fn clamp_timeout_saturates_at_max_and_clamps_zero() {
         let normal = clamp_timeout(DurationMs::from_millis(1_000));
         assert_eq!(normal, Duration::from_millis(1_000));
+
+        let zero = clamp_timeout(DurationMs::from_millis(0));
+        assert_eq!(zero, MIN_RPC_TIMEOUT);
+
+        let negative = clamp_timeout(DurationMs::from_millis(-1));
+        assert_eq!(negative, MIN_RPC_TIMEOUT);
 
         let huge = clamp_timeout(DurationMs::from_millis(i64::MAX));
         assert_eq!(huge, MAX_RPC_TIMEOUT);
