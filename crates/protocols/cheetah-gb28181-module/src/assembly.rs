@@ -188,7 +188,7 @@ impl CredentialProvider for SecretStoreCredentialProvider {
         match self.store.get(&key) {
             Ok(secret) => Ok(Some(secret)),
             Err(e) if e.kind() == SignalErrorKind::NotFound => Ok(None),
-            Err(e) => Err(CredentialError::Backend(e.to_string())),
+            Err(e) => Err(CredentialError::backend(e)),
         }
     }
 }
