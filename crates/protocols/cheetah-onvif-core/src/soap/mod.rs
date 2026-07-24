@@ -9,7 +9,7 @@ const SOAP_ENVELOPE: &str = "http://www.w3.org/2003/05/soap-envelope";
 const WSA: &str = "http://www.w3.org/2005/08/addressing";
 
 /// A lightweight SOAP 1.2 envelope builder.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Envelope {
     action: String,
     body: String,
@@ -79,6 +79,20 @@ impl Envelope {
         writer.write_event(Event::End(BytesEnd::new("s:Envelope")))?;
 
         String::from_utf8(cursor.into_inner()).map_err(|e| OnvifError::Xml(e.to_string()))
+    }
+}
+
+impl std::fmt::Debug for Envelope {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Envelope")
+            .field("action", &self.action)
+            .field("body", &self.body)
+            .field("message_id", &self.message_id)
+            .field(
+                "security_header",
+                &self.security_header.as_ref().map(|_| "<redacted>"),
+            )
+            .finish()
     }
 }
 
@@ -205,5 +219,20 @@ mod tests {
         assert_eq!(fault.subcode, Some("ter:InvalidArgVal".to_string()));
         assert_eq!(fault.reason, "Invalid argument");
         assert_eq!(fault.detail, Some("device id missing".to_string()));
+    }
+
+    #[test]
+    fn debug_redacts_security_header() {
+        let envelope = Envelope::new("http://example.com/Action", "<Body/>")
+            .with_message_id("urn:uuid:msg-1")
+            .with_security_header(
+                "<wsse:Security><wsse:UsernameToken>secret</wsse:UsernameToken></wsse:Security>"
+                    .to_string(),
+            );
+        let debug = format!("{:?}", envelope);
+        assert!(debug.contains("Action"));
+        assert!(debug.contains("urn:uuid:msg-1"));
+        assert!(!debug.contains("secret"));
+        assert!(debug.contains("<redacted>"));
     }
 }
