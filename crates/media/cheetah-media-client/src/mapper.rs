@@ -13,9 +13,20 @@ use cheetah_signal_grpc::cheetah::media::v1::{
 };
 use cheetah_signal_types::{
     MediaBindingId, MediaNodeInstanceEpoch, MediaSessionId, MessageId, NodeId, OperationId,
-    OwnerEpoch, Revision, TenantId, UtcTimestamp,
+    OwnerEpoch, Revision, TenantId, UtcTimestamp, clamp_str,
 };
 use std::str::FromStr;
+
+/// Maximum byte length of free-form media node event/command diagnostic strings.
+const MAX_MEDIA_DIAGNOSTIC_BYTES: usize = 1024;
+/// Maximum byte length of stable media node event/command diagnostic codes.
+const MAX_MEDIA_CODE_BYTES: usize = 256;
+/// Maximum byte length of media node event identifiers and correlation fields.
+const MAX_MEDIA_EVENT_ID_BYTES: usize = 256;
+/// Maximum byte length of W3C traceparent (55) plus headroom for invalid values.
+const MAX_MEDIA_TRACEPARENT_BYTES: usize = 128;
+/// Maximum byte length of W3C tracestate.
+const MAX_MEDIA_TRACESTATE_BYTES: usize = 512;
 
 /// Builds a typed `MediaControlRequest` from a domain command.
 pub(crate) fn build_media_control_request(
@@ -159,6 +170,11 @@ pub fn map_command_result(
         .result
         .ok_or_else(|| DomainError::unavailable("media node returned no command result"))?;
 
+    let error_message = result
+        .error
+        .as_ref()
+        .map(|e| clamp_str(&e.message, MAX_MEDIA_DIAGNOSTIC_BYTES));
+
     match CommandStatus::try_from(result.status) {
         Ok(CommandStatus::Completed) => Ok(MediaNodeCommandResult::Completed),
         Ok(CommandStatus::Accepted) => Ok(MediaNodeCommandResult::Accepted),
@@ -167,27 +183,15 @@ pub fn map_command_result(
         // unknown outcome for the reconciler rather than a terminal failure.
         Ok(CommandStatus::Timeout) => Ok(MediaNodeCommandResult::UnknownOutcome {
             code: "timeout".to_string(),
-            message: result
-                .error
-                .as_ref()
-                .map(|e| e.message.clone())
-                .unwrap_or_else(|| "media node command timed out".to_string()),
+            message: error_message.unwrap_or_else(|| "media node command timed out".to_string()),
         }),
         Ok(s) => Ok(MediaNodeCommandResult::Failed {
-            code: format!("{s:?}"),
-            message: result
-                .error
-                .as_ref()
-                .map(|e| e.message.clone())
-                .unwrap_or_default(),
+            code: clamp_str(&format!("{s:?}"), MAX_MEDIA_CODE_BYTES),
+            message: error_message.unwrap_or_default(),
         }),
         Err(_) => Ok(MediaNodeCommandResult::Failed {
             code: "unknown_status".to_string(),
-            message: result
-                .error
-                .as_ref()
-                .map(|e| e.message.clone())
-                .unwrap_or_default(),
+            message: error_message.unwrap_or_default(),
         }),
     }
 }
@@ -217,8 +221,8 @@ pub fn map_proto_session_ref(proto: &MediaSessionRef) -> Result<MediaNodeSession
 /// and advance its cursor without redelivering the event indefinitely.
 pub fn map_media_event(event: &MediaEvent) -> MediaNodeEvent {
     let tenant_id = parse_id_or_default::<TenantId>(&event.tenant_id);
-    let event_id = event.event_id.clone();
-    let correlation_id = event.correlation_id.clone();
+    let event_id = clamp_str(&event.event_id, MAX_MEDIA_EVENT_ID_BYTES);
+    let correlation_id = clamp_str(&event.correlation_id, MAX_MEDIA_EVENT_ID_BYTES);
     let sequence = event.sequence;
     let occurred_at = event
         .occurred_at
@@ -227,15 +231,15 @@ pub fn map_media_event(event: &MediaEvent) -> MediaNodeEvent {
     let traceparent = if event.traceparent.is_empty() {
         None
     } else {
-        Some(event.traceparent.clone())
+        Some(clamp_str(&event.traceparent, MAX_MEDIA_TRACEPARENT_BYTES))
     };
     let tracestate = if event.tracestate.is_empty() {
         None
     } else {
-        Some(event.tracestate.clone())
+        Some(clamp_str(&event.tracestate, MAX_MEDIA_TRACESTATE_BYTES))
     };
 
-    let callback = try_build_callback(event);
+    let callback = try_build_callback(event, &event_id);
 
     MediaNodeEvent {
         tenant_id,
@@ -249,7 +253,7 @@ pub fn map_media_event(event: &MediaEvent) -> MediaNodeEvent {
     }
 }
 
-fn try_build_callback(event: &MediaEvent) -> Option<MediaNodeCallback> {
+fn try_build_callback(event: &MediaEvent, clamped_event_id: &str) -> Option<MediaNodeCallback> {
     if event.event_id.is_empty() {
         return None;
     }
@@ -289,7 +293,7 @@ fn try_build_callback(event: &MediaEvent) -> Option<MediaNodeCallback> {
         media_binding_id,
         operation_id,
         owner_epoch,
-        message_id: event.event_id.clone(),
+        message_id: clamped_event_id.to_string(),
         binding_revision,
         session_revision,
         kind,
@@ -303,16 +307,16 @@ fn map_event_payload(event: &MediaEvent) -> Result<MediaNodeCallbackKind, Domain
         | Some(MediaEventPayload::StreamOnline(_))
         | Some(MediaEventPayload::RtpNegotiated(_)) => Ok(MediaNodeCallbackKind::Started),
         Some(MediaEventPayload::StreamStopped(s)) => Ok(MediaNodeCallbackKind::Stopped {
-            reason: s.reason.clone(),
+            reason: clamp_str(&s.reason, MAX_MEDIA_DIAGNOSTIC_BYTES),
         }),
         Some(MediaEventPayload::RecordStopped(_)) => Ok(MediaNodeCallbackKind::Stopped {
             reason: "record_stopped".to_string(),
         }),
         Some(MediaEventPayload::StreamOffline(s)) => Ok(MediaNodeCallbackKind::Stopped {
-            reason: s.reason.clone(),
+            reason: clamp_str(&s.reason, MAX_MEDIA_DIAGNOSTIC_BYTES),
         }),
         Some(MediaEventPayload::PlaybackComplete(s)) => Ok(MediaNodeCallbackKind::Stopped {
-            reason: s.reason.clone(),
+            reason: clamp_str(&s.reason, MAX_MEDIA_DIAGNOSTIC_BYTES),
         }),
         Some(MediaEventPayload::RtpTimeout(_)) => Ok(MediaNodeCallbackKind::Failed {
             code: "rtp_timeout".to_string(),
@@ -325,7 +329,7 @@ fn map_event_payload(event: &MediaEvent) -> Result<MediaNodeCallbackKind, Domain
             }),
             _ => Ok(MediaNodeCallbackKind::Failed {
                 code: "proxy_state_error".to_string(),
-                message: s.state.clone(),
+                message: clamp_str(&s.state, MAX_MEDIA_DIAGNOSTIC_BYTES),
             }),
         },
         Some(MediaEventPayload::ResourceStateChanged(s)) => {
@@ -344,7 +348,8 @@ fn map_event_payload(event: &MediaEvent) -> Result<MediaNodeCallbackKind, Domain
                     message: "resource entered error state".to_string(),
                 }),
                 _ => Err(DomainError::invalid_argument(format!(
-                    "unhandled resource state: {state}"
+                    "unhandled resource state: {}",
+                    clamp_str(state, MAX_MEDIA_DIAGNOSTIC_BYTES)
                 ))),
             }
         }
@@ -367,14 +372,14 @@ fn map_media_error(
 ) -> Result<MediaNodeCallbackKind, DomainError> {
     if let Some(status) = &error.status {
         return Ok(MediaNodeCallbackKind::Failed {
-            code: status.code.clone(),
-            message: status.message.clone(),
+            code: clamp_str(&status.code, MAX_MEDIA_CODE_BYTES),
+            message: clamp_str(&status.message, MAX_MEDIA_DIAGNOSTIC_BYTES),
         });
     }
     if !error.error_code.is_empty() {
         return Ok(MediaNodeCallbackKind::Failed {
-            code: error.error_code.clone(),
-            message: error.error_message.clone(),
+            code: clamp_str(&error.error_code, MAX_MEDIA_CODE_BYTES),
+            message: clamp_str(&error.error_message, MAX_MEDIA_DIAGNOSTIC_BYTES),
         });
     }
     Err(DomainError::invalid_argument(
@@ -413,4 +418,238 @@ fn parse_required_id<T: FromStr<Err = cheetah_signal_types::SignalError>>(
         )));
     }
     T::from_str(value).map_err(|e| DomainError::invalid_argument(format!("invalid {field}: {e}")))
+}
+
+#[cfg(test)]
+#[allow(deprecated, clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+    use cheetah_signal_grpc::cheetah::common::v1::{CommandResult, CommandStatus, ErrorStatus};
+    use cheetah_signal_grpc::cheetah::foundation::v1::ErrorStatus as FoundationErrorStatus;
+    use cheetah_signal_grpc::cheetah::media::v1::{
+        MediaError, MediaEvent, MediaResourceState, MediaSessionRefStopped, PlaybackCompleteEvent,
+        ProxyStateChangedEvent, ResourceStateChangedEvent, StreamOfflineEvent,
+        media_event::Event as MediaEventPayload,
+    };
+
+    fn oversized_string(extra: usize) -> String {
+        "x".repeat(MAX_MEDIA_DIAGNOSTIC_BYTES + extra)
+    }
+
+    #[test]
+    fn map_command_result_clamps_oversized_error_message() {
+        let message = oversized_string(20);
+        let response = MediaControlExecuteResponse {
+            result: Some(CommandResult {
+                status: CommandStatus::Failed as i32,
+                operation_id: "op-1".to_string(),
+                error: Some(ErrorStatus {
+                    code: "media_failed".to_string(),
+                    message: message.clone(),
+                    retryable: false,
+                    violations: Vec::new(),
+                }),
+            }),
+        };
+
+        let result = map_command_result(response).unwrap();
+        match result {
+            MediaNodeCommandResult::Failed { code, message: m } => {
+                // Known CommandStatus variants become the code; the wire error.code is ignored.
+                assert_eq!(code, "Failed");
+                assert_eq!(m.len(), MAX_MEDIA_DIAGNOSTIC_BYTES);
+                assert!(m.starts_with('x'));
+                assert!(!m.ends_with("x") || m.len() < message.len());
+            }
+            other => panic!("expected Failed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn map_command_result_clamps_unknown_status_error_message() {
+        let message = oversized_string(20);
+        let response = MediaControlExecuteResponse {
+            result: Some(CommandResult {
+                status: 999,
+                operation_id: "op-1".to_string(),
+                error: Some(ErrorStatus {
+                    code: "c".repeat(MAX_MEDIA_CODE_BYTES + 10),
+                    message: message.clone(),
+                    retryable: false,
+                    violations: Vec::new(),
+                }),
+            }),
+        };
+
+        let result = map_command_result(response).unwrap();
+        match result {
+            MediaNodeCommandResult::Failed { code, message: m } => {
+                // Unknown statuses map to a static code; the message is still clamped.
+                assert_eq!(code, "unknown_status");
+                assert_eq!(m.len(), MAX_MEDIA_DIAGNOSTIC_BYTES);
+                assert!(m.starts_with('x'));
+            }
+            other => panic!("expected Failed, got {other:?}"),
+        }
+    }
+
+    fn sample_event_with_payload(payload: MediaEventPayload) -> MediaEvent {
+        MediaEvent {
+            tenant_id: "11111111-1111-1111-1111-111111111111".to_string(),
+            event_id: "ev-1".to_string(),
+            media_node_id: "22222222-2222-2222-2222-222222222222".to_string(),
+            media_node_instance_epoch: 1,
+            sequence: 1,
+            occurred_at: None,
+            media_session_id: "44444444-4444-4444-4444-444444444444".to_string(),
+            media_binding_id: "33333333-3333-3333-3333-333333333333".to_string(),
+            media_handle: String::new(),
+            media_key: None,
+            correlation_id: "corr-1".to_string(),
+            traceparent: String::new(),
+            tracestate: String::new(),
+            operation_id: Some("op-1".to_string()),
+            owner_epoch: Some(1),
+            binding_revision: Some(0),
+            session_revision: Some(0),
+            event: Some(payload),
+        }
+    }
+
+    #[test]
+    fn map_media_event_clamps_header_fields() {
+        let event = MediaEvent {
+            event_id: "e".repeat(MAX_MEDIA_EVENT_ID_BYTES + 4),
+            correlation_id: "c".repeat(MAX_MEDIA_EVENT_ID_BYTES + 4),
+            traceparent: "t".repeat(MAX_MEDIA_TRACEPARENT_BYTES + 4),
+            tracestate: "s".repeat(MAX_MEDIA_TRACESTATE_BYTES + 4),
+            ..sample_event_with_payload(MediaEventPayload::RtpTimeout(
+                cheetah_signal_grpc::cheetah::media::v1::RtpTimeoutEvent::default(),
+            ))
+        };
+
+        let mapped = map_media_event(&event);
+        assert_eq!(mapped.event_id.len(), MAX_MEDIA_EVENT_ID_BYTES);
+        assert_eq!(mapped.correlation_id.len(), MAX_MEDIA_EVENT_ID_BYTES);
+        assert_eq!(
+            mapped.traceparent.as_ref().unwrap().len(),
+            MAX_MEDIA_TRACEPARENT_BYTES
+        );
+        assert_eq!(
+            mapped.tracestate.as_ref().unwrap().len(),
+            MAX_MEDIA_TRACESTATE_BYTES
+        );
+    }
+
+    #[test]
+    fn map_media_event_clamps_stream_stopped_reason() {
+        let reason = oversized_string(10);
+        let payload = MediaEventPayload::StreamStopped(MediaSessionRefStopped {
+            session: None,
+            reason: reason.clone(),
+        });
+
+        let event = sample_event_with_payload(payload);
+        let mapped = map_media_event(&event);
+        match mapped.callback.unwrap().kind {
+            MediaNodeCallbackKind::Stopped { reason: r } => {
+                assert_eq!(r.len(), MAX_MEDIA_DIAGNOSTIC_BYTES);
+                assert!(r.starts_with('x'));
+            }
+            other => panic!("expected Stopped, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn map_media_event_clamps_media_error_code_and_message() {
+        let message = oversized_string(10);
+        let code = "c".repeat(MAX_MEDIA_CODE_BYTES + 10);
+        let payload = MediaEventPayload::Error(MediaError {
+            session: None,
+            error_code: String::new(),
+            error_message: String::new(),
+            status: Some(FoundationErrorStatus {
+                code: code.clone(),
+                message: message.clone(),
+                retryable: false,
+                violations: Vec::new(),
+            }),
+            request_id: String::new(),
+            correlation_id: String::new(),
+            resource_ref: None,
+            outcome: 0,
+        });
+
+        let event = sample_event_with_payload(payload);
+        let mapped = map_media_event(&event);
+        match mapped.callback.unwrap().kind {
+            MediaNodeCallbackKind::Failed {
+                code: c,
+                message: m,
+            } => {
+                assert_eq!(c.len(), MAX_MEDIA_CODE_BYTES);
+                assert_eq!(m.len(), MAX_MEDIA_DIAGNOSTIC_BYTES);
+            }
+            other => panic!("expected Failed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn map_media_event_clamps_proxy_state_string() {
+        let huge = oversized_string(10);
+        let payload = MediaEventPayload::ProxyStateChanged(ProxyStateChangedEvent { state: huge });
+
+        let event = sample_event_with_payload(payload);
+        let mapped = map_media_event(&event);
+        match mapped.callback.unwrap().kind {
+            MediaNodeCallbackKind::Failed { message, .. } => {
+                assert_eq!(message.len(), MAX_MEDIA_DIAGNOSTIC_BYTES);
+            }
+            other => panic!("expected Failed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn map_media_event_does_not_build_callback_for_oversized_unhandled_resource_state() {
+        let huge = oversized_string(10);
+        let payload = MediaEventPayload::ResourceStateChanged(ResourceStateChangedEvent {
+            new_state: Some(MediaResourceState {
+                kind: String::new(),
+                state: huge,
+                generation: 0,
+                ..Default::default()
+            }),
+            old_state: None,
+        });
+
+        let event = sample_event_with_payload(payload);
+        let mapped = map_media_event(&event);
+        assert!(mapped.callback.is_none());
+    }
+
+    #[test]
+    fn map_media_event_clamps_playback_complete_and_stream_offline_reason() {
+        let reason = oversized_string(10);
+        let playback = MediaEventPayload::PlaybackComplete(PlaybackCompleteEvent {
+            media_session_id: String::new(),
+            media_handle: String::new(),
+            reason: reason.clone(),
+        });
+        let offline = MediaEventPayload::StreamOffline(StreamOfflineEvent {
+            media_session_id: String::new(),
+            media_handle: String::new(),
+            reason,
+        });
+
+        for payload in [playback, offline] {
+            let event = sample_event_with_payload(payload);
+            let mapped = map_media_event(&event);
+            match mapped.callback.unwrap().kind {
+                MediaNodeCallbackKind::Stopped { reason: r } => {
+                    assert_eq!(r.len(), MAX_MEDIA_DIAGNOSTIC_BYTES);
+                }
+                other => panic!("expected Stopped, got {other:?}"),
+            }
+        }
+    }
 }
