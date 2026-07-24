@@ -143,7 +143,7 @@ where
                 format!("webhook response body read failed: {e}"),
             )
         })?;
-        if body.len() + chunk.len() > limit {
+        if body.len().saturating_add(chunk.len()) > limit {
             return Err(SignalError::new(
                 SignalErrorKind::InvalidArgument,
                 "webhook response body exceeds maximum allowed size",

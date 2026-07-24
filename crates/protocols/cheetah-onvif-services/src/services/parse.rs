@@ -36,7 +36,7 @@ impl<'a> ParseContext<'a> {
                 self.limits.max_nodes
             )));
         }
-        if self.stack.len() + 1 > self.limits.max_depth {
+        if self.stack.len().saturating_add(1) > self.limits.max_depth {
             return Err(limit_error(format!(
                 "response exceeds {} nesting depth",
                 self.limits.max_depth
@@ -55,7 +55,7 @@ impl<'a> ParseContext<'a> {
                 self.limits.max_nodes
             )));
         }
-        if self.stack.len() + 1 > self.limits.max_depth {
+        if self.stack.len().saturating_add(1) > self.limits.max_depth {
             return Err(limit_error(format!(
                 "response exceeds {} nesting depth",
                 self.limits.max_depth
@@ -65,7 +65,7 @@ impl<'a> ParseContext<'a> {
     }
 
     pub(crate) fn append_text(&mut self, s: &str) -> Result<(), OnvifServiceError> {
-        if self.text.len() + s.len() > self.limits.max_text_bytes {
+        if self.text.len().saturating_add(s.len()) > self.limits.max_text_bytes {
             return Err(limit_error(format!(
                 "response text exceeds {} bytes",
                 self.limits.max_text_bytes

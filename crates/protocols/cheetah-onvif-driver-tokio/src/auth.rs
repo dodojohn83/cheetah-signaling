@@ -65,14 +65,14 @@ pub fn inject_username_token(
 
     // Prefer SOAP 1.2 prefix used by this codebase.
     if let Some(idx) = envelope_xml.find("</s:Header>") {
-        let mut out = String::with_capacity(envelope_xml.len() + security.len());
+        let mut out = String::with_capacity(envelope_xml.len().saturating_add(security.len()));
         out.push_str(&envelope_xml[..idx]);
         out.push_str(&security);
         out.push_str(&envelope_xml[idx..]);
         return Ok(out);
     }
     if let Some(idx) = envelope_xml.find("</Header>") {
-        let mut out = String::with_capacity(envelope_xml.len() + security.len());
+        let mut out = String::with_capacity(envelope_xml.len().saturating_add(security.len()));
         out.push_str(&envelope_xml[..idx]);
         out.push_str(&security);
         out.push_str(&envelope_xml[idx..]);
