@@ -5,6 +5,11 @@
 //! wire messages are returned inside [`MediaOutput::SendMessage`] for the
 //! transport driver to send.
 
+// Clippy suggests replacing `|e| MediaError::malformed_sip(e)` with the
+// function item, but the constructors are generic over `impl Display` and
+// cannot be used as ordinary function pointers in `map_err`.
+#![allow(clippy::redundant_closure)]
+
 pub(crate) mod commands;
 pub(crate) mod control;
 pub(crate) mod handlers;
@@ -191,6 +196,23 @@ pub enum MediaOutput {
     EmitEvent(Gb28181Event),
 }
 
+/// Maximum byte length of the human-readable message carried by a `MediaError`.
+const MAX_MEDIA_ERROR_BYTES: usize = 1024;
+
+/// Truncates `message` at a UTF-8 character boundary so it is at most
+/// `MAX_MEDIA_ERROR_BYTES` long.
+fn clamp_message(message: impl std::fmt::Display) -> String {
+    let s = message.to_string();
+    if s.len() <= MAX_MEDIA_ERROR_BYTES {
+        return s;
+    }
+    let mut idx = MAX_MEDIA_ERROR_BYTES;
+    while idx > 0 && !s.is_char_boundary(idx) {
+        idx -= 1;
+    }
+    s[..idx].to_string()
+}
+
 /// Errors returned by the media state machine.
 #[derive(Clone, Debug, thiserror::Error, Eq, PartialEq)]
 pub enum MediaError {
@@ -215,6 +237,56 @@ pub enum MediaError {
     /// Capability or codec is not supported.
     #[error("unsupported capability: {0}")]
     Unsupported(String),
+}
+
+impl MediaError {
+    /// Creates an `InvalidState` error with a clamped message.
+    pub fn invalid_state(message: impl std::fmt::Display) -> Self {
+        Self::InvalidState(clamp_message(message))
+    }
+
+    /// Creates a `MalformedSip` error with a clamped message.
+    pub fn malformed_sip(message: impl std::fmt::Display) -> Self {
+        Self::MalformedSip(clamp_message(message))
+    }
+
+    /// Creates a `MalformedSdp` error with a clamped message.
+    pub fn malformed_sdp(message: impl std::fmt::Display) -> Self {
+        Self::MalformedSdp(clamp_message(message))
+    }
+
+    /// Creates an `Unsupported` error with a clamped message.
+    pub fn unsupported(message: impl std::fmt::Display) -> Self {
+        Self::Unsupported(clamp_message(message))
+    }
+}
+
+#[cfg(test)]
+mod error_tests {
+    use super::*;
+
+    #[test]
+    fn constructors_passthrough_short_messages() {
+        assert_eq!(MediaError::invalid_state("ready").to_string(), "invalid session state: ready");
+        assert_eq!(MediaError::malformed_sip("missing tag").to_string(), "malformed SIP message: missing tag");
+        assert_eq!(MediaError::malformed_sdp("no c=").to_string(), "malformed SDP: no c=");
+        assert_eq!(MediaError::unsupported("g711").to_string(), "unsupported capability: g711");
+    }
+
+    #[test]
+    fn constructors_clamp_long_messages_at_char_boundary() {
+        let padding = "x".repeat(MAX_MEDIA_ERROR_BYTES);
+        let trailer = "\u{1F600}";
+        let message = format!("{padding}{trailer}");
+        let err = MediaError::invalid_state(message.clone());
+        let inner = match err {
+            MediaError::InvalidState(s) => s,
+            _ => panic!("expected InvalidState"),
+        };
+        assert!(inner.len() <= MAX_MEDIA_ERROR_BYTES);
+        assert!(inner.is_char_boundary(inner.len()));
+        assert!(message.starts_with(&inner));
+    }
 }
 
 /// Sans-I/O state machine for GB28181 media sessions.

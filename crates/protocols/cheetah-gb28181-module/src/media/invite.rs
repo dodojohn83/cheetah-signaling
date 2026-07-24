@@ -400,7 +400,7 @@ pub fn build_sdp_offer(params: &SdpParams) -> Result<String, AccessError> {
 pub fn first_contact_uri(msg: &SipMessage) -> Result<SipUri, super::MediaError> {
     msg.headers()
         .get(&HeaderName::Contact)
-        .ok_or_else(|| super::MediaError::MalformedSip("missing Contact header".to_string()))?
+        .ok_or_else(|| super::MediaError::malformed_sip("missing Contact header"))?
         .as_str()
         .split(',')
         .find_map(|token| {
@@ -416,7 +416,7 @@ pub fn first_contact_uri(msg: &SipMessage) -> Result<SipUri, super::MediaError> 
             };
             SipUri::parse(inner).ok()
         })
-        .ok_or_else(|| super::MediaError::MalformedSip("invalid Contact URI".to_string()))
+        .ok_or_else(|| super::MediaError::malformed_sip("invalid Contact URI"))
 }
 
 /// Extracts a `tag` parameter from a header value.

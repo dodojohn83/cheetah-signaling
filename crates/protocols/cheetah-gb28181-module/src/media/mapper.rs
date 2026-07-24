@@ -51,7 +51,7 @@ impl GbMediaPurpose {
             MediaPurpose::Live => Ok(Self::Live),
             MediaPurpose::Playback => Ok(Self::Playback),
             MediaPurpose::Talk => Ok(Self::Talk),
-            other => Err(MediaError::Unsupported(format!(
+            other => Err(MediaError::unsupported(format!(
                 "media purpose {other:?} is not a GB28181 media operation"
             ))),
         }
@@ -162,17 +162,17 @@ pub fn map_start(request: GbStartRequest) -> Result<MediaCommand, MediaError> {
     } = request;
 
     if !purpose.is_recorded() && window.is_some() {
-        return Err(MediaError::InvalidState(format!(
+        return Err(MediaError::invalid_state(format!(
             "{purpose:?} must not carry a recording window"
         )));
     }
     if download_speed.is_some() && purpose != GbMediaPurpose::Download {
-        return Err(MediaError::InvalidState(format!(
+        return Err(MediaError::invalid_state(format!(
             "{purpose:?} must not carry a download speed"
         )));
     }
     if codec.is_some() && purpose != GbMediaPurpose::Talk {
-        return Err(MediaError::InvalidState(format!(
+        return Err(MediaError::invalid_state(format!(
             "{purpose:?} must not carry an audio codec"
         )));
     }
@@ -236,11 +236,10 @@ pub fn map_start(request: GbStartRequest) -> Result<MediaCommand, MediaError> {
         GbMediaPurpose::Download => {
             let ssrc = require_video_ssrc(ssrc)?;
             let window = require_window(window, purpose)?;
-            let download_speed = download_speed.ok_or_else(|| {
-                MediaError::InvalidState("download requires a download speed".to_string())
-            })?;
+            let download_speed = download_speed
+                .ok_or_else(|| MediaError::invalid_state("download requires a download speed"))?;
             if download_speed == 0 {
-                return Err(MediaError::InvalidState(
+                return Err(MediaError::invalid_state(
                     "download speed must be greater than zero".to_string(),
                 ));
             }
@@ -264,14 +263,13 @@ pub fn map_start(request: GbStartRequest) -> Result<MediaCommand, MediaError> {
             })
         }
         GbMediaPurpose::Talk => {
-            let codec = codec.ok_or_else(|| {
-                MediaError::Unsupported("talk requires an audio codec".to_string())
-            })?;
+            let codec =
+                codec.ok_or_else(|| MediaError::unsupported("talk requires an audio codec"))?;
             if !SUPPORTED_TALK_CODECS.contains(&codec.as_str()) {
-                return Err(MediaError::Unsupported(codec));
+                return Err(MediaError::unsupported(codec));
             }
             if ssrc.is_some() {
-                return Err(MediaError::InvalidState(
+                return Err(MediaError::invalid_state(
                     "talk audio sessions must not carry a video SSRC".to_string(),
                 ));
             }
@@ -318,7 +316,7 @@ pub fn map_control(
         MediaControl::Stop => (PlaybackAction::Teardown, None, None),
         MediaControl::Seek { offset_ms } => {
             if *offset_ms < 0 {
-                return Err(MediaError::InvalidState(
+                return Err(MediaError::invalid_state(
                     "seek offset must not be negative".to_string(),
                 ));
             }
@@ -337,14 +335,14 @@ pub fn map_control(
         }
         MediaControl::Scale { value } => {
             if !value.is_finite() {
-                return Err(MediaError::InvalidState(
+                return Err(MediaError::invalid_state(
                     "scale value must be finite".to_string(),
                 ));
             }
             (PlaybackAction::Play, Some(*value), None)
         }
         other => {
-            return Err(MediaError::Unsupported(format!(
+            return Err(MediaError::unsupported(format!(
                 "playback control {other:?} is not supported"
             )));
         }
@@ -360,9 +358,7 @@ pub fn map_control(
 
 /// Requires a video SSRC for live/playback/download sessions.
 fn require_video_ssrc(ssrc: Option<String>) -> Result<String, MediaError> {
-    ssrc.ok_or_else(|| {
-        MediaError::InvalidState("video media session requires a negotiated SSRC".to_string())
-    })
+    ssrc.ok_or_else(|| MediaError::invalid_state("video media session requires a negotiated SSRC"))
 }
 
 /// Requires a recording window for playback/download sessions.
@@ -370,6 +366,7 @@ fn require_window(
     window: Option<GbRecordWindow>,
     purpose: GbMediaPurpose,
 ) -> Result<GbRecordWindow, MediaError> {
-    window
-        .ok_or_else(|| MediaError::InvalidState(format!("{purpose:?} requires a recording window")))
+    window.ok_or_else(|| {
+        MediaError::invalid_state(format!("{purpose:?} requires a recording window"))
+    })
 }
