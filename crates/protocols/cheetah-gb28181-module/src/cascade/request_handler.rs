@@ -137,7 +137,7 @@ pub(super) fn handle_request<P: CascadeCredentialProvider>(
         &platform_id,
     ) {
         Ok(messages) => {
-            let mut outputs = Vec::with_capacity(messages.len() + 1);
+            let mut outputs = Vec::with_capacity(messages.len().saturating_add(1));
             outputs.push(CascadeOutput::SendResponse(build_ok_response(
                 &msg,
                 &response_tag,

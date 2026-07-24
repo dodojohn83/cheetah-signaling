@@ -2,6 +2,11 @@
 
 use std::sync::Arc;
 
+/// Maximum number of catalog items a single SIP MESSAGE can carry.
+const MAX_CATALOG_ITEMS_PER_PACKET: usize = 10_000;
+/// Maximum number of catalog response pages emitted for one upstream query.
+const MAX_CATALOG_QUERY_PAGES: usize = 10_000;
+
 use cheetah_gb28181_core::{
     Body, HeaderName, HeaderValue, Method, RequestLine, SipHeaders, SipMessage, SipUri, StatusLine,
 };
@@ -275,8 +280,8 @@ pub(crate) fn build_catalog_pages(
 
     // Independent upper bound so a misbehaving or concurrently-growing provider
     // cannot make this loop run unbounded.
-    let max_per_packet = max_per_packet.max(1);
-    let max_pages = (config.catalog_max_query_pages as usize).max(1);
+    let max_per_packet = max_per_packet.clamp(1, MAX_CATALOG_ITEMS_PER_PACKET);
+    let max_pages = (config.catalog_max_query_pages as usize).clamp(1, MAX_CATALOG_QUERY_PAGES);
     let max_total_items = max_per_packet.saturating_mul(max_pages);
 
     loop {
@@ -284,10 +289,15 @@ pub(crate) fn build_catalog_pages(
             break;
         }
 
-        let page = provider
+        let mut page = provider
             .query_page(query, cursor.as_deref(), max_per_packet)
             .map_err(|e| CascadeError::Internal(e.to_string()))?;
         pages_emitted += 1;
+
+        // Defensive clamp: a provider must not return more items than the page
+        // size asked for, but truncate just in case to keep a single SIP
+        // MESSAGE within bounded memory.
+        page.items.truncate(max_per_packet);
 
         // Clamp the advertised total to the configured cap. This also protects
         // against a provider that reports a total smaller than what it returns,

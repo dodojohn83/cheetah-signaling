@@ -808,3 +808,52 @@ fn catalog_query_wrong_device_id_returns_bad_request() {
         _ => panic!("expected a response"),
     }
 }
+
+struct HugeTotalCatalogProvider;
+
+impl CatalogProvider for HugeTotalCatalogProvider {
+    fn query_page(
+        &self,
+        _query: &CatalogQuery,
+        _cursor: Option<&str>,
+        _limit: usize,
+    ) -> Result<CatalogPage, CatalogError> {
+        Ok(CatalogPage {
+            items: vec![CatalogItem {
+                device_id: "34020000001320000001".to_string(),
+                name: Some("Camera 1".to_string()),
+                status: Some("ON".to_string()),
+                ..Default::default()
+            }],
+            total: usize::MAX,
+            next_cursor: None,
+        })
+    }
+}
+
+#[test]
+fn catalog_query_clamps_huge_max_items_and_pages() {
+    let provider = Arc::new(HugeTotalCatalogProvider);
+    let mut cfg = config();
+    cfg.catalog_max_items_per_packet = u32::MAX;
+    cfg.catalog_max_query_pages = u32::MAX;
+    let mut cascade = Gb28181Cascade::new(cfg, password_provider())
+        .unwrap()
+        .with_catalog_provider(provider);
+    let (call_id, _) = register_to_connected(&mut cascade);
+
+    let msg = catalog_query_message("1", "34020000001320000001", &call_id);
+    let outputs = cascade
+        .process(CascadeInput {
+            now: 100,
+            event: CascadeEvent::Request(Box::new(msg)),
+        })
+        .unwrap();
+
+    let bodies = catalog_response_bodies(&outputs);
+    assert_eq!(bodies.len(), 1);
+    let parsed = parse_catalog(bodies[0].as_bytes()).unwrap();
+    assert_eq!(parsed.items.len(), 1);
+    // The advertised total is clamped to max_per_packet * max_pages (10_000 * 10_000).
+    assert_eq!(parsed.sum_num, 100_000_000);
+}
