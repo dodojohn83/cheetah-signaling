@@ -16,6 +16,14 @@ pub const MAX_COMPATIBILITY_FIELD_BYTES: usize = 512;
 const MAX_CORS_ORIGINS: usize = 64;
 /// Maximum byte length of a single CORS allowed origin.
 const MAX_CORS_ORIGIN_BYTES: usize = 256;
+/// Maximum number of async worker threads (used for shard metrics sizing).
+const MAX_WORKER_THREADS: usize = 1024;
+/// Maximum number of blocking threads.
+const MAX_BLOCKING_THREADS: usize = 10_000;
+/// Maximum per-actor mailbox queue depth.
+const MAX_QUEUE_DEPTH: usize = 1_000_000;
+/// Maximum idle blocking thread keep-alive in milliseconds (one hour).
+const MAX_THREAD_KEEP_ALIVE_MS: i64 = 3_600_000;
 
 /// Serializes a `SecretString` as a redacted placeholder, preserving empty defaults.
 ///
@@ -80,16 +88,35 @@ pub struct SignalConfig {
 impl SignalConfig {
     /// Validates the configuration for consistency and allowed ranges.
     pub fn validate(&self) -> Result<()> {
-        if self.runtime.worker_threads == 0 {
+        if self.runtime.worker_threads == 0 || self.runtime.worker_threads > MAX_WORKER_THREADS {
             return Err(SignalError::new(
                 SignalErrorKind::InvalidArgument,
-                "runtime.worker_threads must be greater than zero",
+                format!("runtime.worker_threads must be between 1 and {MAX_WORKER_THREADS}"),
             ));
         }
-        if self.runtime.queue_depth == 0 {
+        if self.runtime.max_blocking_threads == 0
+            || self.runtime.max_blocking_threads > MAX_BLOCKING_THREADS
+        {
             return Err(SignalError::new(
                 SignalErrorKind::InvalidArgument,
-                "runtime.queue_depth must be greater than zero",
+                format!(
+                    "runtime.max_blocking_threads must be between 1 and {MAX_BLOCKING_THREADS}"
+                ),
+            ));
+        }
+        let keep_alive_ms = self.runtime.thread_keep_alive_ms.as_millis();
+        if keep_alive_ms <= 0 || keep_alive_ms > MAX_THREAD_KEEP_ALIVE_MS {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                format!(
+                    "runtime.thread_keep_alive_ms must be between 1 and {MAX_THREAD_KEEP_ALIVE_MS}"
+                ),
+            ));
+        }
+        if self.runtime.queue_depth == 0 || self.runtime.queue_depth > MAX_QUEUE_DEPTH {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                format!("runtime.queue_depth must be between 1 and {MAX_QUEUE_DEPTH}"),
             ));
         }
         if self.gb28181.catalog_fragment_max_entries == 0 {
@@ -2000,5 +2027,77 @@ mod http_config_tests {
                 .validate()
                 .is_err()
         );
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod runtime_config_tests {
+    use super::*;
+
+    fn signal_config_with_runtime(runtime: RuntimeConfig) -> SignalConfig {
+        SignalConfig {
+            runtime,
+            ..SignalConfig::default()
+        }
+    }
+
+    #[test]
+    fn default_runtime_config_is_valid() {
+        assert!(SignalConfig::default().validate().is_ok());
+    }
+
+    #[test]
+    fn worker_threads_at_limit_is_valid() {
+        let cfg = RuntimeConfig {
+            worker_threads: MAX_WORKER_THREADS,
+            ..RuntimeConfig::default()
+        };
+        assert!(signal_config_with_runtime(cfg).validate().is_ok());
+    }
+
+    #[test]
+    fn too_many_worker_threads_is_rejected() {
+        let cfg = RuntimeConfig {
+            worker_threads: MAX_WORKER_THREADS + 1,
+            ..RuntimeConfig::default()
+        };
+        assert!(signal_config_with_runtime(cfg).validate().is_err());
+    }
+
+    #[test]
+    fn too_many_blocking_threads_is_rejected() {
+        let cfg = RuntimeConfig {
+            max_blocking_threads: MAX_BLOCKING_THREADS + 1,
+            ..RuntimeConfig::default()
+        };
+        assert!(signal_config_with_runtime(cfg).validate().is_err());
+    }
+
+    #[test]
+    fn queue_depth_at_limit_is_valid() {
+        let cfg = RuntimeConfig {
+            queue_depth: MAX_QUEUE_DEPTH,
+            ..RuntimeConfig::default()
+        };
+        assert!(signal_config_with_runtime(cfg).validate().is_ok());
+    }
+
+    #[test]
+    fn oversized_queue_depth_is_rejected() {
+        let cfg = RuntimeConfig {
+            queue_depth: MAX_QUEUE_DEPTH + 1,
+            ..RuntimeConfig::default()
+        };
+        assert!(signal_config_with_runtime(cfg).validate().is_err());
+    }
+
+    #[test]
+    fn excessive_thread_keep_alive_is_rejected() {
+        let cfg = RuntimeConfig {
+            thread_keep_alive_ms: DurationMs::from_millis(MAX_THREAD_KEEP_ALIVE_MS + 1),
+            ..RuntimeConfig::default()
+        };
+        assert!(signal_config_with_runtime(cfg).validate().is_err());
     }
 }
