@@ -54,7 +54,7 @@ impl AuthContext {
         {
             Ok(())
         } else {
-            Err(HttpError::PermissionDenied(format!(
+            Err(HttpError::permission_denied(format!(
                 "missing {scope} scope"
             )))
         }
@@ -77,13 +77,13 @@ impl FromRequestParts<Arc<ApiState>> for AuthContext {
             Some(value) => match value.to_str() {
                 Ok(text) if text.len() <= MAX_AUTHORIZATION_BYTES => Some(text),
                 Ok(_) => {
-                    return Err(HttpError::Unauthenticated(
-                        "authorization header exceeds maximum length".to_string(),
+                    return Err(HttpError::unauthenticated(
+                        "authorization header exceeds maximum length",
                     ));
                 }
                 Err(_) => {
-                    return Err(HttpError::Unauthenticated(
-                        "authorization header is not valid UTF-8".to_string(),
+                    return Err(HttpError::unauthenticated(
+                        "authorization header is not valid UTF-8",
                     ));
                 }
             },
@@ -108,8 +108,8 @@ impl FromRequestParts<Arc<ApiState>> for AuthContext {
             Some(res) => res,
             None => match try_api_key_auth(parts, &state.config.security) {
                 Some(res) => res,
-                None => Err(HttpError::Unauthenticated(
-                    "missing Authorization or X-Api-Key header".to_string(),
+                None => Err(HttpError::unauthenticated(
+                    "missing Authorization or X-Api-Key header",
                 )),
             },
         };
@@ -135,11 +135,11 @@ fn try_api_key_auth(
             Ok(api_key) if api_key.len() <= MAX_API_KEY_BYTES => {
                 Some(authenticate_static_key(security, api_key))
             }
-            Ok(_) => Some(Err(HttpError::Unauthenticated(
-                "x-api-key header exceeds maximum length".to_string(),
+            Ok(_) => Some(Err(HttpError::unauthenticated(
+                "x-api-key header exceeds maximum length",
             ))),
-            Err(_) => Some(Err(HttpError::Unauthenticated(
-                "x-api-key header is not valid UTF-8".to_string(),
+            Err(_) => Some(Err(HttpError::unauthenticated(
+                "x-api-key header is not valid UTF-8",
             ))),
         },
         None => None,
@@ -152,12 +152,10 @@ fn authenticate_static_key(
 ) -> Result<AuthContext, HttpError> {
     let expected = security.static_api_key.expose_secret();
     if expected.is_empty() {
-        return Err(HttpError::Unauthenticated(
-            "static API key not configured".to_string(),
-        ));
+        return Err(HttpError::unauthenticated("static API key not configured"));
     }
     if provided.as_bytes().ct_eq(expected.as_bytes()).unwrap_u8() == 0 {
-        return Err(HttpError::Unauthenticated("invalid API key".to_string()));
+        return Err(HttpError::unauthenticated("invalid API key"));
     }
     Ok(AuthContext {
         principal: Principal {
@@ -193,20 +191,20 @@ async fn authenticate_bearer(
 ) -> Result<AuthContext, HttpError> {
     let pem = security.jwt_public_key_ref.expose_secret();
     if pem.is_empty() {
-        return Err(HttpError::Unauthenticated(
-            "JWT authentication not configured".to_string(),
+        return Err(HttpError::unauthenticated(
+            "JWT authentication not configured",
         ));
     }
     if token.len() > MAX_JWT_TOKEN_BYTES {
-        return Err(HttpError::Unauthenticated(
-            "JWT token exceeds maximum length".to_string(),
+        return Err(HttpError::unauthenticated(
+            "JWT token exceeds maximum length",
         ));
     }
 
     // The validation algorithm is fixed to RS256 and not read from the untrusted
     // token header to prevent algorithm confusion attacks.
     let key = DecodingKey::from_rsa_pem(pem.as_bytes())
-        .map_err(|e| HttpError::Internal(format!("invalid JWT public key configuration: {e}")))?;
+        .map_err(|e| HttpError::internal(format!("invalid JWT public key configuration: {e}")))?;
     let mut validation = Validation::new(Algorithm::RS256);
     let mut required_claims = vec!["exp"];
     if !security.jwt_audience.is_empty() {
@@ -219,13 +217,13 @@ async fn authenticate_bearer(
     }
     validation.set_required_spec_claims(&required_claims);
     let token_data: TokenData<JwtClaims> = decode(token, &key, &validation)
-        .map_err(|e| HttpError::Unauthenticated(format!("JWT validation failed: {e}")))?;
+        .map_err(|e| HttpError::unauthenticated(format!("JWT validation failed: {e}")))?;
 
     let claims = token_data.claims;
     let tenant_id = if let Some(ref t) = claims.tenant_id {
         Some(
             t.parse::<TenantId>()
-                .map_err(|e| HttpError::Unauthenticated(format!("invalid tenant_id claim: {e}")))?,
+                .map_err(|e| HttpError::unauthenticated(format!("invalid tenant_id claim: {e}")))?,
         )
     } else {
         None
@@ -241,13 +239,13 @@ async fn authenticate_bearer(
 
 fn principal_from_jwt_claims(claims: JwtClaims) -> Result<Principal, HttpError> {
     if claims.sub.is_empty() {
-        return Err(HttpError::Unauthenticated(
-            "JWT sub claim must not be empty".to_string(),
+        return Err(HttpError::unauthenticated(
+            "JWT sub claim must not be empty",
         ));
     }
     if claims.sub.len() > MAX_JWT_SUB_BYTES {
-        return Err(HttpError::Unauthenticated(
-            "JWT sub claim exceeds maximum length".to_string(),
+        return Err(HttpError::unauthenticated(
+            "JWT sub claim exceeds maximum length",
         ));
     }
 
@@ -255,14 +253,14 @@ fn principal_from_jwt_claims(claims: JwtClaims) -> Result<Principal, HttpError> 
     if !claims.scope.is_empty() {
         let parts = claims.scope.split_whitespace();
         if parts.clone().count() > MAX_JWT_SCOPES {
-            return Err(HttpError::Unauthenticated(
-                "JWT scope claim contains too many entries".to_string(),
+            return Err(HttpError::unauthenticated(
+                "JWT scope claim contains too many entries",
             ));
         }
         for part in parts {
             if part.len() > MAX_JWT_SCOPE_BYTES {
-                return Err(HttpError::Unauthenticated(
-                    "JWT scope entry exceeds maximum length".to_string(),
+                return Err(HttpError::unauthenticated(
+                    "JWT scope entry exceeds maximum length",
                 ));
             }
             scopes.push(part.to_string());
@@ -270,28 +268,28 @@ fn principal_from_jwt_claims(claims: JwtClaims) -> Result<Principal, HttpError> 
     }
 
     if claims.scopes.len() > MAX_JWT_SCOPES {
-        return Err(HttpError::Unauthenticated(
-            "JWT scopes claim contains too many entries".to_string(),
+        return Err(HttpError::unauthenticated(
+            "JWT scopes claim contains too many entries",
         ));
     }
     for scope in &claims.scopes {
         if scope.len() > MAX_JWT_SCOPE_BYTES {
-            return Err(HttpError::Unauthenticated(
-                "JWT scopes entry exceeds maximum length".to_string(),
+            return Err(HttpError::unauthenticated(
+                "JWT scopes entry exceeds maximum length",
             ));
         }
         scopes.push(scope.clone());
     }
 
     if claims.roles.len() > MAX_JWT_SCOPES {
-        return Err(HttpError::Unauthenticated(
-            "JWT roles claim contains too many entries".to_string(),
+        return Err(HttpError::unauthenticated(
+            "JWT roles claim contains too many entries",
         ));
     }
     for role in &claims.roles {
         if role.len() > MAX_JWT_SCOPE_BYTES {
-            return Err(HttpError::Unauthenticated(
-                "JWT roles entry exceeds maximum length".to_string(),
+            return Err(HttpError::unauthenticated(
+                "JWT roles entry exceeds maximum length",
             ));
         }
         scopes.push(role.clone());

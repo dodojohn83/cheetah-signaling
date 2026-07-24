@@ -43,7 +43,7 @@ impl ApiRequestContext {
         {
             Ok(())
         } else {
-            Err(HttpError::PermissionDenied(format!(
+            Err(HttpError::permission_denied(format!(
                 "missing {scope} scope"
             )))
         }
@@ -155,9 +155,7 @@ fn check_rate_limit(
     if state.rate_limiter.check(&key) {
         Ok(())
     } else {
-        Err(HttpError::RateLimited(
-            "tenant rate limit exceeded".to_string(),
-        ))
+        Err(HttpError::rate_limited("tenant rate limit exceeded"))
     }
 }
 
@@ -168,8 +166,8 @@ const MAX_TENANT_ID_BYTES: usize = 128;
 fn resolve_tenant_id(parts: &Parts, auth: &AuthContext) -> Result<TenantId, HttpError> {
     let Some(value) = parts.headers.get("x-tenant-id") else {
         return auth.tenant_id.ok_or_else(|| {
-            HttpError::Unauthenticated(
-                "tenant id is required via x-tenant-id header or token claim".to_string(),
+            HttpError::unauthenticated(
+                "tenant id is required via x-tenant-id header or token claim",
             )
         });
     };
@@ -190,15 +188,15 @@ fn resolve_tenant_id(parts: &Parts, auth: &AuthContext) -> Result<TenantId, Http
 
     if let Some(auth_tenant) = auth.tenant_id {
         if header != auth_tenant {
-            return Err(HttpError::PermissionDenied(
-                "tenant header does not match token tenant".to_string(),
+            return Err(HttpError::permission_denied(
+                "tenant header does not match token tenant",
             ));
         }
     } else if !auth.principal.scopes.iter().any(|s| s == "system_admin") {
         // Tokens that do not assert a tenant claim must carry system_admin scope
         // before they are allowed to select a tenant via the x-tenant-id header.
-        return Err(HttpError::PermissionDenied(
-            "token without tenant claim requires system_admin scope".to_string(),
+        return Err(HttpError::permission_denied(
+            "token without tenant claim requires system_admin scope",
         ));
     }
 
