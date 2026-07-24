@@ -46,7 +46,7 @@ fn clamp_read_timeout(ms: u64) -> Duration {
 fn uri_len(uri: &axum::http::Uri) -> usize {
     let path = uri.path().len();
     let query = uri.query().map_or(0, |q| q.len());
-    path + query
+    path.saturating_add(query)
 }
 
 /// Extension carrying the request identifier for correlation.
