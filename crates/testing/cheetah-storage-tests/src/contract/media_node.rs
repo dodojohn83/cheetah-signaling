@@ -96,7 +96,7 @@ fn node_updated_event(fixtures: &Fixtures, node: &MediaNode) -> Event<DomainEven
 }
 
 async fn register_and_get(storage: &dyn Storage, fixtures: &Fixtures) -> TestResult<()> {
-    let mut repo = storage.media_node_repository();
+    let repo = storage.media_node_repository();
     let node_id = fixtures.node_id();
     let mut node = sample_node(node_id);
     let now = fixtures.clock().now_wall();
@@ -125,7 +125,7 @@ async fn register_and_get(storage: &dyn Storage, fixtures: &Fixtures) -> TestRes
 }
 
 async fn heartbeat_and_lease(storage: &dyn Storage, fixtures: &Fixtures) -> TestResult<()> {
-    let mut repo = storage.media_node_repository();
+    let repo = storage.media_node_repository();
     let node_id = fixtures.node_id();
     let mut node = sample_node(node_id);
     let now = fixtures.clock().now_wall();
@@ -180,7 +180,7 @@ async fn heartbeat_and_lease(storage: &dyn Storage, fixtures: &Fixtures) -> Test
 }
 
 async fn list_alive(storage: &dyn Storage, fixtures: &Fixtures) -> TestResult<()> {
-    let mut repo = storage.media_node_repository();
+    let repo = storage.media_node_repository();
     let node_id = fixtures.node_id();
     let mut node = sample_node(node_id);
     let now = fixtures.clock().now_wall();
@@ -201,7 +201,7 @@ async fn list_alive(storage: &dyn Storage, fixtures: &Fixtures) -> TestResult<()
 }
 
 async fn drain_and_deregister(storage: &dyn Storage, fixtures: &Fixtures) -> TestResult<()> {
-    let mut repo = storage.media_node_repository();
+    let repo = storage.media_node_repository();
     let node_id = fixtures.node_id();
     let mut node = sample_node(node_id);
     let now = fixtures.clock().now_wall();
