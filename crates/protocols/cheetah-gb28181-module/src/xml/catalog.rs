@@ -8,6 +8,12 @@ use super::reader::parse_xml;
 use super::writer::encode_xml;
 use crate::error::AccessError;
 use cheetah_domain::{CompatibilityCapability, CompatibilityProfile};
+use cheetah_signal_types::clamp_str;
+
+/// Maximum byte length of a single `CatalogItem` string field. This matches the
+/// XML writer's per-element text limit so provider-supplied items cannot bloat
+/// memory before encoding.
+const MAX_CATALOG_ITEM_FIELD_BYTES: usize = 4096;
 
 /// Parsed content of a GB28181 `Catalog` response.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -74,6 +80,42 @@ pub struct CatalogItem {
     pub longitude: Option<String>,
     /// Latitude.
     pub latitude: Option<String>,
+}
+
+impl CatalogItem {
+    /// Returns a copy with every string field truncated to a bounded byte length
+    /// at a UTF-8 boundary. This defends against a `CatalogProvider` that returns
+    /// oversized fields before they are written to XML or emitted as events.
+    pub fn clamp_fields(&self) -> Self {
+        fn clamp_opt(s: &Option<String>) -> Option<String> {
+            s.as_ref()
+                .map(|v| clamp_str(v, MAX_CATALOG_ITEM_FIELD_BYTES))
+        }
+        Self {
+            device_id: clamp_str(&self.device_id, MAX_CATALOG_ITEM_FIELD_BYTES),
+            name: clamp_opt(&self.name),
+            manufacturer: clamp_opt(&self.manufacturer),
+            model: clamp_opt(&self.model),
+            owner: clamp_opt(&self.owner),
+            civil_code: clamp_opt(&self.civil_code),
+            block: clamp_opt(&self.block),
+            address: clamp_opt(&self.address),
+            parental: clamp_opt(&self.parental),
+            parent_id: clamp_opt(&self.parent_id),
+            safety_way: clamp_opt(&self.safety_way),
+            register_way: clamp_opt(&self.register_way),
+            cert_num: clamp_opt(&self.cert_num),
+            certifiable: clamp_opt(&self.certifiable),
+            err_code: clamp_opt(&self.err_code),
+            end_time: clamp_opt(&self.end_time),
+            secrecy: clamp_opt(&self.secrecy),
+            ip_address: clamp_opt(&self.ip_address),
+            port: clamp_opt(&self.port),
+            status: clamp_opt(&self.status),
+            longitude: clamp_opt(&self.longitude),
+            latitude: clamp_opt(&self.latitude),
+        }
+    }
 }
 
 /// Parses a `Catalog` response body.
@@ -165,11 +207,11 @@ pub(crate) fn extract_catalog_with_profile(
     }
 
     Ok(CatalogResponse {
-        sn,
-        device_id,
+        sn: clamp_str(&sn, MAX_CATALOG_ITEM_FIELD_BYTES),
+        device_id: clamp_str(&device_id, MAX_CATALOG_ITEM_FIELD_BYTES),
         sum_num,
         num: declared_num,
-        items,
+        items: items.into_iter().map(|i| i.clamp_fields()).collect(),
     })
 }
 
@@ -178,30 +220,33 @@ fn parse_item(item: &XmlElement) -> Option<CatalogItem> {
     if device_id.is_empty() {
         return None;
     }
-    Some(CatalogItem {
-        device_id,
-        name: item.child_text("Name"),
-        manufacturer: item.child_text("Manufacturer"),
-        model: item.child_text("Model"),
-        owner: item.child_text("Owner"),
-        civil_code: item.child_text("CivilCode"),
-        block: item.child_text("Block"),
-        address: item.child_text("Address"),
-        parental: item.child_text("Parental"),
-        parent_id: item.child_text("ParentID"),
-        safety_way: item.child_text("SafetyWay"),
-        register_way: item.child_text("RegisterWay"),
-        cert_num: item.child_text("CertNum"),
-        certifiable: item.child_text("Certifiable"),
-        err_code: item.child_text("ErrCode"),
-        end_time: item.child_text("EndTime"),
-        secrecy: item.child_text("Secrecy"),
-        ip_address: item.child_text("IPAddress"),
-        port: item.child_text("Port"),
-        status: item.child_text("Status"),
-        longitude: item.child_text("Longitude"),
-        latitude: item.child_text("Latitude"),
-    })
+    Some(
+        CatalogItem {
+            device_id,
+            name: item.child_text("Name"),
+            manufacturer: item.child_text("Manufacturer"),
+            model: item.child_text("Model"),
+            owner: item.child_text("Owner"),
+            civil_code: item.child_text("CivilCode"),
+            block: item.child_text("Block"),
+            address: item.child_text("Address"),
+            parental: item.child_text("Parental"),
+            parent_id: item.child_text("ParentID"),
+            safety_way: item.child_text("SafetyWay"),
+            register_way: item.child_text("RegisterWay"),
+            cert_num: item.child_text("CertNum"),
+            certifiable: item.child_text("Certifiable"),
+            err_code: item.child_text("ErrCode"),
+            end_time: item.child_text("EndTime"),
+            secrecy: item.child_text("Secrecy"),
+            ip_address: item.child_text("IPAddress"),
+            port: item.child_text("Port"),
+            status: item.child_text("Status"),
+            longitude: item.child_text("Longitude"),
+            latitude: item.child_text("Latitude"),
+        }
+        .clamp_fields(),
+    )
 }
 
 /// Parsed content of a GB28181 `Catalog` query from an upstream platform.
@@ -229,9 +274,10 @@ pub fn parse_catalog_query(body: &[u8]) -> Result<CatalogQuery, AccessError> {
         return Err(AccessError::UnsupportedCmdType(cmd_type));
     }
     let device_id = root.require_child_text("DeviceID")?;
+    let sn = root.require_child_text("SN")?;
     Ok(CatalogQuery {
-        sn: root.require_child_text("SN")?,
-        device_id,
+        sn: clamp_str(&sn, MAX_CATALOG_ITEM_FIELD_BYTES),
+        device_id: clamp_str(&device_id, MAX_CATALOG_ITEM_FIELD_BYTES),
     })
 }
 
@@ -257,10 +303,12 @@ pub fn build_catalog_response(
     sum_num: u32,
     items: &[CatalogItem],
 ) -> Result<String, AccessError> {
+    let sn = clamp_str(sn, MAX_CATALOG_ITEM_FIELD_BYTES);
+    let device_id = clamp_str(device_id, MAX_CATALOG_ITEM_FIELD_BYTES);
     let mut root = child_element("Response", "");
     root.children.push(child_element("CmdType", "Catalog"));
-    root.children.push(child_element("SN", sn));
-    root.children.push(child_element("DeviceID", device_id));
+    root.children.push(child_element("SN", &sn));
+    root.children.push(child_element("DeviceID", &device_id));
     root.children
         .push(child_element("SumNum", &sum_num.to_string()));
 
@@ -269,6 +317,7 @@ pub fn build_catalog_response(
         .attributes
         .insert("Num".to_string(), items.len().to_string());
     for item in items {
+        let item = item.clamp_fields();
         let mut item_el = child_element("Item", "");
         item_el
             .children
@@ -463,5 +512,51 @@ mod tests {
         assert_eq!(catalog.items.len(), 3);
         assert_eq!(catalog.num, 5);
         assert_eq!(catalog.sum_num, 3);
+    }
+
+    #[test]
+    fn catalog_item_clamps_oversized_fields() {
+        let long = "x".repeat(8192);
+        let item = CatalogItem {
+            device_id: long.clone(),
+            name: Some(long.clone()),
+            status: Some("ON".to_string()),
+            ..Default::default()
+        };
+        let clamped = item.clamp_fields();
+        assert_eq!(clamped.device_id.len(), MAX_CATALOG_ITEM_FIELD_BYTES);
+        assert!(
+            clamped
+                .device_id
+                .is_char_boundary(MAX_CATALOG_ITEM_FIELD_BYTES)
+        );
+        assert_eq!(
+            clamped.name.as_ref().unwrap().len(),
+            MAX_CATALOG_ITEM_FIELD_BYTES
+        );
+        assert!(
+            clamped
+                .name
+                .as_ref()
+                .unwrap()
+                .is_char_boundary(MAX_CATALOG_ITEM_FIELD_BYTES)
+        );
+        assert_eq!(clamped.status, Some("ON".to_string()));
+    }
+
+    #[test]
+    fn build_catalog_response_clamps_oversized_inputs_and_items() {
+        let long = "x".repeat(8192);
+        let item = CatalogItem {
+            device_id: long.clone(),
+            name: Some(long.clone()),
+            status: Some("ON".to_string()),
+            ..Default::default()
+        };
+        let xml = build_catalog_response(&long, &long, 1, &[item]).unwrap();
+        assert!(xml.contains("<SN>"));
+        assert!(xml.contains("<DeviceID>"));
+        assert!(xml.contains("<Name>"));
+        assert!(!xml.contains(&"x".repeat(4097)));
     }
 }

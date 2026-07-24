@@ -9,6 +9,9 @@ use cheetah_signal_types::clamp_str;
 
 /// Maximum byte length of a `CatalogError` diagnostic message.
 const MAX_CATALOG_ERROR_BYTES: usize = 1024;
+/// Maximum byte length of a `CatalogPage` cursor. Providers must not use the
+/// cursor to smuggle unbounded data across query boundaries.
+const MAX_CATALOG_CURSOR_BYTES: usize = 4096;
 
 use crate::cascade::{
     CascadeConfig, CascadeError, MAX_CATALOG_FILTER_DEVICE_ID_BYTES,
@@ -358,6 +361,12 @@ pub(crate) fn build_catalog_pages(
         // size asked for, but truncate just in case to keep a single SIP
         // MESSAGE within bounded memory.
         page.items.truncate(max_per_packet);
+
+        // Clamp the cursor so a misbehaving provider cannot use it to carry
+        // unbounded state between pages.
+        page.next_cursor = page
+            .next_cursor
+            .map(|c| clamp_str(&c, MAX_CATALOG_CURSOR_BYTES));
 
         // Clamp the advertised total to the configured cap. This also protects
         // against a provider that reports a total smaller than what it returns,
