@@ -495,7 +495,7 @@ async fn dispatch_command(
                 .ptz_continuous_move(
                     &cmd.ptz_endpoint,
                     &cmd.profile_token,
-                    cmd.velocity(),
+                    cmd.velocity()?,
                     cmd.timeout_seconds,
                     credentials.as_ref(),
                     timeout,

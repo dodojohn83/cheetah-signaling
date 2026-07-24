@@ -344,10 +344,38 @@ fn ptz_continuous_move_clips_velocity_components_to_unit_range() {
         password_text: false,
         clock_offset_seconds: 0,
     };
-    let velocity = cmd.velocity();
+    let velocity = cmd.velocity().expect("velocity should be valid");
     assert_eq!(velocity.pan, 1.0);
     assert_eq!(velocity.tilt, -1.0);
     assert_eq!(velocity.zoom, 0.5);
+}
+
+#[test]
+fn ptz_continuous_move_rejects_non_finite_velocity() {
+    for (pan, tilt, zoom) in [
+        (f64::NAN, 0.0, 0.0),
+        (0.0, f64::INFINITY, 0.0),
+        (0.0, 0.0, f64::NEG_INFINITY),
+    ] {
+        let cmd = PtzContinuousMoveCommand {
+            ptz_endpoint: "http://192.0.2.10/onvif/ptz".into(),
+            profile_token: "profile1".into(),
+            pan,
+            tilt,
+            zoom,
+            timeout_seconds: 5,
+            timeout_ms: None,
+            username: None,
+            credentials_ref: None,
+            password: None,
+            password_text: false,
+            clock_offset_seconds: 0,
+        };
+        assert!(
+            cmd.velocity().is_err(),
+            "pan={pan}, tilt={tilt}, zoom={zoom}"
+        );
+    }
 }
 
 #[test]

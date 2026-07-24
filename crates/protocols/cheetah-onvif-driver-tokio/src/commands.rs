@@ -2,7 +2,7 @@
 
 use crate::DeviceCredentials;
 use crate::util::clamp_timeout;
-use cheetah_onvif_services::services::{MediaDialect, PtzVelocity, clip_unit};
+use cheetah_onvif_services::services::{MediaDialect, PtzVelocity};
 use cheetah_plugin_sdk::{DriverContext, PluginError};
 use cheetah_signal_types::{TenantId, config::OnvifConfig};
 use secrecy::{ExposeSecret, SecretString};
@@ -267,12 +267,21 @@ pub(crate) struct PtzContinuousMoveCommand {
 }
 
 impl PtzContinuousMoveCommand {
-    pub(crate) fn velocity(&self) -> PtzVelocity {
-        PtzVelocity {
-            pan: clip_unit(self.pan),
-            tilt: clip_unit(self.tilt),
-            zoom: clip_unit(self.zoom),
-        }
+    pub(crate) fn velocity(&self) -> Result<PtzVelocity, PluginError> {
+        let clip = |value: f64, name: &str| -> Result<f64, PluginError> {
+            if !value.is_finite() {
+                return Err(PluginError::Driver(format!(
+                    "ptz continuous move {name} must be finite"
+                )));
+            }
+            Ok(value.clamp(-1.0, 1.0))
+        };
+
+        Ok(PtzVelocity {
+            pan: clip(self.pan, "pan")?,
+            tilt: clip(self.tilt, "tilt")?,
+            zoom: clip(self.zoom, "zoom")?,
+        })
     }
 
     pub(crate) async fn resolve_credentials(
