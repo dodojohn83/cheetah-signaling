@@ -201,7 +201,7 @@ mod manifest_tests {
 #[cfg(test)]
 mod checksum_tests {
     use crate::PluginError;
-    use crate::checksum::verify_manifest_checksum;
+    use crate::checksum::{MAX_ALGORITHM_BYTES, MAX_DIGEST_HEX_BYTES, verify_manifest_checksum};
     use hmac::Mac;
     use sha2::{Digest, Sha256};
 
@@ -224,6 +224,21 @@ mod checksum_tests {
     #[test]
     fn sha256_rejects_incorrect_digest() {
         assert!(verify_manifest_checksum(b"hello", "sha256", "deadbeef", &[]).is_err());
+    }
+
+    #[test]
+    fn rejects_oversized_algorithm() {
+        let algorithm = "a".repeat(MAX_ALGORITHM_BYTES + 1);
+        assert!(verify_manifest_checksum(b"x", &algorithm, "a", &[]).is_err());
+    }
+
+    #[test]
+    fn rejects_oversized_digest() {
+        let digest = "a".repeat(MAX_DIGEST_HEX_BYTES + 1);
+        assert!(matches!(
+            verify_manifest_checksum(b"x", "sha256", &digest, &[]),
+            Err(PluginError::InvalidChecksum)
+        ));
     }
 
     #[test]
