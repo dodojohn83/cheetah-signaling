@@ -23,7 +23,7 @@ pub(crate) fn build_keepalive_message(
     validate_token(branch)?;
 
     let body_str = build_keepalive(&sn.to_string(), platform_id, "OK")
-        .map_err(|e| CascadeError::Internal(format!("failed to encode keepalive XML: {e}")))?;
+        .map_err(|e| CascadeError::internal(format!("failed to encode keepalive XML: {e}")))?;
     let body: Body = body_str.into_bytes();
 
     let mut headers = SipHeaders::new();

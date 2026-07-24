@@ -495,7 +495,7 @@ pub(crate) fn on_media_ready<P: super::CascadeCredentialProvider>(
     // Parse the answer SDP defensively; a malformed answer should not crash the
     // state machine, but we must not forward it upstream.
     if parse_sdp(answer_sdp.as_bytes(), &UPSTREAM_SDP_CONFIG).is_err() {
-        return Err(CascadeError::Internal(
+        return Err(CascadeError::internal(
             "application supplied malformed answer SDP".to_string(),
         ));
     }
@@ -670,7 +670,7 @@ fn build_bye_from_bridge(
     validate_token(branch)?;
     let from_value = HeaderValue::new(&bridge.upstream_from);
     let target = super::catalog::parse_uri_from_header(&from_value).ok_or_else(|| {
-        CascadeError::Internal("cannot parse upstream From URI for BYE".to_string())
+        CascadeError::internal("cannot parse upstream From URI for BYE".to_string())
     })?;
     let remote_tag = extract_tag(&bridge.upstream_from).unwrap_or_default();
 

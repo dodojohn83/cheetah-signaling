@@ -250,12 +250,12 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
             .keepalive
             .sn
             .checked_add(1)
-            .ok_or_else(|| CascadeError::Internal("keepalive SN overflow".to_string()))?;
+            .ok_or_else(|| CascadeError::internal("keepalive SN overflow".to_string()))?;
         reg.keepalive.cseq = reg
             .keepalive
             .cseq
             .checked_add(1)
-            .ok_or_else(|| CascadeError::Internal("keepalive CSeq overflow".to_string()))?;
+            .ok_or_else(|| CascadeError::internal("keepalive CSeq overflow".to_string()))?;
         let branch = self.next_branch(&reg.keepalive.call_id, reg.keepalive.cseq);
         let msg = build_keepalive_message(
             &self.config,
@@ -297,7 +297,7 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
         now: u64,
     ) -> Result<DigestResponse, CascadeError> {
         if challenge.qop == Some(cheetah_gb28181_core::DigestQop::AuthInt) {
-            return Err(CascadeError::AuthenticationFailed(
+            return Err(CascadeError::authentication_failed(
                 "auth-int qop is not supported".to_string(),
             ));
         }
@@ -322,7 +322,7 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
             .password_for(&self.config.credential_ref)
             .ok_or(CascadeError::NoCredentials)?;
         let auth = self.auth.as_mut().ok_or_else(|| {
-            CascadeError::Internal("digest auth context missing after creation".to_string())
+            CascadeError::internal("digest auth context missing after creation".to_string())
         })?;
         let cnonce = DigestClient::derive_cnonce(
             &password,
@@ -345,7 +345,7 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
             Some(p) => p
                 .cseq
                 .checked_add(1)
-                .ok_or_else(|| CascadeError::Internal("CSeq overflow".to_string()))?,
+                .ok_or_else(|| CascadeError::internal("CSeq overflow".to_string()))?,
             None => 1,
         };
         let call_id = match previous.as_ref() {
@@ -456,7 +456,7 @@ pub(super) fn extract_challenge(msg: &SipMessage) -> Result<Option<DigestChallen
     };
     match DigestChallenge::parse(value.as_str()) {
         Ok(c) => Ok(Some(c)),
-        Err(e) => Err(CascadeError::MalformedSip(format!(
+        Err(e) => Err(CascadeError::malformed_sip(format!(
             "failed to parse WWW-Authenticate: {e}"
         ))),
     }
@@ -468,11 +468,11 @@ pub(super) fn parse_expires(msg: &SipMessage, default: u32) -> Result<u32, Casca
     };
     let trimmed = value.as_str().trim();
     if trimmed.is_empty() {
-        return Err(CascadeError::MalformedSip(
+        return Err(CascadeError::malformed_sip(
             "empty Expires header".to_string(),
         ));
     }
     trimmed
         .parse::<u32>()
-        .map_err(|_| CascadeError::MalformedSip(format!("non-numeric Expires header: {trimmed}")))
+        .map_err(|_| CascadeError::malformed_sip(format!("non-numeric Expires header: {trimmed}")))
 }
