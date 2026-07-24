@@ -56,7 +56,7 @@ impl OwnerRepository for PostgresOwnerRepository {
         .bind(device_id.as_uuid())
         .fetch_optional(&self.read_pool)
         .await
-        .map_err(|e| StorageError::backend(e.to_string()))?;
+        .map_err(StorageError::backend)?;
 
         Ok(row.map(|r| OwnerInfo {
             owner_node_id: r.owner_node_id.into(),
@@ -89,7 +89,7 @@ impl OwnerRepository for PostgresOwnerRepository {
         .bind(OffsetDateTime::now_utc())
         .execute(&self.write_pool)
         .await
-        .map_err(|e| StorageError::backend(e.to_string()))?;
+        .map_err(StorageError::backend)?;
         Ok(())
     }
 
@@ -103,7 +103,7 @@ impl OwnerRepository for PostgresOwnerRepository {
             .bind(device_id.as_uuid())
             .execute(&self.write_pool)
             .await
-            .map_err(|e| StorageError::backend(e.to_string()))?;
+            .map_err(StorageError::backend)?;
         Ok(())
     }
 
@@ -143,7 +143,7 @@ impl OwnerRepository for PostgresOwnerRepository {
         .bind(updated_at)
         .execute(&self.write_pool)
         .await
-        .map_err(|e| StorageError::backend(e.to_string()))?;
+        .map_err(StorageError::backend)?;
 
         let row: Option<OwnerRow> = sqlx::query_as::<sqlx::Postgres, OwnerRow>(
             "SELECT owner_node_id, owner_epoch, expires_at FROM device_owners WHERE tenant_id = $1 AND device_id = $2",
@@ -152,7 +152,7 @@ impl OwnerRepository for PostgresOwnerRepository {
         .bind(device_id.as_uuid())
         .fetch_optional(&self.write_pool)
         .await
-        .map_err(|e| StorageError::backend(e.to_string()))?;
+        .map_err(StorageError::backend)?;
 
         match row {
             Some(r) if r.owner_node_id == node_id.as_uuid() => Ok(OwnerInfo {
@@ -187,7 +187,7 @@ impl OwnerRepository for PostgresOwnerRepository {
         .bind(now)
         .execute(&self.write_pool)
         .await
-        .map_err(|e| StorageError::backend(e.to_string()))?;
+        .map_err(StorageError::backend)?;
 
         if result.rows_affected() == 0 {
             return Ok(None);
@@ -200,7 +200,7 @@ impl OwnerRepository for PostgresOwnerRepository {
         .bind(device_id.as_uuid())
         .fetch_optional(&self.write_pool)
         .await
-        .map_err(|e| StorageError::backend(e.to_string()))?;
+        .map_err(StorageError::backend)?;
 
         Ok(row.map(|r| OwnerInfo {
             owner_node_id: r.owner_node_id.into(),
@@ -225,7 +225,7 @@ impl OwnerRepository for PostgresOwnerRepository {
         .bind(epoch.0 as i64)
         .execute(&self.write_pool)
         .await
-        .map_err(|e| StorageError::backend(e.to_string()))?;
+        .map_err(StorageError::backend)?;
         Ok(())
     }
 
@@ -275,7 +275,7 @@ impl OwnerRepository for PostgresOwnerRepository {
             .fetch_all(&self.read_pool)
             .await,
         }
-        .map_err(|e| StorageError::backend(e.to_string()))?;
+        .map_err(StorageError::backend)?;
 
         let page_size = page_size as usize;
         let has_more = rows.len() > page_size;

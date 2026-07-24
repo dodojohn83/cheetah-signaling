@@ -48,7 +48,7 @@ impl OperationStepRepository for SqliteOperationStepRepository {
         .bind(sqlx::types::Json(&step))
         .execute(&self.pool)
         .await
-        .map_err(|e| StorageError::backend(e.to_string()))?;
+        .map_err(StorageError::backend)?;
         Ok(())
     }
 
@@ -64,7 +64,7 @@ impl OperationStepRepository for SqliteOperationStepRepository {
         .bind(operation_id.as_uuid())
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| StorageError::backend(e.to_string()))?;
+        .map_err(StorageError::backend)?;
 
         Ok(rows.into_iter().map(|r| r.data.0).collect())
     }

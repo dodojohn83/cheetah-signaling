@@ -22,7 +22,7 @@ fn execute_raw_sql<'c>(
         conn.execute(sqlx::raw_sql(sql))
             .await
             .map(|res| res.rows_affected())
-            .map_err(|e| StorageError::backend(e.to_string()))
+            .map_err(StorageError::backend)
     })
 }
 
@@ -60,7 +60,7 @@ impl SqliteMigration {
         )
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| StorageError::backend(e.to_string()))?;
+        .map_err(StorageError::backend)?;
 
         if sqlx_exists.is_none() {
             return Ok(());
@@ -69,7 +69,7 @@ impl SqliteMigration {
         let cheetah_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM _cheetah_migrations")
             .fetch_one(&self.pool)
             .await
-            .map_err(|e| StorageError::backend(e.to_string()))?;
+            .map_err(StorageError::backend)?;
 
         if cheetah_count.0 == 0 {
             sqlx::query(
@@ -80,7 +80,7 @@ impl SqliteMigration {
             )
             .execute(&self.pool)
             .await
-            .map_err(|e| StorageError::backend(e.to_string()))?;
+            .map_err(StorageError::backend)?;
         }
         Ok(())
     }
@@ -91,7 +91,7 @@ impl SqliteMigration {
         )
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| StorageError::backend(e.to_string()))?;
+        .map_err(StorageError::backend)?;
 
         rows.into_iter()
             .map(|(v, p, checksum)| {
@@ -122,7 +122,7 @@ impl PhaseMigrationBackend for SqliteMigration {
         )
         .execute(&self.pool)
         .await
-        .map_err(|e| StorageError::backend(e.to_string()))?;
+        .map_err(StorageError::backend)?;
 
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS _cheetah_backfill_jobs (
@@ -135,7 +135,7 @@ impl PhaseMigrationBackend for SqliteMigration {
         )
         .execute(&self.pool)
         .await
-        .map_err(|e| StorageError::backend(e.to_string()))?;
+        .map_err(StorageError::backend)?;
 
         self.seed_from_sqlx_migrations().await?;
         Ok(())
@@ -146,7 +146,7 @@ impl PhaseMigrationBackend for SqliteMigration {
             sqlx::query_as("SELECT version, phase, checksum FROM _cheetah_migrations")
                 .fetch_all(&self.pool)
                 .await
-                .map_err(|e| StorageError::backend(e.to_string()))?;
+                .map_err(StorageError::backend)?;
 
         rows.into_iter()
             .map(|(v, p, checksum)| {
@@ -191,11 +191,7 @@ impl PhaseMigrationBackend for SqliteMigration {
     }
 
     async fn apply_migration(&self, m: &VersionedMigration) -> Result<(), StorageError> {
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| StorageError::backend(e.to_string()))?;
+        let mut tx = self.pool.begin().await.map_err(StorageError::backend)?;
 
         execute_raw_sql(&mut tx, m.sql)
             .await
@@ -214,9 +210,7 @@ impl PhaseMigrationBackend for SqliteMigration {
         .await
         .map_err(|e| StorageError::migration(m.version, e.to_string()))?;
 
-        tx.commit()
-            .await
-            .map_err(|e| StorageError::backend(e.to_string()))?;
+        tx.commit().await.map_err(StorageError::backend)?;
         Ok(())
     }
 
@@ -228,7 +222,7 @@ impl PhaseMigrationBackend for SqliteMigration {
         .bind(version)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| StorageError::backend(e.to_string()))?;
+        .map_err(StorageError::backend)?;
 
         row.map(|r| r.into_job()).transpose()
     }
@@ -247,7 +241,7 @@ impl PhaseMigrationBackend for SqliteMigration {
         .bind(updated)
         .execute(&self.pool)
         .await
-        .map_err(|e| StorageError::backend(e.to_string()))?;
+        .map_err(StorageError::backend)?;
         Ok(())
     }
 }
@@ -300,7 +294,7 @@ impl Migration for SqliteMigration {
         )
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| StorageError::backend(e.to_string()))?;
+        .map_err(StorageError::backend)?;
 
         let jobs: Vec<BackfillJob> = rows
             .into_iter()

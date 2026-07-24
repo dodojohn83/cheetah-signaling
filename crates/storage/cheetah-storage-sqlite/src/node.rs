@@ -98,7 +98,7 @@ impl NodeRepository for SqliteNodeRepository {
         .bind(Json(&node.load))
         .execute(&self.write_pool)
         .await
-        .map_err(|e| StorageError::backend(e.to_string()))?;
+        .map_err(StorageError::backend)?;
         Ok(())
     }
 
@@ -122,7 +122,7 @@ impl NodeRepository for SqliteNodeRepository {
         .bind(instance_id.as_uuid())
         .execute(&self.write_pool)
         .await
-        .map_err(|e| StorageError::backend(e.to_string()))?;
+        .map_err(StorageError::backend)?;
 
         if result.rows_affected() == 0 {
             return Ok(None);
@@ -137,7 +137,7 @@ impl NodeRepository for SqliteNodeRepository {
         .bind(node_id.as_uuid())
         .fetch_optional(&self.write_pool)
         .await
-        .map_err(|e| StorageError::backend(e.to_string()))?;
+        .map_err(StorageError::backend)?;
 
         Ok(row.map(Into::into))
     }
@@ -152,7 +152,7 @@ impl NodeRepository for SqliteNodeRepository {
         .bind(node_id.as_uuid())
         .fetch_optional(&self.read_pool)
         .await
-        .map_err(|e| StorageError::backend(e.to_string()))?;
+        .map_err(StorageError::backend)?;
 
         Ok(row.map(Into::into))
     }
@@ -191,7 +191,7 @@ impl NodeRepository for SqliteNodeRepository {
             .build_query_as::<NodeRow>()
             .fetch_all(&self.read_pool)
             .await
-            .map_err(|e| StorageError::backend(e.to_string()))?;
+            .map_err(StorageError::backend)?;
 
         let mut nodes: Vec<ClusterNode> = rows.into_iter().map(Into::into).collect();
         let has_more = nodes.len() > page_size;
@@ -234,7 +234,7 @@ impl NodeRepository for SqliteNodeRepository {
         .bind(instance_id.as_uuid())
         .execute(&self.write_pool)
         .await
-        .map_err(|e| StorageError::backend(e.to_string()))?;
+        .map_err(StorageError::backend)?;
         Ok(result.rows_affected() > 0)
     }
 }
