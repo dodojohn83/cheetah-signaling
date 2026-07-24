@@ -321,6 +321,7 @@ impl PluginHost {
         id: PluginId,
         command: DriverCommand,
     ) -> Result<(), PluginHostError> {
+        command.validate().map_err(PluginHostError::Driver)?;
         let instance = self
             .instances
             .get(&id)
