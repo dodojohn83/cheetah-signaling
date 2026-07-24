@@ -194,7 +194,7 @@ impl fmt::Debug for ProcessState {
 /// A [`ProtocolDriver`] that delegates all calls to an out-of-process plugin
 /// over gRPC.
 pub struct OutOfProcessDriver {
-    client: Mutex<PluginRuntimeClient<Channel>>,
+    client: PluginRuntimeClient<Channel>,
     process: Mutex<ProcessState>,
 }
 
@@ -324,7 +324,7 @@ impl OutOfProcessDriver {
             .max_encoding_message_size(runtime.max_message_size);
 
         Ok(Self {
-            client: Mutex::new(client),
+            client,
             process: Mutex::new(ProcessState {
                 child: Some(child),
                 _shutdown_tx: shutdown_tx,
@@ -351,7 +351,7 @@ impl OutOfProcessDriver {
         };
 
         let rpc_timeout = clamp_timeout(timeout);
-        let mut client = self.client.lock().await.clone();
+        let mut client = self.client.clone();
         let response = tokio::time::timeout(rpc_timeout, client.call_driver(request))
             .await
             .map_err(|_| PluginError::Cancelled)?
@@ -701,7 +701,7 @@ mod tests {
         let (shutdown_tx, _shutdown_rx) = oneshot::channel();
 
         Ok(OutOfProcessDriver {
-            client: Mutex::new(client),
+            client,
             process: Mutex::new(ProcessState {
                 child: Some(child),
                 _shutdown_tx: shutdown_tx,
