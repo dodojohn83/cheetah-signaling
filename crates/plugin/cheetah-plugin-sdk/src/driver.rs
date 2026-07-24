@@ -3,10 +3,25 @@
 use crate::error::PluginError;
 use crate::manifest::{PluginName, ProtocolCapability, ResourceBudget};
 use async_trait::async_trait;
-use cheetah_signal_types::{DurationMs, TenantId, UtcTimestamp};
+use cheetah_signal_types::{DurationMs, TenantId, UtcTimestamp, clamp_str};
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+/// Maximum byte length of a [`CapabilityDescriptor`] protocol name.
+const MAX_CAPABILITY_PROTOCOL_BYTES: usize = 64;
+/// Maximum number of entries in [`CapabilityDescriptor::metadata`].
+const MAX_CAPABILITY_METADATA_ENTRIES: usize = 64;
+/// Maximum byte length of a [`CapabilityDescriptor`] metadata key.
+const MAX_CAPABILITY_METADATA_KEY_BYTES: usize = 128;
+/// Maximum byte length of a [`CapabilityDescriptor`] metadata value.
+const MAX_CAPABILITY_METADATA_VALUE_BYTES: usize = 4096;
+/// Maximum byte length of a [`HealthReport`] human-readable message.
+const MAX_HEALTH_MESSAGE_BYTES: usize = 1024;
+/// Maximum number of entries in [`HealthReport::metrics`].
+const MAX_HEALTH_METRICS_ENTRIES: usize = 64;
+/// Maximum byte length of a [`HealthReport`] metric key.
+const MAX_HEALTH_METRIC_KEY_BYTES: usize = 128;
 
 /// A command delivered to a protocol driver.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -111,6 +126,39 @@ pub struct CapabilityDescriptor {
     pub metadata: HashMap<String, String>,
 }
 
+impl CapabilityDescriptor {
+    /// Validates that the descriptor fits within configured bounds.
+    pub fn validate(&self) -> Result<(), PluginError> {
+        if self.protocol.len() > MAX_CAPABILITY_PROTOCOL_BYTES {
+            return Err(PluginError::Driver(format!(
+                "capability protocol exceeds {} bytes",
+                MAX_CAPABILITY_PROTOCOL_BYTES
+            )));
+        }
+        if self.metadata.len() > MAX_CAPABILITY_METADATA_ENTRIES {
+            return Err(PluginError::Driver(format!(
+                "capability metadata exceeds {} entries",
+                MAX_CAPABILITY_METADATA_ENTRIES
+            )));
+        }
+        for (k, v) in &self.metadata {
+            if k.len() > MAX_CAPABILITY_METADATA_KEY_BYTES {
+                return Err(PluginError::Driver(format!(
+                    "capability metadata key exceeds {} bytes",
+                    MAX_CAPABILITY_METADATA_KEY_BYTES
+                )));
+            }
+            if v.len() > MAX_CAPABILITY_METADATA_VALUE_BYTES {
+                return Err(PluginError::Driver(format!(
+                    "capability metadata value exceeds {} bytes",
+                    MAX_CAPABILITY_METADATA_VALUE_BYTES
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Health report produced by a driver.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct HealthReport {
@@ -121,6 +169,50 @@ pub struct HealthReport {
     /// Counters such as active devices, pending commands, etc.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub metrics: HashMap<String, u64>,
+}
+
+impl HealthReport {
+    /// Validates that the report fits within configured bounds.
+    pub fn validate(&self) -> Result<(), PluginError> {
+        if self.message.len() > MAX_HEALTH_MESSAGE_BYTES {
+            return Err(PluginError::Driver(format!(
+                "health message exceeds {} bytes",
+                MAX_HEALTH_MESSAGE_BYTES
+            )));
+        }
+        if self.metrics.len() > MAX_HEALTH_METRICS_ENTRIES {
+            return Err(PluginError::Driver(format!(
+                "health metrics exceed {} entries",
+                MAX_HEALTH_METRICS_ENTRIES
+            )));
+        }
+        for k in self.metrics.keys() {
+            if k.len() > MAX_HEALTH_METRIC_KEY_BYTES {
+                return Err(PluginError::Driver(format!(
+                    "health metric key exceeds {} bytes",
+                    MAX_HEALTH_METRIC_KEY_BYTES
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// Returns a new `HealthReport` with the message and metrics clamped to bounds.
+    pub fn clamp_to_bounds(&self) -> Self {
+        let mut metrics = HashMap::new();
+        for (k, v) in &self.metrics {
+            let key = clamp_str(k, MAX_HEALTH_METRIC_KEY_BYTES);
+            if metrics.len() >= MAX_HEALTH_METRICS_ENTRIES {
+                break;
+            }
+            metrics.insert(key, *v);
+        }
+        Self {
+            status: self.status,
+            message: clamp_str(&self.message, MAX_HEALTH_MESSAGE_BYTES),
+            metrics,
+        }
+    }
 }
 
 /// A protocol driver implementation.
@@ -178,4 +270,71 @@ pub trait ProtocolDriverFactory: Send + Sync {
         &self,
         config: serde_json::Value,
     ) -> Result<Box<dyn ProtocolDriver>, PluginError>;
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+    use crate::manifest::ProtocolDirection;
+
+    fn valid_descriptor() -> CapabilityDescriptor {
+        CapabilityDescriptor {
+            protocol: "onvif".to_string(),
+            direction: ProtocolDirection::Outbound,
+            metadata: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn capability_descriptor_rejects_oversized_protocol() {
+        let mut descriptor = valid_descriptor();
+        descriptor.protocol = "x".repeat(MAX_CAPABILITY_PROTOCOL_BYTES + 1);
+        assert!(descriptor.validate().is_err());
+    }
+
+    #[test]
+    fn capability_descriptor_rejects_too_many_metadata_entries() {
+        let mut descriptor = valid_descriptor();
+        for i in 0..MAX_CAPABILITY_METADATA_ENTRIES + 1 {
+            descriptor
+                .metadata
+                .insert(format!("key-{i}"), "v".to_string());
+        }
+        assert!(descriptor.validate().is_err());
+    }
+
+    #[test]
+    fn capability_descriptor_rejects_oversized_metadata_value() {
+        let mut descriptor = valid_descriptor();
+        descriptor.metadata.insert(
+            "summary".to_string(),
+            "x".repeat(MAX_CAPABILITY_METADATA_VALUE_BYTES + 1),
+        );
+        assert!(descriptor.validate().is_err());
+    }
+
+    #[test]
+    fn health_report_clamps_message_and_metrics() {
+        let report = HealthReport {
+            status: HealthStatus::Healthy,
+            message: "x".repeat(MAX_HEALTH_MESSAGE_BYTES + 10),
+            metrics: [(
+                "long_key_".to_string() + &"x".repeat(MAX_HEALTH_METRIC_KEY_BYTES + 1),
+                1,
+            )]
+            .into_iter()
+            .collect(),
+        };
+        let clamped = report.clamp_to_bounds();
+        assert!(clamped.message.len() <= MAX_HEALTH_MESSAGE_BYTES);
+        assert!(clamped.message.is_char_boundary(clamped.message.len()));
+        assert!(
+            clamped.metrics.is_empty() || {
+                let (k, _) = clamped.metrics.iter().next().unwrap();
+                k.len() <= MAX_HEALTH_METRIC_KEY_BYTES
+            }
+        );
+    }
 }
