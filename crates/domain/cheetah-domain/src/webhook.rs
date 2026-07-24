@@ -10,7 +10,7 @@ const MAX_WEBHOOK_SECRET_REF_BYTES: usize = 256;
 /// Maximum number of subscribed event types on a webhook.
 const MAX_WEBHOOK_EVENT_TYPES: usize = 64;
 /// Maximum byte length of a single webhook event type name.
-const MAX_WEBHOOK_EVENT_TYPE_BYTES: usize = 128;
+pub const MAX_WEBHOOK_EVENT_TYPE_BYTES: usize = 128;
 /// Maximum byte length of a webhook delivery payload.
 const MAX_WEBHOOK_PAYLOAD_BYTES: usize = 1_048_576;
 /// Maximum byte length of a webhook delivery last-error message.
@@ -151,6 +151,19 @@ fn validate_secret_ref(secret_ref: &str) -> Result<()> {
     Ok(())
 }
 
+/// Validates a single webhook event type name.
+pub fn validate_event_type(event_type: &str) -> Result<()> {
+    if event_type.is_empty() {
+        return Err(DomainError::invalid_argument(
+            "webhook event type must not be empty",
+        ));
+    }
+    if event_type.len() > MAX_WEBHOOK_EVENT_TYPE_BYTES {
+        return Err(DomainError::invalid_argument("webhook event type too long"));
+    }
+    Ok(())
+}
+
 fn validate_event_types(event_types: &[String]) -> Result<()> {
     if event_types.len() > MAX_WEBHOOK_EVENT_TYPES {
         return Err(DomainError::invalid_argument(
@@ -158,14 +171,7 @@ fn validate_event_types(event_types: &[String]) -> Result<()> {
         ));
     }
     for event_type in event_types {
-        if event_type.is_empty() {
-            return Err(DomainError::invalid_argument(
-                "webhook event type must not be empty",
-            ));
-        }
-        if event_type.len() > MAX_WEBHOOK_EVENT_TYPE_BYTES {
-            return Err(DomainError::invalid_argument("webhook event type too long"));
-        }
+        validate_event_type(event_type)?;
     }
     Ok(())
 }
@@ -541,6 +547,34 @@ mod tests {
             "http://example.com/hook".to_string(),
             "ref".to_string(),
             event_types,
+        );
+        assert!(matches!(result, Err(DomainError::InvalidArgument { .. })));
+    }
+
+    #[test]
+    fn validate_event_type_rejects_empty_and_oversized() {
+        assert!(matches!(
+            validate_event_type(""),
+            Err(DomainError::InvalidArgument { .. })
+        ));
+        assert!(validate_event_type(&"x".repeat(MAX_WEBHOOK_EVENT_TYPE_BYTES)).is_ok());
+        assert!(matches!(
+            validate_event_type(&"x".repeat(MAX_WEBHOOK_EVENT_TYPE_BYTES + 1)),
+            Err(DomainError::InvalidArgument { .. })
+        ));
+    }
+
+    #[test]
+    fn webhook_config_rejects_oversized_event_type() {
+        let clock = InMemoryClock::new();
+        let ids = InMemoryIdGenerator::new();
+        let result = WebhookConfig::new(
+            &clock,
+            &ids,
+            ids.generate_tenant_id(),
+            "http://example.com/hook".to_string(),
+            "ref".to_string(),
+            vec!["x".repeat(MAX_WEBHOOK_EVENT_TYPE_BYTES + 1)],
         );
         assert!(matches!(result, Err(DomainError::InvalidArgument { .. })));
     }
