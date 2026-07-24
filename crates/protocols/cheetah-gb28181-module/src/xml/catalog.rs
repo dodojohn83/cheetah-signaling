@@ -88,14 +88,14 @@ pub(crate) fn extract_catalog_with_profile(
 ) -> Result<CatalogResponse, AccessError> {
     let cmd_type = root
         .child_text("CmdType")
-        .ok_or_else(|| AccessError::InvalidXml("missing CmdType".to_string()))?;
+        .ok_or_else(|| AccessError::invalid_xml("missing CmdType"))?;
     if cmd_type != "Catalog" {
-        return Err(AccessError::UnsupportedCmdType(cmd_type));
+        return Err(AccessError::unsupported_cmd_type(cmd_type));
     }
 
     let allow_notify = profile.has(CompatibilityCapability::CatalogNotify);
     if root.name != "Response" && !(allow_notify && root.name == "Notify") {
-        return Err(AccessError::InvalidXml(format!(
+        return Err(AccessError::invalid_xml(format!(
             "unexpected Catalog root element: {}",
             root.name
         )));
@@ -103,7 +103,7 @@ pub(crate) fn extract_catalog_with_profile(
 
     let device_list = root
         .child("DeviceList")
-        .ok_or_else(|| AccessError::InvalidXml("missing DeviceList".to_string()))?;
+        .ok_or_else(|| AccessError::invalid_xml("missing DeviceList"))?;
 
     let sn = root.require_child_text("SN")?;
     let device_id = root.require_child_text("DeviceID")?;
@@ -151,13 +151,13 @@ pub(crate) fn extract_catalog_with_profile(
         // implementations that split or miscount directory entries.
         let present = items.len() as u32 + dropped;
         if declared_num != present {
-            return Err(AccessError::InvalidXml(format!(
+            return Err(AccessError::invalid_xml(format!(
                 "Catalog Num {} does not match item element count {}",
                 declared_num, present
             )));
         }
         if sum_num > 0 && declared_num > sum_num {
-            return Err(AccessError::InvalidXml(format!(
+            return Err(AccessError::invalid_xml(format!(
                 "Catalog Num {} exceeds SumNum {}",
                 declared_num, sum_num
             )));
@@ -217,16 +217,16 @@ pub struct CatalogQuery {
 pub fn parse_catalog_query(body: &[u8]) -> Result<CatalogQuery, AccessError> {
     let root = parse_xml(body, &XmlLimits::default())?;
     if root.name != "Query" {
-        return Err(AccessError::InvalidXml(format!(
+        return Err(AccessError::invalid_xml(format!(
             "expected Query root, got {}",
             root.name
         )));
     }
     let cmd_type = root
         .child_text("CmdType")
-        .ok_or_else(|| AccessError::InvalidXml("missing CmdType".to_string()))?;
+        .ok_or_else(|| AccessError::invalid_xml("missing CmdType"))?;
     if cmd_type != "Catalog" {
-        return Err(AccessError::UnsupportedCmdType(cmd_type));
+        return Err(AccessError::unsupported_cmd_type(cmd_type));
     }
     let device_id = root.require_child_text("DeviceID")?;
     Ok(CatalogQuery {
@@ -304,7 +304,7 @@ fn parse_u32(value: &str) -> Result<u32, AccessError> {
     value
         .trim()
         .parse()
-        .map_err(|_| AccessError::InvalidXml(format!("invalid numeric value: {value}")))
+        .map_err(|_| AccessError::invalid_xml(format!("invalid numeric value: {value}")))
 }
 
 #[cfg(test)]

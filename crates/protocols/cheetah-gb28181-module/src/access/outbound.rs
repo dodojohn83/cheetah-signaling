@@ -61,13 +61,11 @@ pub(crate) fn process_command<P: CredentialProvider>(
                     cheetah_domain::PresetAction::Delete => GbPresetAction::Delete,
                     cheetah_domain::PresetAction::List => unreachable!(),
                     _ => {
-                        return Err(crate::error::AccessError::UnsupportedCmdType(
-                            "preset".to_string(),
-                        ));
+                        return Err(crate::error::AccessError::unsupported_cmd_type("preset"));
                     }
                 };
                 let point = u8::try_from(preset.preset_id).map_err(|_| {
-                    crate::error::AccessError::InvalidXml("preset_id exceeds u8 range".to_string())
+                    crate::error::AccessError::invalid_xml("preset_id exceeds u8 range")
                 })?;
                 DeviceControlRequest {
                     sn,
@@ -104,8 +102,8 @@ pub(crate) fn process_command<P: CredentialProvider>(
             .encode_xml()
         }
         other => {
-            return Err(crate::error::AccessError::UnsupportedCmdType(
-                other.kind().to_string(),
+            return Err(crate::error::AccessError::unsupported_cmd_type(
+                other.kind(),
             ));
         }
     }?;
@@ -132,9 +130,9 @@ fn build_message_request<P: CredentialProvider>(
         access.config.domain_id().as_ref(),
         access.config.realm()
     ))
-    .map_err(|e| crate::error::AccessError::Internal(e.to_string()))?;
+    .map_err(|e| crate::error::AccessError::internal(e))?;
     let to_uri = SipUri::parse(format!("sip:{target_id}@{}", access.config.realm()))
-        .map_err(|e| crate::error::AccessError::Internal(e.to_string()))?;
+        .map_err(|e| crate::error::AccessError::internal(e))?;
     let branch = format!("z9hG4bK{tag}");
     let call_id = format!("gb-cmd-{tag}@{}", access.config.realm());
 
@@ -142,12 +140,12 @@ fn build_message_request<P: CredentialProvider>(
     headers.append(
         HeaderName::Via,
         HeaderValue::via("UDP", access.config.realm(), 5060, &branch)
-            .map_err(|e| crate::error::AccessError::Internal(e.to_string()))?,
+            .map_err(|e| crate::error::AccessError::internal(e))?,
     );
     headers.append(
         HeaderName::From,
         HeaderValue::from_uri(&from_uri, tag)
-            .map_err(|e| crate::error::AccessError::Internal(e.to_string()))?,
+            .map_err(|e| crate::error::AccessError::internal(e))?,
     );
     headers.append(HeaderName::To, HeaderValue::to_uri(&to_uri));
     headers.append(HeaderName::CallId, HeaderValue::new(call_id));

@@ -34,9 +34,9 @@ pub fn parse_media_status(body: &[u8]) -> Result<MediaStatusInfo, AccessError> {
 pub(crate) fn extract_media_status(root: &XmlElement) -> Result<MediaStatusInfo, AccessError> {
     let cmd_type = root
         .child_text("CmdType")
-        .ok_or_else(|| AccessError::InvalidXml("missing CmdType".to_string()))?;
+        .ok_or_else(|| AccessError::invalid_xml("missing CmdType"))?;
     if cmd_type != "MediaStatus" {
-        return Err(AccessError::UnsupportedCmdType(cmd_type));
+        return Err(AccessError::unsupported_cmd_type(cmd_type));
     }
 
     Ok(MediaStatusInfo {

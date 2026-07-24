@@ -25,12 +25,10 @@ fn write_element(
     depth: usize,
 ) -> Result<(), AccessError> {
     if depth > limits.max_depth {
-        return Err(AccessError::InvalidXml("XML nesting too deep".to_string()));
+        return Err(AccessError::invalid_xml("XML nesting too deep"));
     }
     if element.children.len() > limits.max_children_per_element {
-        return Err(AccessError::InvalidXml(
-            "too many children per element".to_string(),
-        ));
+        return Err(AccessError::invalid_xml("too many children per element"));
     }
 
     validate_xml_name(&element.name)?;
@@ -58,7 +56,7 @@ fn write_element(
 
     if has_text {
         if element.text.len() > limits.max_text_len {
-            return Err(AccessError::InvalidXml("text node too long".to_string()));
+            return Err(AccessError::invalid_xml("text node too long"));
         }
         out.push_str(&escape_text(&element.text));
     }
@@ -103,16 +101,14 @@ fn escape_attr(value: &str) -> String {
 
 fn validate_xml_name(name: &str) -> Result<(), AccessError> {
     if name.is_empty() {
-        return Err(AccessError::InvalidXml("empty element name".to_string()));
+        return Err(AccessError::invalid_xml("empty element name"));
     }
     // GB28181 element names are ASCII identifiers.
     if !name
         .chars()
         .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
     {
-        return Err(AccessError::InvalidXml(
-            "invalid character in XML name".to_string(),
-        ));
+        return Err(AccessError::invalid_xml("invalid character in XML name"));
     }
     Ok(())
 }
