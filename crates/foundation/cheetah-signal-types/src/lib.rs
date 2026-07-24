@@ -38,7 +38,9 @@ pub use context::{
     MediaMutationContext, Principal, PrincipalKind, RequestContext, ResourceId, ResourceKind,
     ResourceRef,
 };
-pub use error::{FieldViolation, Result, SignalError, SignalErrorKind};
+pub use error::{
+    FieldViolation, Result, SignalError, SignalErrorKind, clamp_str, clamp_string_bytes,
+};
 pub use event::Event;
 pub use gb_metrics::{
     GbCommandMethod, GbCommandOutcome, GbDevicePresence, GbMediaSessionState, GbMetricsRecorder,

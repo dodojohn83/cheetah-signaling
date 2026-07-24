@@ -18,8 +18,9 @@ use cheetah_domain::{
 };
 use cheetah_signal_types::{
     Clock, CorrelationId, DurationMs, MediaNodeInstanceEpoch, MessageId, NodeId, Principal,
-    PrincipalKind, RequestContext, TenantId, UtcTimestamp,
+    PrincipalKind, RequestContext, TenantId, UtcTimestamp, clamp_str,
 };
+
 use cheetah_storage_api::Storage;
 use futures::StreamExt;
 use std::collections::BTreeSet;
@@ -27,6 +28,9 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
+
+/// Maximum byte length of a `SchedulerError::EventStream` message.
+const MAX_EVENT_STREAM_ERROR_BYTES: usize = 1024;
 
 pub use crate::event_consumer_support::{NoopReconciliationHandler, ReconciliationHandler};
 
@@ -284,7 +288,12 @@ impl MediaEventConsumer {
             .stream_client
             .subscribe(endpoint, request)
             .await
-            .map_err(|e| SchedulerError::EventStream(format!("{e}")))?;
+            .map_err(|e| {
+                SchedulerError::EventStream(clamp_str(
+                    &format!("{e}"),
+                    MAX_EVENT_STREAM_ERROR_BYTES,
+                ))
+            })?;
 
         loop {
             tokio::select! {
@@ -296,7 +305,12 @@ impl MediaEventConsumer {
                             tracing::warn!(node_id = %node.node_id, "failed to process media event: {e}");
                         }
                     }
-                    Some(Err(e)) => return Err(SchedulerError::EventStream(format!("{e}"))),
+                    Some(Err(e)) => {
+                        return Err(SchedulerError::EventStream(clamp_str(
+                            &format!("{e}"),
+                            MAX_EVENT_STREAM_ERROR_BYTES,
+                        )))
+                    }
                 },
             }
         }
