@@ -4,7 +4,7 @@ use super::element::XmlElement;
 use super::writer::encode_xml;
 use crate::error::AccessError;
 use cheetah_domain::{QueryCommand, QueryKind};
-use cheetah_signal_types::UtcTimestamp;
+use cheetah_signal_types::{UtcTimestamp, clamp_str};
 
 fn text_child(name: &str, text: &str) -> XmlElement {
     XmlElement {
@@ -13,6 +13,9 @@ fn text_child(name: &str, text: &str) -> XmlElement {
         ..Default::default()
     }
 }
+
+/// Maximum byte length of a single `QueryRequest` string field.
+const MAX_QUERY_FIELD_BYTES: usize = 4096;
 
 fn gb_time(ts: UtcTimestamp) -> Result<String, AccessError> {
     let s = ts
@@ -60,41 +63,62 @@ impl QueryRequest {
         command: &QueryCommand,
     ) -> Self {
         Self {
-            sn: sn.into(),
-            device_id: device_id.into(),
+            sn: clamp_str(&sn.into(), MAX_QUERY_FIELD_BYTES),
+            device_id: clamp_str(&device_id.into(), MAX_QUERY_FIELD_BYTES),
             kind: command.kind,
             start_time: command.start_time,
             end_time: command.end_time,
-            config_type: command.config_type.clone(),
+            config_type: command
+                .config_type
+                .as_ref()
+                .map(|t| clamp_str(t, MAX_QUERY_FIELD_BYTES)),
             scale: command.scale,
+        }
+    }
+
+    /// Returns a copy with `sn`, `device_id` and `config_type` truncated to
+    /// [`MAX_QUERY_FIELD_BYTES`] at a UTF-8 boundary.
+    pub fn clamp_fields(&self) -> Self {
+        Self {
+            sn: clamp_str(&self.sn, MAX_QUERY_FIELD_BYTES),
+            device_id: clamp_str(&self.device_id, MAX_QUERY_FIELD_BYTES),
+            kind: self.kind,
+            start_time: self.start_time,
+            end_time: self.end_time,
+            config_type: self
+                .config_type
+                .as_ref()
+                .map(|t| clamp_str(t, MAX_QUERY_FIELD_BYTES)),
+            scale: self.scale,
         }
     }
 
     /// Encodes the request as a `<Query>` XML body.
     pub fn encode_xml(&self) -> Result<String, AccessError> {
+        let req = self.clamp_fields();
         let mut children = vec![
-            text_child("CmdType", cmd_type(self.kind)),
-            text_child("SN", &self.sn),
-            text_child("DeviceID", &self.device_id),
+            text_child("CmdType", cmd_type(req.kind)),
+            text_child("SN", &req.sn),
+            text_child("DeviceID", &req.device_id),
         ];
 
-        match self.kind {
+        match req.kind {
             QueryKind::RecordInfo => {
-                let start = self.start_time.ok_or_else(|| {
+                let start = req.start_time.ok_or_else(|| {
                     AccessError::InvalidXml("RecordInfo requires start_time".to_string())
                 })?;
-                let end = self.end_time.ok_or_else(|| {
+                let end = req.end_time.ok_or_else(|| {
                     AccessError::InvalidXml("RecordInfo requires end_time".to_string())
                 })?;
                 children.push(text_child("StartTime", &gb_time(start)?));
                 children.push(text_child("EndTime", &gb_time(end)?));
                 children.push(text_child("Type", "all"));
-                if let Some(scale) = self.scale {
+                if let Some(scale) = req.scale {
                     children.push(text_child("Scale", &scale.to_string()));
                 }
             }
             QueryKind::ConfigDownload => {
-                let config_type = self.config_type.as_deref().unwrap_or("BasicParam");
+                let config_type = req.config_type.as_deref().unwrap_or("BasicParam");
                 children.push(text_child("ConfigType", config_type));
             }
             _ => {}
@@ -200,5 +224,24 @@ mod tests {
         };
         let xml = req.encode_xml().unwrap();
         assert!(xml.contains("<CmdType>PresetQuery</CmdType>"));
+    }
+
+    #[test]
+    fn query_request_clamps_oversized_fields() {
+        let long = "x".repeat(8192);
+        let req = QueryRequest {
+            sn: long.clone(),
+            device_id: long.clone(),
+            kind: QueryKind::ConfigDownload,
+            start_time: None,
+            end_time: None,
+            config_type: Some(long),
+            scale: None,
+        };
+        let xml = req.encode_xml().unwrap();
+        assert!(xml.contains("<SN>"));
+        assert!(xml.contains("<DeviceID>"));
+        assert!(xml.contains("<ConfigType>"));
+        assert!(!xml.contains(&"x".repeat(4097)));
     }
 }

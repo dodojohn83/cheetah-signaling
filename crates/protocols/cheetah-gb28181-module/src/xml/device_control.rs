@@ -15,6 +15,7 @@ use super::limits::XmlLimits;
 use super::reader::parse_xml;
 use super::writer::encode_xml;
 use crate::error::AccessError;
+use cheetah_signal_types::clamp_str;
 
 fn hex_encode_upper(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789ABCDEF";
@@ -25,6 +26,9 @@ fn hex_encode_upper(bytes: &[u8]) -> String {
     }
     out
 }
+
+/// Maximum byte length of a single `DeviceControl` string field.
+const MAX_DEVICE_CONTROL_FIELD_BYTES: usize = 4096;
 
 const PTZ_FIRST: u8 = 0xA5;
 const PTZ_SECOND: u8 = 0x0F;
@@ -196,6 +200,31 @@ pub enum DeviceControlKind {
     },
 }
 
+impl DeviceControlKind {
+    /// Returns a copy with any string payload truncated to
+    /// [`MAX_DEVICE_CONTROL_FIELD_BYTES`] at a UTF-8 boundary.
+    fn clamp_fields(&self) -> Self {
+        match self {
+            Self::Ptz(cmd) => Self::Ptz(cmd.clone()),
+            Self::Preset(cmd) => Self::Preset(cmd.clone()),
+            Self::Guard(v) => Self::Guard(*v),
+            Self::AlarmReset { alarm_method } => Self::AlarmReset {
+                alarm_method: alarm_method
+                    .as_ref()
+                    .map(|m| clamp_str(m, MAX_DEVICE_CONTROL_FIELD_BYTES)),
+            },
+            Self::Record(v) => Self::Record(*v),
+            Self::TeleBoot => Self::TeleBoot,
+            Self::IFrame => Self::IFrame,
+            Self::DeviceConfig { config_type } => Self::DeviceConfig {
+                config_type: config_type
+                    .as_ref()
+                    .map(|t| clamp_str(t, MAX_DEVICE_CONTROL_FIELD_BYTES)),
+            },
+        }
+    }
+}
+
 /// A GB28181 `DeviceControl` request.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DeviceControlRequest {
@@ -208,9 +237,20 @@ pub struct DeviceControlRequest {
 }
 
 impl DeviceControlRequest {
+    /// Returns a copy with `sn`, `device_id` and any string payload truncated
+    /// to [`MAX_DEVICE_CONTROL_FIELD_BYTES`] at a UTF-8 boundary.
+    pub fn clamp_fields(&self) -> Self {
+        Self {
+            sn: clamp_str(&self.sn, MAX_DEVICE_CONTROL_FIELD_BYTES),
+            device_id: clamp_str(&self.device_id, MAX_DEVICE_CONTROL_FIELD_BYTES),
+            kind: self.kind.clamp_fields(),
+        }
+    }
+
     /// Encodes the request as a `DeviceControl` XML body.
     pub fn encode_xml(&self) -> Result<String, AccessError> {
-        let (cmd_type, payload_child) = match &self.kind {
+        let req = self.clamp_fields();
+        let (cmd_type, payload_child) = match &req.kind {
             DeviceControlKind::Ptz(cmd) => ("DeviceControl", text_child("PTZCmd", &cmd.encode())),
             DeviceControlKind::Preset(cmd) => {
                 ("DeviceControl", text_child("PTZCmd", &cmd.encode()))
@@ -228,8 +268,8 @@ impl DeviceControlRequest {
             DeviceControlKind::AlarmReset { alarm_method } => {
                 let mut children = vec![
                     text_child("CmdType", "DeviceControl"),
-                    text_child("SN", &self.sn),
-                    text_child("DeviceID", &self.device_id),
+                    text_child("SN", &req.sn),
+                    text_child("DeviceID", &req.device_id),
                     text_child("AlarmCmd", "ResetAlarm"),
                 ];
                 if let Some(method) = alarm_method {
@@ -245,8 +285,8 @@ impl DeviceControlRequest {
             DeviceControlKind::DeviceConfig { config_type } => {
                 let mut children = vec![
                     text_child("CmdType", "DeviceConfig"),
-                    text_child("SN", &self.sn),
-                    text_child("DeviceID", &self.device_id),
+                    text_child("SN", &req.sn),
+                    text_child("DeviceID", &req.device_id),
                 ];
                 let tag = config_type.as_deref().unwrap_or("BasicParam");
                 children.push(XmlElement {
@@ -266,8 +306,8 @@ impl DeviceControlRequest {
             name: "Control".to_string(),
             children: vec![
                 text_child("CmdType", cmd_type),
-                text_child("SN", &self.sn),
-                text_child("DeviceID", &self.device_id),
+                text_child("SN", &req.sn),
+                text_child("DeviceID", &req.device_id),
                 payload_child,
             ],
             ..Default::default()
@@ -305,9 +345,17 @@ pub(crate) fn extract_device_control_response(
     }
 
     Ok(DeviceControlResponse {
-        sn: root.require_child_text("SN")?,
-        device_id: root.require_child_text("DeviceID")?,
-        result: root.child_text("Result"),
+        sn: clamp_str(
+            &root.require_child_text("SN")?,
+            MAX_DEVICE_CONTROL_FIELD_BYTES,
+        ),
+        device_id: clamp_str(
+            &root.require_child_text("DeviceID")?,
+            MAX_DEVICE_CONTROL_FIELD_BYTES,
+        ),
+        result: root
+            .child_text("Result")
+            .map(|r| clamp_str(&r, MAX_DEVICE_CONTROL_FIELD_BYTES)),
     })
 }
 
@@ -465,5 +513,22 @@ mod tests {
         assert_eq!(resp.sn, "42");
         assert_eq!(resp.device_id, "34020000001320000001");
         assert_eq!(resp.result.as_deref(), Some("OK"));
+    }
+
+    #[test]
+    fn device_control_request_clamps_oversized_fields() {
+        let long = "x".repeat(8192);
+        let req = DeviceControlRequest {
+            sn: long.clone(),
+            device_id: long.clone(),
+            kind: DeviceControlKind::AlarmReset {
+                alarm_method: Some(long.clone()),
+            },
+        };
+        let xml = req.encode_xml().unwrap();
+        assert!(xml.contains("<SN>"));
+        assert!(xml.contains("<DeviceID>"));
+        assert!(xml.contains("<AlarmMethod>"));
+        assert!(!xml.contains(&"x".repeat(4097)));
     }
 }

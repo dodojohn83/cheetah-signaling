@@ -9,6 +9,10 @@ use super::element::XmlElement;
 use super::limits::XmlLimits;
 use super::reader::parse_xml;
 use crate::error::AccessError;
+use cheetah_signal_types::clamp_str;
+
+/// Maximum byte length of a single `MediaStatusInfo` string field.
+const MAX_MEDIA_STATUS_FIELD_BYTES: usize = 4096;
 
 /// Parsed content of a GB28181 `MediaStatus` NOTIFY message.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -40,9 +44,18 @@ pub(crate) fn extract_media_status(root: &XmlElement) -> Result<MediaStatusInfo,
     }
 
     Ok(MediaStatusInfo {
-        sn: root.require_child_text("SN")?,
-        device_id: root.require_child_text("DeviceID")?,
-        notify_type: root.require_child_text("NotifyType")?,
+        sn: clamp_str(
+            &root.require_child_text("SN")?,
+            MAX_MEDIA_STATUS_FIELD_BYTES,
+        ),
+        device_id: clamp_str(
+            &root.require_child_text("DeviceID")?,
+            MAX_MEDIA_STATUS_FIELD_BYTES,
+        ),
+        notify_type: clamp_str(
+            &root.require_child_text("NotifyType")?,
+            MAX_MEDIA_STATUS_FIELD_BYTES,
+        ),
         extensions: root.extension_map(KNOWN_MEDIA_STATUS_FIELDS),
     })
 }
