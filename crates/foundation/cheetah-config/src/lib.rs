@@ -87,6 +87,14 @@ impl ConfigSource for LayeredConfigSource {
     }
 }
 
+/// Checks whether `rest` begins with `SECRET_` (case-insensitive) without
+/// allocating an uppercase copy of the key.
+fn is_secret_prefix(rest: &str) -> bool {
+    const PREFIX: &str = "SECRET_";
+    rest.get(..PREFIX.len())
+        .is_some_and(|p| p.eq_ignore_ascii_case(PREFIX))
+}
+
 /// Builds an environment source from an iterator of `(key, value)` pairs.
 ///
 /// Only keys starting with `CHEETAH_` are considered. Keys that do not contain
@@ -101,7 +109,7 @@ fn env_source(vars: impl Iterator<Item = (String, String)>) -> Environment {
             // Require at least one `__` separator so only nested config keys are
             // forwarded, and explicitly skip secret references, which must never
             // be interpreted as config fields even if their name contains `__`.
-            if rest.contains("__") && !rest.to_ascii_uppercase().starts_with("SECRET_") {
+            if rest.contains("__") && !is_secret_prefix(rest) {
                 source.insert(key, value);
             }
         }
@@ -221,5 +229,42 @@ unknown_field = true
             Err(e) => panic!("config deserialize failed: {e}"),
         };
         assert_eq!(config.http.port, 9090);
+    }
+
+    #[test]
+    fn env_secret_prefix_is_case_insensitive() {
+        let env = vec![
+            (
+                "CHEETAH_secret_DB__PASSWORD".to_string(),
+                "s3cr3t".to_string(),
+            ),
+            ("CHEETAH_HTTP__PORT".to_string(), "9090".to_string()),
+        ];
+        let source = env_source(env.into_iter());
+        let cfg = match Config::builder().add_source(source).build() {
+            Ok(c) => c,
+            Err(e) => panic!("config build failed: {e}"),
+        };
+        let config: SignalConfig = match cfg.try_deserialize() {
+            Ok(c) => c,
+            Err(e) => panic!("config deserialize failed: {e}"),
+        };
+        assert_eq!(config.http.port, 9090);
+    }
+
+    #[test]
+    fn env_secret_prefix_matches_first_segment_only() {
+        // A key whose first segment is not SECRET should still be forwarded
+        // even if a later segment contains the substring.
+        let env = vec![("CHEETAH_HTTP__SECRET__PORT".to_string(), "9090".to_string())];
+        let source = env_source(env.into_iter());
+        let cfg = match Config::builder().add_source(source).build() {
+            Ok(c) => c,
+            Err(e) => panic!("config build failed: {e}"),
+        };
+        // This should fail deserialization because `secret` is not a valid
+        // HttpConfig field, confirming the key was forwarded.
+        let result: std::result::Result<SignalConfig, _> = cfg.try_deserialize();
+        assert!(result.is_err());
     }
 }
