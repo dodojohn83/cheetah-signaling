@@ -3,7 +3,9 @@
 use crate::config::MediaRegistryConfig;
 use crate::error::SchedulerError;
 use crate::model::{MediaNode, NodeStatus};
-use crate::registry::{MediaNodeRegistry, NodeEntry, is_active, lease_until, to_media_node};
+use crate::registry::{
+    MediaNodeRegistry, NodeEntry, is_active, is_lease_expired, lease_until, to_media_node,
+};
 use cheetah_domain::DomainEvent;
 use cheetah_signal_types::{
     Clock, Event, IdGenerator, MAX_PAGE_SIZE, MediaBindingId, NodeId, PageRequest, Principal,
@@ -90,7 +92,7 @@ impl PersistentMediaNodeRegistry {
 
     /// Loads currently alive nodes from the repository into memory.
     pub async fn load(&self, clock: &dyn Clock) -> Result<(), SchedulerError> {
-        let mut nodes = self.nodes.write().await;
+        let mut collected = BTreeMap::new();
         let mut cursor = None;
         loop {
             let page_request = PageRequest {
@@ -113,13 +115,16 @@ impl PersistentMediaNodeRegistry {
                     reserved: BTreeMap::new(),
                     instance_id: node.instance_id.clone(),
                 };
-                nodes.insert(node.node_id, entry);
+                collected.insert(node.node_id, entry);
             }
             cursor = page.next_cursor;
             if !has_more {
                 break;
             }
         }
+
+        let mut nodes = self.nodes.write().await;
+        nodes.extend(collected);
         Ok(())
     }
 }
@@ -132,48 +137,78 @@ impl MediaNodeRegistry for PersistentMediaNodeRegistry {
         lease_ttl_ms: u64,
         clock: &dyn Clock,
     ) -> Result<MediaNode, SchedulerError> {
-        let mut nodes = self.nodes.write().await;
         let now = clock.now_wall();
         let lease = lease_until(clock, lease_ttl_ms);
+        let instance_id = node.instance_id.clone();
 
-        let (updated, reported, reserved) = if let Some(existing) = nodes.get(&node.node_id) {
-            if existing.instance_id == node.instance_id {
-                let mut updated = node;
-                updated.generation = existing.node.generation;
-                updated.instance_epoch = existing.node.instance_epoch;
-                updated.status = NodeStatus::Active;
-                updated.draining = false;
-                updated.load = existing.node.load;
-                updated.last_heartbeat_at = Some(now);
-                updated.lease_until = lease;
-                updated.revision = existing.node.revision;
+        // Snapshot the in-memory entry (if any) without holding the lock across
+        // repository I/O.
+        let in_memory = {
+            let nodes = self.nodes.read().await;
+            nodes.get(&node.node_id).map(|entry| {
                 (
-                    updated,
-                    existing.reported_session_count,
-                    existing.reserved.clone(),
+                    entry.node.clone(),
+                    entry.instance_id.clone(),
+                    entry.reported_session_count,
+                    entry.reserved.clone(),
                 )
-            } else {
-                let mut updated = node;
-                updated.generation = existing.node.generation.saturating_add(1);
-                updated.instance_epoch = existing.node.instance_epoch.saturating_add(1);
-                updated.status = NodeStatus::Active;
-                updated.draining = false;
-                updated.last_heartbeat_at = Some(now);
-                updated.lease_until = lease;
-                updated.revision = existing.node.revision;
-                (updated, 0, BTreeMap::new())
-            }
-        } else {
-            let mut updated = node;
-            updated.generation = 1;
-            updated.instance_epoch = 1;
-            updated.status = NodeStatus::Active;
-            updated.draining = false;
-            updated.last_heartbeat_at = Some(now);
-            updated.lease_until = lease;
-            updated.revision = 0;
-            (updated, 0, BTreeMap::new())
+            })
         };
+
+        let (updated, reported, reserved) =
+            if let Some((existing_node, existing_instance_id, reported, reserved)) = in_memory {
+                if existing_instance_id == instance_id {
+                    let mut updated = node;
+                    updated.generation = existing_node.generation;
+                    updated.instance_epoch = existing_node.instance_epoch;
+                    updated.status = NodeStatus::Active;
+                    updated.draining = false;
+                    updated.load = existing_node.load;
+                    updated.last_heartbeat_at = Some(now);
+                    updated.lease_until = lease;
+                    updated.revision = existing_node.revision;
+                    (updated, reported, reserved)
+                } else {
+                    let mut updated = node;
+                    updated.generation = existing_node.generation.saturating_add(1);
+                    updated.instance_epoch = existing_node.instance_epoch.saturating_add(1);
+                    updated.status = NodeStatus::Active;
+                    updated.draining = false;
+                    updated.last_heartbeat_at = Some(now);
+                    updated.lease_until = lease;
+                    updated.revision = existing_node.revision;
+                    (updated, 0, BTreeMap::new())
+                }
+            } else {
+                let existing = self
+                    .repo
+                    .lock()
+                    .await
+                    .get(node.node_id)
+                    .await
+                    .map_err(|e| SchedulerError::Backend(e.to_string()))?;
+                if let Some(existing_node) = existing {
+                    let mut updated = node;
+                    updated.generation = existing_node.generation.saturating_add(1);
+                    updated.instance_epoch = existing_node.instance_epoch.saturating_add(1);
+                    updated.status = NodeStatus::Active;
+                    updated.draining = false;
+                    updated.last_heartbeat_at = Some(now);
+                    updated.lease_until = lease;
+                    updated.revision = existing_node.revision;
+                    (updated, 0, BTreeMap::new())
+                } else {
+                    let mut updated = node;
+                    updated.generation = 1;
+                    updated.instance_epoch = 1;
+                    updated.status = NodeStatus::Active;
+                    updated.draining = false;
+                    updated.last_heartbeat_at = Some(now);
+                    updated.lease_until = lease;
+                    updated.revision = 0;
+                    (updated, 0, BTreeMap::new())
+                }
+            };
 
         let event = self.make_event(clock, &updated);
         let persisted = self
@@ -191,7 +226,10 @@ impl MediaNodeRegistry for PersistentMediaNodeRegistry {
             instance_id: persisted.instance_id.clone(),
         };
         let view = to_media_node(&entry, now, &self.config);
-        nodes.insert(view.node_id, entry);
+        {
+            let mut nodes = self.nodes.write().await;
+            nodes.insert(view.node_id, entry);
+        }
         Ok(view)
     }
 
@@ -356,16 +394,21 @@ impl MediaNodeRegistry for PersistentMediaNodeRegistry {
 
     async fn list_active(&self, clock: &dyn Clock) -> Vec<MediaNode> {
         let now = clock.now_wall();
-        {
-            let mut nodes = self.nodes.write().await;
-            if nodes.is_empty() {
-                let mut cursor = None;
-                loop {
-                    let page_request = PageRequest {
-                        cursor,
-                        page_size: MAX_PAGE_SIZE,
-                    };
-                    if let Ok(page) = self.repo.lock().await.list_alive(now, page_request).await {
+        let needs_load = {
+            let nodes = self.nodes.read().await;
+            nodes.is_empty()
+        };
+
+        if needs_load {
+            let mut collected = BTreeMap::new();
+            let mut cursor = None;
+            loop {
+                let page_request = PageRequest {
+                    cursor,
+                    page_size: MAX_PAGE_SIZE,
+                };
+                match self.repo.lock().await.list_alive(now, page_request).await {
+                    Ok(page) => {
                         let has_more = page.next_cursor.is_some();
                         for node in page.items {
                             let entry = NodeEntry {
@@ -374,20 +417,26 @@ impl MediaNodeRegistry for PersistentMediaNodeRegistry {
                                 reserved: BTreeMap::new(),
                                 instance_id: node.instance_id.clone(),
                             };
-                            nodes.insert(node.node_id, entry);
+                            collected.insert(node.node_id, entry);
                         }
                         cursor = page.next_cursor;
                         if !has_more {
                             break;
                         }
-                    } else {
-                        break;
                     }
+                    Err(_) => break,
                 }
+            }
+            let mut nodes = self.nodes.write().await;
+            if nodes.is_empty() {
+                nodes.extend(collected);
             }
         }
 
-        let nodes = self.nodes.read().await;
+        let mut nodes = self.nodes.write().await;
+        nodes.retain(|_, entry| {
+            !(entry.node.status == NodeStatus::Left && is_lease_expired(entry, now))
+        });
         nodes
             .values()
             .filter(|e| is_active(e, now, &self.config))
@@ -444,5 +493,208 @@ impl MediaNodeRegistry for PersistentMediaNodeRegistry {
         entry.reserved.remove(&(tenant_id, binding_id));
         entry.reserved.retain(|_, d| *d > now);
         Ok(to_media_node(entry, now, &self.config))
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use crate::config::MediaRegistryConfig;
+    use crate::model::{MediaNode, MediaNodeHealth, NodeStatus};
+    use cheetah_signal_types::test_support::{FakeClock, FakeIdGenerator};
+    use cheetah_signal_types::{DurationMs, NodeId, Page, PageRequest, UtcTimestamp};
+    use cheetah_storage_api::{MediaNodeRepository, StorageError};
+    use std::str::FromStr;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Clone)]
+    struct FakeRepo {
+        node: Arc<Mutex<Option<MediaNode>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl MediaNodeRepository for FakeRepo {
+        async fn register(
+            &mut self,
+            mut node: MediaNode,
+            _events: Vec<Event<DomainEvent>>,
+        ) -> Result<MediaNode, StorageError> {
+            node.revision = node.revision.saturating_add(1);
+            *self.node.lock().unwrap() = Some(node.clone());
+            Ok(node)
+        }
+
+        async fn heartbeat(
+            &mut self,
+            _node_id: NodeId,
+            _instance_id: String,
+            _lease_until: UtcTimestamp,
+            _updated_at: UtcTimestamp,
+            _load: u64,
+            _session_count: u64,
+            _events: Vec<Event<DomainEvent>>,
+        ) -> Result<Option<MediaNode>, StorageError> {
+            Ok(None)
+        }
+
+        async fn get(&self, _node_id: NodeId) -> Result<Option<MediaNode>, StorageError> {
+            Ok(self.node.lock().unwrap().clone())
+        }
+
+        async fn list_alive(
+            &self,
+            now: UtcTimestamp,
+            _page: PageRequest,
+        ) -> Result<Page<MediaNode>, StorageError> {
+            let node = self.node.lock().unwrap().clone();
+            let items = if let Some(node) = node {
+                if node.lease_until.is_some_and(|lease| now < lease) {
+                    vec![node]
+                } else {
+                    Vec::new()
+                }
+            } else {
+                Vec::new()
+            };
+            Ok(Page::new(items))
+        }
+
+        async fn set_draining(
+            &mut self,
+            _node_id: NodeId,
+            _instance_id: String,
+            _draining: bool,
+            _updated_at: UtcTimestamp,
+            _events: Vec<Event<DomainEvent>>,
+        ) -> Result<Option<MediaNode>, StorageError> {
+            Ok(None)
+        }
+
+        async fn deregister(
+            &mut self,
+            _node_id: NodeId,
+            _instance_id: String,
+            _updated_at: UtcTimestamp,
+            lease_until: Option<UtcTimestamp>,
+            _events: Vec<Event<DomainEvent>>,
+        ) -> Result<Option<MediaNode>, StorageError> {
+            let mut guard = self.node.lock().unwrap();
+            if let Some(node) = guard.as_mut() {
+                node.status = NodeStatus::Left;
+                node.lease_until = lease_until;
+                Ok(Some(node.clone()))
+            } else {
+                Ok(None)
+            }
+        }
+    }
+
+    fn test_node(node_id: NodeId, instance_id: &str) -> MediaNode {
+        MediaNode {
+            node_id,
+            instance_id: instance_id.to_string(),
+            instance_epoch: 0,
+            generation: 0,
+            revision: 0,
+            zone: "zone-a".to_string(),
+            region: "region-1".to_string(),
+            network_zones: Vec::new(),
+            labels: BTreeMap::new(),
+            control_endpoint: "http://127.0.0.1:9000".to_string(),
+            media_addresses: Vec::new(),
+            capabilities: Vec::new(),
+            capacity: crate::model::MediaNodeCapacity {
+                max_sessions: 10,
+                max_bandwidth_mbps: 100,
+                max_cpu_percent: 100,
+            },
+            load: 0,
+            session_count: 0,
+            health: MediaNodeHealth::Healthy,
+            draining: false,
+            status: NodeStatus::Active,
+            last_heartbeat_at: None,
+            lease_until: None,
+            contract_version: 0,
+        }
+    }
+
+    fn test_config() -> MediaRegistryConfig {
+        MediaRegistryConfig::test()
+    }
+
+    #[tokio::test]
+    async fn register_fetches_persisted_epoch_when_in_memory_entry_missing() {
+        let clock = Arc::new(FakeClock::new());
+        let id_gen: Arc<dyn IdGenerator> = Arc::new(FakeIdGenerator::default());
+        let repo = FakeRepo {
+            node: Arc::new(Mutex::new(None)),
+        };
+
+        let node_id = NodeId::from_str("11111111-1111-1111-1111-111111111111").unwrap();
+
+        let registry1 = PersistentMediaNodeRegistry::new(
+            test_config(),
+            Box::new(repo.clone()),
+            id_gen.clone(),
+            node_id,
+        );
+
+        let node1 = test_node(node_id, "instance-1");
+        let registered1 = registry1
+            .register(node1, 1000, clock.as_ref())
+            .await
+            .unwrap();
+        assert_eq!(registered1.instance_epoch, 1);
+        assert_eq!(registered1.generation, 1);
+
+        registry1.deregister(node_id, clock.as_ref()).await.unwrap();
+
+        let node2 = test_node(node_id, "instance-2");
+        let registry2 = PersistentMediaNodeRegistry::new(
+            test_config(),
+            Box::new(repo.clone()),
+            id_gen.clone(),
+            node_id,
+        );
+        let registered2 = registry2
+            .register(node2, 1000, clock.as_ref())
+            .await
+            .unwrap();
+        assert_eq!(registered2.instance_epoch, 2);
+        assert_eq!(registered2.generation, 2);
+        assert_eq!(registered2.status, NodeStatus::Active);
+    }
+
+    #[tokio::test]
+    async fn list_active_evicts_left_nodes_after_protection_lease_expires() {
+        let clock = Arc::new(FakeClock::new());
+        let id_gen: Arc<dyn IdGenerator> = Arc::new(FakeIdGenerator::default());
+        let repo = FakeRepo {
+            node: Arc::new(Mutex::new(None)),
+        };
+
+        let node_id = NodeId::from_str("22222222-2222-2222-2222-222222222222").unwrap();
+        let registry =
+            PersistentMediaNodeRegistry::new(test_config(), Box::new(repo), id_gen, node_id);
+
+        let node = test_node(node_id, "instance-1");
+        registry.register(node, 1000, clock.as_ref()).await.unwrap();
+        registry.deregister(node_id, clock.as_ref()).await.unwrap();
+
+        // While within the deregister protection window, the node is still listed.
+        let active = registry.list_active(clock.as_ref()).await;
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].status, NodeStatus::Left);
+
+        clock.advance_wall(DurationMs::from_millis(120_000));
+
+        let active = registry.list_active(clock.as_ref()).await;
+        assert!(active.is_empty());
+
+        // The in-memory cache entry should also be removed, not just filtered.
+        let nodes = registry.nodes.read().await;
+        assert!(nodes.is_empty());
     }
 }
