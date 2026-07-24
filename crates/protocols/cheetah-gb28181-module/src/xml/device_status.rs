@@ -7,6 +7,10 @@ use super::limits::XmlLimits;
 use super::reader::parse_xml;
 use super::writer::encode_xml;
 use crate::error::AccessError;
+use cheetah_signal_types::clamp_str;
+
+/// Maximum byte length of a single `DeviceStatus` string field.
+const MAX_DEVICE_STATUS_FIELD_BYTES: usize = 4096;
 
 /// Parsed content of a GB28181 `DeviceStatus` response.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -25,6 +29,26 @@ pub struct DeviceStatusResponse {
     pub reason: Option<String>,
     /// Whether the device is invalid.
     pub invalid_equip: Option<String>,
+}
+
+impl DeviceStatusResponse {
+    /// Returns a copy with every string field truncated to
+    /// [`MAX_DEVICE_STATUS_FIELD_BYTES`] at a UTF-8 boundary.
+    pub fn clamp_fields(&self) -> Self {
+        fn clamp_opt(s: &Option<String>) -> Option<String> {
+            s.as_ref()
+                .map(|v| clamp_str(v, MAX_DEVICE_STATUS_FIELD_BYTES))
+        }
+        Self {
+            sn: clamp_str(&self.sn, MAX_DEVICE_STATUS_FIELD_BYTES),
+            device_id: clamp_str(&self.device_id, MAX_DEVICE_STATUS_FIELD_BYTES),
+            result: clamp_opt(&self.result),
+            online: clamp_opt(&self.online),
+            status: clamp_opt(&self.status),
+            reason: clamp_opt(&self.reason),
+            invalid_equip: clamp_opt(&self.invalid_equip),
+        }
+    }
 }
 
 /// Parses a `DeviceStatus` response body.
@@ -48,10 +72,12 @@ pub fn build_device_status_notify(
     device_id: &str,
     online: bool,
 ) -> Result<String, AccessError> {
+    let sn = clamp_str(sn, MAX_DEVICE_STATUS_FIELD_BYTES);
+    let device_id = clamp_str(device_id, MAX_DEVICE_STATUS_FIELD_BYTES);
     let mut root = child_element("Notify", "");
     root.children.push(child_element("CmdType", "DeviceStatus"));
-    root.children.push(child_element("SN", sn));
-    root.children.push(child_element("DeviceID", device_id));
+    root.children.push(child_element("SN", &sn));
+    root.children.push(child_element("DeviceID", &device_id));
     root.children.push(child_element(
         "Online",
         if online { "ONLINE" } else { "OFFLINE" },
@@ -78,7 +104,8 @@ pub(crate) fn extract_device_status(
         status: root.child_text("Status"),
         reason: root.child_text("Reason"),
         invalid_equip: root.child_text("InvalidEquip"),
-    })
+    }
+    .clamp_fields())
 }
 
 #[cfg(test)]
@@ -107,5 +134,44 @@ mod tests {
         assert_eq!(status.online.as_deref(), Some("ONLINE"));
         assert_eq!(status.status.as_deref(), Some("OK"));
         assert_eq!(status.invalid_equip.as_deref(), Some("False"));
+    }
+
+    #[test]
+    fn device_status_clamps_oversized_fields() {
+        let long = "x".repeat(8192);
+        let info = DeviceStatusResponse {
+            sn: long.clone(),
+            device_id: long.clone(),
+            result: Some(long.clone()),
+            online: Some(long.clone()),
+            status: Some(long.clone()),
+            reason: Some(long.clone()),
+            invalid_equip: Some(long),
+        }
+        .clamp_fields();
+        assert_eq!(info.sn.len(), 4096);
+        assert_eq!(info.device_id.len(), 4096);
+        assert_eq!(info.result.as_ref().unwrap().len(), 4096);
+        assert_eq!(info.online.as_ref().unwrap().len(), 4096);
+        assert_eq!(info.status.as_ref().unwrap().len(), 4096);
+        assert_eq!(info.reason.as_ref().unwrap().len(), 4096);
+        assert_eq!(info.invalid_equip.as_ref().unwrap().len(), 4096);
+    }
+
+    #[test]
+    fn clamp_respects_multibyte_utf8_boundary() {
+        let long = "é".repeat(4096);
+        let info = DeviceStatusResponse {
+            sn: long,
+            device_id: String::new(),
+            result: None,
+            online: None,
+            status: None,
+            reason: None,
+            invalid_equip: None,
+        }
+        .clamp_fields();
+        assert!(info.sn.len() <= 4096);
+        assert!(info.sn.is_char_boundary(4096));
     }
 }
