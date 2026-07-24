@@ -520,8 +520,8 @@ pub(crate) fn default_stream_protocol() -> String {
 
 pub(crate) fn parse_dialect(dialect: Option<&str>) -> MediaDialect {
     match dialect {
-        Some("media1") => MediaDialect::Media1,
-        Some("media2") => MediaDialect::Media2,
+        Some(s) if s.eq_ignore_ascii_case("media1") => MediaDialect::Media1,
+        Some(s) if s.eq_ignore_ascii_case("media2") => MediaDialect::Media2,
         _ => MediaDialect::Media2,
     }
 }
