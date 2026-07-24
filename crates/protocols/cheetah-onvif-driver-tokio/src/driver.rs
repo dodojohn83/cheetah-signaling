@@ -42,9 +42,16 @@ pub struct OnvifHttpDriver {
 impl OnvifHttpDriver {
     /// Creates a driver from configuration.
     pub fn new(config: &DriverConfig) -> DriverResult<Self> {
+        // Allow the XML parser to consume the entire response body the HTTP
+        // client is configured to buffer. Otherwise a `max_response_bytes`
+        // value above the parser's default `max_input_bytes` would fail.
+        let limits = ParserLimits {
+            max_input_bytes: config.max_response_bytes,
+            ..ParserLimits::default()
+        };
         Ok(Self {
             client: SoapClient::new(config)?,
-            limits: ParserLimits::default(),
+            limits,
             policy: config.xaddr_policy.clone(),
             capability_cache: CapabilityCache::new(config.capability_cache_capacity),
             capability_ttl: config.capability_ttl,
