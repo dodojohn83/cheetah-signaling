@@ -183,24 +183,7 @@ impl SignalConfig {
                 ));
             }
         }
-        if self.media.default_invite_timeout_ms.as_millis() <= 0 {
-            return Err(SignalError::new(
-                SignalErrorKind::InvalidArgument,
-                "media.default_invite_timeout_ms must be greater than zero",
-            ));
-        }
-        if self.media.periodic_reconcile_interval_ms.as_millis() <= 0 {
-            return Err(SignalError::new(
-                SignalErrorKind::InvalidArgument,
-                "media.periodic_reconcile_interval_ms must be greater than zero",
-            ));
-        }
-        if self.media.needs_verification_grace_ms.as_millis() <= 0 {
-            return Err(SignalError::new(
-                SignalErrorKind::InvalidArgument,
-                "media.needs_verification_grace_ms must be greater than zero",
-            ));
-        }
+
         let inferred = self.infer_deployment_profile()?;
         match inferred {
             DeploymentProfile::Edge => {

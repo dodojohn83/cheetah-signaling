@@ -23,6 +23,11 @@ const MAX_STORAGE_SECRET_REF_BYTES: usize = 256;
 
 const MAX_MEDIA_NODE_SELECTOR_BYTES: usize = 256;
 
+const MAX_MEDIA_INVITE_TIMEOUT_MS: i64 = 24 * 60 * 60 * 1_000; // 1 day
+const MAX_MEDIA_RECONCILE_INTERVAL_MS: i64 = 24 * 60 * 60 * 1_000; // 1 day
+const MAX_MEDIA_VERIFICATION_GRACE_MS: i64 = 30 * 24 * 60 * 60 * 1_000; // 30 days
+const MAX_MEDIA_SESSIONS_PER_DEVICE: u32 = 1_000;
+
 const MAX_GRPC_ADDR_BYTES: usize = 256;
 const MAX_GRPC_SECRET_REF_BYTES: usize = 256;
 
@@ -275,12 +280,32 @@ impl StorageConfig {
 }
 
 impl MediaConfig {
-    /// Validates string field bounds for the media configuration.
+    /// Validates string and numeric field bounds for the media configuration.
     pub fn validate(&self) -> Result<()> {
         validate_string(
             "media.default_media_node_selector",
             &self.default_media_node_selector,
             MAX_MEDIA_NODE_SELECTOR_BYTES,
+        )?;
+        validate_positive_i64(
+            "media.default_invite_timeout_ms",
+            self.default_invite_timeout_ms.as_millis(),
+            MAX_MEDIA_INVITE_TIMEOUT_MS,
+        )?;
+        validate_positive_i64(
+            "media.periodic_reconcile_interval_ms",
+            self.periodic_reconcile_interval_ms.as_millis(),
+            MAX_MEDIA_RECONCILE_INTERVAL_MS,
+        )?;
+        validate_positive_i64(
+            "media.needs_verification_grace_ms",
+            self.needs_verification_grace_ms.as_millis(),
+            MAX_MEDIA_VERIFICATION_GRACE_MS,
+        )?;
+        validate_positive_u32(
+            "media.max_sessions_per_device",
+            self.max_sessions_per_device,
+            MAX_MEDIA_SESSIONS_PER_DEVICE,
         )?;
         Ok(())
     }
@@ -610,6 +635,35 @@ mod tests {
     fn media_config_rejects_long_selector() {
         let config = MediaConfig {
             default_media_node_selector: "x".repeat(MAX_MEDIA_NODE_SELECTOR_BYTES + 1),
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn media_config_rejects_zero_invite_timeout() {
+        let config = MediaConfig {
+            default_invite_timeout_ms: DurationMs::from_millis(0),
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn media_config_rejects_excessive_reconcile_interval() {
+        let config = MediaConfig {
+            periodic_reconcile_interval_ms: DurationMs::from_millis(
+                MAX_MEDIA_RECONCILE_INTERVAL_MS + 1,
+            ),
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn media_config_rejects_zero_max_sessions() {
+        let config = MediaConfig {
+            max_sessions_per_device: 0,
             ..Default::default()
         };
         assert!(config.validate().is_err());

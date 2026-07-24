@@ -129,6 +129,16 @@ impl RateLimiter {
             inner.next_cleanup = now.checked_add(self.stale_after).unwrap_or(now);
         }
 
+        // Enforce the capacity bound on every request so a DDoS using many
+        // distinct source/tenant/protocol/node keys cannot grow the bucket map
+        // unboundedly between scheduled cleanups.
+        if !inner.buckets.contains_key(key)
+            && inner.buckets.len() >= self.max_entries
+            && let Some(victim) = inner.buckets.keys().next().cloned()
+        {
+            inner.buckets.remove(&victim);
+        }
+
         let bucket = inner.buckets.entry(key.clone()).or_insert(Bucket {
             last_update: now,
             tokens: f64::from(self.capacity),
@@ -223,6 +233,34 @@ mod tests {
         assert!(!limiter.check(&key));
         // Cleanup path is exercised (runs only once per 60s window); no panic.
         assert!(!limiter.check(&key));
+    }
+
+    #[test]
+    fn check_enforces_capacity_bound_between_cleanups() {
+        let limiter = RateLimiter::new(1, 1_000_000);
+        for i in 0..limiter.max_entries {
+            let key = RateKey {
+                source: std::net::Ipv4Addr::new(127, 0, 0, (i % 256) as u8).into(),
+                tenant: format!("tenant-{i}"),
+                protocol: "devices".to_string(),
+                node: "node".to_string(),
+            };
+            assert!(limiter.check(&key));
+        }
+
+        let extra = RateKey {
+            source: std::net::Ipv4Addr::new(10, 0, 0, 1).into(),
+            tenant: "extra".to_string(),
+            protocol: "devices".to_string(),
+            node: "node".to_string(),
+        };
+        assert!(limiter.check(&extra));
+
+        let inner = limiter
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        assert!(inner.buckets.len() <= limiter.max_entries);
     }
 
     #[test]
