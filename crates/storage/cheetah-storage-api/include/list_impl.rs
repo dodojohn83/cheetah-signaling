@@ -5,6 +5,7 @@
 
 use ::cheetah_domain::{Channel, Device, DomainError, MediaSession, Operation, Result};
 use ::cheetah_signal_types::{ListCursor, Page, PageRequest, TenantId, UtcTimestamp};
+use ::cheetah_storage_api::escape_like_pattern;
 use ::sqlx::{QueryBuilder, types::Json};
 use ::time::OffsetDateTime;
 use ::uuid::Uuid;
@@ -62,17 +63,6 @@ fn push_string_filter(qb: &mut QueryBuilder<'_, Db>, column: &str, value: &Optio
         qb.push(" = ");
         qb.push_bind(value.clone());
     }
-}
-
-fn escape_like_pattern(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    for c in value.chars() {
-        if c == '\\' || c == '%' || c == '_' {
-            out.push('\\');
-        }
-        out.push(c);
-    }
-    out
 }
 
 fn push_name_prefix_filter(qb: &mut QueryBuilder<'_, Db>, column: &str, value: &Option<String>) {

@@ -3,6 +3,7 @@
 //! Storage ports for Cheetah Signaling.
 
 pub mod error;
+pub mod like_escape;
 pub mod migration;
 pub mod phase_migration;
 pub mod repository;
@@ -10,6 +11,7 @@ pub mod revision;
 pub mod storage;
 pub mod timestamp;
 
+pub use like_escape::escape_like_pattern;
 pub use revision::stored_revision_as_u64;
 
 pub use error::StorageError;
