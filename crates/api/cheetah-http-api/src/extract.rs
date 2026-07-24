@@ -1,6 +1,7 @@
 //! Axum extractors for request context and pagination.
 
 use crate::rate_limit::RateKey;
+use crate::router::RequestId;
 use crate::{ApiState, AuthContext, HttpError};
 use axum::{
     extract::{ConnectInfo, FromRequestParts},
@@ -15,6 +16,8 @@ use std::sync::Arc;
 
 /// Maximum byte length of an `Idempotency-Key` header value.
 const MAX_IDEMPOTENCY_KEY_BYTES: usize = 256;
+/// Maximum byte length of an `X-Correlation-Id` header value.
+const MAX_CORRELATION_ID_BYTES: usize = 128;
 
 /// Request context resolved from auth and headers.
 #[derive(Clone, Debug)]
@@ -63,18 +66,24 @@ impl FromRequestParts<Arc<ApiState>> for ApiRequestContext {
 
         let tenant_id = resolve_tenant_id(parts, &auth)?;
 
-        let message_id: MessageId = if let Some(header) = parts.headers.get("x-request-id") {
-            parse_message_or_correlation_id(header, "x-request-id")?.into()
-        } else {
-            state.id_generator.generate_message_id()
-        };
+        let request_id = parts
+            .extensions
+            .get::<RequestId>()
+            .cloned()
+            .map(|r| r.0)
+            .unwrap_or_else(|| state.id_generator.generate_message_id().to_string());
 
-        let correlation_id: CorrelationId =
-            if let Some(header) = parts.headers.get("x-correlation-id") {
-                parse_message_or_correlation_id(header, "x-correlation-id")?.into()
-            } else {
-                state.id_generator.generate_correlation_id()
-            };
+        let message_id: MessageId = request_id
+            .parse::<uuid::Uuid>()
+            .map(MessageId::from)
+            .unwrap_or_else(|_| state.id_generator.generate_message_id());
+
+        let correlation_id: CorrelationId = parts
+            .headers
+            .get("x-correlation-id")
+            .and_then(|h| parse_uuid_header(h, MAX_CORRELATION_ID_BYTES))
+            .map(CorrelationId::from)
+            .unwrap_or_else(|| CorrelationId::from(uuid::Uuid::from(message_id)));
 
         let traceparent = parts
             .headers
@@ -112,7 +121,7 @@ impl FromRequestParts<Arc<ApiState>> for ApiRequestContext {
 
         let span = tracing::Span::current();
         span.record("tenant_id", request_context.tenant_id.to_string());
-        span.record("request_id", request_context.message_id.to_string());
+        span.record("request_id", request_id);
         if let Some(node_id) = request_context.node_id {
             span.record("node_id", node_id.to_string());
         }
@@ -196,15 +205,12 @@ fn resolve_tenant_id(parts: &Parts, auth: &AuthContext) -> Result<TenantId, Http
     Ok(header)
 }
 
-fn parse_message_or_correlation_id(
-    header: &axum::http::HeaderValue,
-    name: &str,
-) -> Result<uuid::Uuid, HttpError> {
-    let text = header
-        .to_str()
-        .map_err(|_| HttpError::Unauthenticated(format!("{name} header is not valid UTF-8")))?;
-    text.parse::<uuid::Uuid>()
-        .map_err(|e| HttpError::Unauthenticated(format!("invalid {name}: {e}")))
+fn parse_uuid_header(header: &axum::http::HeaderValue, max_bytes: usize) -> Option<uuid::Uuid> {
+    let text = header.to_str().ok()?;
+    if text.len() > max_bytes {
+        return None;
+    }
+    text.parse::<uuid::Uuid>().ok()
 }
 
 /// Maximum byte length of a list `name_prefix` filter.

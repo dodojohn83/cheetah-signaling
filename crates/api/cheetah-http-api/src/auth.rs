@@ -1,5 +1,6 @@
 //! Authentication and RBAC for the HTTP API.
 
+use crate::router::RequestId;
 use crate::{ApiState, HttpError};
 use axum::{
     extract::{ConnectInfo, FromRequestParts},
@@ -14,6 +15,11 @@ use serde::Deserialize;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use subtle::ConstantTimeEq;
+
+/// Maximum byte length of an `X-Request-Id` value recorded in audit logs.
+const MAX_REQUEST_ID_BYTES: usize = 128;
+/// Maximum byte length of an `X-Correlation-Id` value recorded in audit logs.
+const MAX_CORRELATION_ID_BYTES: usize = 128;
 
 /// Maximum byte length of a JWT `sub` claim stored as the principal id.
 const MAX_JWT_SUB_BYTES: usize = 256;
@@ -298,18 +304,30 @@ fn principal_from_jwt_claims(claims: JwtClaims) -> Result<Principal, HttpError> 
     })
 }
 
+/// Truncates `s` at a UTF-8 character boundary so it is at most `max` bytes.
+fn clamp_id_string(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        s.to_string()
+    } else {
+        let mut end = max;
+        while !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        s[..end].to_string()
+    }
+}
+
 fn record_auth_audit(parts: &Parts, state: &ApiState, result: &Result<AuthContext, HttpError>) {
     let request_id = parts
-        .headers
-        .get("x-request-id")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string())
+        .extensions
+        .get::<RequestId>()
+        .map(|r| clamp_id_string(&r.0, MAX_REQUEST_ID_BYTES))
         .unwrap_or_else(|| state.id_generator.generate_message_id().to_string());
     let correlation_id = parts
         .headers
         .get("x-correlation-id")
         .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string());
+        .map(|s| clamp_id_string(s, MAX_CORRELATION_ID_BYTES));
     let source_ip = parts
         .extensions
         .get::<ConnectInfo<SocketAddr>>()
