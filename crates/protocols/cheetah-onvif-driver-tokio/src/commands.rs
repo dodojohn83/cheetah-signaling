@@ -532,7 +532,7 @@ pub(crate) fn parse_tenant_id(raw: Option<&str>) -> Result<Option<TenantId>, Plu
         Some(s) => s
             .parse()
             .map(Some)
-            .map_err(|e| PluginError::driver(format!("invalid tenant_id {s}: {e}"))),
+            .map_err(|e| PluginError::driver(format!("invalid tenant_id: {e}"))),
     }
 }
 
@@ -547,7 +547,17 @@ pub(crate) async fn resolve_credentials(
 ) -> Result<Option<DeviceCredentials>, PluginError> {
     let effective_username = username.or(config.default_username.as_deref());
 
+    let validate_ref = |ref_name: &str| -> Result<(), PluginError> {
+        if ref_name.len() > MAX_ONVIF_CREDENTIALS_REF_BYTES {
+            return Err(PluginError::driver(
+                "credentials_ref exceeds maximum length",
+            ));
+        }
+        Ok(())
+    };
+
     let password_secret: Option<SecretString> = if let Some(ref_name) = credentials_ref {
+        validate_ref(ref_name)?;
         match ctx.secret(ref_name).await? {
             Some(secret) => Some(secret),
             None => {
@@ -559,6 +569,7 @@ pub(crate) async fn resolve_credentials(
     } else if password.is_some() {
         password.map(SecretString::from)
     } else if let Some(ref_name) = config.default_credentials_ref.as_deref() {
+        validate_ref(ref_name)?;
         match ctx.secret(ref_name).await? {
             Some(secret) => Some(secret),
             None => {
@@ -595,6 +606,8 @@ pub(crate) async fn resolve_credentials(
 pub(crate) const MAX_ONVIF_USERNAME_BYTES: usize = 256;
 /// Maximum byte length for an ONVIF password.
 pub(crate) const MAX_ONVIF_PASSWORD_BYTES: usize = 4096;
+/// Maximum byte length for a credentials secret reference.
+pub(crate) const MAX_ONVIF_CREDENTIALS_REF_BYTES: usize = 256;
 
 pub(crate) fn make_credentials(
     username: Option<&str>,
