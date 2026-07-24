@@ -72,7 +72,7 @@ async fn setup(path: &std::path::Path) -> TestContext {
     old_cluster_node.load = NodeLoad { devices: 1 };
 
     {
-        let mut node_repo = storage.node_repository();
+        let node_repo = storage.node_repository();
         node_repo.register(this_cluster_node).await.unwrap();
         node_repo.register(old_cluster_node).await.unwrap();
     }
@@ -156,7 +156,7 @@ async fn submit_operation(ctx: &TestContext) -> cheetah_signal_types::OperationI
 }
 
 async fn set_old_owner(ctx: &TestContext) {
-    let mut repo = ctx.storage.owner_repository();
+    let repo = ctx.storage.owner_repository();
     let now = ctx.clock.now_wall();
     let lease_until = now
         .checked_add(DurationMs::from_millis(60_000_000))

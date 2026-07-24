@@ -59,10 +59,10 @@ async fn sqlite_startup_graceful_shutdown_and_crash_recovery() {
 
     let bus = Arc::new(InProcessMessageBus::new(16, 16));
 
-    let owner_repo_shared = Arc::new(tokio::sync::Mutex::new(SqliteOwnerRepository::new(
+    let owner_repo_shared: Arc<dyn OwnerRepository> = Arc::new(SqliteOwnerRepository::new(
         storage.read_pool().clone(),
         storage.write_pool().clone(),
-    ))) as Arc<tokio::sync::Mutex<dyn OwnerRepository>>;
+    ));
     let owner_repo_for_resolver: Arc<dyn OwnerRepository> = Arc::new(SqliteOwnerRepository::new(
         storage.read_pool().clone(),
         storage.write_pool().clone(),

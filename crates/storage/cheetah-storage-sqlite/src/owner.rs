@@ -71,7 +71,7 @@ impl OwnerRepository for SqliteOwnerRepository {
     }
 
     async fn set(
-        &mut self,
+        &self,
         tenant_id: cheetah_signal_types::TenantId,
         device_id: cheetah_signal_types::DeviceId,
         owner: OwnerInfo,
@@ -99,7 +99,7 @@ impl OwnerRepository for SqliteOwnerRepository {
     }
 
     async fn clear(
-        &mut self,
+        &self,
         tenant_id: cheetah_signal_types::TenantId,
         device_id: cheetah_signal_types::DeviceId,
     ) -> Result<(), StorageError> {
@@ -113,7 +113,7 @@ impl OwnerRepository for SqliteOwnerRepository {
     }
 
     async fn acquire(
-        &mut self,
+        &self,
         tenant_id: cheetah_signal_types::TenantId,
         device_id: cheetah_signal_types::DeviceId,
         node_id: cheetah_signal_types::NodeId,
@@ -172,7 +172,7 @@ impl OwnerRepository for SqliteOwnerRepository {
     }
 
     async fn renew(
-        &mut self,
+        &self,
         tenant_id: cheetah_signal_types::TenantId,
         device_id: cheetah_signal_types::DeviceId,
         node_id: cheetah_signal_types::NodeId,
@@ -215,7 +215,7 @@ impl OwnerRepository for SqliteOwnerRepository {
     }
 
     async fn release(
-        &mut self,
+        &self,
         tenant_id: cheetah_signal_types::TenantId,
         device_id: cheetah_signal_types::DeviceId,
         node_id: cheetah_signal_types::NodeId,

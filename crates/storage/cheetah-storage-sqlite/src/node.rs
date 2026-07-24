@@ -67,7 +67,7 @@ impl SqliteNodeRepository {
 
 #[async_trait::async_trait]
 impl NodeRepository for SqliteNodeRepository {
-    async fn register(&mut self, node: ClusterNode) -> Result<(), StorageError> {
+    async fn register(&self, node: ClusterNode) -> Result<(), StorageError> {
         sqlx::query(
             "INSERT INTO cluster_nodes (
                 node_id, instance_id, zone, version, started_at, lease_until, updated_at,
@@ -103,7 +103,7 @@ impl NodeRepository for SqliteNodeRepository {
     }
 
     async fn heartbeat(
-        &mut self,
+        &self,
         node_id: NodeId,
         instance_id: NodeInstanceId,
         lease_until: UtcTimestamp,
@@ -221,7 +221,7 @@ impl NodeRepository for SqliteNodeRepository {
     }
 
     async fn mark_draining(
-        &mut self,
+        &self,
         node_id: NodeId,
         instance_id: NodeInstanceId,
         updated_at: UtcTimestamp,

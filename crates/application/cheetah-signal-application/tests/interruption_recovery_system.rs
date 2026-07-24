@@ -55,10 +55,10 @@ async fn postgres_nats_brief_interruption_and_recovery() {
     let node_a = id_generator.generate_node_id();
     let node_b = id_generator.generate_node_id();
 
-    let owner_repo = Arc::new(tokio::sync::Mutex::new(PostgresOwnerRepository::new(
+    let owner_repo: Arc<dyn OwnerRepository> = Arc::new(PostgresOwnerRepository::new(
         storage.read_pool().clone(),
         storage.write_pool().clone(),
-    ))) as Arc<tokio::sync::Mutex<dyn OwnerRepository>>;
+    ));
     let owner_repo_for_resolver: Arc<dyn OwnerRepository> = Arc::new(PostgresOwnerRepository::new(
         storage.read_pool().clone(),
         storage.write_pool().clone(),
@@ -307,10 +307,10 @@ async fn postgres_nats_brief_interruption_and_recovery() {
             .await
             .unwrap(),
     );
-    let owner_repo_recovered = Arc::new(tokio::sync::Mutex::new(PostgresOwnerRepository::new(
+    let owner_repo_recovered: Arc<dyn OwnerRepository> = Arc::new(PostgresOwnerRepository::new(
         storage_recovered.read_pool().clone(),
         storage_recovered.write_pool().clone(),
-    ))) as Arc<tokio::sync::Mutex<dyn OwnerRepository>>;
+    ));
     let resolver_recovered: Arc<dyn DeviceOwnerResolver> =
         Arc::new(CachingDeviceOwnerResolver::new(
             Arc::new(PostgresOwnerRepository::new(
@@ -323,8 +323,6 @@ async fn postgres_nats_brief_interruption_and_recovery() {
         ));
 
     let recovered_owner = owner_repo_recovered
-        .lock()
-        .await
         .get(tenant, device_id)
         .await
         .unwrap()

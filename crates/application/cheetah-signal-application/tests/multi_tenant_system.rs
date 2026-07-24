@@ -55,14 +55,14 @@ async fn multi_tenant_postgres_nats_isolation() {
     let node_a = id_generator.generate_node_id();
     let node_b = id_generator.generate_node_id();
 
-    let owner_repo_a = Arc::new(tokio::sync::Mutex::new(PostgresOwnerRepository::new(
+    let owner_repo_a: Arc<dyn OwnerRepository> = Arc::new(PostgresOwnerRepository::new(
         storage.read_pool().clone(),
         storage.write_pool().clone(),
-    ))) as Arc<tokio::sync::Mutex<dyn OwnerRepository>>;
-    let owner_repo_b = Arc::new(tokio::sync::Mutex::new(PostgresOwnerRepository::new(
+    ));
+    let owner_repo_b: Arc<dyn OwnerRepository> = Arc::new(PostgresOwnerRepository::new(
         storage.read_pool().clone(),
         storage.write_pool().clone(),
-    ))) as Arc<tokio::sync::Mutex<dyn OwnerRepository>>;
+    ));
     let lease_repo_a = owner_repo_a.clone();
     let lease_repo_b = owner_repo_b.clone();
 

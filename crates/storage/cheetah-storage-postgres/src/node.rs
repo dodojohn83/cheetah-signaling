@@ -60,7 +60,7 @@ impl PostgresNodeRepository {
 
 #[async_trait::async_trait]
 impl NodeRepository for PostgresNodeRepository {
-    async fn register(&mut self, node: ClusterNode) -> Result<(), StorageError> {
+    async fn register(&self, node: ClusterNode) -> Result<(), StorageError> {
         let now = node.updated_at.as_offset();
         sqlx::query(
             "INSERT INTO cluster_nodes (
@@ -97,7 +97,7 @@ impl NodeRepository for PostgresNodeRepository {
     }
 
     async fn heartbeat(
-        &mut self,
+        &self,
         node_id: NodeId,
         instance_id: NodeInstanceId,
         lease_until: UtcTimestamp,
@@ -215,7 +215,7 @@ impl NodeRepository for PostgresNodeRepository {
     }
 
     async fn mark_draining(
-        &mut self,
+        &self,
         node_id: NodeId,
         instance_id: NodeInstanceId,
         updated_at: UtcTimestamp,

@@ -397,7 +397,7 @@ impl cheetah_storage_api::OwnerRepository for StorageBackedOwnerRepo {
     }
 
     async fn set(
-        &mut self,
+        &self,
         tenant_id: TenantId,
         device_id: DeviceId,
         owner: cheetah_domain::OwnerInfo,
@@ -409,7 +409,7 @@ impl cheetah_storage_api::OwnerRepository for StorageBackedOwnerRepo {
     }
 
     async fn clear(
-        &mut self,
+        &self,
         tenant_id: TenantId,
         device_id: DeviceId,
     ) -> Result<(), cheetah_storage_api::StorageError> {
@@ -420,7 +420,7 @@ impl cheetah_storage_api::OwnerRepository for StorageBackedOwnerRepo {
     }
 
     async fn acquire(
-        &mut self,
+        &self,
         tenant_id: TenantId,
         device_id: DeviceId,
         node_id: NodeId,
@@ -434,7 +434,7 @@ impl cheetah_storage_api::OwnerRepository for StorageBackedOwnerRepo {
     }
 
     async fn renew(
-        &mut self,
+        &self,
         tenant_id: TenantId,
         device_id: DeviceId,
         node_id: NodeId,
@@ -447,7 +447,7 @@ impl cheetah_storage_api::OwnerRepository for StorageBackedOwnerRepo {
     }
 
     async fn release(
-        &mut self,
+        &self,
         tenant_id: TenantId,
         device_id: DeviceId,
         node_id: NodeId,
@@ -482,14 +482,14 @@ struct StorageBackedNodeRepo {
 #[async_trait::async_trait]
 impl cheetah_storage_api::NodeRepository for StorageBackedNodeRepo {
     async fn register(
-        &mut self,
+        &self,
         node: cheetah_domain::ClusterNode,
     ) -> Result<(), cheetah_storage_api::StorageError> {
         self.storage.node_repository().register(node).await
     }
 
     async fn heartbeat(
-        &mut self,
+        &self,
         node_id: NodeId,
         instance_id: cheetah_signal_types::NodeInstanceId,
         lease_until: UtcTimestamp,
@@ -521,7 +521,7 @@ impl cheetah_storage_api::NodeRepository for StorageBackedNodeRepo {
     }
 
     async fn mark_draining(
-        &mut self,
+        &self,
         node_id: NodeId,
         instance_id: cheetah_signal_types::NodeInstanceId,
         updated_at: UtcTimestamp,
@@ -852,14 +852,10 @@ pub async fn start(
         }
     };
 
-    let owner_repo_arc: Arc<dyn cheetah_storage_api::OwnerRepository> =
+    let owner_repo: Arc<dyn cheetah_storage_api::OwnerRepository> =
         Arc::new(StorageBackedOwnerRepo {
             storage: storage.clone(),
         });
-    let owner_repo_mutex: Arc<tokio::sync::Mutex<dyn cheetah_storage_api::OwnerRepository>> =
-        Arc::new(tokio::sync::Mutex::new(StorageBackedOwnerRepo {
-            storage: storage.clone(),
-        }));
 
     let lease_ttl = if config.cluster.lease_ttl_ms.as_millis() > 0 {
         config.cluster.lease_ttl_ms
@@ -867,14 +863,14 @@ pub async fn start(
         DurationMs::from_millis(10_000)
     };
     let owner_lease = Arc::new(OwnerLeaseService::new(
-        owner_repo_mutex.clone(),
+        owner_repo.clone(),
         clock.clone(),
         node_id,
         lease_ttl,
     ));
 
     let caching_resolver = CachingDeviceOwnerResolver::new(
-        owner_repo_arc.clone(),
+        owner_repo.clone(),
         clock.clone(),
         DurationMs::from_millis(1000),
         1024,
@@ -885,7 +881,7 @@ pub async fn start(
         Arc::new(caching_resolver)
     } else {
         Arc::new(SingleNodeOwnerResolver::new(
-            OwnerLeaseService::new(owner_repo_mutex.clone(), clock.clone(), node_id, lease_ttl),
+            OwnerLeaseService::new(owner_repo.clone(), clock.clone(), node_id, lease_ttl),
             caching_resolver,
         ))
     };
@@ -1041,7 +1037,7 @@ pub async fn start(
             clamp_interval_ms(u64::try_from(lease_ttl.as_millis().max(1_000) / 3).unwrap_or(3_000));
         workers.push(spawn_owner_lease_renew_worker(
             owner_lease.clone(),
-            owner_repo_arc.clone(),
+            owner_repo.clone(),
             node_id,
             renew_interval,
             cancel.child_token(),
@@ -1052,10 +1048,10 @@ pub async fn start(
     // Cluster node registration + heartbeat against cluster_nodes table.
     #[cfg(feature = "cluster")]
     {
-        let node_repo: Arc<futures::lock::Mutex<dyn cheetah_storage_api::NodeRepository>> =
-            Arc::new(futures::lock::Mutex::new(StorageBackedNodeRepo {
+        let node_repo: Arc<dyn cheetah_storage_api::NodeRepository> =
+            Arc::new(StorageBackedNodeRepo {
                 storage: storage.clone(),
-            }));
+            });
         let heartbeat_ms = if config.cluster.heartbeat_interval_ms.as_millis() > 0 {
             config.cluster.heartbeat_interval_ms.as_millis()
         } else {
@@ -1200,19 +1196,19 @@ pub async fn start(
     // Cluster drain/migration + takeover service (armed for reconnect paths).
     if config.cluster.enabled {
         let assignment = build_assignment_service(
-            Arc::new(tokio::sync::Mutex::new(StorageBackedNodeRepo {
+            Arc::new(StorageBackedNodeRepo {
                 storage: storage.clone(),
-            })),
-            owner_repo_mutex.clone(),
+            }),
+            owner_repo.clone(),
             clock.clone(),
             lease_ttl,
         );
         let drain_service = Arc::new(build_drain_service(
             assignment,
-            owner_repo_mutex.clone(),
-            Arc::new(tokio::sync::Mutex::new(StorageBackedNodeRepo {
+            owner_repo.clone(),
+            Arc::new(StorageBackedNodeRepo {
                 storage: storage.clone(),
-            })),
+            }),
             clock.clone(),
         ));
         let protocol_lookup: Arc<dyn cheetah_cluster_ownership::DeviceProtocolLookup> =
