@@ -410,7 +410,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
         } = input;
         let request = match &message {
             SipMessage::Request { .. } => &message,
-            _ => return Err(AccessError::Internal("expected request".to_string())),
+            _ => return Err(AccessError::internal("expected request")),
         };
 
         match self.process_message_body(source, now, request) {
