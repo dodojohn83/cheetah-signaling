@@ -8,6 +8,26 @@ use std::io::{Cursor, Write as _};
 const SOAP_ENVELOPE: &str = "http://www.w3.org/2003/05/soap-envelope";
 const WSA: &str = "http://www.w3.org/2005/08/addressing";
 
+/// Maximum byte length of a single parsed SOAP Fault field.
+///
+/// Fault strings are only used for diagnostics; capping them prevents a
+/// misbehaving device from forcing the driver to hold a multi-megabyte string
+/// while formatting an error.
+const MAX_FAULT_FIELD_BYTES: usize = 512;
+
+/// Truncates `s` to at most [`MAX_FAULT_FIELD_BYTES`] bytes at a UTF-8
+/// character boundary.
+fn clamp_fault_field(s: &str) -> String {
+    if s.len() <= MAX_FAULT_FIELD_BYTES {
+        return s.to_string();
+    }
+    let mut end = MAX_FAULT_FIELD_BYTES;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    s[..end].to_string()
+}
+
 /// A lightweight SOAP 1.2 envelope builder.
 #[derive(Clone, Debug)]
 pub struct Envelope {
@@ -117,7 +137,15 @@ pub fn parse_fault(xml: &str) -> OnvifResult<Fault> {
                 }
             }
             Ok(Event::Text(e)) => {
-                text.push_str(&e.xml10_content().unwrap_or_default());
+                let content = e.xml10_content().unwrap_or_default();
+                if text.len() < MAX_FAULT_FIELD_BYTES {
+                    let remaining = MAX_FAULT_FIELD_BYTES - text.len();
+                    let mut end = remaining.min(content.len());
+                    while end > 0 && !content.is_char_boundary(end) {
+                        end -= 1;
+                    }
+                    text.push_str(&content[..end]);
+                }
             }
             Ok(Event::End(e)) => {
                 let name = local_name(&e.name());
@@ -140,16 +168,16 @@ fn handle_end(parent: &str, name: &str, text: &str, fault: &mut Fault) {
     let trimmed = text.trim();
     match (parent, name) {
         ("Code", "Value") if fault.code.is_empty() => {
-            fault.code = trimmed.to_string();
+            fault.code = clamp_fault_field(trimmed);
         }
         ("Subcode", "Value") => {
-            fault.subcode = Some(trimmed.to_string());
+            fault.subcode = Some(clamp_fault_field(trimmed));
         }
         ("Reason", "Text") if fault.reason.is_empty() => {
-            fault.reason = trimmed.to_string();
+            fault.reason = clamp_fault_field(trimmed);
         }
         ("Fault", "Detail") => {
-            fault.detail = Some(trimmed.to_string());
+            fault.detail = Some(clamp_fault_field(trimmed));
         }
         _ => {}
     }
@@ -205,5 +233,45 @@ mod tests {
         assert_eq!(fault.subcode, Some("ter:InvalidArgVal".to_string()));
         assert_eq!(fault.reason, "Invalid argument");
         assert_eq!(fault.detail, Some("device id missing".to_string()));
+    }
+
+    #[test]
+    fn parse_fault_clamps_oversized_fields() {
+        let long = "x".repeat(MAX_FAULT_FIELD_BYTES + 100);
+        let xml = format!(
+            r#"<?xml version="1.0"?>
+<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">
+  <s:Body>
+    <s:Fault>
+      <s:Code><s:Value>{long}</s:Value></s:Code>
+      <s:Reason><s:Text>{long}</s:Text></s:Reason>
+      <s:Detail>{long}</s:Detail>
+    </s:Fault>
+  </s:Body>
+</s:Envelope>"#
+        );
+        let fault = parse_fault(&xml).unwrap();
+        assert!(fault.code.len() <= MAX_FAULT_FIELD_BYTES);
+        assert!(fault.reason.len() <= MAX_FAULT_FIELD_BYTES);
+        assert!(fault.detail.as_ref().unwrap().len() <= MAX_FAULT_FIELD_BYTES);
+    }
+
+    #[test]
+    fn parse_fault_multibyte_truncation_respects_char_boundaries() {
+        // 50 three-byte characters = 150 bytes. Truncating to 512 must keep
+        // a valid UTF-8 prefix without splitting a character.
+        let text = "é".repeat(50);
+        let xml = format!(
+            r#"<?xml version="1.0"?>
+<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">
+  <s:Body>
+    <s:Fault>
+      <s:Reason><s:Text>{text}</s:Text></s:Reason>
+    </s:Fault>
+  </s:Body>
+</s:Envelope>"#
+        );
+        let fault = parse_fault(&xml).unwrap();
+        assert!(fault.reason.is_char_boundary(fault.reason.len()));
     }
 }
