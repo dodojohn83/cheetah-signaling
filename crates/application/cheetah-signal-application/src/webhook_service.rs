@@ -14,6 +14,13 @@ use secrecy::ExposeSecret;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+/// Maximum number of delivery attempts before dead-lettering.
+const MAX_WEBHOOK_ATTEMPTS: u32 = 100;
+/// Maximum retry backoff / request timeout (5 minutes).
+const MAX_WEBHOOK_DELAY_MS: i64 = 300_000;
+/// Maximum circuit breaker cooldown (1 hour).
+const MAX_WEBHOOK_COOLDOWN_MS: i64 = 3_600_000;
+
 /// Configuration for webhook delivery retries and circuit breaker behavior.
 #[derive(Clone, Debug)]
 pub struct WebhookDeliveryConfig {
@@ -48,16 +55,28 @@ impl WebhookDeliveryConfig {
     /// Returns a sanitized copy with clamped bounds.
     ///
     /// Negative delays/timeouts are clamped to non-negative values,
-    /// `max_delay_ms` is at least `base_delay_ms`, `max_attempts` is at
-    /// least 1, and `request_timeout_ms` is at least 1 millisecond so a
-    /// request does not hang without a deadline.
+    /// `max_delay_ms` is at least `base_delay_ms`, `max_attempts` is between
+    /// 1 and [`MAX_WEBHOOK_ATTEMPTS`], delays/timeouts are capped at five
+    /// minutes, and the circuit breaker cooldown is capped at one hour.
     pub fn sanitize(&self) -> Self {
-        let base_delay_ms = self.base_delay_ms.as_millis().max(0);
-        let max_delay_ms = self.max_delay_ms.as_millis().max(base_delay_ms);
-        let request_timeout_ms = self.request_timeout_ms.as_millis().max(1);
-        let circuit_breaker_cooldown_ms = self.circuit_breaker_cooldown_ms.as_millis().max(0);
+        let base_delay_ms = self
+            .base_delay_ms
+            .as_millis()
+            .clamp(0, MAX_WEBHOOK_DELAY_MS);
+        let max_delay_ms = self
+            .max_delay_ms
+            .as_millis()
+            .clamp(base_delay_ms, MAX_WEBHOOK_DELAY_MS);
+        let request_timeout_ms = self
+            .request_timeout_ms
+            .as_millis()
+            .clamp(1, MAX_WEBHOOK_DELAY_MS);
+        let circuit_breaker_cooldown_ms = self
+            .circuit_breaker_cooldown_ms
+            .as_millis()
+            .clamp(0, MAX_WEBHOOK_COOLDOWN_MS);
         Self {
-            max_attempts: self.max_attempts.max(1),
+            max_attempts: self.max_attempts.clamp(1, MAX_WEBHOOK_ATTEMPTS),
             base_delay_ms: DurationMs::from_millis(base_delay_ms),
             max_delay_ms: DurationMs::from_millis(max_delay_ms),
             request_timeout_ms: DurationMs::from_millis(request_timeout_ms),
@@ -631,5 +650,27 @@ mod tests {
 
         assert_eq!(config.base_delay_ms.as_millis(), 10_000);
         assert_eq!(config.max_delay_ms.as_millis(), 10_000);
+    }
+
+    #[test]
+    fn webhook_delivery_config_clamps_oversized_values() {
+        let config = WebhookDeliveryConfig {
+            max_attempts: u32::MAX,
+            base_delay_ms: DurationMs::from_millis(1_000_000),
+            max_delay_ms: DurationMs::from_millis(1_000_000),
+            request_timeout_ms: DurationMs::from_millis(1_000_000),
+            circuit_breaker_threshold: 3,
+            circuit_breaker_cooldown_ms: DurationMs::from_millis(1_000_000_000),
+        }
+        .sanitize();
+
+        assert_eq!(config.max_attempts, MAX_WEBHOOK_ATTEMPTS);
+        assert_eq!(config.base_delay_ms.as_millis(), MAX_WEBHOOK_DELAY_MS);
+        assert_eq!(config.max_delay_ms.as_millis(), MAX_WEBHOOK_DELAY_MS);
+        assert_eq!(config.request_timeout_ms.as_millis(), MAX_WEBHOOK_DELAY_MS);
+        assert_eq!(
+            config.circuit_breaker_cooldown_ms.as_millis(),
+            MAX_WEBHOOK_COOLDOWN_MS
+        );
     }
 }
