@@ -124,51 +124,6 @@ impl SignalConfig {
                 format!("runtime.queue_depth must be between 1 and {MAX_QUEUE_DEPTH}"),
             ));
         }
-        if self.gb28181.catalog_fragment_max_entries == 0 {
-            return Err(SignalError::new(
-                SignalErrorKind::InvalidArgument,
-                "gb28181.catalog_fragment_max_entries must be greater than zero",
-            ));
-        }
-        if self.gb28181.catalog_fragment_max_items == 0 {
-            return Err(SignalError::new(
-                SignalErrorKind::InvalidArgument,
-                "gb28181.catalog_fragment_max_items must be greater than zero",
-            ));
-        }
-        if self.gb28181.record_fragment_max_entries == 0 {
-            return Err(SignalError::new(
-                SignalErrorKind::InvalidArgument,
-                "gb28181.record_fragment_max_entries must be greater than zero",
-            ));
-        }
-        if self.gb28181.record_fragment_max_items == 0 {
-            return Err(SignalError::new(
-                SignalErrorKind::InvalidArgument,
-                "gb28181.record_fragment_max_items must be greater than zero",
-            ));
-        }
-        if self.gb28181.session_reaper_batch_size == 0
-            || self.gb28181.session_reaper_batch_size > crate::MAX_PAGE_SIZE
-        {
-            return Err(SignalError::new(
-                SignalErrorKind::InvalidArgument,
-                format!(
-                    "gb28181.session_reaper_batch_size must be between 1 and {}",
-                    crate::MAX_PAGE_SIZE
-                ),
-            ));
-        }
-        if self.gb28181.session_reaper_max_per_tick == 0
-            || self.gb28181.session_reaper_max_per_tick > SESSION_REAPER_MAX_PER_TICK_LIMIT
-        {
-            return Err(SignalError::new(
-                SignalErrorKind::InvalidArgument,
-                format!(
-                    "gb28181.session_reaper_max_per_tick must be between 1 and {SESSION_REAPER_MAX_PER_TICK_LIMIT}"
-                ),
-            ));
-        }
         self.gb28181.validate()?;
         self.http.validate()?;
         if self.onvif.enabled {
@@ -775,6 +730,14 @@ pub struct PluginsConfig {
 /// many expired sessions a single sweep buffers in memory before marking them
 /// offline, so a misconfigured value cannot read an unbounded number of rows.
 pub const SESSION_REAPER_MAX_PER_TICK_LIMIT: u32 = 1_000_000;
+/// Upper bound for [`Gb28181Config::catalog_fragment_max_entries`].
+const MAX_CATALOG_FRAGMENT_ENTRIES: u32 = 10_000;
+/// Upper bound for [`Gb28181Config::catalog_fragment_max_items`].
+const MAX_CATALOG_FRAGMENT_ITEMS: u32 = 100_000;
+/// Upper bound for [`Gb28181Config::record_fragment_max_entries`].
+const MAX_RECORD_FRAGMENT_ENTRIES: u32 = 10_000;
+/// Upper bound for [`Gb28181Config::record_fragment_max_items`].
+const MAX_RECORD_FRAGMENT_ITEMS: u32 = 100_000;
 
 /// GB28181 protocol configuration.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1064,16 +1027,44 @@ impl Gb28181Config {
     /// that every explicit listener is complete, and that listener ids, domains,
     /// realms and bind addresses are unambiguous.
     pub fn validate(&self) -> Result<()> {
-        if self.catalog_fragment_max_entries == 0 {
+        if self.catalog_fragment_max_entries == 0
+            || self.catalog_fragment_max_entries > MAX_CATALOG_FRAGMENT_ENTRIES
+        {
             return Err(SignalError::new(
                 SignalErrorKind::InvalidArgument,
-                "gb28181.catalog_fragment_max_entries must be greater than zero",
+                format!(
+                    "gb28181.catalog_fragment_max_entries must be between 1 and {MAX_CATALOG_FRAGMENT_ENTRIES}"
+                ),
             ));
         }
-        if self.catalog_fragment_max_items == 0 {
+        if self.catalog_fragment_max_items == 0
+            || self.catalog_fragment_max_items > MAX_CATALOG_FRAGMENT_ITEMS
+        {
             return Err(SignalError::new(
                 SignalErrorKind::InvalidArgument,
-                "gb28181.catalog_fragment_max_items must be greater than zero",
+                format!(
+                    "gb28181.catalog_fragment_max_items must be between 1 and {MAX_CATALOG_FRAGMENT_ITEMS}"
+                ),
+            ));
+        }
+        if self.record_fragment_max_entries == 0
+            || self.record_fragment_max_entries > MAX_RECORD_FRAGMENT_ENTRIES
+        {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                format!(
+                    "gb28181.record_fragment_max_entries must be between 1 and {MAX_RECORD_FRAGMENT_ENTRIES}"
+                ),
+            ));
+        }
+        if self.record_fragment_max_items == 0
+            || self.record_fragment_max_items > MAX_RECORD_FRAGMENT_ITEMS
+        {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                format!(
+                    "gb28181.record_fragment_max_items must be between 1 and {MAX_RECORD_FRAGMENT_ITEMS}"
+                ),
             ));
         }
         if self.session_reaper_batch_size == 0
@@ -1953,6 +1944,81 @@ mod gb28181_listener_tests {
         l.compatibility_profile = Some("x".repeat(MAX_COMPATIBILITY_FIELD_BYTES + 1));
         cfg.listeners.push(l);
         assert!(cfg.validate().is_err());
+    }
+
+    fn gb28181_config_with(
+        catalog_fragment_max_entries: u32,
+        catalog_fragment_max_items: u32,
+        record_fragment_max_entries: u32,
+        record_fragment_max_items: u32,
+    ) -> Gb28181Config {
+        Gb28181Config {
+            catalog_fragment_max_entries,
+            catalog_fragment_max_items,
+            record_fragment_max_entries,
+            record_fragment_max_items,
+            ..Gb28181Config::default()
+        }
+    }
+
+    #[test]
+    fn catalog_fragment_max_entries_bounds() {
+        assert!(gb28181_config_with(0, 1, 1, 1).validate().is_err());
+        assert!(
+            gb28181_config_with(MAX_CATALOG_FRAGMENT_ENTRIES + 1, 1, 1, 1)
+                .validate()
+                .is_err()
+        );
+        assert!(
+            gb28181_config_with(MAX_CATALOG_FRAGMENT_ENTRIES, 1, 1, 1)
+                .validate()
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn catalog_fragment_max_items_bounds() {
+        assert!(gb28181_config_with(1, 0, 1, 1).validate().is_err());
+        assert!(
+            gb28181_config_with(1, MAX_CATALOG_FRAGMENT_ITEMS + 1, 1, 1)
+                .validate()
+                .is_err()
+        );
+        assert!(
+            gb28181_config_with(1, MAX_CATALOG_FRAGMENT_ITEMS, 1, 1)
+                .validate()
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn record_fragment_max_entries_bounds() {
+        assert!(gb28181_config_with(1, 1, 0, 1).validate().is_err());
+        assert!(
+            gb28181_config_with(1, 1, MAX_RECORD_FRAGMENT_ENTRIES + 1, 1)
+                .validate()
+                .is_err()
+        );
+        assert!(
+            gb28181_config_with(1, 1, MAX_RECORD_FRAGMENT_ENTRIES, 1)
+                .validate()
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn record_fragment_max_items_bounds() {
+        assert!(gb28181_config_with(1, 1, 1, 0).validate().is_err());
+        assert!(
+            gb28181_config_with(1, 1, 1, MAX_RECORD_FRAGMENT_ITEMS + 1)
+                .validate()
+                .is_err()
+        );
+        assert!(
+            gb28181_config_with(1, 1, 1, MAX_RECORD_FRAGMENT_ITEMS)
+                .validate()
+                .is_ok()
+        );
     }
 }
 
