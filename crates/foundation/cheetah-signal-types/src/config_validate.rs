@@ -29,6 +29,7 @@ const MAX_GRPC_SECRET_REF_BYTES: usize = 256;
 const MAX_MESSAGING_URL_BYTES: usize = 4096;
 const MAX_MESSAGING_SECRET_REF_BYTES: usize = 256;
 const MAX_MESSAGING_DOMAIN_BYTES: usize = 256;
+const MAX_MESSAGING_PENDING: usize = 1_000_000;
 
 const MAX_PLUGIN_DIR_BYTES: usize = 4096;
 
@@ -211,7 +212,7 @@ impl GrpcConfig {
 }
 
 impl MessagingConfig {
-    /// Validates string field bounds for the messaging configuration.
+    /// Validates string field bounds and numeric limits for the messaging configuration.
     pub fn validate(&self) -> Result<()> {
         validate_string(
             "messaging.nats_url",
@@ -228,6 +229,12 @@ impl MessagingConfig {
             &self.jetstream_domain,
             MAX_MESSAGING_DOMAIN_BYTES,
         )?;
+        if self.max_pending > MAX_MESSAGING_PENDING {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                format!("messaging.max_pending must not exceed {MAX_MESSAGING_PENDING}"),
+            ));
+        }
         Ok(())
     }
 }
@@ -369,6 +376,24 @@ mod tests {
             ..Default::default()
         };
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn messaging_config_rejects_excessive_max_pending() {
+        let config = MessagingConfig {
+            max_pending: MAX_MESSAGING_PENDING + 1,
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn messaging_config_accepts_zero_max_pending() {
+        let config = MessagingConfig {
+            max_pending: 0,
+            ..Default::default()
+        };
+        assert!(config.validate().is_ok());
     }
 
     #[test]
