@@ -2,7 +2,7 @@
 
 use crate::config::MediaRegistryConfig;
 use crate::error::SchedulerError;
-use crate::model::{MediaNode, NodeStatus};
+use crate::model::{MediaNode, MediaNodeHealth, NodeStatus};
 use crate::registry::{
     MediaNodeRegistry, NodeEntry, is_active, is_lease_expired, lease_until, to_media_node,
 };
