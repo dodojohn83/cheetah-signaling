@@ -141,8 +141,8 @@ impl<A: DeviceActor> Runtime<A> {
         message: RuntimeMessage,
     ) -> Result<(), RuntimeError> {
         if matches!(message, RuntimeMessage::Shutdown) {
-            return Err(RuntimeError::InvalidArgument(
-                "use shutdown() to stop the runtime".into(),
+            return Err(RuntimeError::invalid_argument(
+                "use shutdown() to stop the runtime",
             ));
         }
         if self.inner.draining.load(Ordering::Acquire) {
@@ -164,8 +164,8 @@ impl<A: DeviceActor> Runtime<A> {
         message: RuntimeMessage,
     ) -> Result<AdmissionOutcome, RuntimeError> {
         if matches!(message, RuntimeMessage::Shutdown) {
-            return Err(RuntimeError::InvalidArgument(
-                "use shutdown() to stop the runtime".into(),
+            return Err(RuntimeError::invalid_argument(
+                "use shutdown() to stop the runtime",
             ));
         }
         if self.inner.draining.load(Ordering::Acquire) {
@@ -246,8 +246,8 @@ impl<A: DeviceActor> Runtime<A> {
                 Ok(Ok(())) => {}
                 Ok(Err(_)) => {}
                 Err(_) => {
-                    return Err(RuntimeError::Internal(
-                        "timed out sending shutdown to shard".into(),
+                    return Err(RuntimeError::internal(
+                        "timed out sending shutdown to shard",
                     ));
                 }
             }
@@ -258,8 +258,8 @@ impl<A: DeviceActor> Runtime<A> {
             Ok(Ok(())) => {}
             Ok(Err(_)) => {}
             Err(_) => {
-                return Err(RuntimeError::Internal(
-                    "timed out sending shutdown to timer wheel".into(),
+                return Err(RuntimeError::internal(
+                    "timed out sending shutdown to timer wheel",
                 ));
             }
         }
@@ -269,11 +269,11 @@ impl<A: DeviceActor> Runtime<A> {
                 match tokio::time::timeout(Duration::from_secs(5), handle).await {
                     Ok(Ok(())) => {}
                     Ok(Err(e)) => {
-                        return Err(RuntimeError::Internal(e.to_string()));
+                        return Err(RuntimeError::internal(e));
                     }
                     Err(_) => {
-                        return Err(RuntimeError::Internal(
-                            "timed out waiting for worker to stop".into(),
+                        return Err(RuntimeError::internal(
+                            "timed out waiting for worker to stop",
                         ));
                     }
                 }
