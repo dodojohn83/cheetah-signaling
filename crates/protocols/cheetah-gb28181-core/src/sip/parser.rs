@@ -473,7 +473,14 @@ fn normalize_cseq_value(value: HeaderValue) -> HeaderValue {
         Some((num, method)) => (num, method.trim_start()),
         None => return value,
     };
-    HeaderValue::new(format!("{} {}", num, method.to_ascii_uppercase()))
+    // Use the case-insensitive Method parser for known tokens to avoid
+    // allocating an uppercase copy of the method substring. Unknown tokens
+    // still get upper-cased so that downstream comparisons stay canonical.
+    let normalized = match Method::parse_normalized(method) {
+        Ok(m) => m.to_string(),
+        Err(_) => method.to_ascii_uppercase(),
+    };
+    HeaderValue::new(format!("{} {}", num, normalized))
 }
 
 fn build_message(
