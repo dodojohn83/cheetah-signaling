@@ -6,6 +6,13 @@ use super::message::{Body, Method, RequestLine, SipMessage, StatusLine};
 use super::uri::SipUri;
 use crate::{CompatibilityCapability, CompatibilityProfile};
 
+const MAX_SIP_START_LINE_BYTES: usize = 64 * 1024;
+const MAX_SIP_HEADERS: usize = 1024;
+const MAX_SIP_HEADER_BLOCK_BYTES: usize = 1024 * 1024;
+const MAX_SIP_HEADER_LINE_BYTES: usize = 64 * 1024;
+const MAX_SIP_BODY_BYTES: usize = 64 * 1024 * 1024;
+const MAX_SIP_BUFFER_BYTES: usize = 64 * 1024 * 1024;
+
 /// Limits and behavior of the SIP parser.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SipParserConfig {
@@ -38,6 +45,25 @@ impl Default for SipParserConfig {
             max_body_bytes: 2_097_152,
             max_buffer_bytes: 8_388_608,
             datagram_mode: false,
+        }
+    }
+}
+
+impl SipParserConfig {
+    /// Clamps every limit to a safe, non-zero range.
+    fn normalize(self) -> Self {
+        Self {
+            max_start_line_bytes: self.max_start_line_bytes.clamp(1, MAX_SIP_START_LINE_BYTES),
+            max_headers: self.max_headers.clamp(1, MAX_SIP_HEADERS),
+            max_header_block_bytes: self
+                .max_header_block_bytes
+                .clamp(1, MAX_SIP_HEADER_BLOCK_BYTES),
+            max_header_line_bytes: self
+                .max_header_line_bytes
+                .clamp(1, MAX_SIP_HEADER_LINE_BYTES),
+            max_body_bytes: self.max_body_bytes.clamp(1, MAX_SIP_BODY_BYTES),
+            max_buffer_bytes: self.max_buffer_bytes.clamp(1, MAX_SIP_BUFFER_BYTES),
+            datagram_mode: self.datagram_mode,
         }
     }
 }
@@ -80,7 +106,7 @@ impl SipParser {
         profile: Option<CompatibilityProfile>,
     ) -> Self {
         Self {
-            config,
+            config: config.normalize(),
             profile,
             state: ParserState::default(),
             buffer: Vec::new(),
@@ -106,6 +132,7 @@ impl SipParser {
         mut config: SipParserConfig,
         profile: Option<&CompatibilityProfile>,
     ) -> Result<SipMessage, SipError> {
+        config = config.normalize();
         config.datagram_mode = true;
         let mut parser = Self::new_with_profile(config, profile.cloned());
         parser.feed(data)?;
@@ -540,6 +567,46 @@ mod tests {
 
     fn datagram(data: &str) -> Result<SipMessage, SipError> {
         SipParser::parse_datagram(data.as_bytes(), SipParserConfig::default())
+    }
+
+    #[test]
+    fn parser_config_limits_are_normalized() {
+        let config = SipParserConfig {
+            max_start_line_bytes: usize::MAX,
+            max_headers: usize::MAX,
+            max_header_block_bytes: usize::MAX,
+            max_header_line_bytes: usize::MAX,
+            max_body_bytes: usize::MAX,
+            max_buffer_bytes: usize::MAX,
+            ..Default::default()
+        };
+
+        let parser = SipParser::new(config);
+        assert_eq!(parser.config.max_start_line_bytes, MAX_SIP_START_LINE_BYTES);
+        assert_eq!(parser.config.max_headers, MAX_SIP_HEADERS);
+        assert_eq!(
+            parser.config.max_header_block_bytes,
+            MAX_SIP_HEADER_BLOCK_BYTES
+        );
+        assert_eq!(
+            parser.config.max_header_line_bytes,
+            MAX_SIP_HEADER_LINE_BYTES
+        );
+        assert_eq!(parser.config.max_body_bytes, MAX_SIP_BODY_BYTES);
+        assert_eq!(parser.config.max_buffer_bytes, MAX_SIP_BUFFER_BYTES);
+
+        let zero_config = SipParserConfig {
+            max_start_line_bytes: 0,
+            max_headers: 0,
+            max_header_block_bytes: 0,
+            max_header_line_bytes: 0,
+            max_body_bytes: 0,
+            max_buffer_bytes: 0,
+            datagram_mode: false,
+        };
+        let parser = SipParser::new(zero_config);
+        assert_eq!(parser.config.max_start_line_bytes, 1);
+        assert_eq!(parser.config.max_headers, 1);
     }
 
     #[test]
