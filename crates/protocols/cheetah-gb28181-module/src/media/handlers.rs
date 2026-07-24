@@ -233,8 +233,6 @@ fn on_invite_success(
         return reject_and_teardown(media, sid, &remote_tag, &contact, &reason);
     }
 
-    let remote_sdp_text = String::from_utf8_lossy(msg.body()).to_string();
-
     let remote_ssrc = parsed_remote_sdp
         .media
         .first()
@@ -302,7 +300,6 @@ fn on_invite_success(
         channel_id: session.channel_id,
         device_id: session.device_id.clone(),
         source,
-        remote_sdp: remote_sdp_text,
         remote_ssrc,
         remote_port,
         remote_proto,

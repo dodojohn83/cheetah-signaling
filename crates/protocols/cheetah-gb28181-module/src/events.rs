@@ -219,6 +219,9 @@ pub enum Gb28181Event {
         outcome: MediaStatusOutcome,
     },
     /// A live or playback media session was successfully established.
+    ///
+    /// The raw remote SDP answer is intentionally not included in this event;
+    /// downstream consumers only need bounded, desensitised control fields.
     MediaSessionStarted {
         /// Logical domain the device belongs to.
         domain_id: DomainId,
@@ -230,8 +233,6 @@ pub enum Gb28181Event {
         device_id: DeviceId,
         /// Remote media address (from the device SDP connection line).
         source: SocketAddr,
-        /// Raw remote SDP answer.
-        remote_sdp: String,
         /// SSRC reported by the device, if present.
         remote_ssrc: Option<String>,
         /// Remote media port.
@@ -288,6 +289,9 @@ pub enum Gb28181Event {
         reason: String,
     },
     /// An upstream cascade platform sent an INVITE to play a channel.
+    ///
+    /// The raw upstream SDP offer is intentionally not included in this event;
+    /// downstream consumers only need bounded, desensitised control fields.
     CascadePlayRequested {
         /// Logical domain.
         domain_id: DomainId,
@@ -303,8 +307,6 @@ pub enum Gb28181Event {
         upstream_to: String,
         /// Target user part from the upstream Request-URI (external device/channel ID).
         target_user: String,
-        /// Parsed remote SDP offer.
-        remote_sdp: String,
     },
     /// An upstream cascade play bridge was torn down by BYE/CANCEL or the
     /// downstream side stopped.
