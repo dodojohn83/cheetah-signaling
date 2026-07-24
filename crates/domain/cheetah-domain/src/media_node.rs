@@ -135,7 +135,9 @@ impl MediaNode {
         let max_sessions = self.capacity.max_sessions.max(1);
         if self.load >= max_cpu || self.session_count >= max_sessions {
             self.health = MediaNodeHealth::Unhealthy;
-        } else if self.load >= max_cpu * 7 / 10 || self.session_count >= max_sessions * 7 / 10 {
+        } else if self.load >= max_cpu.saturating_mul(7) / 10
+            || self.session_count >= max_sessions.saturating_mul(7) / 10
+        {
             self.health = MediaNodeHealth::Degraded;
         } else {
             self.health = MediaNodeHealth::Healthy;

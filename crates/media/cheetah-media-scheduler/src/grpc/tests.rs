@@ -562,3 +562,60 @@ async fn heartbeat_rejects_oversized_lease_id()
     }
     Ok(())
 }
+
+#[tokio::test]
+async fn register_rejects_oversized_capacity()
+-> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let node_id = NodeId::from_str("66666666-6666-6666-6666-666666666666")?;
+    let registry = Arc::new(FakeRegistry {
+        node: Mutex::new(Some(fake_existing_node(node_id))),
+    });
+    let mut config = test_config();
+    config.max_capacity_sessions = 1000;
+    config.max_capacity_bandwidth_mbps = 10_000;
+    let service = MediaClusterRegistryService::new(
+        registry.clone(),
+        Arc::new(FakeClock::new()),
+        Arc::new(FakeIdGenerator::new()),
+        config,
+        crate::MediaMetrics::arc(),
+        Arc::new(NoOpAuditLog),
+        node_id,
+    );
+
+    let request = Request::new(RegisterMediaNodeRequest {
+        node: Some(media_proto::MediaNodeRegistration {
+            node_id: node_id.to_string(),
+            listen_addr: "https://1.1.1.1:443".to_string(),
+            capability: None,
+            capabilities: vec![media_proto::MediaCapability {
+                protocol: "gb28181".to_string(),
+                operations: vec!["live".to_string()],
+                constraints: std::collections::BTreeMap::new(),
+                version: 1,
+                runtime_state: "active".to_string(),
+            }],
+            region: "us-east".to_string(),
+            zone: "zone-a".to_string(),
+            network_zones: vec!["us-east".to_string()],
+            capacity: Some(media_proto::MediaNodeCapacity {
+                max_sessions: 10_000,
+                max_bandwidth_mbps: 100_000,
+                max_cpu_percent: 100,
+                available_sessions: 10,
+                available_bandwidth_mbps: 1000,
+                available_cpu_percent: 100,
+            }),
+            instance_id: String::new(),
+        }),
+    });
+
+    match service.register_media_node(request).await {
+        Err(status) => {
+            assert_eq!(status.code(), tonic::Code::InvalidArgument);
+            assert!(status.message().contains("capacity"));
+        }
+        Ok(_) => panic!("expected registration to be rejected"),
+    }
+    Ok(())
+}
