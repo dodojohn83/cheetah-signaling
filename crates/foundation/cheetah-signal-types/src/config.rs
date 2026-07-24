@@ -24,6 +24,11 @@ const MAX_BLOCKING_THREADS: usize = 10_000;
 const MAX_QUEUE_DEPTH: usize = 1_000_000;
 /// Maximum idle blocking thread keep-alive in milliseconds (one hour).
 const MAX_THREAD_KEEP_ALIVE_MS: i64 = 3_600_000;
+/// Maximum HTTP request read timeout in milliseconds (five minutes).
+///
+/// Larger values can overflow the deadline timestamp used by the request
+/// context, causing the handler to time out immediately instead of waiting.
+const MAX_HTTP_READ_TIMEOUT_MS: i64 = 300_000;
 
 /// Serializes a `SecretString` as a redacted placeholder, preserving empty defaults.
 ///
@@ -236,12 +241,6 @@ impl SignalConfig {
             return Err(SignalError::new(
                 SignalErrorKind::InvalidArgument,
                 "grpc.tls_cert_ref and grpc.tls_key_ref must both be set or both be unset",
-            ));
-        }
-        if self.http.read_timeout_ms.as_millis() <= 0 {
-            return Err(SignalError::new(
-                SignalErrorKind::InvalidArgument,
-                "http.read_timeout_ms must be greater than zero",
             ));
         }
         let static_key = self.security.static_api_key.expose_secret();
@@ -552,6 +551,13 @@ impl Default for HttpConfig {
 impl HttpConfig {
     /// Validates HTTP-specific configuration.
     pub fn validate(&self) -> Result<()> {
+        let timeout_ms = self.read_timeout_ms.as_millis();
+        if timeout_ms <= 0 || timeout_ms > MAX_HTTP_READ_TIMEOUT_MS {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                format!("http.read_timeout_ms must be between 1 and {MAX_HTTP_READ_TIMEOUT_MS}"),
+            ));
+        }
         if self.cors_allowed_origins.len() > MAX_CORS_ORIGINS {
             return Err(SignalError::new(
                 SignalErrorKind::InvalidArgument,
@@ -1962,9 +1968,44 @@ mod http_config_tests {
         }
     }
 
+    fn http_config_with_timeout(timeout_ms: i64) -> HttpConfig {
+        HttpConfig {
+            read_timeout_ms: DurationMs::from_millis(timeout_ms),
+            ..HttpConfig::default()
+        }
+    }
+
     #[test]
     fn default_http_config_is_valid() {
         assert!(HttpConfig::default().validate().is_ok());
+    }
+
+    #[test]
+    fn read_timeout_zero_is_rejected() {
+        assert!(http_config_with_timeout(0).validate().is_err());
+    }
+
+    #[test]
+    fn negative_read_timeout_is_rejected() {
+        assert!(http_config_with_timeout(-1).validate().is_err());
+    }
+
+    #[test]
+    fn oversized_read_timeout_is_rejected() {
+        assert!(
+            http_config_with_timeout(MAX_HTTP_READ_TIMEOUT_MS + 1)
+                .validate()
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn max_read_timeout_is_accepted() {
+        assert!(
+            http_config_with_timeout(MAX_HTTP_READ_TIMEOUT_MS)
+                .validate()
+                .is_ok()
+        );
     }
 
     #[test]
