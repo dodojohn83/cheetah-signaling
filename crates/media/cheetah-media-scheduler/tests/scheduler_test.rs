@@ -578,3 +578,58 @@ async fn rolling_upgrade_routes_new_sessions_to_newer_contract_version() {
         .unwrap();
     assert_eq!(v1_chosen.node_id, node_a.node_id);
 }
+
+#[tokio::test]
+async fn get_returns_none_for_stale_in_memory_node() {
+    let clock = Arc::new(ManualClock::new(OffsetDateTime::UNIX_EPOCH));
+    let config = MediaRegistryConfig {
+        heartbeat_timeout_ms: 1_000,
+        ..Default::default()
+    };
+    let registry = InMemoryMediaNodeRegistry::new(config);
+    registry
+        .register(default_node(), 60_000, clock.as_ref())
+        .await
+        .unwrap();
+    clock.advance_wall(2_000);
+    assert!(registry.get(node_id(), clock.as_ref()).await.is_none());
+}
+
+#[tokio::test]
+async fn reserve_rejects_stale_in_memory_node() {
+    let clock = Arc::new(ManualClock::new(OffsetDateTime::UNIX_EPOCH));
+    let config = MediaRegistryConfig {
+        heartbeat_timeout_ms: 1_000,
+        ..Default::default()
+    };
+    let registry = InMemoryMediaNodeRegistry::new(config);
+    registry
+        .register(default_node(), 60_000, clock.as_ref())
+        .await
+        .unwrap();
+    clock.advance_wall(2_000);
+    let err = registry
+        .reserve(node_id(), tenant_id(), binding_id(), clock.as_ref())
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("not found"));
+}
+
+#[tokio::test]
+async fn reserve_rejects_unhealthy_in_memory_node() {
+    let clock = Arc::new(ManualClock::new(OffsetDateTime::UNIX_EPOCH));
+    let registry = InMemoryMediaNodeRegistry::new(MediaRegistryConfig::default());
+    registry
+        .register(default_node(), 60_000, clock.as_ref())
+        .await
+        .unwrap();
+    registry
+        .heartbeat(node_id(), "instance-1", 1, 100, 0, clock.as_ref())
+        .await
+        .unwrap();
+    let err = registry
+        .reserve(node_id(), tenant_id(), binding_id(), clock.as_ref())
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("exhausted"));
+}

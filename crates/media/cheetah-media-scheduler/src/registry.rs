@@ -270,9 +270,12 @@ impl MediaNodeRegistry for InMemoryMediaNodeRegistry {
     async fn get(&self, node_id: NodeId, clock: &dyn Clock) -> Option<MediaNode> {
         let nodes = self.nodes.read().ok()?;
         let now = clock.now_wall();
-        nodes
-            .get(&node_id)
-            .map(|e| to_media_node(e, now, &self.config))
+        nodes.get(&node_id).and_then(|e| {
+            if !is_active(e, now, &self.config) {
+                return None;
+            }
+            Some(to_media_node(e, now, &self.config))
+        })
     }
 
     async fn list_active(&self, clock: &dyn Clock) -> Vec<MediaNode> {
@@ -302,13 +305,20 @@ impl MediaNodeRegistry for InMemoryMediaNodeRegistry {
         let entry = nodes
             .get_mut(&node_id)
             .ok_or_else(|| SchedulerError::NodeNotFound(node_id.to_string()))?;
-        if entry.node.draining || entry.node.status == NodeStatus::Draining {
-            return Err(SchedulerError::NodeDraining(node_id.to_string()));
-        }
-        if entry.node.status == NodeStatus::Left {
+        let now = clock.now_wall();
+        let view = to_media_node(entry, now, &self.config);
+        if view.status == NodeStatus::Left {
             return Err(SchedulerError::NodeNotFound(node_id.to_string()));
         }
-        let now = clock.now_wall();
+        if !is_active(entry, now, &self.config) {
+            return Err(SchedulerError::NodeNotFound(node_id.to_string()));
+        }
+        if view.status == NodeStatus::Draining || view.draining {
+            return Err(SchedulerError::NodeDraining(node_id.to_string()));
+        }
+        if view.health == MediaNodeHealth::Unhealthy {
+            return Err(SchedulerError::CapacityExhausted(node_id.to_string()));
+        }
         let ttl = i64::try_from(self.config.reservation_ttl_ms).unwrap_or(i64::MAX);
         let deadline = now
             .checked_add(cheetah_signal_types::DurationMs::from_millis(ttl))
