@@ -255,25 +255,29 @@ impl MediaNodeRegistry for PersistentMediaNodeRegistry {
             )));
         }
 
-        let mut nodes = self.nodes.write().await;
-        let entry = nodes
-            .get_mut(&node_id)
-            .ok_or_else(|| SchedulerError::NodeNotFound(node_id.to_string()))?;
-        if entry.node.status == NodeStatus::Left {
-            return Err(SchedulerError::NodeNotFound(format!(
-                "{node_id} has been deregistered"
-            )));
-        }
-        if entry.instance_id != lease_id || entry.node.instance_epoch != instance_epoch {
-            return Err(SchedulerError::NodeNotFound(format!(
-                "{node_id} lease or instance epoch mismatch"
-            )));
-        }
         let now = clock.now_wall();
         let lease = lease_until(clock, self.config.default_lease_ttl_ms)
             .ok_or_else(|| SchedulerError::Backend("lease timestamp overflow".to_string()))?;
 
-        let event = self.make_event(clock, &entry.node);
+        // Validate the in-memory entry and build the outbox event without
+        // holding the write lock across the repository I/O.
+        let event = {
+            let nodes = self.nodes.read().await;
+            let entry = nodes
+                .get(&node_id)
+                .ok_or_else(|| SchedulerError::NodeNotFound(node_id.to_string()))?;
+            if entry.node.status == NodeStatus::Left {
+                return Err(SchedulerError::NodeNotFound(format!(
+                    "{node_id} has been deregistered"
+                )));
+            }
+            if entry.instance_id != lease_id || entry.node.instance_epoch != instance_epoch {
+                return Err(SchedulerError::NodeNotFound(format!(
+                    "{node_id} lease or instance epoch mismatch"
+                )));
+            }
+            self.make_event(clock, &entry.node)
+        };
 
         let persisted = self
             .repo
@@ -291,8 +295,12 @@ impl MediaNodeRegistry for PersistentMediaNodeRegistry {
             .await
             .map_err(|e| SchedulerError::Backend(e.to_string()))?;
 
+        let mut nodes = self.nodes.write().await;
         match persisted {
             Some(node) => {
+                let entry = nodes
+                    .get_mut(&node_id)
+                    .ok_or_else(|| SchedulerError::NodeNotFound(node_id.to_string()))?;
                 entry.node = node;
                 entry.reported_session_count = session_count;
                 entry.node.last_heartbeat_at = Some(now);
@@ -309,14 +317,20 @@ impl MediaNodeRegistry for PersistentMediaNodeRegistry {
         drain: bool,
         clock: &dyn Clock,
     ) -> Result<MediaNode, SchedulerError> {
-        let mut nodes = self.nodes.write().await;
-        let entry = nodes
-            .get_mut(&node_id)
-            .ok_or_else(|| SchedulerError::NodeNotFound(node_id.to_string()))?;
         let now = clock.now_wall();
-        let instance_id = entry.instance_id.clone();
 
-        let event = self.make_event(clock, &entry.node);
+        // Snapshot the instance id and build the outbox event without holding
+        // the write lock across the repository I/O.
+        let (instance_id, event) = {
+            let nodes = self.nodes.read().await;
+            let entry = nodes
+                .get(&node_id)
+                .ok_or_else(|| SchedulerError::NodeNotFound(node_id.to_string()))?;
+            (
+                entry.instance_id.clone(),
+                self.make_event(clock, &entry.node),
+            )
+        };
 
         let persisted = self
             .repo
@@ -326,8 +340,12 @@ impl MediaNodeRegistry for PersistentMediaNodeRegistry {
             .await
             .map_err(|e| SchedulerError::Backend(e.to_string()))?;
 
+        let mut nodes = self.nodes.write().await;
         match persisted {
             Some(node) => {
+                let entry = nodes
+                    .get_mut(&node_id)
+                    .ok_or_else(|| SchedulerError::NodeNotFound(node_id.to_string()))?;
                 entry.node = node;
                 Ok(to_media_node(entry, now, &self.config))
             }
@@ -340,15 +358,21 @@ impl MediaNodeRegistry for PersistentMediaNodeRegistry {
         node_id: NodeId,
         clock: &dyn Clock,
     ) -> Result<MediaNode, SchedulerError> {
-        let mut nodes = self.nodes.write().await;
-        let entry = nodes
-            .get_mut(&node_id)
-            .ok_or_else(|| SchedulerError::NodeNotFound(node_id.to_string()))?;
         let now = clock.now_wall();
-        let instance_id = entry.instance_id.clone();
         let protection_lease = lease_until(clock, self.config.deregister_protection_ttl_ms);
 
-        let event = self.make_event(clock, &entry.node);
+        // Snapshot the instance id and build the outbox event without holding
+        // the write lock across the repository I/O.
+        let (instance_id, event) = {
+            let nodes = self.nodes.read().await;
+            let entry = nodes
+                .get(&node_id)
+                .ok_or_else(|| SchedulerError::NodeNotFound(node_id.to_string()))?;
+            (
+                entry.instance_id.clone(),
+                self.make_event(clock, &entry.node),
+            )
+        };
 
         let persisted = self
             .repo
@@ -358,8 +382,12 @@ impl MediaNodeRegistry for PersistentMediaNodeRegistry {
             .await
             .map_err(|e| SchedulerError::Backend(e.to_string()))?;
 
+        let mut nodes = self.nodes.write().await;
         match persisted {
             Some(node) => {
+                let entry = nodes
+                    .get_mut(&node_id)
+                    .ok_or_else(|| SchedulerError::NodeNotFound(node_id.to_string()))?;
                 entry.node = node;
                 entry.node.lease_until = protection_lease;
                 Ok(to_media_node(entry, now, &self.config))
@@ -528,14 +556,27 @@ mod tests {
         async fn heartbeat(
             &mut self,
             _node_id: NodeId,
-            _instance_id: String,
-            _lease_until: UtcTimestamp,
-            _updated_at: UtcTimestamp,
-            _load: u64,
-            _session_count: u64,
+            instance_id: String,
+            lease_until: UtcTimestamp,
+            updated_at: UtcTimestamp,
+            load: u64,
+            session_count: u64,
             _events: Vec<Event<DomainEvent>>,
         ) -> Result<Option<MediaNode>, StorageError> {
-            Ok(None)
+            let mut guard = self.node.lock().unwrap();
+            if let Some(node) = guard.as_mut() {
+                if node.instance_id != instance_id || node.status == NodeStatus::Left {
+                    return Ok(None);
+                }
+                node.load = load;
+                node.session_count = session_count;
+                node.last_heartbeat_at = Some(updated_at);
+                node.lease_until = Some(lease_until);
+                node.revision = node.revision.saturating_add(1);
+                Ok(Some(node.clone()))
+            } else {
+                Ok(None)
+            }
         }
 
         async fn get(&self, _node_id: NodeId) -> Result<Option<MediaNode>, StorageError> {
@@ -563,26 +604,45 @@ mod tests {
         async fn set_draining(
             &mut self,
             _node_id: NodeId,
-            _instance_id: String,
-            _draining: bool,
+            instance_id: String,
+            draining: bool,
             _updated_at: UtcTimestamp,
             _events: Vec<Event<DomainEvent>>,
         ) -> Result<Option<MediaNode>, StorageError> {
-            Ok(None)
+            let mut guard = self.node.lock().unwrap();
+            if let Some(node) = guard.as_mut() {
+                if node.instance_id != instance_id {
+                    return Ok(None);
+                }
+                node.draining = draining;
+                node.status = if draining {
+                    NodeStatus::Draining
+                } else {
+                    NodeStatus::Active
+                };
+                node.revision = node.revision.saturating_add(1);
+                Ok(Some(node.clone()))
+            } else {
+                Ok(None)
+            }
         }
 
         async fn deregister(
             &mut self,
             _node_id: NodeId,
-            _instance_id: String,
+            instance_id: String,
             _updated_at: UtcTimestamp,
             lease_until: Option<UtcTimestamp>,
             _events: Vec<Event<DomainEvent>>,
         ) -> Result<Option<MediaNode>, StorageError> {
             let mut guard = self.node.lock().unwrap();
             if let Some(node) = guard.as_mut() {
+                if node.instance_id != instance_id {
+                    return Ok(None);
+                }
                 node.status = NodeStatus::Left;
                 node.lease_until = lease_until;
+                node.revision = node.revision.saturating_add(1);
                 Ok(Some(node.clone()))
             } else {
                 Ok(None)
@@ -696,5 +756,67 @@ mod tests {
         // The in-memory cache entry should also be removed, not just filtered.
         let nodes = registry.nodes.read().await;
         assert!(nodes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn heartbeat_updates_lease_and_load_without_holding_nodes_write_lock() {
+        let clock = Arc::new(FakeClock::new());
+        let id_gen: Arc<dyn IdGenerator> = Arc::new(FakeIdGenerator::default());
+        let repo = FakeRepo {
+            node: Arc::new(Mutex::new(None)),
+        };
+
+        let node_id = NodeId::from_str("33333333-3333-3333-3333-333333333333").unwrap();
+        let registry =
+            PersistentMediaNodeRegistry::new(test_config(), Box::new(repo), id_gen, node_id);
+
+        let node = test_node(node_id, "instance-1");
+        let registered = registry.register(node, 1000, clock.as_ref()).await.unwrap();
+        let lease_id = registered.instance_id.clone();
+
+        clock.advance_wall(DurationMs::from_millis(500));
+
+        let heartbeat = registry
+            .heartbeat(
+                node_id,
+                &lease_id,
+                registered.instance_epoch,
+                42,
+                7,
+                clock.as_ref(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(heartbeat.load, 42);
+        assert_eq!(heartbeat.session_count, 7);
+        assert!(heartbeat.lease_until.is_some());
+        assert!(heartbeat.last_heartbeat_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn drain_toggles_draining_flag_and_status() {
+        let clock = Arc::new(FakeClock::new());
+        let id_gen: Arc<dyn IdGenerator> = Arc::new(FakeIdGenerator::default());
+        let repo = FakeRepo {
+            node: Arc::new(Mutex::new(None)),
+        };
+
+        let node_id = NodeId::from_str("44444444-4444-4444-4444-444444444444").unwrap();
+        let registry =
+            PersistentMediaNodeRegistry::new(test_config(), Box::new(repo), id_gen, node_id);
+
+        let node = test_node(node_id, "instance-1");
+        registry.register(node, 1000, clock.as_ref()).await.unwrap();
+
+        let drained = registry.drain(node_id, true, clock.as_ref()).await.unwrap();
+        assert_eq!(drained.status, NodeStatus::Draining);
+        assert!(drained.draining);
+
+        let active = registry
+            .drain(node_id, false, clock.as_ref())
+            .await
+            .unwrap();
+        assert_eq!(active.status, NodeStatus::Active);
+        assert!(!active.draining);
     }
 }
