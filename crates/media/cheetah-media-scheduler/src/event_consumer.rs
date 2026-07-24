@@ -153,15 +153,20 @@ impl MediaEventConsumer {
             }
         }
 
-        for id in active {
-            if !current.contains_key(&id) {
-                to_start.push(id);
+        for id in &active {
+            if !current.contains_key(id) {
+                to_start.push(*id);
             }
         }
 
         for id in to_stop {
             self.subscriptions.cancel(id);
         }
+
+        // Prune auxiliary state for nodes that are no longer active so the
+        // cursor and rate-limit maps do not grow without bound as nodes churn.
+        self.cursors.retain(&active);
+        self.diagnostic_log_limiter.retain(&active);
 
         let nodes_to_start = to_start.len();
         for (index, node_id) in to_start.into_iter().enumerate() {
