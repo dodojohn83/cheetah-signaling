@@ -103,7 +103,7 @@ impl PersistentMediaNodeRegistry {
                 .await
                 .list_alive(clock.now_wall(), page_request)
                 .await
-                .map_err(|e| SchedulerError::Backend(e.to_string()))?;
+                .map_err(SchedulerError::backend)?;
 
             let has_more = page.next_cursor.is_some();
             for node in page.items {
@@ -182,7 +182,7 @@ impl MediaNodeRegistry for PersistentMediaNodeRegistry {
             .await
             .register(updated, vec![event])
             .await
-            .map_err(|e| SchedulerError::Backend(e.to_string()))?;
+            .map_err(SchedulerError::backend)?;
 
         let entry = NodeEntry {
             node: persisted.clone(),
@@ -233,7 +233,7 @@ impl MediaNodeRegistry for PersistentMediaNodeRegistry {
         }
         let now = clock.now_wall();
         let lease = lease_until(clock, self.config.default_lease_ttl_ms)
-            .ok_or_else(|| SchedulerError::Backend("lease timestamp overflow".to_string()))?;
+            .ok_or_else(|| SchedulerError::backend("lease timestamp overflow"))?;
 
         let event = self.make_event(clock, &entry.node);
 
@@ -251,7 +251,7 @@ impl MediaNodeRegistry for PersistentMediaNodeRegistry {
                 vec![event],
             )
             .await
-            .map_err(|e| SchedulerError::Backend(e.to_string()))?;
+            .map_err(SchedulerError::backend)?;
 
         match persisted {
             Some(node) => {
@@ -286,7 +286,7 @@ impl MediaNodeRegistry for PersistentMediaNodeRegistry {
             .await
             .set_draining(node_id, instance_id, drain, now, vec![event])
             .await
-            .map_err(|e| SchedulerError::Backend(e.to_string()))?;
+            .map_err(SchedulerError::backend)?;
 
         match persisted {
             Some(node) => {
@@ -318,7 +318,7 @@ impl MediaNodeRegistry for PersistentMediaNodeRegistry {
             .await
             .deregister(node_id, instance_id, now, protection_lease, vec![event])
             .await
-            .map_err(|e| SchedulerError::Backend(e.to_string()))?;
+            .map_err(SchedulerError::backend)?;
 
         match persisted {
             Some(node) => {

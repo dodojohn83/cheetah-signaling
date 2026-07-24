@@ -1,6 +1,10 @@
 //! Scheduler errors.
 
 use cheetah_domain::DomainError;
+use cheetah_signal_types::clamp_str;
+
+/// Maximum byte length of a `SchedulerError::Backend` message.
+const MAX_BACKEND_ERROR_BYTES: usize = 1024;
 
 /// Errors returned by the media node registry and scheduler.
 #[derive(Debug, thiserror::Error)]
@@ -45,4 +49,11 @@ pub enum SchedulerError {
     /// Media event stream client failure.
     #[error("media event stream client: {0}")]
     EventStream(String),
+}
+
+impl SchedulerError {
+    /// Creates a `Backend` error, truncating the message to a bounded size.
+    pub fn backend(msg: impl std::fmt::Display) -> Self {
+        Self::Backend(clamp_str(&msg.to_string(), MAX_BACKEND_ERROR_BYTES))
+    }
 }

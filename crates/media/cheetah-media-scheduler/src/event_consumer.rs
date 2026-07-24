@@ -185,9 +185,7 @@ impl MediaEventConsumer {
                     break;
                 }
                 Err(tokio::sync::TryAcquireError::Closed) => {
-                    return Err(SchedulerError::Backend(
-                        "subscription semaphore closed".to_string(),
-                    ));
+                    return Err(SchedulerError::backend("subscription semaphore closed"));
                 }
             };
 
@@ -324,7 +322,7 @@ impl MediaEventConsumer {
             .storage
             .begin()
             .await
-            .map_err(|e| SchedulerError::Backend(format!("{e}")))?;
+            .map_err(SchedulerError::backend)?;
         let record = uow
             .processed_message_repository()
             .find(TenantId::default(), message_id_for_node(node.node_id))
@@ -422,7 +420,7 @@ impl MediaEventConsumer {
             .storage
             .begin()
             .await
-            .map_err(|e| SchedulerError::Backend(format!("{e}")))?;
+            .map_err(SchedulerError::backend)?;
 
         let record = ProcessedMessageRecord {
             tenant_id,
@@ -461,7 +459,7 @@ impl MediaEventConsumer {
                 "sequence": sequence,
                 "error": e.to_string(),
             }))
-            .map_err(|e| SchedulerError::Backend(format!("{e}")))?;
+            .map_err(SchedulerError::backend)?;
             uow.processed_message_repository()
                 .complete(
                     tenant_id,
@@ -495,7 +493,7 @@ impl MediaEventConsumer {
                     "sequence": sequence,
                     "status": "completed",
                 }))
-                .map_err(|e| SchedulerError::Backend(format!("{e}")))?;
+                .map_err(SchedulerError::backend)?;
                 uow.processed_message_repository()
                     .complete(
                         tenant_id,
@@ -515,22 +513,20 @@ impl MediaEventConsumer {
                 // Discard any partial outbox/state writes from the failed handler.
                 // The processed-message failure marker and cursor are recorded in
                 // a fresh unit of work so the domain transaction stays atomic.
-                uow.rollback()
-                    .await
-                    .map_err(|e| SchedulerError::Backend(format!("{e}")))?;
+                uow.rollback().await.map_err(SchedulerError::backend)?;
                 drop(uow);
 
                 let payload = serde_json::to_string(&serde_json::json!({
                     "sequence": sequence,
                     "error": e.to_string(),
                 }))
-                .map_err(|e| SchedulerError::Backend(format!("{e}")))?;
+                .map_err(SchedulerError::backend)?;
 
                 let mut uow = self
                     .storage
                     .begin()
                     .await
-                    .map_err(|e| SchedulerError::Backend(format!("{e}")))?;
+                    .map_err(SchedulerError::backend)?;
 
                 let record = ProcessedMessageRecord {
                     tenant_id,
@@ -677,7 +673,7 @@ impl MediaEventConsumer {
             .await?;
 
         let payload = serde_json::to_string(&serde_json::json!({ "sequence": sequence }))
-            .map_err(|e| SchedulerError::Backend(format!("{e}")))?;
+            .map_err(SchedulerError::backend)?;
         uow.processed_message_repository()
             .complete(
                 tenant_id,
