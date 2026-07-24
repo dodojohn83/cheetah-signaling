@@ -192,7 +192,7 @@ pub(super) fn on_command(
                 "PCMA" => SdpParams::pcma_rtpmap(),
                 "G.711U" => SdpParams::pcmu_rtpmap(),
                 "PCMU" => SdpParams::pcmu_rtpmap(),
-                _ => return Err(MediaError::Unsupported(codec)),
+                _ => return Err(MediaError::unsupported(codec)),
             };
             let p = StartParams {
                 media_session_id,
@@ -254,7 +254,7 @@ pub(super) fn on_command(
             let rtpmap = match codec.as_str() {
                 "G.711A" | "PCMA" => SdpParams::pcma_rtpmap(),
                 "G.711U" | "PCMU" => SdpParams::pcmu_rtpmap(),
-                _ => return Err(MediaError::Unsupported(codec)),
+                _ => return Err(MediaError::unsupported(codec)),
             };
             let p = StartParams {
                 media_session_id,
@@ -320,7 +320,7 @@ fn do_start(
         &p.subject_session,
         sdp,
     )
-    .map_err(|e| MediaError::MalformedSip(e.to_string()))?;
+    .map_err(|e| MediaError::malformed_sip(e))?;
 
     media.sessions.insert(
         p.media_session_id,
@@ -357,7 +357,7 @@ fn do_stop(
         .get_mut(&media_session_id)
         .ok_or(MediaError::SessionNotFound)?;
     if session.state == SessionState::Stopping || session.state == SessionState::Terminated {
-        return Err(MediaError::InvalidState(format!("{:?}", session.state)));
+        return Err(MediaError::invalid_state(format!("{:?}", session.state)));
     }
 
     // A pending INVITE must be cancelled rather than torn down with BYE.
@@ -369,7 +369,7 @@ fn do_stop(
             &session.branch,
             &session.target,
         )
-        .map_err(|e| MediaError::MalformedSip(e.to_string()))?;
+        .map_err(|e| MediaError::malformed_sip(e))?;
         session.state = SessionState::Stopping;
         return Ok(vec![MediaOutput::SendMessage(cancel)]);
     }
@@ -377,7 +377,7 @@ fn do_stop(
     let next_cseq = session
         .cseq
         .checked_add(1)
-        .ok_or_else(|| MediaError::InvalidState("CSeq overflow".to_string()))?;
+        .ok_or_else(|| MediaError::invalid_state("CSeq overflow"))?;
     let branch = format!("{}-bye", session.branch);
     let target = session.remote_target.as_ref().unwrap_or(&session.target);
     let bye = build_bye(
@@ -387,7 +387,7 @@ fn do_stop(
         &branch,
         target,
     )
-    .map_err(|e| MediaError::MalformedSip(e.to_string()))?;
+    .map_err(|e| MediaError::malformed_sip(e))?;
     session.cseq = next_cseq;
     session.state = SessionState::Stopping;
 
@@ -406,13 +406,13 @@ fn do_control_playback(
         .get_mut(&media_session_id)
         .ok_or(MediaError::SessionNotFound)?;
     if session.state != SessionState::Active {
-        return Err(MediaError::InvalidState(format!("{:?}", session.state)));
+        return Err(MediaError::invalid_state(format!("{:?}", session.state)));
     }
 
     let next_cseq = session
         .cseq
         .checked_add(1)
-        .ok_or_else(|| MediaError::InvalidState("CSeq overflow".to_string()))?;
+        .ok_or_else(|| MediaError::invalid_state("CSeq overflow"))?;
     let branch = format!(
         "{}-{}-info-{next_cseq}",
         session.branch,
@@ -429,7 +429,7 @@ fn do_control_playback(
         scale,
         range.as_deref(),
     )
-    .map_err(|e| MediaError::MalformedSip(e.to_string()))?;
+    .map_err(|e| MediaError::malformed_sip(e))?;
     session.cseq = next_cseq;
 
     Ok(vec![MediaOutput::SendMessage(info)])

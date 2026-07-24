@@ -68,7 +68,7 @@ impl SdpParserConfig {
 /// Parses an SDP body into a structured session.
 pub fn parse_sdp(body: &[u8], config: &SdpParserConfig) -> Result<SdpSession, SdpError> {
     if body.len() > config.max_size {
-        return Err(SdpError::LimitExceeded(format!(
+        return Err(SdpError::limit_exceeded(format!(
             "SDP body size {} exceeds max {}",
             body.len(),
             config.max_size
@@ -76,12 +76,12 @@ pub fn parse_sdp(body: &[u8], config: &SdpParserConfig) -> Result<SdpSession, Sd
     }
 
     let text = std::str::from_utf8(body)
-        .map_err(|_| SdpError::Malformed("SDP body is not valid UTF-8".to_string()))?;
+        .map_err(|_| SdpError::malformed("SDP body is not valid UTF-8".to_string()))?;
 
     let raw = text.replace("\r\n", "\n");
     let lines: Vec<&str> = raw.lines().collect();
     if lines.len() > config.max_lines {
-        return Err(SdpError::LimitExceeded(format!(
+        return Err(SdpError::limit_exceeded(format!(
             "SDP line count {} exceeds max {}",
             lines.len(),
             config.max_lines
@@ -90,7 +90,7 @@ pub fn parse_sdp(body: &[u8], config: &SdpParserConfig) -> Result<SdpSession, Sd
 
     for line in &lines {
         if line.len() > config.max_line_len {
-            return Err(SdpError::LimitExceeded(format!(
+            return Err(SdpError::limit_exceeded(format!(
                 "SDP line length {} exceeds max {}",
                 line.len(),
                 config.max_line_len
@@ -138,7 +138,7 @@ impl<'a> ParserState<'a> {
             match kind {
                 'm' => {
                     if session.media.len() >= self.config.max_media {
-                        return Err(SdpError::LimitExceeded(format!(
+                        return Err(SdpError::limit_exceeded(format!(
                             "media count exceeds {}",
                             self.config.max_media
                         )));
@@ -176,7 +176,7 @@ impl<'a> ParserState<'a> {
         let line = self.peek_line("expected v= line at start")?;
         let (kind, value) = split_line(line)?;
         if kind != 'v' {
-            return Err(SdpError::Malformed(format!(
+            return Err(SdpError::malformed(format!(
                 "expected v= line, got {kind}="
             )));
         }
@@ -189,7 +189,7 @@ impl<'a> ParserState<'a> {
         let line = self.peek_line("expected o= line")?;
         let (kind, value) = split_line(line)?;
         if kind != 'o' {
-            return Err(SdpError::Malformed(format!(
+            return Err(SdpError::malformed(format!(
                 "expected o= line, got {kind}="
             )));
         }
@@ -202,7 +202,7 @@ impl<'a> ParserState<'a> {
         let line = self.peek_line("expected s= line")?;
         let (kind, value) = split_line(line)?;
         if kind != 's' {
-            return Err(SdpError::Malformed(format!(
+            return Err(SdpError::malformed(format!(
                 "expected s= line, got {kind}="
             )));
         }
@@ -215,7 +215,7 @@ impl<'a> ParserState<'a> {
         self.lines
             .get(self.pos)
             .copied()
-            .ok_or_else(|| SdpError::Malformed(message.to_string()))
+            .ok_or_else(|| SdpError::malformed(message.to_string()))
     }
 
     fn parse_session_line(
@@ -237,14 +237,14 @@ impl<'a> ParserState<'a> {
                 let attr = parse_attribute(value)?;
                 if matches!(attr, SdpAttribute::Unknown { .. }) {
                     if *unknown_count >= self.config.max_unknown_attributes {
-                        return Err(SdpError::LimitExceeded(
+                        return Err(SdpError::limit_exceeded(
                             "too many unknown session attributes".to_string(),
                         ));
                     }
                     *unknown_count += 1;
                 }
                 if *attr_count >= self.config.max_attributes {
-                    return Err(SdpError::LimitExceeded(
+                    return Err(SdpError::limit_exceeded(
                         "too many session attributes".to_string(),
                     ));
                 }
@@ -252,7 +252,7 @@ impl<'a> ParserState<'a> {
                 session.attributes.push(attr);
             }
             other => {
-                return Err(SdpError::Malformed(format!(
+                return Err(SdpError::malformed(format!(
                     "unexpected session-level line: {other}="
                 )));
             }
@@ -282,19 +282,19 @@ impl<'a> ParserState<'a> {
                         .count()
                         >= self.config.max_unknown_attributes
                 {
-                    return Err(SdpError::LimitExceeded(
+                    return Err(SdpError::limit_exceeded(
                         "too many unknown media attributes".to_string(),
                     ));
                 }
                 if media.attributes.len() >= self.config.max_attributes {
-                    return Err(SdpError::LimitExceeded(
+                    return Err(SdpError::limit_exceeded(
                         "too many media attributes".to_string(),
                     ));
                 }
                 media.attributes.push(attr);
             }
             other => {
-                return Err(SdpError::Malformed(format!(
+                return Err(SdpError::malformed(format!(
                     "unexpected media-level line: {other}="
                 )));
             }
@@ -305,14 +305,14 @@ impl<'a> ParserState<'a> {
 
 fn split_line(line: &str) -> Result<(char, &str), SdpError> {
     if line.is_empty() {
-        return Err(SdpError::Malformed("empty SDP line".to_string()));
+        return Err(SdpError::malformed("empty SDP line".to_string()));
     }
     let mut chars = line.chars();
     let kind = chars
         .next()
-        .ok_or_else(|| SdpError::Malformed("empty SDP line".to_string()))?;
+        .ok_or_else(|| SdpError::malformed("empty SDP line".to_string()))?;
     if chars.next() != Some('=') {
-        return Err(SdpError::Malformed(format!("SDP line missing '=': {line}")));
+        return Err(SdpError::malformed(format!("SDP line missing '=': {line}")));
     }
     let value = &line[kind.len_utf8() + '='.len_utf8()..];
     Ok((kind, value))
@@ -321,7 +321,7 @@ fn split_line(line: &str) -> Result<(char, &str), SdpError> {
 fn parse_origin(value: &str) -> Result<SdpOrigin, SdpError> {
     let parts: Vec<&str> = value.split_whitespace().collect();
     if parts.len() < 6 {
-        return Err(SdpError::Malformed(format!("invalid o= line: {value}")));
+        return Err(SdpError::malformed(format!("invalid o= line: {value}")));
     }
     Ok(SdpOrigin {
         username: parts[0].to_string(),
@@ -336,7 +336,7 @@ fn parse_origin(value: &str) -> Result<SdpOrigin, SdpError> {
 fn parse_connection(value: &str) -> Result<SdpConnection, SdpError> {
     let parts: Vec<&str> = value.split_whitespace().collect();
     if parts.len() < 3 {
-        return Err(SdpError::Malformed(format!("invalid c= line: {value}")));
+        return Err(SdpError::malformed(format!("invalid c= line: {value}")));
     }
     Ok(SdpConnection {
         nettype: parts[0].to_string(),
@@ -348,7 +348,7 @@ fn parse_connection(value: &str) -> Result<SdpConnection, SdpError> {
 fn parse_time(value: &str) -> Result<SdpTime, SdpError> {
     let parts: Vec<&str> = value.split_whitespace().collect();
     if parts.len() < 2 {
-        return Err(SdpError::Malformed(format!("invalid t= line: {value}")));
+        return Err(SdpError::malformed(format!("invalid t= line: {value}")));
     }
     Ok(SdpTime {
         start: parts[0].to_string(),
@@ -359,7 +359,7 @@ fn parse_time(value: &str) -> Result<SdpTime, SdpError> {
 fn parse_media(value: &str) -> Result<SdpMedia, SdpError> {
     let parts: Vec<&str> = value.split_whitespace().collect();
     if parts.len() < 4 {
-        return Err(SdpError::Malformed(format!("invalid m= line: {value}")));
+        return Err(SdpError::malformed(format!("invalid m= line: {value}")));
     }
 
     let media_type = parts[0].to_string();
@@ -385,15 +385,15 @@ fn parse_port(s: &str) -> Result<(u16, u16), SdpError> {
         let count = &count[1..];
         let port = port
             .parse::<u16>()
-            .map_err(|_| SdpError::Malformed(format!("invalid port: {s}")))?;
+            .map_err(|_| SdpError::malformed(format!("invalid port: {s}")))?;
         let count = count
             .parse::<u16>()
-            .map_err(|_| SdpError::Malformed(format!("invalid port count: {s}")))?;
+            .map_err(|_| SdpError::malformed(format!("invalid port count: {s}")))?;
         Ok((port, count))
     } else {
         let port = s
             .parse::<u16>()
-            .map_err(|_| SdpError::Malformed(format!("invalid port: {s}")))?;
+            .map_err(|_| SdpError::malformed(format!("invalid port: {s}")))?;
         Ok((port, 1))
     }
 }
@@ -440,33 +440,33 @@ fn parse_rtpmap(value: &str) -> Result<RtpMap, SdpError> {
     let mut parts = value.splitn(2, char::is_whitespace);
     let pt = parts
         .next()
-        .ok_or_else(|| SdpError::Malformed(format!("invalid rtpmap: {value}")))?
+        .ok_or_else(|| SdpError::malformed(format!("invalid rtpmap: {value}")))?
         .to_string();
     let rest = parts
         .next()
-        .ok_or_else(|| SdpError::Malformed(format!("invalid rtpmap: {value}")))?
+        .ok_or_else(|| SdpError::malformed(format!("invalid rtpmap: {value}")))?
         .trim_start();
     // encoding/clock are required; the remainder (if any) is the optional
     // parameters field, which is opaque and may contain slashes (RFC 4566).
     let mut parts = rest.splitn(3, '/');
     let encoding = parts
         .next()
-        .ok_or_else(|| SdpError::Malformed(format!("rtpmap missing encoding: {value}")))?;
+        .ok_or_else(|| SdpError::malformed(format!("rtpmap missing encoding: {value}")))?;
     if invalid_rtpmap_field(encoding) {
-        return Err(SdpError::Malformed(format!(
+        return Err(SdpError::malformed(format!(
             "rtpmap missing or invalid encoding: {value}"
         )));
     }
     let clock = parts
         .next()
-        .ok_or_else(|| SdpError::Malformed(format!("rtpmap missing clock rate: {value}")))?;
+        .ok_or_else(|| SdpError::malformed(format!("rtpmap missing clock rate: {value}")))?;
     if invalid_rtpmap_field(clock) {
-        return Err(SdpError::Malformed(format!(
+        return Err(SdpError::malformed(format!(
             "rtpmap missing or invalid clock rate: {value}"
         )));
     }
     if clock.parse::<u32>().is_err() {
-        return Err(SdpError::Malformed(format!(
+        return Err(SdpError::malformed(format!(
             "rtpmap invalid clock rate: {clock}"
         )));
     }
@@ -483,7 +483,7 @@ fn parse_rtpmap(value: &str) -> Result<RtpMap, SdpError> {
         None => None,
         Some(Ok(s)) => Some(s),
         Some(Err(())) => {
-            return Err(SdpError::Malformed(format!(
+            return Err(SdpError::malformed(format!(
                 "rtpmap invalid parameters: {value}"
             )));
         }
@@ -504,7 +504,7 @@ fn parse_fmtp(value: &str) -> Result<(String, String), SdpError> {
     let mut parts = value.splitn(2, char::is_whitespace);
     let pt = parts
         .next()
-        .ok_or_else(|| SdpError::Malformed(format!("invalid fmtp: {value}")))?
+        .ok_or_else(|| SdpError::malformed(format!("invalid fmtp: {value}")))?
         .to_string();
     let params = parts.next().unwrap_or("").to_string();
     Ok((pt, params))
@@ -521,7 +521,7 @@ fn parse_setup(value: &str) -> Result<SdpSetup, SdpError> {
         Ok(SdpSetup::None)
     } else {
         let display = truncate_at_char_boundary(value, MAX_SDP_ATTR_DISPLAY_BYTES);
-        Err(SdpError::Unsupported(format!("setup={display}")))
+        Err(SdpError::unsupported(format!("setup={display}")))
     }
 }
 
@@ -532,7 +532,7 @@ fn parse_connection_attr(value: &str) -> Result<SdpConnectionType, SdpError> {
         Ok(SdpConnectionType::Existing)
     } else {
         let display = truncate_at_char_boundary(value, MAX_SDP_ATTR_DISPLAY_BYTES);
-        Err(SdpError::Unsupported(format!("connection={display}")))
+        Err(SdpError::unsupported(format!("connection={display}")))
     }
 }
 
@@ -540,7 +540,7 @@ fn parse_ssrc(value: &str) -> Result<(String, Option<String>), SdpError> {
     let mut parts = value.splitn(2, char::is_whitespace);
     let id = parts
         .next()
-        .ok_or_else(|| SdpError::Malformed(format!("invalid ssrc: {value}")))?
+        .ok_or_else(|| SdpError::malformed(format!("invalid ssrc: {value}")))?
         .to_string();
     let text = parts.next().map(|s| s.to_string());
     Ok((id, text))

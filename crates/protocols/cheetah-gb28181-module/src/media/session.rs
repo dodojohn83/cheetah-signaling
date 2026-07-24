@@ -46,7 +46,7 @@ pub struct Session {
 pub fn socket_addr(host: &str, port: u16) -> Result<SocketAddr, super::MediaError> {
     let ip = host
         .parse::<IpAddr>()
-        .map_err(|e| super::MediaError::MalformedSip(e.to_string()))?;
+        .map_err(|e| super::MediaError::malformed_sip(e))?;
     Ok(SocketAddr::new(ip, port))
 }
 

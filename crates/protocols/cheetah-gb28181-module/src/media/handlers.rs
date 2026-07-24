@@ -25,7 +25,7 @@ pub(super) fn on_message(
 ) -> Result<Vec<MediaOutput>, MediaError> {
     let call_id = msg
         .call_id()
-        .ok_or_else(|| MediaError::MalformedSip("missing Call-ID".to_string()))?
+        .ok_or_else(|| MediaError::malformed_sip("missing Call-ID"))?
         .to_string();
     let Some(&sid) = media.call_index.get(&call_id) else {
         // Final responses to BYE or CANCEL may be retransmissions after the dialog
@@ -51,9 +51,7 @@ fn on_response(
     code: u16,
     msg: SipMessage,
 ) -> Result<Vec<MediaOutput>, MediaError> {
-    let cseq = msg
-        .cseq()
-        .map_err(|e| MediaError::MalformedSip(e.to_string()))?;
+    let cseq = msg.cseq().map_err(|e| MediaError::malformed_sip(e))?;
 
     if cseq.1 == Method::Invite {
         let cseq_match = media
@@ -142,7 +140,7 @@ fn on_invite_success(
             target,
             &format!("{}-ack", session.branch),
         )
-        .map_err(|e| MediaError::MalformedSip(e.to_string()))?;
+        .map_err(|e| MediaError::malformed_sip(e))?;
         return Ok(vec![MediaOutput::SendMessage(ack)]);
     }
 
@@ -181,7 +179,7 @@ fn on_invite_success(
             &contact,
             &ack_branch,
         )
-        .map_err(|e| MediaError::MalformedSip(e.to_string()))?;
+        .map_err(|e| MediaError::malformed_sip(e))?;
         outputs.push(MediaOutput::SendMessage(ack));
 
         if !remote_tag.is_empty() {
@@ -190,7 +188,7 @@ fn on_invite_success(
             session.cseq = session
                 .cseq
                 .checked_add(1)
-                .ok_or_else(|| MediaError::InvalidState("CSeq overflow".to_string()))?;
+                .ok_or_else(|| MediaError::invalid_state("CSeq overflow"))?;
             let bye_branch = format!("{}-bye-late", session.branch);
             let bye = if let Some(target) = session.remote_target.as_ref() {
                 build_bye(
@@ -200,7 +198,7 @@ fn on_invite_success(
                     &bye_branch,
                     target,
                 )
-                .map_err(|e| MediaError::MalformedSip(e.to_string()))
+                .map_err(|e| MediaError::malformed_sip(e))
             } else {
                 unreachable!("remote_target was just populated")
             }?;
@@ -218,12 +216,12 @@ fn on_invite_success(
         return Ok(outputs);
     }
 
-    let remote_tag = remote_tag
-        .ok_or_else(|| MediaError::MalformedSip("missing To tag in 200 OK".to_string()))?;
+    let remote_tag =
+        remote_tag.ok_or_else(|| MediaError::malformed_sip("missing To tag in 200 OK"))?;
     let contact = contact?;
 
     let parsed_remote_sdp = cheetah_gb28181_core::parse_sdp(msg.body(), &REMOTE_SDP_CONFIG)
-        .map_err(|e| MediaError::MalformedSdp(e.to_string()))?;
+        .map_err(|e| MediaError::malformed_sdp(e))?;
 
     // Enforce the compatibility profile's SDP payload/attribute allow-list before
     // committing to the dialog. Non-baseline payload types and vendor attributes
@@ -286,7 +284,7 @@ fn on_invite_success(
         &contact,
         &ack_branch,
     )
-    .map_err(|e| MediaError::MalformedSip(e.to_string()))?;
+    .map_err(|e| MediaError::malformed_sip(e))?;
 
     let session = media
         .sessions
@@ -336,14 +334,14 @@ fn reject_and_teardown(
         contact,
         &ack_branch,
     )
-    .map_err(|e| MediaError::MalformedSip(e.to_string()))?;
+    .map_err(|e| MediaError::malformed_sip(e))?;
 
     let mut bye_session = session.clone();
     bye_session.remote_tag = Some(remote_tag.to_string());
     bye_session.cseq = bye_session
         .cseq
         .checked_add(1)
-        .ok_or_else(|| MediaError::InvalidState("CSeq overflow".to_string()))?;
+        .ok_or_else(|| MediaError::invalid_state("CSeq overflow"))?;
     let bye_branch = format!("{}-bye", session.branch);
     let bye = build_bye(
         &media.config.local_sip_uri,
@@ -352,7 +350,7 @@ fn reject_and_teardown(
         &bye_branch,
         contact,
     )
-    .map_err(|e| MediaError::MalformedSip(e.to_string()))?;
+    .map_err(|e| MediaError::malformed_sip(e))?;
 
     let session = media
         .remove_session(sid)
