@@ -124,7 +124,7 @@ async fn next_limited_line<R: AsyncBufRead + Unpin + ?Sized>(
 
         if let Some(pos) = data.iter().position(|&b| b == b'\n') {
             let mut take = pos;
-            let truncated = if buf.len() + take > max_len {
+            let truncated = if buf.len().saturating_add(take) > max_len {
                 take = max_len.saturating_sub(buf.len());
                 true
             } else {
@@ -136,7 +136,7 @@ async fn next_limited_line<R: AsyncBufRead + Unpin + ?Sized>(
         }
 
         let available = data.len();
-        if buf.len() + available > max_len {
+        if buf.len().saturating_add(available) > max_len {
             let take = max_len.saturating_sub(buf.len());
             buf.extend_from_slice(&data[..take]);
             reader.consume(available);

@@ -144,7 +144,7 @@ impl SoapClient {
         let mut stream = response.bytes_stream();
         while let Some(chunk) = stream.next().await {
             let chunk = chunk.map_err(|e| DriverError::Http(e.to_string()))?;
-            if body_bytes.len() + chunk.len() > self.max_response_bytes {
+            if body_bytes.len().saturating_add(chunk.len()) > self.max_response_bytes {
                 return Err(DriverError::BodyLimit {
                     limit: self.max_response_bytes,
                 });
