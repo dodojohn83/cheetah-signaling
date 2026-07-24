@@ -30,15 +30,14 @@ const MAX_THREAD_KEEP_ALIVE_MS: i64 = 3_600_000;
 /// context, causing the handler to time out immediately instead of waiting.
 const MAX_HTTP_READ_TIMEOUT_MS: i64 = 300_000;
 
-/// Maximum byte length of the HTTP listen address string.
+/// Maximum byte length of `http.listen_addr`.
 const MAX_HTTP_ADDR_BYTES: usize = 256;
-
-/// Maximum allowed HTTP rate-limit requests per second.
-const MAX_HTTP_RATE_LIMIT_RPS: u32 = 100_000;
-
-/// Maximum allowed HTTP rate-limit burst capacity.
-const MAX_HTTP_RATE_LIMIT_BURST: u32 = 10_000;
-
+/// Maximum byte length of HTTP TLS/secret references.
+const MAX_HTTP_SECRET_REF_BYTES: usize = 256;
+/// Maximum HTTP rate-limit requests per second.
+const MAX_HTTP_RATE_LIMIT_REQUESTS_PER_SECOND: u32 = 1_000_000;
+/// Maximum HTTP rate-limit burst capacity.
+const MAX_HTTP_RATE_LIMIT_BURST: u32 = 1_000_000;
 /// Serializes a `SecretString` as a redacted placeholder, preserving empty defaults.
 ///
 /// Empty secrets are written as `""` so the default configuration round-trips
@@ -437,11 +436,41 @@ impl HttpConfig {
                 format!("http.listen_addr exceeds {MAX_HTTP_ADDR_BYTES} bytes"),
             ));
         }
+        if let Some(ref r) = self.tls_cert_ref
+            && r.len() > MAX_HTTP_SECRET_REF_BYTES
+        {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                format!("http.tls_cert_ref exceeds {MAX_HTTP_SECRET_REF_BYTES} bytes"),
+            ));
+        }
+        if let Some(ref r) = self.tls_key_ref
+            && r.len() > MAX_HTTP_SECRET_REF_BYTES
+        {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                format!("http.tls_key_ref exceeds {MAX_HTTP_SECRET_REF_BYTES} bytes"),
+            ));
+        }
         let timeout_ms = self.read_timeout_ms.as_millis();
         if timeout_ms <= 0 || timeout_ms > MAX_HTTP_READ_TIMEOUT_MS {
             return Err(SignalError::new(
                 SignalErrorKind::InvalidArgument,
                 format!("http.read_timeout_ms must be between 1 and {MAX_HTTP_READ_TIMEOUT_MS}"),
+            ));
+        }
+        if self.rate_limit_requests_per_second > MAX_HTTP_RATE_LIMIT_REQUESTS_PER_SECOND {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                format!(
+                    "http.rate_limit_requests_per_second must not exceed {MAX_HTTP_RATE_LIMIT_REQUESTS_PER_SECOND}"
+                ),
+            ));
+        }
+        if self.rate_limit_burst > MAX_HTTP_RATE_LIMIT_BURST {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                format!("http.rate_limit_burst must not exceed {MAX_HTTP_RATE_LIMIT_BURST}"),
             ));
         }
         if self.cors_allowed_origins.len() > MAX_CORS_ORIGINS {
@@ -468,20 +497,6 @@ impl HttpConfig {
                     "http.cors_allowed_origins entry contains invalid characters",
                 ));
             }
-        }
-        if self.rate_limit_requests_per_second > MAX_HTTP_RATE_LIMIT_RPS {
-            return Err(SignalError::new(
-                SignalErrorKind::InvalidArgument,
-                format!(
-                    "http.rate_limit_requests_per_second must not exceed {MAX_HTTP_RATE_LIMIT_RPS}"
-                ),
-            ));
-        }
-        if self.rate_limit_burst > MAX_HTTP_RATE_LIMIT_BURST {
-            return Err(SignalError::new(
-                SignalErrorKind::InvalidArgument,
-                format!("http.rate_limit_burst must not exceed {MAX_HTTP_RATE_LIMIT_BURST}"),
-            ));
         }
         Ok(())
     }
@@ -2106,29 +2121,48 @@ mod http_config_tests {
 
     #[test]
     fn oversized_listen_addr_is_rejected() {
-        let config = HttpConfig {
+        let cfg = HttpConfig {
             listen_addr: "x".repeat(MAX_HTTP_ADDR_BYTES + 1),
             ..HttpConfig::default()
         };
-        assert!(config.validate().is_err());
+        assert!(cfg.validate().is_err());
     }
 
     #[test]
-    fn excessive_rate_limit_rps_is_rejected() {
-        let config = HttpConfig {
-            rate_limit_requests_per_second: MAX_HTTP_RATE_LIMIT_RPS + 1,
+    fn oversized_tls_cert_ref_is_rejected() {
+        let cfg = HttpConfig {
+            tls_cert_ref: Some("x".repeat(MAX_HTTP_SECRET_REF_BYTES + 1)),
             ..HttpConfig::default()
         };
-        assert!(config.validate().is_err());
+        assert!(cfg.validate().is_err());
     }
 
     #[test]
-    fn excessive_rate_limit_burst_is_rejected() {
-        let config = HttpConfig {
+    fn oversized_rate_limit_requests_per_second_is_rejected() {
+        let cfg = HttpConfig {
+            rate_limit_requests_per_second: MAX_HTTP_RATE_LIMIT_REQUESTS_PER_SECOND + 1,
+            ..HttpConfig::default()
+        };
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn oversized_rate_limit_burst_is_rejected() {
+        let cfg = HttpConfig {
             rate_limit_burst: MAX_HTTP_RATE_LIMIT_BURST + 1,
             ..HttpConfig::default()
         };
-        assert!(config.validate().is_err());
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn max_rate_limit_values_are_accepted() {
+        let cfg = HttpConfig {
+            rate_limit_requests_per_second: MAX_HTTP_RATE_LIMIT_REQUESTS_PER_SECOND,
+            rate_limit_burst: MAX_HTTP_RATE_LIMIT_BURST,
+            ..HttpConfig::default()
+        };
+        assert!(cfg.validate().is_ok());
     }
 }
 
