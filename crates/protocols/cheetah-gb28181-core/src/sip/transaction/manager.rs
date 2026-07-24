@@ -33,6 +33,9 @@ use crate::{Method, SipErrorKind, SipMessage};
 
 /// Default maximum number of live transactions per role (client and server).
 pub const DEFAULT_MAX_TRANSACTIONS: usize = 4096;
+/// Absolute maximum number of live transactions per role. Larger values would
+/// allow an unbounded HashMap to grow and disable eviction.
+const MAX_TRANSACTIONS_LIMIT: usize = 1_048_576;
 /// Default idle/terminated time-to-live before an entry is reclaimed.
 pub const DEFAULT_TRANSACTION_TTL: Duration = Duration::from_secs(64);
 
@@ -168,7 +171,8 @@ pub struct TransactionManager<T> {
 
 impl<T: Clone> TransactionManager<T> {
     /// Creates a manager with the given configuration.
-    pub fn new(config: ManagerConfig) -> Self {
+    pub fn new(mut config: ManagerConfig) -> Self {
+        config.max_transactions = config.max_transactions.clamp(1, MAX_TRANSACTIONS_LIMIT);
         Self {
             config,
             client: HashMap::new(),
@@ -528,6 +532,37 @@ mod tests {
 
     fn manager() -> TransactionManager<()> {
         TransactionManager::new(ManagerConfig::default())
+    }
+
+    #[test]
+    fn max_transactions_is_clamped() {
+        let mut huge = TransactionManager::new(ManagerConfig {
+            max_transactions: usize::MAX,
+            ..ManagerConfig::default()
+        });
+        let req1 = register("z9hG4bKhuge1", 1);
+        let req2 = register("z9hG4bKhuge2", 2);
+        huge.handle_request(req1, T, Duration::ZERO);
+        huge.handle_request(req2, T, Duration::ZERO);
+        assert_eq!(
+            huge.server_len(),
+            2,
+            "huge max_transactions must be clamped, not zero"
+        );
+
+        let mut zero = TransactionManager::new(ManagerConfig {
+            max_transactions: 0,
+            ..ManagerConfig::default()
+        });
+        let req1 = register("z9hG4bKzero1", 1);
+        let req2 = register("z9hG4bKzero2", 2);
+        zero.handle_request(req1, T, Duration::ZERO);
+        zero.handle_request(req2, T, Duration::ZERO);
+        assert_eq!(
+            zero.server_len(),
+            1,
+            "zero max_transactions must be clamped to 1"
+        );
     }
 
     #[test]
