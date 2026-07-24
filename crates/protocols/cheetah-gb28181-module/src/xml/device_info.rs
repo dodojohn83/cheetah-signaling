@@ -4,6 +4,10 @@ use super::element::XmlElement;
 use super::limits::XmlLimits;
 use super::reader::parse_xml;
 use crate::error::AccessError;
+use cheetah_signal_types::clamp_str;
+
+/// Maximum byte length of a single `DeviceInfo` string field.
+const MAX_DEVICE_INFO_FIELD_BYTES: usize = 4096;
 
 /// Parsed content of a GB28181 `DeviceInfo` response.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -26,6 +30,28 @@ pub struct DeviceInfoResponse {
     pub max_alarm: Option<String>,
     /// Maximum number of outputs.
     pub max_output: Option<String>,
+}
+
+impl DeviceInfoResponse {
+    /// Returns a copy with every string field truncated to
+    /// [`MAX_DEVICE_INFO_FIELD_BYTES`] at a UTF-8 boundary.
+    pub fn clamp_fields(&self) -> Self {
+        fn clamp_opt(s: &Option<String>) -> Option<String> {
+            s.as_ref()
+                .map(|v| clamp_str(v, MAX_DEVICE_INFO_FIELD_BYTES))
+        }
+        Self {
+            sn: clamp_str(&self.sn, MAX_DEVICE_INFO_FIELD_BYTES),
+            device_id: clamp_str(&self.device_id, MAX_DEVICE_INFO_FIELD_BYTES),
+            result: clamp_opt(&self.result),
+            manufacturer: clamp_opt(&self.manufacturer),
+            model: clamp_opt(&self.model),
+            firmware: clamp_opt(&self.firmware),
+            max_camera: clamp_opt(&self.max_camera),
+            max_alarm: clamp_opt(&self.max_alarm),
+            max_output: clamp_opt(&self.max_output),
+        }
+    }
 }
 
 /// Parses a `DeviceInfo` response body.
@@ -52,7 +78,8 @@ pub(crate) fn extract_device_info(root: &XmlElement) -> Result<DeviceInfoRespons
         max_camera: root.child_text("MaxCamera"),
         max_alarm: root.child_text("MaxAlarm"),
         max_output: root.child_text("MaxOutput"),
-    })
+    }
+    .clamp_fields())
 }
 
 #[cfg(test)]
@@ -80,5 +107,29 @@ mod tests {
         assert_eq!(info.manufacturer.as_deref(), Some("Hikvision"));
         assert_eq!(info.model.as_deref(), Some("DS-2CD"));
         assert_eq!(info.firmware.as_deref(), Some("V5.5.0"));
+    }
+
+    #[test]
+    fn device_info_clamps_oversized_fields() {
+        let long = "x".repeat(8192);
+        let info = DeviceInfoResponse {
+            sn: long.clone(),
+            device_id: long.clone(),
+            result: Some(long.clone()),
+            manufacturer: Some(long.clone()),
+            model: Some(long.clone()),
+            firmware: Some(long.clone()),
+            max_camera: Some(long.clone()),
+            max_alarm: Some(long.clone()),
+            max_output: Some(long.clone()),
+        }
+        .clamp_fields();
+        assert_eq!(info.sn.len(), MAX_DEVICE_INFO_FIELD_BYTES);
+        assert_eq!(info.device_id.len(), MAX_DEVICE_INFO_FIELD_BYTES);
+        assert_eq!(
+            info.manufacturer.as_ref().unwrap().len(),
+            MAX_DEVICE_INFO_FIELD_BYTES
+        );
+        assert!(info.device_id.is_char_boundary(MAX_DEVICE_INFO_FIELD_BYTES));
     }
 }
