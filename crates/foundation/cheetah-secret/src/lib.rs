@@ -20,6 +20,11 @@ use std::sync::{Arc, Mutex, MutexGuard};
 /// chains and API keys while preventing a misconfigured mount from causing OOM.
 const MAX_SECRET_FILE_BYTES: usize = 128 * 1024;
 
+/// Maximum byte length of a secret key name. This prevents a misconfigured or
+/// untrusted caller from constructing an arbitrarily large environment variable
+/// name or file path while normalizing the key.
+const MAX_SECRET_KEY_BYTES: usize = 256;
+
 /// In-memory secret store for tests and development.
 #[derive(Clone, Debug)]
 pub struct InMemorySecretStore {
@@ -114,7 +119,13 @@ impl EnvSecretStore {
         }
     }
 
-    fn env_key(&self, key: &str) -> String {
+    fn env_key(&self, key: &str) -> Result<String> {
+        if key.len() > MAX_SECRET_KEY_BYTES {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                "secret key exceeds maximum length",
+            ));
+        }
         let normalized: String = key
             .chars()
             .map(|c| {
@@ -125,13 +136,13 @@ impl EnvSecretStore {
                 }
             })
             .collect();
-        format!("{}{}", self.prefix, normalized)
+        Ok(format!("{}{}", self.prefix, normalized))
     }
 }
 
 impl SecretStore for EnvSecretStore {
     fn get(&self, key: &str) -> Result<SecretString> {
-        let env_key = self.env_key(key);
+        let env_key = self.env_key(key)?;
         match std::env::var(&env_key) {
             Ok(value) => Ok(SecretString::from(value)),
             Err(std::env::VarError::NotPresent) => Err(SignalError::new(
@@ -185,6 +196,12 @@ impl FileSecretStore {
     }
 
     fn secret_path(&self, key: &str) -> Result<PathBuf> {
+        if key.len() > MAX_SECRET_KEY_BYTES {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                "secret key exceeds maximum length",
+            ));
+        }
         if key.is_empty()
             || key.chars().any(std::path::is_separator)
             || key.split(['/', '\\']).any(|c| c == ".." || c == ".")
@@ -601,13 +618,31 @@ mod tests {
     #[test]
     fn env_store_maps_keys() -> Result<()> {
         let store = EnvSecretStore::new();
-        assert_eq!(store.env_key("sig.test"), "CHEETAH_SECRET_SIG_TEST");
+        assert_eq!(store.env_key("sig.test")?, "CHEETAH_SECRET_SIG_TEST");
 
         let path_store = EnvSecretStore::with_prefix("");
         let value = path_store.get("path")?;
         let expected = std::env::var("PATH").unwrap_or_default();
         assert!(!expected.is_empty());
         assert_eq!(value.expose_secret(), expected);
+        Ok(())
+    }
+
+    #[test]
+    fn env_store_rejects_oversized_key() {
+        let store = EnvSecretStore::new();
+        let oversized = "a".repeat(MAX_SECRET_KEY_BYTES + 1);
+        assert!(store.get(&oversized).is_err());
+    }
+
+    #[test]
+    fn file_store_rejects_oversized_key() -> Result<()> {
+        let dir = tempfile::tempdir().map_err(|e| {
+            SignalError::new(SignalErrorKind::Internal, "failed to create temp dir").with_source(e)
+        })?;
+        let store = FileSecretStore::new(dir.path());
+        let oversized = "a".repeat(MAX_SECRET_KEY_BYTES + 1);
+        assert!(store.get(&oversized).is_err());
         Ok(())
     }
 
