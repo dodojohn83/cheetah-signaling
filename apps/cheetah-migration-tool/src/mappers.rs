@@ -57,6 +57,7 @@ pub fn map_record(
     record: &OldRecord,
     parent_protocols: &ParentProtocols,
 ) -> Result<MappedEntity, MigrationError> {
+    record.validate()?;
     match record.entity_type {
         EntityType::Tenant => Ok(MappedEntity {
             entity: MappedAggregate::Tenant,
@@ -161,6 +162,7 @@ pub(crate) fn map_channel(
     parent_protocol: Protocol,
     parent_device_id: DeviceId,
 ) -> Result<MappedEntity, MigrationError> {
+    record.validate()?;
     if record.external_id.is_empty() {
         return Err(MigrationError::InvalidRecord {
             row: 0,

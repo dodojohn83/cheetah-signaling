@@ -1,6 +1,9 @@
 //! Errors returned by the migration tool.
 
+use cheetah_signal_types::clamp_string_bytes;
 use std::path::PathBuf;
+
+const MAX_MIGRATION_ERROR_MESSAGE_BYTES: usize = 1024;
 
 /// Top-level migration tool error.
 #[derive(Debug, thiserror::Error)]
@@ -69,8 +72,11 @@ impl From<cheetah_signal_types::SignalError> for MigrationError {
 }
 
 impl MigrationError {
-    /// Creates a generic operational error.
+    /// Creates a generic operational error with a bounded diagnostic message.
     pub fn other(message: impl Into<String>) -> Self {
-        Self::Other(message.into())
+        Self::Other(clamp_string_bytes(
+            message.into(),
+            MAX_MIGRATION_ERROR_MESSAGE_BYTES,
+        ))
     }
 }

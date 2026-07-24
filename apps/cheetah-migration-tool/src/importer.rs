@@ -104,6 +104,12 @@ impl Importer {
         let parent_protocols = build_parent_protocols(&records);
 
         for (row, record) in records.iter().enumerate() {
+            if let Err(e) = record.validate() {
+                tracing::warn!(row = row + 1, error = %e, "skipping invalid record");
+                result.records_invalid += 1;
+                continue;
+            }
+
             if !options.cutover_ids.is_empty() && !options.cutover_ids.contains(&record.external_id)
             {
                 result.records_skipped += 1;
