@@ -7,7 +7,7 @@ use cheetah_message_api::{
     AckHandle, BusError, CommandEnvelope, Delivery, EventEnvelope, RawCommandBus, RawEventBus,
     Subscription, command_subject, encode_command,
 };
-use cheetah_signal_types::{Event, NodeId};
+use cheetah_signal_types::{Event, NodeId, clamp_str};
 use futures::StreamExt;
 use prost::Message;
 use std::fmt;
@@ -26,13 +26,15 @@ const MAX_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
 /// This is larger than the 4 MiB inner JSON payload limit to allow for proto
 /// envelope overhead while still preventing unbounded allocations.
 const MAX_PROTO_MESSAGE_BYTES: usize = 8 * 1024 * 1024;
+/// Maximum byte length of a message carried by a `BusError` from the NATS driver.
+const MAX_BUS_ERROR_BYTES: usize = 1024;
 
 fn clamp_timeout(timeout: Duration) -> Duration {
     timeout.min(MAX_TIMEOUT).max(Duration::from_millis(1))
 }
 
 fn nats_error_to_bus(err: impl std::fmt::Display) -> BusError {
-    BusError::Unavailable(err.to_string())
+    BusError::Unavailable(clamp_str(&err.to_string(), MAX_BUS_ERROR_BYTES))
 }
 
 async fn with_timeout<T, E>(
@@ -338,7 +340,7 @@ impl CommandBus for NatsBus {
             .owner_resolver
             .resolve(command.tenant_id(), command.device_id())
             .await
-            .map_err(|e| DomainError::unavailable(e.to_string()))?
+            .map_err(|e| DomainError::unavailable(clamp_str(&e.to_string(), MAX_BUS_ERROR_BYTES)))?
         {
             Some(owner) => owner,
             None => {

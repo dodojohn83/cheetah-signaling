@@ -210,7 +210,8 @@ impl MediaEventConsumer {
                     .subscribe_node(node_id, task_token, generation)
                     .await
                 {
-                    tracing::warn!(%node_id, "media event subscription ended: {e}");
+                    let error_msg = clamp_str(&format!("{e}"), MAX_EVENT_STREAM_ERROR_BYTES);
+                    tracing::warn!(%node_id, "media event subscription ended: {}", error_msg);
                 }
                 self_clone
                     .subscriptions
@@ -234,7 +235,8 @@ impl MediaEventConsumer {
                 r = self.consume_node(node_id, cancel.child_token(), generation) => r,
             };
             if let Err(e) = result {
-                tracing::warn!(%node_id, "media event stream error: {e}");
+                let error_msg = clamp_str(&format!("{e}"), MAX_EVENT_STREAM_ERROR_BYTES);
+                tracing::warn!(%node_id, "media event stream error: {}", error_msg);
                 delay_ms = delay_ms
                     .saturating_mul(2)
                     .min(self.config.max_reconnect_interval_ms);
@@ -302,7 +304,8 @@ impl MediaEventConsumer {
                     None => return Ok(()),
                     Some(Ok(event)) => {
                         if let Err(e) = self.process_event(event, &node).await {
-                            tracing::warn!(node_id = %node.node_id, "failed to process media event: {e}");
+                            let error_msg = clamp_str(&format!("{e}"), MAX_EVENT_STREAM_ERROR_BYTES);
+                            tracing::warn!(node_id = %node.node_id, "failed to process media event: {}", error_msg);
                         }
                     }
                     Some(Err(e)) => {
