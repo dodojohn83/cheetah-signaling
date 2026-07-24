@@ -4,7 +4,7 @@ use cheetah_domain::{
     DomainEvent, MediaCapability, MediaNode, MediaNodeCapacity, MediaNodeHealth, MediaNodeLimits,
     NodeStatus,
 };
-use cheetah_signal_types::{Event, ListCursor, NodeId, Page, PageRequest, UtcTimestamp};
+use cheetah_signal_types::{Event, ListCursor, NodeId, Page, PageRequest, UtcTimestamp, clamp_str};
 use cheetah_storage_api::{MediaNodeRepository, StorageError};
 use sqlx::types::Json;
 use sqlx::{FromRow, SqliteConnection, SqlitePool};
@@ -34,7 +34,8 @@ fn parse_status(value: &str) -> Result<NodeStatus, StorageError> {
         "draining" => Ok(NodeStatus::Draining),
         "left" => Ok(NodeStatus::Left),
         other => Err(StorageError::backend(format!(
-            "unknown node status: {other}"
+            "unknown node status: {}",
+            clamp_str(other, 64)
         ))),
     }
 }
@@ -494,5 +495,23 @@ impl MediaNodeRepository for SqliteMediaNodeRepository {
 
         tx.commit().await.map_err(StorageError::backend)?;
         Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn parse_status_clamps_oversized_unknown_value() {
+        let long = "x".repeat(1024);
+        let err = parse_status(&long).unwrap_err();
+        if let StorageError::Backend { message } = err {
+            assert!(message.starts_with("unknown node status: "));
+            assert!(message.len() <= "unknown node status: ".len() + 64);
+        } else {
+            panic!("expected Backend error");
+        }
     }
 }
