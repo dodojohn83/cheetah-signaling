@@ -213,22 +213,22 @@ impl OutOfProcessDriver {
         plugin_name: PluginName,
     ) -> Result<Self, PluginError> {
         if runtime.listen_address.is_empty() {
-            return Err(PluginError::InvalidManifest(
+            return Err(PluginError::invalid_manifest(
                 "listen_address must be configured".to_string(),
             ));
         }
         let socket_addr = runtime
             .listen_address
             .parse::<std::net::SocketAddr>()
-            .map_err(|e| PluginError::InvalidManifest(format!("invalid listen_address: {e}")))?;
+            .map_err(|e| PluginError::invalid_manifest(format!("invalid listen_address: {e}")))?;
         if socket_addr.port() == 0 {
-            return Err(PluginError::InvalidManifest(
+            return Err(PluginError::invalid_manifest(
                 "listen_address port 0 is not supported; configure a concrete port".to_string(),
             ));
         }
 
         let tls = runtime.tls.as_ref().ok_or_else(|| {
-            PluginError::InvalidManifest(
+            PluginError::invalid_manifest(
                 "out-of-process plugin communication requires TLS/mTLS".to_string(),
             )
         })?;
@@ -237,19 +237,19 @@ impl OutOfProcessDriver {
         let _ = rustls::crypto::ring::default_provider().install_default();
 
         let ca_pem = fs::read(&tls.ca_cert_pem_path).await.map_err(|e| {
-            PluginError::Driver(format!(
+            PluginError::driver(format!(
                 "failed to read plugin CA certificate {}: {e}",
                 tls.ca_cert_pem_path.display()
             ))
         })?;
         let client_cert_pem = fs::read(&tls.client_cert_pem_path).await.map_err(|e| {
-            PluginError::Driver(format!(
+            PluginError::driver(format!(
                 "failed to read plugin client certificate {}: {e}",
                 tls.client_cert_pem_path.display()
             ))
         })?;
         let client_key_pem = fs::read(&tls.client_key_pem_path).await.map_err(|e| {
-            PluginError::Driver(format!(
+            PluginError::driver(format!(
                 "failed to read plugin client key {}: {e}",
                 tls.client_key_pem_path.display()
             ))
@@ -272,16 +272,16 @@ impl OutOfProcessDriver {
 
         let mut child = cmd
             .spawn()
-            .map_err(|e| PluginError::Driver(format!("failed to spawn plugin: {e}")))?;
+            .map_err(|e| PluginError::driver(format!("failed to spawn plugin: {e}")))?;
 
         let stdout = child
             .stdout
             .take()
-            .ok_or_else(|| PluginError::Driver("plugin stdout was not captured".to_string()))?;
+            .ok_or_else(|| PluginError::driver("plugin stdout was not captured".to_string()))?;
         let stderr = child
             .stderr
             .take()
-            .ok_or_else(|| PluginError::Driver("plugin stderr was not captured".to_string()))?;
+            .ok_or_else(|| PluginError::driver("plugin stderr was not captured".to_string()))?;
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
         let log_plugin_name = runtime.command.display().to_string();
@@ -307,16 +307,16 @@ impl OutOfProcessDriver {
         let endpoint = format!("https://{}", runtime.listen_address);
         let connect_timeout = clamp_timeout(runtime.connect_timeout);
         let channel = Channel::from_shared(endpoint.clone())
-            .map_err(|e| PluginError::Driver(format!("invalid plugin endpoint {endpoint}: {e}")))?
+            .map_err(|e| PluginError::driver(format!("invalid plugin endpoint {endpoint}: {e}")))?
             .tls_config_with_verifier(client_tls_config, verifier)
-            .map_err(|e| PluginError::Driver(format!("invalid TLS config: {e}")))?
+            .map_err(|e| PluginError::driver(format!("invalid TLS config: {e}")))?
             .connect_timeout(connect_timeout);
 
         let channel = tokio::time::timeout(connect_timeout, channel.connect())
             .await
             .map_err(|_| PluginError::Cancelled)?
             .map_err(|e| {
-                PluginError::Driver(format!("failed to connect to plugin at {endpoint}: {e}"))
+                PluginError::driver(format!("failed to connect to plugin at {endpoint}: {e}"))
             })?;
 
         let client = PluginRuntimeClient::new(channel)
@@ -341,7 +341,7 @@ impl OutOfProcessDriver {
     ) -> Result<serde_json::Value, PluginError> {
         let correlation_id = Uuid::now_v7().to_string();
         let payload_bytes = serde_json::to_vec(&payload)
-            .map_err(|e| PluginError::Driver(format!("failed to encode {method} payload: {e}")))?;
+            .map_err(|e| PluginError::driver(format!("failed to encode {method} payload: {e}")))?;
 
         let request = PluginRuntimeCallDriverRequest {
             correlation_id,
@@ -355,7 +355,7 @@ impl OutOfProcessDriver {
         let response = tokio::time::timeout(rpc_timeout, client.call_driver(request))
             .await
             .map_err(|_| PluginError::Cancelled)?
-            .map_err(|e| PluginError::Driver(format!("{method} RPC failed: {e}")))?;
+            .map_err(|e| PluginError::driver(format!("{method} RPC failed: {e}")))?;
 
         decode_response(&response.into_inner(), method)
     }
@@ -420,7 +420,7 @@ impl ProtocolDriver for OutOfProcessDriver {
 
         let events: Vec<ProtocolEvent> = match response.get("events") {
             Some(v) => serde_json::from_value(v.clone()).map_err(|e| {
-                PluginError::Driver(format!("handle_command events malformed: {e}"))
+                PluginError::driver(format!("handle_command events malformed: {e}"))
             })?,
             None => Vec::new(),
         };
@@ -429,7 +429,7 @@ impl ProtocolDriver for OutOfProcessDriver {
             ctx.device_sink()
                 .emit_event(event)
                 .await
-                .map_err(|e| PluginError::Driver(format!("event sink error: {e}")))?;
+                .map_err(|e| PluginError::driver(format!("event sink error: {e}")))?;
         }
 
         Ok(())
@@ -447,7 +447,7 @@ impl ProtocolDriver for OutOfProcessDriver {
         });
         let response = self.call_method("probe", payload, timeout).await?;
         serde_json::from_value(response)
-            .map_err(|e| PluginError::Driver(format!("probe response malformed: {e}")))
+            .map_err(|e| PluginError::driver(format!("probe response malformed: {e}")))
     }
 
     async fn health(
@@ -458,7 +458,7 @@ impl ProtocolDriver for OutOfProcessDriver {
         let payload = serde_json::json!({});
         let response = self.call_method("health", payload, timeout).await?;
         serde_json::from_value(response)
-            .map_err(|e| PluginError::Driver(format!("health response malformed: {e}")))
+            .map_err(|e| PluginError::driver(format!("health response malformed: {e}")))
     }
 }
 
@@ -477,7 +477,7 @@ fn decode_response(
             return Ok(serde_json::Value::Null);
         }
         serde_json::from_slice(&response.payload)
-            .map_err(|e| PluginError::Driver(format!("{method} response is not valid JSON: {e}")))
+            .map_err(|e| PluginError::driver(format!("{method} response is not valid JSON: {e}")))
     } else {
         Err(map_error_code(
             &response.error_code,
@@ -488,15 +488,15 @@ fn decode_response(
 
 fn map_error_code(code: &str, message: &str) -> PluginError {
     match code {
-        "invalid_manifest" => PluginError::InvalidManifest(message.to_string()),
-        "incompatible_sdk" => PluginError::Driver(format!("incompatible SDK: {message}")),
+        "invalid_manifest" => PluginError::invalid_manifest(message),
+        "incompatible_sdk" => PluginError::driver(format!("incompatible SDK: {message}")),
         "invalid_checksum" => PluginError::InvalidChecksum,
-        "unsupported_protocol" => PluginError::UnsupportedProtocol(message.to_string()),
-        "resource_budget_exceeded" => PluginError::ResourceBudgetExceeded(message.to_string()),
-        "unsupported" => PluginError::Unsupported(message.to_string()),
+        "unsupported_protocol" => PluginError::unsupported_protocol(message),
+        "resource_budget_exceeded" => PluginError::resource_budget_exceeded(message),
+        "unsupported" => PluginError::unsupported(message),
         "cancelled" => PluginError::Cancelled,
-        "transient" => PluginError::Transient(message.to_string()),
-        _ => PluginError::Driver(format!("{code}: {message}")),
+        "transient" => PluginError::transient(message),
+        _ => PluginError::driver(format!("{code}: {message}")),
     }
 }
 
@@ -633,7 +633,7 @@ mod tests {
     fn generate_test_tls_pair() -> Result<(String, String), PluginError> {
         let certified =
             rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).map_err(|e| {
-                PluginError::Driver(format!("failed to generate test certificate: {e}"))
+                PluginError::driver(format!("failed to generate test certificate: {e}"))
             })?;
         Ok((certified.cert.pem(), certified.signing_key.serialize_pem()))
     }
@@ -650,18 +650,18 @@ mod tests {
 
         let addr: std::net::SocketAddr = "127.0.0.1:0"
             .parse()
-            .map_err(|e| PluginError::Driver(format!("invalid socket address: {e}")))?;
+            .map_err(|e| PluginError::driver(format!("invalid socket address: {e}")))?;
         let listener = TcpListener::bind(addr)
             .await
-            .map_err(|e| PluginError::Driver(format!("failed to bind listener: {e}")))?;
+            .map_err(|e| PluginError::driver(format!("failed to bind listener: {e}")))?;
         let port = listener
             .local_addr()
-            .map_err(|e| PluginError::Driver(format!("failed to read local address: {e}")))?
+            .map_err(|e| PluginError::driver(format!("failed to read local address: {e}")))?
             .port();
 
         let mut server = tonic::transport::Server::builder()
             .tls_config(server_tls)
-            .map_err(|e| PluginError::Driver(format!("invalid test server TLS config: {e}")))?;
+            .map_err(|e| PluginError::driver(format!("invalid test server TLS config: {e}")))?;
 
         tokio::spawn(async move {
             let svc = PluginRuntimeServer::new(FakePlugin);
@@ -681,12 +681,12 @@ mod tests {
 
         let endpoint = format!("https://127.0.0.1:{port}");
         let channel = Channel::from_shared(endpoint.clone())
-            .map_err(|e| PluginError::Driver(format!("invalid endpoint {endpoint}: {e}")))?
+            .map_err(|e| PluginError::driver(format!("invalid endpoint {endpoint}: {e}")))?
             .tls_config(client_tls)
-            .map_err(|e| PluginError::Driver(format!("invalid TLS config: {e}")))?
+            .map_err(|e| PluginError::driver(format!("invalid TLS config: {e}")))?
             .connect()
             .await
-            .map_err(|e| PluginError::Driver(format!("failed to connect to {endpoint}: {e}")))?;
+            .map_err(|e| PluginError::driver(format!("failed to connect to {endpoint}: {e}")))?;
         let client = PluginRuntimeClient::new(channel)
             .max_decoding_message_size(4 * 1024 * 1024)
             .max_encoding_message_size(4 * 1024 * 1024);
@@ -696,7 +696,7 @@ mod tests {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
-            .map_err(|e| PluginError::Driver(format!("failed to spawn placeholder child: {e}")))?;
+            .map_err(|e| PluginError::driver(format!("failed to spawn placeholder child: {e}")))?;
 
         let (shutdown_tx, _shutdown_rx) = oneshot::channel();
 

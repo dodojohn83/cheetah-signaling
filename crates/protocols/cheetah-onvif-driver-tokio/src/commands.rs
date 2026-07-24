@@ -532,7 +532,7 @@ pub(crate) fn parse_tenant_id(raw: Option<&str>) -> Result<Option<TenantId>, Plu
         Some(s) => s
             .parse()
             .map(Some)
-            .map_err(|e| PluginError::Driver(format!("invalid tenant_id {s}: {e}"))),
+            .map_err(|e| PluginError::driver(format!("invalid tenant_id {s}: {e}"))),
     }
 }
 
@@ -551,7 +551,7 @@ pub(crate) async fn resolve_credentials(
         match ctx.secret(ref_name).await? {
             Some(secret) => Some(secret),
             None => {
-                return Err(PluginError::Driver(format!(
+                return Err(PluginError::driver(format!(
                     "credentials secret {ref_name} not found"
                 )));
             }
@@ -562,7 +562,7 @@ pub(crate) async fn resolve_credentials(
         match ctx.secret(ref_name).await? {
             Some(secret) => Some(secret),
             None => {
-                return Err(PluginError::Driver(format!(
+                return Err(PluginError::driver(format!(
                     "credentials secret {ref_name} not found"
                 )));
             }
@@ -578,8 +578,8 @@ pub(crate) async fn resolve_credentials(
     if let (Some(u), None) = (effective_username, password_secret.as_ref())
         && !u.is_empty()
     {
-        return Err(PluginError::Driver(
-            "username provided without a password or credentials_ref".into(),
+        return Err(PluginError::driver(
+            "username provided without a password or credentials_ref",
         ));
     }
 
@@ -612,14 +612,10 @@ pub(crate) fn make_credentials(
         return Ok(None);
     }
     if username.len() > MAX_ONVIF_USERNAME_BYTES {
-        return Err(PluginError::Driver(
-            "ONVIF username exceeds maximum length".into(),
-        ));
+        return Err(PluginError::driver("ONVIF username exceeds maximum length"));
     }
     if password.expose_secret().len() > MAX_ONVIF_PASSWORD_BYTES {
-        return Err(PluginError::Driver(
-            "ONVIF password exceeds maximum length".into(),
-        ));
+        return Err(PluginError::driver("ONVIF password exceeds maximum length"));
     }
     Ok(Some(DeviceCredentials {
         username: username.to_string(),

@@ -256,8 +256,8 @@ impl DriverContext for FakeDriverContext {
         _params: serde_json::Value,
         _timeout: DurationMs,
     ) -> Result<String, PluginError> {
-        Err(PluginError::Unsupported(
-            "media session not available in tests".into(),
+        Err(PluginError::unsupported(
+            "media session not available in tests",
         ))
     }
 
@@ -266,8 +266,8 @@ impl DriverContext for FakeDriverContext {
         _protocol: &str,
         _address: &str,
     ) -> Result<String, PluginError> {
-        Err(PluginError::Unsupported(
-            "endpoint registration not available in tests".into(),
+        Err(PluginError::unsupported(
+            "endpoint registration not available in tests",
         ))
     }
 }

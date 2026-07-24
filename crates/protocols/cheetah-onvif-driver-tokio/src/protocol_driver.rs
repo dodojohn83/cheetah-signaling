@@ -42,7 +42,7 @@ impl OnvifTokioProtocolDriver {
         let mut guard = self
             .driver
             .lock()
-            .map_err(|e| PluginError::Driver(format!("driver mutex poisoned: {e:?}")))?;
+            .map_err(|e| PluginError::driver(format!("driver mutex poisoned: {e:?}")))?;
         if let Some(driver) = guard.as_ref() {
             return Ok(driver.clone());
         }
@@ -294,7 +294,7 @@ fn onvif_config(ctx: &dyn DriverContext) -> Result<OnvifConfig, PluginError> {
         Ok(OnvifConfig::default())
     } else {
         serde_json::from_value::<OnvifConfig>(ctx.config().clone())
-            .map_err(|e| PluginError::Driver(format!("invalid onvif config: {e}")))
+            .map_err(|e| PluginError::driver(format!("invalid onvif config: {e}")))
     }
 }
 
@@ -588,13 +588,13 @@ async fn dispatch_command(
         | "set_defog"
         | "set_iris_filter"
         | "set_focus" => {
-            return Err(PluginError::Unsupported(format!(
+            return Err(PluginError::unsupported(format!(
                 "onvif imaging write command {} is not supported",
                 command.command_type
             )));
         }
         _ => {
-            return Err(PluginError::Unsupported(format!(
+            return Err(PluginError::unsupported(format!(
                 "onvif command {} is not supported by the tokio driver",
                 command.command_type
             )));
@@ -607,24 +607,24 @@ fn parse_payload<T: for<'de> Deserialize<'de>>(
     payload: &serde_json::Value,
 ) -> Result<T, PluginError> {
     serde_json::from_value(payload.clone())
-        .map_err(|e| PluginError::Driver(format!("invalid onvif command payload: {e}")))
+        .map_err(|e| PluginError::driver(format!("invalid onvif command payload: {e}")))
 }
 
 fn plugin_error_from_driver_error(e: DriverError) -> PluginError {
     match e {
-        DriverError::Onvif(e) => PluginError::Driver(e.to_string()),
-        DriverError::Module(e) => PluginError::Driver(e.to_string()),
-        DriverError::Http(s) => PluginError::Transient(s),
+        DriverError::Onvif(e) => PluginError::driver(e),
+        DriverError::Module(e) => PluginError::driver(e),
+        DriverError::Http(s) => PluginError::transient(s),
         DriverError::HttpStatus { status, body } => {
-            PluginError::Driver(format!("http status {status}: {body}"))
+            PluginError::driver(format!("http status {status}: {body}"))
         }
         DriverError::BodyLimit { limit } => {
-            PluginError::Driver(format!("response body limit exceeded: {limit} bytes"))
+            PluginError::driver(format!("response body limit exceeded: {limit} bytes"))
         }
-        DriverError::Io(e) => PluginError::Transient(e.to_string()),
+        DriverError::Io(e) => PluginError::transient(e),
         DriverError::Timeout(_) => PluginError::Cancelled,
-        DriverError::Config(s) => PluginError::Driver(s),
-        DriverError::Overloaded(s) => PluginError::Transient(s),
+        DriverError::Config(s) => PluginError::driver(s),
+        DriverError::Overloaded(s) => PluginError::transient(s),
     }
 }
 
@@ -636,10 +636,7 @@ fn clock_offset_seconds_with_local(
     system: &SystemDateAndTime,
     local_utc: time::OffsetDateTime,
 ) -> Result<i64, PluginError> {
-    let device_utc = system
-        .utc
-        .to_utc()
-        .map_err(|e| PluginError::Driver(e.to_string()))?;
+    let device_utc = system.utc.to_utc().map_err(PluginError::driver)?;
     Ok((device_utc - local_utc).whole_seconds())
 }
 

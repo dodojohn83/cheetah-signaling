@@ -50,19 +50,19 @@ impl PluginName {
     pub fn new(name: impl Into<String>) -> Result<Self, PluginError> {
         let name = name.into();
         if name.is_empty() {
-            return Err(PluginError::InvalidManifest(
+            return Err(PluginError::invalid_manifest(
                 "plugin name must not be empty".to_string(),
             ));
         }
         if name.len() > 128 {
-            return Err(PluginError::InvalidManifest(
+            return Err(PluginError::invalid_manifest(
                 "plugin name must not exceed 128 bytes".to_string(),
             ));
         }
         if !name.bytes().all(|b| {
             b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_' || b == b'/'
         }) {
-            return Err(PluginError::InvalidManifest(
+            return Err(PluginError::invalid_manifest(
                 "plugin name contains invalid characters".to_string(),
             ));
         }
@@ -150,12 +150,12 @@ impl PluginVersion {
     pub fn new(version: impl Into<String>) -> Result<Self, PluginError> {
         let version = version.into();
         if version.len() > MAX_PLUGIN_VERSION_BYTES {
-            return Err(PluginError::InvalidManifest(format!(
+            return Err(PluginError::invalid_manifest(format!(
                 "plugin version must not exceed {MAX_PLUGIN_VERSION_BYTES} bytes"
             )));
         }
         if semver::Version::parse(&version).is_err() {
-            return Err(PluginError::InvalidManifest(format!(
+            return Err(PluginError::invalid_manifest(format!(
                 "plugin version {version:?} is not valid semver"
             )));
         }
@@ -170,7 +170,7 @@ impl PluginVersion {
     /// Parses the version as a [`semver::Version`].
     pub fn parse(&self) -> Result<semver::Version, PluginError> {
         semver::Version::parse(&self.0).map_err(|e| {
-            PluginError::InvalidManifest(format!(
+            PluginError::invalid_manifest(format!(
                 "plugin version {version:?}: {e}",
                 version = self.0
             ))
@@ -226,12 +226,12 @@ impl SdkVersionReq {
     pub fn new(req: impl Into<String>) -> Result<Self, PluginError> {
         let req = req.into();
         if req.len() > MAX_SDK_VERSION_REQ_BYTES {
-            return Err(PluginError::InvalidManifest(format!(
+            return Err(PluginError::invalid_manifest(format!(
                 "SDK version requirement must not exceed {MAX_SDK_VERSION_REQ_BYTES} bytes"
             )));
         }
         if semver::VersionReq::parse(&req).is_err() {
-            return Err(PluginError::InvalidManifest(format!(
+            return Err(PluginError::invalid_manifest(format!(
                 "SDK version requirement {req:?} is not valid"
             )));
         }
@@ -246,7 +246,7 @@ impl SdkVersionReq {
     /// Parses the requirement as a [`semver::VersionReq`].
     pub fn parse(&self) -> Result<semver::VersionReq, PluginError> {
         semver::VersionReq::parse(&self.0).map_err(|e| {
-            PluginError::InvalidManifest(format!(
+            PluginError::invalid_manifest(format!(
                 "SDK version requirement {req:?}: {e}",
                 req = self.0
             ))
@@ -419,57 +419,57 @@ impl PluginManifest {
     /// Validates the manifest and returns the parsed semver version.
     pub fn validate(&self) -> Result<semver::Version, PluginError> {
         if self.protocols.is_empty() {
-            return Err(PluginError::InvalidManifest(
+            return Err(PluginError::invalid_manifest(
                 "manifest must declare at least one protocol".to_string(),
             ));
         }
         if self.protocols.len() > MAX_PROTOCOLS {
-            return Err(PluginError::InvalidManifest(format!(
+            return Err(PluginError::invalid_manifest(format!(
                 "manifest must not declare more than {MAX_PROTOCOLS} protocols"
             )));
         }
         for (i, protocol) in self.protocols.iter().enumerate() {
             if protocol.protocol.is_empty() {
-                return Err(PluginError::InvalidManifest(
+                return Err(PluginError::invalid_manifest(
                     "protocol name must not be empty".to_string(),
                 ));
             }
             if protocol.protocol.len() > MAX_PROTOCOL_NAME_BYTES {
-                return Err(PluginError::InvalidManifest(format!(
+                return Err(PluginError::invalid_manifest(format!(
                     "protocol name at index {i} must not exceed {MAX_PROTOCOL_NAME_BYTES} bytes"
                 )));
             }
             if let Some(transport) = &protocol.media_transport
                 && transport.len() > MAX_MEDIA_TRANSPORT_BYTES
             {
-                return Err(PluginError::InvalidManifest(format!(
+                return Err(PluginError::invalid_manifest(format!(
                     "media transport at protocol index {i} must not exceed {MAX_MEDIA_TRANSPORT_BYTES} bytes"
                 )));
             }
         }
         if self.permissions.is_empty() {
-            return Err(PluginError::InvalidManifest(
+            return Err(PluginError::invalid_manifest(
                 "manifest must declare at least one permission".to_string(),
             ));
         }
         if self.permissions.len() > MAX_PERMISSIONS {
-            return Err(PluginError::InvalidManifest(format!(
+            return Err(PluginError::invalid_manifest(format!(
                 "manifest must not declare more than {MAX_PERMISSIONS} permissions"
             )));
         }
         if self.config_schema.schema.is_null() {
-            return Err(PluginError::InvalidManifest(
+            return Err(PluginError::invalid_manifest(
                 "config schema must be a valid JSON object".to_string(),
             ));
         }
         if self.config_schema.required.len() > MAX_CONFIG_SCHEMA_REQUIRED {
-            return Err(PluginError::InvalidManifest(format!(
+            return Err(PluginError::invalid_manifest(format!(
                 "config schema required fields must not exceed {MAX_CONFIG_SCHEMA_REQUIRED} entries"
             )));
         }
         for (i, field) in self.config_schema.required.iter().enumerate() {
             if field.len() > MAX_CONFIG_SCHEMA_REQUIRED_ITEM_BYTES {
-                return Err(PluginError::InvalidManifest(format!(
+                return Err(PluginError::invalid_manifest(format!(
                     "config schema required field at index {i} must not exceed {MAX_CONFIG_SCHEMA_REQUIRED_ITEM_BYTES} bytes"
                 )));
             }
@@ -477,12 +477,12 @@ impl PluginManifest {
         match &self.entry {
             PluginEntry::BuiltIn { path } | PluginEntry::OutOfProcess { path } => {
                 if path.is_empty() {
-                    return Err(PluginError::InvalidManifest(
+                    return Err(PluginError::invalid_manifest(
                         "plugin entry path must not be empty".to_string(),
                     ));
                 }
                 if path.len() > MAX_ENTRY_PATH_BYTES {
-                    return Err(PluginError::InvalidManifest(format!(
+                    return Err(PluginError::invalid_manifest(format!(
                         "plugin entry path must not exceed {MAX_ENTRY_PATH_BYTES} bytes"
                     )));
                 }
@@ -490,29 +490,29 @@ impl PluginManifest {
         }
         if let Some(checksum) = &self.checksum {
             if checksum.algorithm.len() > MAX_CHECKSUM_ALGORITHM_BYTES {
-                return Err(PluginError::InvalidManifest(format!(
+                return Err(PluginError::invalid_manifest(format!(
                     "checksum algorithm must not exceed {MAX_CHECKSUM_ALGORITHM_BYTES} bytes"
                 )));
             }
             if checksum.digest.len() > MAX_CHECKSUM_DIGEST_BYTES {
-                return Err(PluginError::InvalidManifest(format!(
+                return Err(PluginError::invalid_manifest(format!(
                     "checksum digest must not exceed {MAX_CHECKSUM_DIGEST_BYTES} bytes"
                 )));
             }
         }
         if self.metadata.len() > MAX_METADATA_KEYS {
-            return Err(PluginError::InvalidManifest(format!(
+            return Err(PluginError::invalid_manifest(format!(
                 "manifest metadata must not exceed {MAX_METADATA_KEYS} keys"
             )));
         }
         for (key, value) in &self.metadata {
             if key.len() > MAX_METADATA_KEY_BYTES {
-                return Err(PluginError::InvalidManifest(format!(
+                return Err(PluginError::invalid_manifest(format!(
                     "metadata key must not exceed {MAX_METADATA_KEY_BYTES} bytes"
                 )));
             }
             if value.len() > MAX_METADATA_VALUE_BYTES {
-                return Err(PluginError::InvalidManifest(format!(
+                return Err(PluginError::invalid_manifest(format!(
                     "metadata value for key {key:?} must not exceed {MAX_METADATA_VALUE_BYTES} bytes"
                 )));
             }
