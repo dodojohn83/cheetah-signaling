@@ -21,7 +21,8 @@ use crate::events::Gb28181Event;
 
 impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
     /// Creates a new cascade state machine.
-    pub fn new(config: CascadeConfig, provider: P) -> Result<Self, CascadeError> {
+    pub fn new(mut config: CascadeConfig, provider: P) -> Result<Self, CascadeError> {
+        config.sanitize()?;
         let inbound_auth = if let Some(secret) = &config.catalog_inbound_digest_server_secret {
             let digest = DigestContext::new(config.realm.clone(), secret.expose_secret())?;
             Some(Arc::new(InboundAuthContext {

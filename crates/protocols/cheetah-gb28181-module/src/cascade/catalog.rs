@@ -2,16 +2,15 @@
 
 use std::sync::Arc;
 
-/// Maximum number of catalog items a single SIP MESSAGE can carry.
-const MAX_CATALOG_ITEMS_PER_PACKET: usize = 10_000;
-/// Maximum number of catalog response pages emitted for one upstream query.
-const MAX_CATALOG_QUERY_PAGES: usize = 10_000;
-
 use cheetah_gb28181_core::{
     Body, HeaderName, HeaderValue, Method, RequestLine, SipHeaders, SipMessage, SipUri, StatusLine,
 };
 
-use crate::cascade::{CascadeConfig, CascadeError, validate_token};
+use crate::cascade::{
+    CascadeConfig, CascadeError, MAX_CATALOG_FILTER_DEVICE_ID_BYTES,
+    MAX_CATALOG_FILTER_LIST_ENTRIES, MAX_CATALOG_FILTER_ORG_PREFIX_BYTES,
+    MAX_CATALOG_FILTER_TAG_BYTES, MAX_CATALOG_FILTER_TENANT_BYTES, validate_token,
+};
 use crate::xml::catalog::{CatalogItem, build_catalog_response};
 
 /// Filter applied by the catalog provider so the shared catalog never leaks
@@ -83,6 +82,55 @@ impl CatalogFilter {
             && self.whitelisted_device_ids.is_empty()
             && self.tags.is_empty()
             && self.org_path_prefix.is_none()
+    }
+
+    /// Validates that the filter strings and collections are within bounded
+    /// sizes so a misconfigured or malicious cascade policy cannot allocate
+    /// unbounded memory or force an oversized SIP `MESSAGE` body.
+    pub(crate) fn validate(&self) -> Result<(), CascadeError> {
+        if let Some(tenant_id) = &self.tenant_id
+            && tenant_id.len() > MAX_CATALOG_FILTER_TENANT_BYTES
+        {
+            return Err(CascadeError::Internal(format!(
+                "catalog_filter.tenant_id exceeds {MAX_CATALOG_FILTER_TENANT_BYTES} bytes"
+            )));
+        }
+
+        if self.whitelisted_device_ids.len() > MAX_CATALOG_FILTER_LIST_ENTRIES {
+            return Err(CascadeError::Internal(format!(
+                "catalog_filter.whitelisted_device_ids exceeds {MAX_CATALOG_FILTER_LIST_ENTRIES} entries"
+            )));
+        }
+        for id in &self.whitelisted_device_ids {
+            if id.len() > MAX_CATALOG_FILTER_DEVICE_ID_BYTES {
+                return Err(CascadeError::Internal(format!(
+                    "catalog_filter.whitelisted_device_ids entry exceeds {MAX_CATALOG_FILTER_DEVICE_ID_BYTES} bytes"
+                )));
+            }
+        }
+
+        if self.tags.len() > MAX_CATALOG_FILTER_LIST_ENTRIES {
+            return Err(CascadeError::Internal(format!(
+                "catalog_filter.tags exceeds {MAX_CATALOG_FILTER_LIST_ENTRIES} entries"
+            )));
+        }
+        for tag in &self.tags {
+            if tag.len() > MAX_CATALOG_FILTER_TAG_BYTES {
+                return Err(CascadeError::Internal(format!(
+                    "catalog_filter.tags entry exceeds {MAX_CATALOG_FILTER_TAG_BYTES} bytes"
+                )));
+            }
+        }
+
+        if let Some(prefix) = &self.org_path_prefix
+            && prefix.len() > MAX_CATALOG_FILTER_ORG_PREFIX_BYTES
+        {
+            return Err(CascadeError::Internal(format!(
+                "catalog_filter.org_path_prefix exceeds {MAX_CATALOG_FILTER_ORG_PREFIX_BYTES} bytes"
+            )));
+        }
+
+        Ok(())
     }
 }
 
@@ -280,8 +328,9 @@ pub(crate) fn build_catalog_pages(
 
     // Independent upper bound so a misbehaving or concurrently-growing provider
     // cannot make this loop run unbounded.
-    let max_per_packet = max_per_packet.clamp(1, MAX_CATALOG_ITEMS_PER_PACKET);
-    let max_pages = (config.catalog_max_query_pages as usize).clamp(1, MAX_CATALOG_QUERY_PAGES);
+    let max_per_packet = max_per_packet.clamp(1, super::MAX_CATALOG_ITEMS_PER_PACKET as usize);
+    let max_pages =
+        (config.catalog_max_query_pages as usize).clamp(1, super::MAX_CATALOG_QUERY_PAGES as usize);
     let max_total_items = max_per_packet.saturating_mul(max_pages);
 
     loop {
