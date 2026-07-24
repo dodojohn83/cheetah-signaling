@@ -250,8 +250,13 @@ impl PhaseMigrationBackend for PostgresMigration {
     }
 
     async fn release_migration_lock(&self) -> Result<(), StorageError> {
-        let mut guard = self.lock_conn.lock().await;
-        if let Some(mut conn) = guard.take() {
+        // Take the connection out of the mutex and drop the guard before the
+        // await to avoid holding an async mutex guard across an await point.
+        let conn = {
+            let mut guard = self.lock_conn.lock().await;
+            guard.take()
+        };
+        if let Some(mut conn) = conn {
             let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
                 .bind(MIGRATION_LOCK_ID)
                 .fetch_one(&mut *conn)
