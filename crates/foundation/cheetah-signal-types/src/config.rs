@@ -196,13 +196,6 @@ impl SignalConfig {
                 "observability.diagnostic_max_duration_ms must be greater than zero when sampling is enabled",
             ));
         }
-        if self.storage.max_connections == 0 {
-            return Err(SignalError::new(
-                SignalErrorKind::InvalidArgument,
-                "storage.max_connections must be greater than zero",
-            ));
-        }
-
         let inferred = self.infer_deployment_profile()?;
         match inferred {
             DeploymentProfile::Edge => {
