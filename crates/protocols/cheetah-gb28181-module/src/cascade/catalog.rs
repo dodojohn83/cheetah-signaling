@@ -5,6 +5,10 @@ use std::sync::Arc;
 use cheetah_gb28181_core::{
     Body, HeaderName, HeaderValue, Method, RequestLine, SipHeaders, SipMessage, SipUri, StatusLine,
 };
+use cheetah_signal_types::clamp_str;
+
+/// Maximum byte length of a `CatalogError` diagnostic message.
+const MAX_CATALOG_ERROR_BYTES: usize = 1024;
 
 use crate::cascade::{
     CascadeConfig, CascadeError, MAX_CATALOG_FILTER_DEVICE_ID_BYTES,
@@ -60,6 +64,13 @@ pub enum CatalogError {
     /// An internal provider error.
     #[error("catalog provider error: {0}")]
     Internal(String),
+}
+
+impl CatalogError {
+    /// Creates an `Internal` error with a bounded diagnostic message.
+    pub fn internal(message: impl std::fmt::Display) -> Self {
+        Self::Internal(clamp_str(&message.to_string(), MAX_CATALOG_ERROR_BYTES))
+    }
 }
 
 /// Port trait for retrieving a filtered, paged view of the catalog that may be

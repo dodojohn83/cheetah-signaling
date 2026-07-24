@@ -558,7 +558,7 @@ impl CatalogProvider for FailingCatalogProvider {
         _cursor: Option<&str>,
         _limit: usize,
     ) -> Result<CatalogPage, CatalogError> {
-        Err(CatalogError::Internal("database unavailable".to_string()))
+        Err(CatalogError::internal("database unavailable"))
     }
 }
 
@@ -856,4 +856,14 @@ fn catalog_query_clamps_huge_max_items_and_pages() {
     assert_eq!(parsed.items.len(), 1);
     // The advertised total is clamped to max_per_packet * max_pages (10_000 * 10_000).
     assert_eq!(parsed.sum_num, 100_000_000);
+}
+
+#[test]
+fn catalog_error_clamps_internal_message() {
+    let long = "x".repeat(2048);
+    let err = CatalogError::internal(format!("provider failure: {long}"));
+    let CatalogError::Internal(msg) = err;
+    assert_eq!(msg.len(), 1024);
+    assert!(msg.is_char_boundary(msg.len()));
+    assert!(msg.starts_with("provider failure: "));
 }
