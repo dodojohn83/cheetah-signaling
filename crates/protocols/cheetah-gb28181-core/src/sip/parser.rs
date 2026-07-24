@@ -153,7 +153,7 @@ impl SipParser {
     /// Returns `SipErrorKind::BufferTooLarge` if the buffer would exceed the
     /// configured `max_buffer_bytes`.
     pub fn feed(&mut self, data: &[u8]) -> Result<(), SipError> {
-        if self.buffer.len() + data.len() > self.config.max_buffer_bytes {
+        if self.buffer.len().saturating_add(data.len()) > self.config.max_buffer_bytes {
             return Err(SipError::new(
                 SipErrorKind::BufferTooLarge,
                 None,
