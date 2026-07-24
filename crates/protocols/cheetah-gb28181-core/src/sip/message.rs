@@ -4,6 +4,11 @@ use super::error::{SipError, SipErrorKind};
 use super::headers::{HeaderName, SipHeaders};
 use super::uri::SipUri;
 
+/// Maximum byte length of a non-standard SIP method token stored in
+/// [`Method::Other`]. This prevents an oversized start-line token from being
+/// copied into every transaction/dialog key and routing table entry.
+const MAX_METHOD_TOKEN_BYTES: usize = 64;
+
 /// SIP methods required for GB28181.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum Method {
@@ -34,6 +39,13 @@ pub enum Method {
 impl Method {
     /// Parses a method from its wire name.
     pub fn parse(s: &str) -> Result<Self, SipError> {
+        if s.len() > MAX_METHOD_TOKEN_BYTES {
+            return Err(SipError::new(
+                SipErrorKind::InvalidStartLine,
+                None,
+                "method token exceeds maximum length",
+            ));
+        }
         Ok(match s {
             "REGISTER" => Method::Register,
             "MESSAGE" => Method::Message,
@@ -384,6 +396,41 @@ mod tests {
         assert_eq!(
             msg.content_length().unwrap_err().kind,
             SipErrorKind::InvalidHeader
+        );
+    }
+
+    #[test]
+    fn parse_known_methods() {
+        for (input, expected) in [
+            ("REGISTER", Method::Register),
+            ("MESSAGE", Method::Message),
+            ("INVITE", Method::Invite),
+            ("ACK", Method::Ack),
+            ("BYE", Method::Bye),
+            ("CANCEL", Method::Cancel),
+            ("OPTIONS", Method::Options),
+            ("SUBSCRIBE", Method::Subscribe),
+            ("NOTIFY", Method::Notify),
+            ("INFO", Method::Info),
+        ] {
+            assert_eq!(Method::parse(input).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn parse_other_valid_token() {
+        assert_eq!(
+            Method::parse("PUBLISH").unwrap(),
+            Method::Other("PUBLISH".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_rejects_oversized_method_token() {
+        let token = "X".repeat(MAX_METHOD_TOKEN_BYTES + 1);
+        assert_eq!(
+            Method::parse(&token).unwrap_err().kind,
+            SipErrorKind::InvalidStartLine
         );
     }
 }
