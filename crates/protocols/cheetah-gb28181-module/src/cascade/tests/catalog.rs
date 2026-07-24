@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use crate::cascade::catalog::{
-    CatalogError, CatalogFilter, CatalogPage, CatalogProvider, CatalogQuery,
+    CatalogError, CatalogFilter, CatalogPage, CatalogProvider, CatalogQuery, build_catalog_pages,
 };
 use crate::cascade::{CascadeEvent, CascadeInput, CascadeOutput, Gb28181Cascade};
 use crate::xml::catalog::{CatalogItem, parse_catalog};
@@ -558,7 +558,7 @@ impl CatalogProvider for FailingCatalogProvider {
         _cursor: Option<&str>,
         _limit: usize,
     ) -> Result<CatalogPage, CatalogError> {
-        Err(CatalogError::Internal("database unavailable".to_string()))
+        Err(CatalogError::internal("database unavailable"))
     }
 }
 
@@ -856,4 +856,91 @@ fn catalog_query_clamps_huge_max_items_and_pages() {
     assert_eq!(parsed.items.len(), 1);
     // The advertised total is clamped to max_per_packet * max_pages (10_000 * 10_000).
     assert_eq!(parsed.sum_num, 100_000_000);
+}
+
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+struct OversizedCursorProvider {
+    calls: AtomicUsize,
+}
+
+impl CatalogProvider for OversizedCursorProvider {
+    fn query_page(
+        &self,
+        _query: &CatalogQuery,
+        cursor: Option<&str>,
+        _limit: usize,
+    ) -> Result<CatalogPage, CatalogError> {
+        let n = self.calls.fetch_add(1, Ordering::SeqCst);
+        if n == 0 {
+            let long = "x".repeat(8192);
+            let item = CatalogItem {
+                device_id: long.clone(),
+                name: Some(long),
+                status: Some("ON".to_string()),
+                ..Default::default()
+            };
+            return Ok(CatalogPage {
+                items: vec![item],
+                total: 1,
+                next_cursor: Some("x".repeat(8192)),
+            });
+        }
+        if let Some(c) = cursor {
+            assert!(
+                c.len() <= 4096,
+                "provider received un-clamped cursor of {} bytes",
+                c.len()
+            );
+        }
+        Ok(CatalogPage {
+            items: vec![],
+            total: 1,
+            next_cursor: None,
+        })
+    }
+}
+
+#[test]
+fn build_catalog_pages_clamps_oversized_cursor_and_item_fields() {
+    let provider: Arc<dyn CatalogProvider> = Arc::new(OversizedCursorProvider {
+        calls: AtomicUsize::new(0),
+    });
+    let cfg = config();
+    let query = CatalogQuery {
+        sn: "1".to_string(),
+        device_id: "34020000001320000001".to_string(),
+        filter: CatalogFilter::default(),
+    };
+    let mut request_counter = 0u64;
+    let messages = build_catalog_pages(
+        &cfg,
+        &provider,
+        &query,
+        1,
+        0,
+        &mut request_counter,
+        "platform",
+    )
+    .unwrap();
+    assert_eq!(messages.len(), 1);
+    let body = match &messages[0] {
+        SipMessage::Request { body, .. } => body,
+        _ => panic!("expected request"),
+    };
+    let catalog = parse_catalog(body).unwrap();
+    assert_eq!(catalog.items.len(), 1);
+    assert_eq!(catalog.items[0].device_id.len(), 4096);
+    assert_eq!(catalog.items[0].name.as_ref().unwrap().len(), 4096);
+    assert_eq!(catalog.items[0].status, Some("ON".to_string()));
+}
+
+#[test]
+fn catalog_error_clamps_internal_message() {
+    let long = "x".repeat(2048);
+    let err = CatalogError::internal(format!("provider failure: {long}"));
+    let CatalogError::Internal(msg) = err;
+    assert_eq!(msg.len(), 1024);
+    assert!(msg.is_char_boundary(msg.len()));
+    assert!(msg.starts_with("provider failure: "));
 }
