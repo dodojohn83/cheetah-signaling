@@ -12,7 +12,7 @@ pub fn encode_sdp(session: &SdpSession) -> Result<String, SdpError> {
     write_session(&mut out, session)?;
     for time in &session.times {
         write!(&mut out, "t={} {}\r\n", time.start, time.stop)
-            .map_err(|e| SdpError::Malformed(e.to_string()))?;
+            .map_err(|e| SdpError::malformed(e.to_string()))?;
     }
     for attr in &session.attributes {
         write_attribute(&mut out, attr)?;
@@ -25,7 +25,7 @@ pub fn encode_sdp(session: &SdpSession) -> Result<String, SdpError> {
 
 fn validate_no_crlf(value: &str) -> Result<(), SdpError> {
     if value.contains('\r') || value.contains('\n') {
-        return Err(SdpError::Malformed(format!(
+        return Err(SdpError::malformed(format!(
             "SDP field contains forbidden line break: {value:?}"
         )));
     }
@@ -122,7 +122,7 @@ fn validate_attribute(attr: &SdpAttribute) -> Result<(), SdpError> {
 use super::error::SdpError;
 
 fn write_session(out: &mut String, session: &SdpSession) -> Result<(), SdpError> {
-    write!(out, "v={}\r\n", session.version).map_err(|e| SdpError::Malformed(e.to_string()))?;
+    write!(out, "v={}\r\n", session.version).map_err(|e| SdpError::malformed(e.to_string()))?;
     write!(
         out,
         "o={} {} {} {} {} {}\r\n",
@@ -133,10 +133,10 @@ fn write_session(out: &mut String, session: &SdpSession) -> Result<(), SdpError>
         session.origin.addrtype,
         session.origin.address
     )
-    .map_err(|e| SdpError::Malformed(e.to_string()))?;
-    write!(out, "s={}\r\n", session.name).map_err(|e| SdpError::Malformed(e.to_string()))?;
+    .map_err(|e| SdpError::malformed(e.to_string()))?;
+    write!(out, "s={}\r\n", session.name).map_err(|e| SdpError::malformed(e.to_string()))?;
     if let Some(info) = &session.info {
-        write!(out, "i={}\r\n", info).map_err(|e| SdpError::Malformed(e.to_string()))?;
+        write!(out, "i={}\r\n", info).map_err(|e| SdpError::malformed(e.to_string()))?;
     }
     if let Some(conn) = &session.connection {
         write!(
@@ -144,27 +144,27 @@ fn write_session(out: &mut String, session: &SdpSession) -> Result<(), SdpError>
             "c={} {} {}\r\n",
             conn.nettype, conn.addrtype, conn.address
         )
-        .map_err(|e| SdpError::Malformed(e.to_string()))?;
+        .map_err(|e| SdpError::malformed(e.to_string()))?;
     }
     Ok(())
 }
 
 fn write_media(out: &mut String, media: &SdpMedia) -> Result<(), SdpError> {
-    write!(out, "m={} ", media.media_type).map_err(|e| SdpError::Malformed(e.to_string()))?;
+    write!(out, "m={} ", media.media_type).map_err(|e| SdpError::malformed(e.to_string()))?;
     if media.port_count > 1 {
         write!(out, "{}/{}", media.port, media.port_count)
-            .map_err(|e| SdpError::Malformed(e.to_string()))?;
+            .map_err(|e| SdpError::malformed(e.to_string()))?;
     } else {
-        write!(out, "{}", media.port).map_err(|e| SdpError::Malformed(e.to_string()))?;
+        write!(out, "{}", media.port).map_err(|e| SdpError::malformed(e.to_string()))?;
     }
-    write!(out, " {}", media.proto).map_err(|e| SdpError::Malformed(e.to_string()))?;
+    write!(out, " {}", media.proto).map_err(|e| SdpError::malformed(e.to_string()))?;
     for fmt in &media.formats {
-        write!(out, " {fmt}").map_err(|e| SdpError::Malformed(e.to_string()))?;
+        write!(out, " {fmt}").map_err(|e| SdpError::malformed(e.to_string()))?;
     }
-    write!(out, "\r\n").map_err(|e| SdpError::Malformed(e.to_string()))?;
+    write!(out, "\r\n").map_err(|e| SdpError::malformed(e.to_string()))?;
 
     if let Some(title) = &media.title {
-        write!(out, "i={}\r\n", title).map_err(|e| SdpError::Malformed(e.to_string()))?;
+        write!(out, "i={}\r\n", title).map_err(|e| SdpError::malformed(e.to_string()))?;
     }
     if let Some(conn) = &media.connection {
         write!(
@@ -172,7 +172,7 @@ fn write_media(out: &mut String, media: &SdpMedia) -> Result<(), SdpError> {
             "c={} {} {}\r\n",
             conn.nettype, conn.addrtype, conn.address
         )
-        .map_err(|e| SdpError::Malformed(e.to_string()))?;
+        .map_err(|e| SdpError::malformed(e.to_string()))?;
     }
     for attr in &media.attributes {
         write_attribute(out, attr)?;
@@ -192,9 +192,9 @@ fn write_attribute(out: &mut String, attr: &SdpAttribute) -> Result<(), SdpError
         } else {
             write!(out, "a=rtpmap:{pt} {encoding}/{clock}\r\n")
         }
-        .map_err(|e| SdpError::Malformed(e.to_string())),
+        .map_err(|e| SdpError::malformed(e.to_string())),
         SdpAttribute::Fmtp { pt, params } => {
-            write!(out, "a=fmtp:{pt} {params}\r\n").map_err(|e| SdpError::Malformed(e.to_string()))
+            write!(out, "a=fmtp:{pt} {params}\r\n").map_err(|e| SdpError::malformed(e.to_string()))
         }
         SdpAttribute::Setup(setup) => {
             let s = match setup {
@@ -203,23 +203,23 @@ fn write_attribute(out: &mut String, attr: &SdpAttribute) -> Result<(), SdpError
                 SdpSetup::Actpass => "actpass",
                 SdpSetup::None => "none",
             };
-            write!(out, "a=setup:{s}\r\n").map_err(|e| SdpError::Malformed(e.to_string()))
+            write!(out, "a=setup:{s}\r\n").map_err(|e| SdpError::malformed(e.to_string()))
         }
         SdpAttribute::Connection(conn) => {
             let s = match conn {
                 SdpConnectionType::New => "new",
                 SdpConnectionType::Existing => "existing",
             };
-            write!(out, "a=connection:{s}\r\n").map_err(|e| SdpError::Malformed(e.to_string()))
+            write!(out, "a=connection:{s}\r\n").map_err(|e| SdpError::malformed(e.to_string()))
         }
         SdpAttribute::Ssrc { id, text } => if let Some(text) = text {
             write!(out, "a=ssrc:{id} {text}\r\n")
         } else {
             write!(out, "a=ssrc:{id}\r\n")
         }
-        .map_err(|e| SdpError::Malformed(e.to_string())),
+        .map_err(|e| SdpError::malformed(e.to_string())),
         SdpAttribute::Y(v) => {
-            write!(out, "a=y:{v}\r\n").map_err(|e| SdpError::Malformed(e.to_string()))
+            write!(out, "a=y:{v}\r\n").map_err(|e| SdpError::malformed(e.to_string()))
         }
         SdpAttribute::Direction(d) => {
             let s = match d {
@@ -228,14 +228,14 @@ fn write_attribute(out: &mut String, attr: &SdpAttribute) -> Result<(), SdpError
                 SdpDirection::SendRecv => "sendrecv",
                 SdpDirection::Inactive => "inactive",
             };
-            write!(out, "a={s}\r\n").map_err(|e| SdpError::Malformed(e.to_string()))
+            write!(out, "a={s}\r\n").map_err(|e| SdpError::malformed(e.to_string()))
         }
         SdpAttribute::Unknown { name, value } => if let Some(value) = value {
             write!(out, "a={name}:{value}\r\n")
         } else {
             write!(out, "a={name}\r\n")
         }
-        .map_err(|e| SdpError::Malformed(e.to_string())),
+        .map_err(|e| SdpError::malformed(e.to_string())),
     }
 }
 
