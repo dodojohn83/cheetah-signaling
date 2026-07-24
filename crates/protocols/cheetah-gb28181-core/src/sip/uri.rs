@@ -58,16 +58,16 @@ impl SipUri {
             .split_once(':')
             .ok_or_else(|| SipError::new(SipErrorKind::InvalidUri, None, "missing scheme"))?;
 
-        let scheme = match scheme.to_ascii_lowercase().as_str() {
-            "sip" => Scheme::Sip,
-            "sips" => Scheme::Sips,
-            _ => {
-                return Err(SipError::new(
-                    SipErrorKind::InvalidUri,
-                    None,
-                    "unsupported scheme",
-                ));
-            }
+        let scheme = if scheme.eq_ignore_ascii_case("sip") {
+            Scheme::Sip
+        } else if scheme.eq_ignore_ascii_case("sips") {
+            Scheme::Sips
+        } else {
+            return Err(SipError::new(
+                SipErrorKind::InvalidUri,
+                None,
+                "unsupported scheme",
+            ));
         };
 
         let (userinfo, hostport) = rest.rsplit_once('@').map_or((None, rest), |(u, h)| {

@@ -6,6 +6,31 @@ use super::uri::SipUri;
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 
+/// Maximum byte length of a SIP header name stored in `HeaderName::Other`.
+const MAX_HEADER_NAME_BYTES: usize = 128;
+
+/// Truncates `s` at a UTF-8 character boundary so it is at most `max` bytes.
+fn truncate_at_char_boundary(s: &str, max: usize) -> &str {
+    if s.len() <= max {
+        return s;
+    }
+    let mut idx = max;
+    while idx > 0 && !s.is_char_boundary(idx) {
+        idx -= 1;
+    }
+    &s[..idx]
+}
+
+/// Bounds `name` to [`MAX_HEADER_NAME_BYTES`] before case-insensitive matching.
+fn bounded_header_name(name: Cow<'_, str>) -> Cow<'_, str> {
+    if name.len() > MAX_HEADER_NAME_BYTES {
+        let n = truncate_at_char_boundary(name.as_ref(), MAX_HEADER_NAME_BYTES);
+        Cow::Owned(n.to_string())
+    } else {
+        name
+    }
+}
+
 /// A SIP header value.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HeaderValue(String);
@@ -149,27 +174,45 @@ impl HeaderName {
     }
 
     fn from_cow(name: Cow<'_, str>) -> Self {
-        let lower = name.to_ascii_lowercase();
-        match lower.as_str() {
-            "via" | "v" => HeaderName::Via,
-            "from" | "f" => HeaderName::From,
-            "to" | "t" => HeaderName::To,
-            "call-id" | "i" => HeaderName::CallId,
-            "cseq" => HeaderName::CSeq,
-            "contact" | "m" => HeaderName::Contact,
-            "max-forwards" => HeaderName::MaxForwards,
-            "user-agent" => HeaderName::UserAgent,
-            "content-type" | "c" => HeaderName::ContentType,
-            "content-length" | "l" => HeaderName::ContentLength,
-            "expires" => HeaderName::Expires,
-            "route" => HeaderName::Route,
-            "record-route" => HeaderName::RecordRoute,
-            "authorization" => HeaderName::Authorization,
-            "www-authenticate" => HeaderName::WwwAuthenticate,
-            "proxy-authenticate" => HeaderName::ProxyAuthenticate,
-            "proxy-authorization" => HeaderName::ProxyAuthorization,
-            "subject" | "s" => HeaderName::Subject,
-            _ => HeaderName::Other(name.into_owned()),
+        let name = bounded_header_name(name);
+        if name.eq_ignore_ascii_case("via") || name.eq_ignore_ascii_case("v") {
+            HeaderName::Via
+        } else if name.eq_ignore_ascii_case("from") || name.eq_ignore_ascii_case("f") {
+            HeaderName::From
+        } else if name.eq_ignore_ascii_case("to") || name.eq_ignore_ascii_case("t") {
+            HeaderName::To
+        } else if name.eq_ignore_ascii_case("call-id") || name.eq_ignore_ascii_case("i") {
+            HeaderName::CallId
+        } else if name.eq_ignore_ascii_case("cseq") {
+            HeaderName::CSeq
+        } else if name.eq_ignore_ascii_case("contact") || name.eq_ignore_ascii_case("m") {
+            HeaderName::Contact
+        } else if name.eq_ignore_ascii_case("max-forwards") {
+            HeaderName::MaxForwards
+        } else if name.eq_ignore_ascii_case("user-agent") {
+            HeaderName::UserAgent
+        } else if name.eq_ignore_ascii_case("content-type") || name.eq_ignore_ascii_case("c") {
+            HeaderName::ContentType
+        } else if name.eq_ignore_ascii_case("content-length") || name.eq_ignore_ascii_case("l") {
+            HeaderName::ContentLength
+        } else if name.eq_ignore_ascii_case("expires") {
+            HeaderName::Expires
+        } else if name.eq_ignore_ascii_case("route") {
+            HeaderName::Route
+        } else if name.eq_ignore_ascii_case("record-route") {
+            HeaderName::RecordRoute
+        } else if name.eq_ignore_ascii_case("authorization") {
+            HeaderName::Authorization
+        } else if name.eq_ignore_ascii_case("www-authenticate") {
+            HeaderName::WwwAuthenticate
+        } else if name.eq_ignore_ascii_case("proxy-authenticate") {
+            HeaderName::ProxyAuthenticate
+        } else if name.eq_ignore_ascii_case("proxy-authorization") {
+            HeaderName::ProxyAuthorization
+        } else if name.eq_ignore_ascii_case("subject") || name.eq_ignore_ascii_case("s") {
+            HeaderName::Subject
+        } else {
+            HeaderName::Other(name.into_owned())
         }
     }
 
@@ -249,7 +292,9 @@ impl std::hash::Hash for HeaderName {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.discriminant().hash(state);
         if let HeaderName::Other(s) = self {
-            s.to_ascii_lowercase().hash(state);
+            for b in s.as_bytes() {
+                b.to_ascii_lowercase().hash(state);
+            }
         }
     }
 }
@@ -399,6 +444,21 @@ mod tests {
         assert_eq!(a.as_str(), "X-Vendor-Tag");
         // ... but equality is case-insensitive per RFC 3261.
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn header_name_is_truncated_to_max_bytes() {
+        let long = "x".repeat(MAX_HEADER_NAME_BYTES + 100);
+        let h = HeaderName::parse(&long);
+        assert!(matches!(h, HeaderName::Other(ref s) if s.len() <= MAX_HEADER_NAME_BYTES));
+    }
+
+    #[test]
+    fn header_name_multibyte_truncation_respects_char_boundaries() {
+        // 50 three-byte characters = 150 bytes. Truncating to 128 must land
+        // on a valid UTF-8 boundary, not panic or produce invalid UTF-8.
+        let long = "中".repeat(50);
+        let _ = HeaderName::parse(&long); // must not panic
     }
 
     #[test]
