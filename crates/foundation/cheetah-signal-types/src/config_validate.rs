@@ -20,6 +20,8 @@ const MAX_JWT_STRING_BYTES: usize = 256;
 const MAX_STORAGE_PATH_BYTES: usize = 4096;
 const MAX_POSTGRES_URL_BYTES: usize = 4096;
 const MAX_STORAGE_SECRET_REF_BYTES: usize = 256;
+const MAX_STORAGE_CONNECTIONS: u32 = 10_000;
+const MAX_STORAGE_CONNECTION_TIMEOUT_MS: i64 = 300_000; // 5 minutes
 
 const MAX_MEDIA_NODE_SELECTOR_BYTES: usize = 256;
 
@@ -66,8 +68,6 @@ const MAX_ONVIF_RATE_SOURCES: usize = 100_000;
 const MAX_ONVIF_MAX_CONCURRENT_PROBES: u32 = 10_000;
 const MAX_ONVIF_ALLOWED_PORTS: usize = 64;
 const MAX_ONVIF_RATE_WINDOW_SECONDS: u64 = 24 * 60 * 60; // 1 day
-
-const MAX_STORAGE_MAX_CONNECTIONS: u32 = 10_000;
 
 const MAX_PLUGIN_INSTANCES: u32 = 10_000;
 
@@ -273,7 +273,12 @@ impl StorageConfig {
         validate_positive_u32(
             "storage.max_connections",
             self.max_connections,
-            MAX_STORAGE_MAX_CONNECTIONS,
+            MAX_STORAGE_CONNECTIONS,
+        )?;
+        validate_positive_i64(
+            "storage.connection_timeout_ms",
+            self.connection_timeout_ms.as_millis(),
+            MAX_STORAGE_CONNECTION_TIMEOUT_MS,
         )?;
         Ok(())
     }
@@ -632,6 +637,52 @@ mod tests {
     }
 
     #[test]
+    fn storage_config_rejects_zero_max_connections() {
+        let config = StorageConfig {
+            max_connections: 0,
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn storage_config_rejects_excessive_max_connections() {
+        let config = StorageConfig {
+            max_connections: MAX_STORAGE_CONNECTIONS + 1,
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn storage_config_rejects_zero_connection_timeout() {
+        let config = StorageConfig {
+            connection_timeout_ms: DurationMs::from_millis(0),
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn storage_config_rejects_excessive_connection_timeout() {
+        let config = StorageConfig {
+            connection_timeout_ms: DurationMs::from_millis(MAX_STORAGE_CONNECTION_TIMEOUT_MS + 1),
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn storage_config_limits_are_accepted() {
+        let config = StorageConfig {
+            max_connections: MAX_STORAGE_CONNECTIONS,
+            connection_timeout_ms: DurationMs::from_millis(MAX_STORAGE_CONNECTION_TIMEOUT_MS),
+            ..Default::default()
+        };
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
     fn media_config_rejects_long_selector() {
         let config = MediaConfig {
             default_media_node_selector: "x".repeat(MAX_MEDIA_NODE_SELECTOR_BYTES + 1),
@@ -745,7 +796,7 @@ mod tests {
     #[test]
     fn storage_config_rejects_excessive_max_connections() {
         let config = StorageConfig {
-            max_connections: MAX_STORAGE_MAX_CONNECTIONS + 1,
+            max_connections: MAX_STORAGE_CONNECTIONS + 1,
             ..Default::default()
         };
         assert!(config.validate().is_err());

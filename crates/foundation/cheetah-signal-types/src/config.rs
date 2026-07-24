@@ -183,7 +183,9 @@ impl SignalConfig {
                 ));
             }
         }
-        if !(0.0..=1.0).contains(&self.observability.diagnostic_sample_rate) {
+        if self.observability.diagnostic_sample_rate < 0.0
+            || self.observability.diagnostic_sample_rate > 1.0
+        {
             return Err(SignalError::new(
                 SignalErrorKind::InvalidArgument,
                 "observability.diagnostic_sample_rate must be in [0.0, 1.0]",
@@ -197,13 +199,6 @@ impl SignalConfig {
                 "observability.diagnostic_max_duration_ms must be greater than zero when sampling is enabled",
             ));
         }
-        if self.storage.max_connections == 0 {
-            return Err(SignalError::new(
-                SignalErrorKind::InvalidArgument,
-                "storage.max_connections must be greater than zero",
-            ));
-        }
-
         let inferred = self.infer_deployment_profile()?;
         match inferred {
             DeploymentProfile::Edge => {
