@@ -4,6 +4,7 @@
 //! device information with bounded concurrency, and registers/upgrades the
 //! discovered cameras through the application `DeviceService`.
 
+use cheetah_domain::{MAX_DEVICE_NAME_BYTES, MAX_METADATA_VALUE_BYTES};
 use cheetah_http_api::state::ApiState;
 use cheetah_onvif_driver_tokio::{DriverConfig, OnvifHttpDriver, probe_once};
 use cheetah_onvif_module::DeviceInformation;
@@ -14,6 +15,7 @@ use cheetah_signal_application::{
 use cheetah_signal_types::config::OnvifConfig;
 use cheetah_signal_types::{
     CorrelationId, MessageId, NodeId, Principal, PrincipalKind, RequestContext, TenantId,
+    clamp_str, clamp_string_bytes,
 };
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -30,6 +32,16 @@ const MAX_DISCOVERY_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 fn clamp_discovery_interval(ms: u64) -> Duration {
     Duration::from_millis(ms).min(MAX_DISCOVERY_INTERVAL)
 }
+
+/// Maximum bytes of an XAddr or endpoint reference that are emitted into logs.
+/// Keeps discovery warning/info lines bounded even if a device advertises a
+/// huge address or reference.
+const MAX_LOG_XADDR_BYTES: usize = 256;
+const MAX_LOG_ENDPOINT_REF_BYTES: usize = 256;
+
+/// Maximum byte length of an ONVIF endpoint reference accepted for provisioning.
+/// Matches `ProtocolIdentity` so the device can be registered without truncation.
+const MAX_ENDPOINT_REF_BYTES: usize = 256;
 
 /// Starts a periodic ONVIF discovery worker.
 ///
@@ -139,7 +151,14 @@ async fn run_discovery_sweep(
         if cancel.is_cancelled() {
             break;
         }
-        let endpoint_ref = m.endpoint_reference.0.to_string();
+        if m.endpoint_reference.0.len() > MAX_ENDPOINT_REF_BYTES {
+            warn!(
+                endpoint_ref = %clamp_str(&m.endpoint_reference.0, MAX_LOG_ENDPOINT_REF_BYTES),
+                "onvif endpoint reference too long; skipping"
+            );
+            continue;
+        }
+        let endpoint_ref = m.endpoint_reference.0;
         let xaddrs = m.x_addrs.0;
         let permit = semaphore.clone();
         let driver = driver.clone();
@@ -166,11 +185,18 @@ async fn run_discovery_sweep(
                 {
                     Ok(()) => return,
                     Err(e) => {
-                        warn!(xaddr = %xaddr, error = %e, "onvif xaddr provisioning attempt failed");
+                        warn!(
+                            xaddr = %clamp_str(&xaddr, MAX_LOG_XADDR_BYTES),
+                            error = %e,
+                            "onvif xaddr provisioning attempt failed"
+                        );
                     }
                 }
             }
-            warn!(endpoint_ref = %endpoint_ref, "all onvif xaddrs failed for device");
+            warn!(
+                endpoint_ref = %clamp_str(&endpoint_ref, MAX_LOG_ENDPOINT_REF_BYTES),
+                "all onvif xaddrs failed for device"
+            );
         });
     }
 
@@ -209,24 +235,39 @@ async fn provision_device(
 
     let name = device_name(&info, endpoint_ref);
     let mut metadata = BTreeMap::new();
-    metadata.insert("endpoint".to_string(), xaddr.to_string());
+    metadata.insert(
+        "endpoint".to_string(),
+        clamp_string_bytes(xaddr.to_string(), MAX_METADATA_VALUE_BYTES),
+    );
     if !info.manufacturer.is_empty() {
-        metadata.insert("manufacturer".to_string(), info.manufacturer.clone());
+        metadata.insert(
+            "manufacturer".to_string(),
+            clamp_string_bytes(info.manufacturer.clone(), MAX_METADATA_VALUE_BYTES),
+        );
     }
     if !info.model.is_empty() {
-        metadata.insert("model".to_string(), info.model.clone());
+        metadata.insert(
+            "model".to_string(),
+            clamp_string_bytes(info.model.clone(), MAX_METADATA_VALUE_BYTES),
+        );
     }
     if !info.firmware_version.is_empty() {
         metadata.insert(
             "firmware_version".to_string(),
-            info.firmware_version.clone(),
+            clamp_string_bytes(info.firmware_version.clone(), MAX_METADATA_VALUE_BYTES),
         );
     }
     if !info.serial_number.is_empty() {
-        metadata.insert("serial_number".to_string(), info.serial_number.clone());
+        metadata.insert(
+            "serial_number".to_string(),
+            clamp_string_bytes(info.serial_number.clone(), MAX_METADATA_VALUE_BYTES),
+        );
     }
     if !info.hardware_id.is_empty() {
-        metadata.insert("hardware_id".to_string(), info.hardware_id.clone());
+        metadata.insert(
+            "hardware_id".to_string(),
+            clamp_string_bytes(info.hardware_id.clone(), MAX_METADATA_VALUE_BYTES),
+        );
     }
 
     let capabilities = Some(vec![CapabilityDto {
@@ -290,7 +331,11 @@ async fn provision_device(
         )
         .await?;
 
-    info!(%device.device.device_id, xaddr = %xaddr, "onvif device provisioned");
+    info!(
+        %device.device.device_id,
+        xaddr = %clamp_str(xaddr, MAX_LOG_XADDR_BYTES),
+        "onvif device provisioned"
+    );
     Ok(())
 }
 
@@ -311,11 +356,12 @@ fn device_name(info: &DeviceInformation, fallback: &str) -> String {
     if !info.serial_number.is_empty() {
         parts.push(info.serial_number.as_str());
     }
-    if parts.is_empty() {
+    let name = if parts.is_empty() {
         fallback.to_string()
     } else {
         parts.join(" ")
-    }
+    };
+    cheetah_signal_types::clamp_string_bytes(name, MAX_DEVICE_NAME_BYTES)
 }
 
 fn build_context(
@@ -352,5 +398,33 @@ mod tests {
             Duration::from_millis(5_000)
         );
         assert_eq!(clamp_discovery_interval(u64::MAX), MAX_DISCOVERY_INTERVAL);
+    }
+
+    #[test]
+    fn device_name_clamps_long_concatenated_fields() {
+        let info = DeviceInformation {
+            manufacturer: "a".repeat(600),
+            model: "b".repeat(600),
+            serial_number: "c".repeat(600),
+            ..Default::default()
+        };
+        let name = device_name(&info, "fallback");
+        assert_eq!(name.len(), MAX_DEVICE_NAME_BYTES);
+        // UTF-8 boundary safety: a trailing multi-byte character is not split.
+        assert!(name.is_char_boundary(name.len()));
+    }
+
+    #[test]
+    fn device_name_uses_fallback_when_all_fields_empty() {
+        let info = DeviceInformation::default();
+        assert_eq!(device_name(&info, "fallback"), "fallback");
+    }
+
+    #[test]
+    fn clamp_str_trims_xaddr_to_log_limit_without_splitting_chars() {
+        let xaddr = "http://".to_string() + &"a".repeat(500);
+        let clamped = clamp_str(&xaddr, MAX_LOG_XADDR_BYTES);
+        assert_eq!(clamped.len(), MAX_LOG_XADDR_BYTES);
+        assert!(clamped.is_char_boundary(clamped.len()));
     }
 }

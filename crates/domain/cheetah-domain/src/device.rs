@@ -21,9 +21,9 @@ pub(crate) const MAX_METADATA_KEYS: usize = 64;
 /// Maximum length of a metadata key in bytes.
 pub(crate) const MAX_METADATA_KEY_BYTES: usize = 128;
 /// Maximum length of a metadata value in bytes.
-pub(crate) const MAX_METADATA_VALUE_BYTES: usize = 4096;
+pub const MAX_METADATA_VALUE_BYTES: usize = 4096;
 /// Maximum length of a device display name in bytes.
-pub(crate) const MAX_DEVICE_NAME_BYTES: usize = 1024;
+pub const MAX_DEVICE_NAME_BYTES: usize = 1024;
 /// Maximum length of a device authority in bytes.
 pub(crate) const MAX_DEVICE_AUTHORITY_BYTES: usize = 256;
 /// Maximum length of an online/offline reason in bytes.

@@ -45,7 +45,8 @@ pub use compatibility::{
     MEDIA_STATUS_STOPPED_NOTIFY_TYPE, MediaStatusOutcome, MediaStatusOverride, SdpMediaOverride,
 };
 pub use device::{
-    Capability, CapabilityValue, Connectivity, Device, DeviceKind, DeviceLifecycle, Protocol,
+    Capability, CapabilityValue, Connectivity, Device, DeviceKind, DeviceLifecycle,
+    MAX_DEVICE_NAME_BYTES, MAX_METADATA_VALUE_BYTES, Protocol,
 };
 pub use error::DomainError;
 pub use event::DomainEvent;
