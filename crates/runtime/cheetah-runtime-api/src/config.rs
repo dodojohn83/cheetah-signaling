@@ -2,6 +2,31 @@
 
 use crate::RuntimeError;
 
+/// Maximum number of fixed shard workers.
+const MAX_SHARD_COUNT: usize = 1024;
+/// Maximum bounded capacity of a shard MPSC mailbox.
+const MAX_MAILBOX_CAPACITY: usize = 1_000_000;
+/// Maximum bounded capacity of the output channel.
+const MAX_OUTPUT_CHANNEL_CAPACITY: usize = 1_000_000;
+/// Maximum bounded capacity of the timer command MPSC channel.
+const MAX_TIMER_COMMAND_CHANNEL_CAPACITY: usize = 1_000_000;
+/// Maximum messages processed per shard poll.
+const MAX_MESSAGES_PER_POLL: usize = 1_000_000;
+/// Maximum consecutive messages for a single device per poll.
+const MAX_CONSECUTIVE_PER_DEVICE: usize = 1_000_000;
+/// Maximum number of timers waiting to be dispatched to a shard.
+const MAX_PENDING_DISPATCH: usize = 1_000_000;
+/// Maximum number of sessions held in the session registry.
+const MAX_SESSIONS: usize = 10_000_000;
+/// Maximum idle timeout for an actor before lazy eviction (24 hours).
+const MAX_ACTOR_IDLE_TIMEOUT_MS: u64 = 86_400_000;
+/// Maximum number of distinct admission rate buckets.
+const MAX_ADMISSION_KEYS: usize = 1_000_000;
+/// Maximum number of coalescer tracked keys.
+const MAX_COALESCE_TRACKED: usize = 1_000_000;
+/// Maximum dead-letter queue capacity.
+const MAX_DEAD_LETTER_CAPACITY: usize = 1_000_000;
+
 /// Configuration for the runtime, sharding, timer wheel, and admission.
 #[derive(Clone, Debug)]
 pub struct RuntimeConfig {
@@ -94,21 +119,24 @@ impl AdmissionPolicyConfig {
                 "admission.rate_refill_tokens_per_sec must be greater than 0".into(),
             ));
         }
-        if self.rate_max_keys == 0 {
-            return Err(RuntimeError::InvalidArgument(
-                "admission.rate_max_keys must be greater than 0".into(),
-            ));
-        }
-        if self.coalesce_max_tracked == 0 {
-            return Err(RuntimeError::InvalidArgument(
-                "admission.coalesce_max_tracked must be greater than 0".into(),
-            ));
-        }
-        if self.dead_letter_capacity == 0 {
-            return Err(RuntimeError::InvalidArgument(
-                "admission.dead_letter_capacity must be greater than 0".into(),
-            ));
-        }
+        validate_in_range(
+            "admission.rate_max_keys",
+            self.rate_max_keys,
+            1,
+            MAX_ADMISSION_KEYS,
+        )?;
+        validate_in_range(
+            "admission.coalesce_max_tracked",
+            self.coalesce_max_tracked,
+            1,
+            MAX_COALESCE_TRACKED,
+        )?;
+        validate_in_range(
+            "admission.dead_letter_capacity",
+            self.dead_letter_capacity,
+            1,
+            MAX_DEAD_LETTER_CAPACITY,
+        )?;
         if self.backlog_high_watermark == 0 {
             return Err(RuntimeError::InvalidArgument(
                 "admission.backlog_high_watermark must be greater than 0".into(),
@@ -142,56 +170,68 @@ impl Default for RuntimeConfig {
 }
 
 impl RuntimeConfig {
-    /// Validates that all configured bounds are greater than zero.
+    /// Validates that all configured bounds are within allowed ranges.
     pub fn validate(&self) -> Result<(), RuntimeError> {
-        if self.shard_count == 0 {
-            return Err(RuntimeError::InvalidArgument(
-                "shard_count must be greater than 0".into(),
-            ));
-        }
-        if self.shard_mailbox_capacity == 0 {
-            return Err(RuntimeError::InvalidArgument(
-                "shard_mailbox_capacity must be greater than 0".into(),
-            ));
-        }
-        if self.output_channel_capacity == 0 {
-            return Err(RuntimeError::InvalidArgument(
-                "output_channel_capacity must be greater than 0".into(),
-            ));
-        }
-        if self.timer_command_channel_capacity == 0 {
-            return Err(RuntimeError::InvalidArgument(
-                "timer_command_channel_capacity must be greater than 0".into(),
-            ));
-        }
+        validate_in_range("shard_count", self.shard_count, 1, MAX_SHARD_COUNT)?;
+        validate_in_range(
+            "shard_mailbox_capacity",
+            self.shard_mailbox_capacity,
+            1,
+            MAX_MAILBOX_CAPACITY,
+        )?;
+        validate_in_range(
+            "output_channel_capacity",
+            self.output_channel_capacity,
+            1,
+            MAX_OUTPUT_CHANNEL_CAPACITY,
+        )?;
+        validate_in_range(
+            "timer_command_channel_capacity",
+            self.timer_command_channel_capacity,
+            1,
+            MAX_TIMER_COMMAND_CHANNEL_CAPACITY,
+        )?;
         if self.timer_tick_resolution_ms == 0 {
             return Err(RuntimeError::InvalidArgument(
                 "timer_tick_resolution_ms must be greater than 0".into(),
             ));
         }
-        if self.max_messages_per_poll == 0 {
-            return Err(RuntimeError::InvalidArgument(
-                "max_messages_per_poll must be greater than 0".into(),
-            ));
-        }
-        if self.max_consecutive_per_device == 0 {
-            return Err(RuntimeError::InvalidArgument(
-                "max_consecutive_per_device must be greater than 0".into(),
-            ));
-        }
-        if self.max_pending_dispatch == 0 {
-            return Err(RuntimeError::InvalidArgument(
-                "max_pending_dispatch must be greater than 0".into(),
-            ));
-        }
-        if self.max_sessions == 0 {
-            return Err(RuntimeError::InvalidArgument(
-                "max_sessions must be greater than 0".into(),
-            ));
+        validate_in_range(
+            "max_messages_per_poll",
+            self.max_messages_per_poll,
+            1,
+            MAX_MESSAGES_PER_POLL,
+        )?;
+        validate_in_range(
+            "max_consecutive_per_device",
+            self.max_consecutive_per_device,
+            1,
+            MAX_CONSECUTIVE_PER_DEVICE,
+        )?;
+        validate_in_range(
+            "max_pending_dispatch",
+            self.max_pending_dispatch,
+            1,
+            MAX_PENDING_DISPATCH,
+        )?;
+        validate_in_range("max_sessions", self.max_sessions, 1, MAX_SESSIONS)?;
+        if self.actor_idle_timeout_ms > MAX_ACTOR_IDLE_TIMEOUT_MS {
+            return Err(RuntimeError::InvalidArgument(format!(
+                "actor_idle_timeout_ms must not exceed {MAX_ACTOR_IDLE_TIMEOUT_MS}"
+            )));
         }
         self.admission.validate()?;
         Ok(())
     }
+}
+
+fn validate_in_range(name: &str, value: usize, min: usize, max: usize) -> Result<(), RuntimeError> {
+    if value < min || value > max {
+        return Err(RuntimeError::InvalidArgument(format!(
+            "{name} must be between {min} and {max}"
+        )));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -217,6 +257,105 @@ mod tests {
     fn zero_capacity_is_invalid() {
         let config = RuntimeConfig {
             max_sessions: 0,
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn shard_count_above_max_is_invalid() {
+        let config = RuntimeConfig {
+            shard_count: MAX_SHARD_COUNT + 1,
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn shard_count_at_max_is_valid() {
+        let config = RuntimeConfig {
+            shard_count: MAX_SHARD_COUNT,
+            ..Default::default()
+        };
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn mailbox_capacity_above_max_is_invalid() {
+        let config = RuntimeConfig {
+            shard_mailbox_capacity: MAX_MAILBOX_CAPACITY + 1,
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn max_messages_per_poll_above_max_is_invalid() {
+        let config = RuntimeConfig {
+            max_messages_per_poll: MAX_MESSAGES_PER_POLL + 1,
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn max_pending_dispatch_above_max_is_invalid() {
+        let config = RuntimeConfig {
+            max_pending_dispatch: MAX_PENDING_DISPATCH + 1,
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn max_sessions_above_max_is_invalid() {
+        let config = RuntimeConfig {
+            max_sessions: MAX_SESSIONS + 1,
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn actor_idle_timeout_above_max_is_invalid() {
+        let config = RuntimeConfig {
+            actor_idle_timeout_ms: MAX_ACTOR_IDLE_TIMEOUT_MS + 1,
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn admission_rate_max_keys_above_max_is_invalid() {
+        let config = RuntimeConfig {
+            admission: AdmissionPolicyConfig {
+                rate_max_keys: MAX_ADMISSION_KEYS + 1,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn admission_coalesce_max_tracked_above_max_is_invalid() {
+        let config = RuntimeConfig {
+            admission: AdmissionPolicyConfig {
+                coalesce_max_tracked: MAX_COALESCE_TRACKED + 1,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn admission_dead_letter_capacity_above_max_is_invalid() {
+        let config = RuntimeConfig {
+            admission: AdmissionPolicyConfig {
+                dead_letter_capacity: MAX_DEAD_LETTER_CAPACITY + 1,
+                ..Default::default()
+            },
             ..Default::default()
         };
         assert!(config.validate().is_err());
