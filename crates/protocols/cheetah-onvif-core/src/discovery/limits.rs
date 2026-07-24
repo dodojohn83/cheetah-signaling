@@ -161,11 +161,11 @@ impl LimitTracker {
     pub fn start(&mut self) -> OnvifResult<()> {
         self.nodes = self.nodes.saturating_add(1);
         if self.nodes > self.limits.max_xml_nodes {
-            return Err(OnvifError::LimitExceeded("max xml nodes".to_string()));
+            return Err(OnvifError::limit_exceeded("max xml nodes".to_string()));
         }
         self.depth = self.depth.saturating_add(1);
         if self.depth > self.limits.max_xml_depth {
-            return Err(OnvifError::LimitExceeded("max xml depth".to_string()));
+            return Err(OnvifError::limit_exceeded("max xml depth".to_string()));
         }
         Ok(())
     }
@@ -174,7 +174,7 @@ impl LimitTracker {
     pub fn empty(&mut self) -> OnvifResult<()> {
         self.nodes = self.nodes.saturating_add(1);
         if self.nodes > self.limits.max_xml_nodes {
-            return Err(OnvifError::LimitExceeded("max xml nodes".to_string()));
+            return Err(OnvifError::limit_exceeded("max xml nodes".to_string()));
         }
         Ok(())
     }
@@ -188,7 +188,7 @@ impl LimitTracker {
 /// Returns an error if `body.len()` exceeds the configured maximum.
 pub fn check_datagram_size(body: &str, limits: &DiscoveryLimits) -> OnvifResult<()> {
     if body.len() > limits.max_datagram_bytes {
-        return Err(OnvifError::LimitExceeded(
+        return Err(OnvifError::limit_exceeded(
             "discovery datagram too large".to_string(),
         ));
     }

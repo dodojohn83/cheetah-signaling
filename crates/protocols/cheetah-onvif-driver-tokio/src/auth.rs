@@ -79,8 +79,8 @@ pub fn inject_username_token(
         return Ok(out);
     }
 
-    Err(DriverError::Config(
-        "SOAP envelope has no Header element for UsernameToken injection".into(),
+    Err(DriverError::config(
+        "SOAP envelope has no Header element for UsernameToken injection",
     ))
 }
 

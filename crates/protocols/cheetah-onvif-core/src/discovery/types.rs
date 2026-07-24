@@ -122,7 +122,7 @@ pub struct Bye {
 pub(crate) fn validate_epr(s: &str) -> OnvifResult<String> {
     let trimmed = s.trim();
     if trimmed.is_empty() {
-        return Err(OnvifError::MissingField("EndpointReference".to_string()));
+        return Err(OnvifError::missing_field("EndpointReference".to_string()));
     }
     Ok(trimmed.to_string())
 }

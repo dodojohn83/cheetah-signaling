@@ -94,7 +94,7 @@ fn empty_body(dialect: MediaDialect, local: &str) -> Result<String, OnvifService
     element.push_attribute((xmlns.as_str(), dialect.ns()));
     writer.write_event(Event::Empty(element))?;
     String::from_utf8(cursor.into_inner())
-        .map_err(|e| OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string())))
+        .map_err(|e| OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::xml(e)))
 }
 
 fn token_body(
@@ -118,7 +118,7 @@ fn token_body(
     writer.write_event(Event::End(BytesEnd::new(&body_name)))?;
 
     String::from_utf8(cursor.into_inner())
-        .map_err(|e| OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string())))
+        .map_err(|e| OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::xml(e)))
 }
 
 /// Builds a `GetProfiles` request for Media1 or Media2.
@@ -167,9 +167,8 @@ pub fn get_stream_uri_request_media1(
 
     writer.write_event(Event::End(BytesEnd::new("trt:GetStreamUri")))?;
 
-    let body = String::from_utf8(cursor.into_inner()).map_err(|e| {
-        OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string()))
-    })?;
+    let body = String::from_utf8(cursor.into_inner())
+        .map_err(|e| OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::xml(e)))?;
     Envelope::new(GET_STREAM_URI_ACTION_M1, body)
         .with_message_id(message_id)
         .build()
@@ -196,9 +195,8 @@ pub fn get_stream_uri_request_media2(
     writer.write_event(Event::End(BytesEnd::new("tr2:ProfileToken")))?;
     writer.write_event(Event::End(BytesEnd::new("tr2:GetStreamUri")))?;
 
-    let body = String::from_utf8(cursor.into_inner()).map_err(|e| {
-        OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string()))
-    })?;
+    let body = String::from_utf8(cursor.into_inner())
+        .map_err(|e| OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::xml(e)))?;
     Envelope::new(GET_STREAM_URI_ACTION_M2, body)
         .with_message_id(message_id)
         .build()
@@ -300,7 +298,7 @@ pub fn parse_get_profiles_response(
                     && let Some(mut profile) = current.take()
                 {
                     if profile.token.is_empty() {
-                        return Err(OnvifServiceError::MissingField("Profile/@token".into()));
+                        return Err(OnvifServiceError::missing_field("Profile/@token"));
                     }
                     if profile.name.is_empty() {
                         profile.name = profile.token.clone();
@@ -326,7 +324,7 @@ pub fn parse_get_profiles_response(
             Ok(Event::Eof) => break,
             Err(e) => {
                 return Err(OnvifServiceError::Onvif(
-                    cheetah_onvif_core::OnvifError::Xml(e.to_string()),
+                    cheetah_onvif_core::OnvifError::xml(e),
                 ));
             }
             _ => {}
@@ -380,7 +378,7 @@ fn parse_media_uri(
             Ok(Event::Eof) => break,
             Err(e) => {
                 return Err(OnvifServiceError::Onvif(
-                    cheetah_onvif_core::OnvifError::Xml(e.to_string()),
+                    cheetah_onvif_core::OnvifError::xml(e),
                 ));
             }
             _ => {}
@@ -388,7 +386,7 @@ fn parse_media_uri(
     }
 
     if uri.uri.is_empty() {
-        return Err(OnvifServiceError::MissingField("Uri".into()));
+        return Err(OnvifServiceError::missing_field("Uri"));
     }
     validate_media_uri(&uri.uri, policy)?;
     Ok(uri)
@@ -400,9 +398,8 @@ fn parse_media_uri(
 /// not trigger the XAddr userinfo rejection; credentials must still be redacted
 /// before logging or northbound emission via [`redact_uri_userinfo`].
 pub fn validate_media_uri(uri: &str, base: &XAddrPolicy) -> Result<(), OnvifServiceError> {
-    let parsed = url::Url::parse(uri).map_err(|e| {
-        OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::InvalidXAddr(e.to_string()))
-    })?;
+    let parsed = url::Url::parse(uri)
+        .map_err(|e| OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::invalid_xaddr(e)))?;
     let mut policy = base.clone();
     for scheme in ["rtsp", "rtsps", "http", "https"] {
         if !policy.allowed_schemes.iter().any(|s| s == scheme) {

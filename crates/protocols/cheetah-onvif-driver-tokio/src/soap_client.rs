@@ -44,7 +44,7 @@ impl SoapClient {
             })
             .user_agent("cheetah-onvif-driver/0.1")
             .build()
-            .map_err(|e| DriverError::Http(e.to_string()))?;
+            .map_err(DriverError::http)?;
 
         Ok(Self {
             client,
@@ -89,26 +89,23 @@ impl SoapClient {
         envelope_xml: &str,
         timeout: Option<Duration>,
     ) -> DriverResult<String> {
-        let url = Url::parse(endpoint).map_err(|e| {
-            DriverError::Onvif(cheetah_onvif_core::OnvifError::InvalidXAddr(e.to_string()))
-        })?;
+        let url = Url::parse(endpoint)
+            .map_err(|e| DriverError::Onvif(cheetah_onvif_core::OnvifError::invalid_xaddr(e)))?;
         self.policy.validate(&url).map_err(DriverError::Onvif)?;
 
         let overall_timeout = timeout.unwrap_or(self.request_timeout);
         let start = std::time::Instant::now();
         let _permit = tokio::time::timeout(overall_timeout, self.permits.acquire())
             .await
-            .map_err(|_| DriverError::Timeout("request permit wait timed out".into()))?
-            .map_err(|_| DriverError::Config("request semaphore closed".into()))?;
+            .map_err(|_| DriverError::timeout("request permit wait timed out"))?
+            .map_err(|_| DriverError::config("request semaphore closed"))?;
         let elapsed = start.elapsed();
 
         let request_timeout = timeout
             .map(|t| t.saturating_sub(elapsed))
             .unwrap_or_else(|| self.request_timeout.saturating_sub(elapsed));
         if request_timeout.is_zero() {
-            return Err(DriverError::Timeout(
-                "deadline exceeded after permit wait".into(),
-            ));
+            return Err(DriverError::timeout("deadline exceeded after permit wait"));
         }
         let request = self
             .client
@@ -120,9 +117,9 @@ impl SoapClient {
 
         let response = request.send().await.map_err(|e| {
             if e.is_timeout() {
-                DriverError::Timeout(e.to_string())
+                DriverError::timeout(e)
             } else {
-                DriverError::Http(e.to_string())
+                DriverError::http(e)
             }
         })?;
 
@@ -143,7 +140,7 @@ impl SoapClient {
         let mut body_bytes = BytesMut::new();
         let mut stream = response.bytes_stream();
         while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|e| DriverError::Http(e.to_string()))?;
+            let chunk = chunk.map_err(DriverError::http)?;
             if body_bytes.len().saturating_add(chunk.len()) > self.max_response_bytes {
                 return Err(DriverError::BodyLimit {
                     limit: self.max_response_bytes,
@@ -156,7 +153,7 @@ impl SoapClient {
         if !status.is_success() {
             // SOAP Faults may still arrive with HTTP 500; surface both.
             if let Ok(fault) = soap::parse_fault(&body) {
-                return Err(DriverError::Http(format!(
+                return Err(DriverError::http(format!(
                     "SOAP Fault: code={}, reason={}",
                     fault.code, fault.reason
                 )));
@@ -171,7 +168,7 @@ impl SoapClient {
         if body.contains("Fault")
             && let Ok(fault) = soap::parse_fault(&body)
         {
-            return Err(DriverError::Http(format!(
+            return Err(DriverError::http(format!(
                 "SOAP Fault: code={}, reason={}",
                 fault.code, fault.reason
             )));
