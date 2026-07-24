@@ -45,7 +45,7 @@ pub(crate) async fn wait_for_ready(
         }
     }
 
-    Err(PluginError::Driver(format!(
+    Err(PluginError::driver(format!(
         "plugin did not become reachable at {address} within {} ms",
         startup_timeout.as_millis()
     )))

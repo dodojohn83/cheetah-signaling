@@ -245,7 +245,7 @@ mod checksum_tests {
     fn hmac_sha256_verifies_with_secret() -> Result<(), PluginError> {
         let payload = b"hello manifest";
         let mut mac = hmac::Hmac::<Sha256>::new_from_slice(b"secret")
-            .map_err(|e| PluginError::InvalidManifest(format!("invalid hmac key: {e}")))?;
+            .map_err(|e| PluginError::invalid_manifest(format!("invalid hmac key: {e}")))?;
         mac.update(payload);
         let digest = hex::encode(mac.finalize().into_bytes());
         verify_manifest_checksum(payload, "hmac-sha256", &digest, b"secret")?;

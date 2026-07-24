@@ -38,7 +38,7 @@ pub fn verify_manifest_checksum(
     secret: &[u8],
 ) -> Result<(), PluginError> {
     if algorithm.len() > MAX_ALGORITHM_BYTES {
-        return Err(PluginError::InvalidManifest(format!(
+        return Err(PluginError::invalid_manifest(format!(
             "checksum algorithm exceeds {MAX_ALGORITHM_BYTES} bytes"
         )));
     }
@@ -52,12 +52,12 @@ pub fn verify_manifest_checksum(
         hex::encode(hasher.finalize())
     } else if algorithm.eq_ignore_ascii_case("hmac-sha256") {
         let mut mac = HmacSha256::new_from_slice(secret)
-            .map_err(|e| PluginError::InvalidManifest(format!("invalid HMAC key: {e}")))?;
+            .map_err(|e| PluginError::invalid_manifest(format!("invalid HMAC key: {e}")))?;
         mac.update(payload);
         hex::encode(mac.finalize().into_bytes())
     } else {
         let display = truncate_at_char_boundary(algorithm, MAX_ALGORITHM_BYTES);
-        return Err(PluginError::InvalidManifest(format!(
+        return Err(PluginError::invalid_manifest(format!(
             "unsupported checksum algorithm: {display}"
         )));
     };

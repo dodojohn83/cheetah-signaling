@@ -62,7 +62,7 @@ impl ProtocolDriver for OnvifProtocolDriver {
         command: DriverCommand,
         _timeout: DurationMs,
     ) -> Result<(), PluginError> {
-        Err(PluginError::Unsupported(format!(
+        Err(PluginError::unsupported(format!(
             "ONVIF command {} requires cheetah-onvif-driver-tokio network binding",
             command.command_type
         )))
@@ -74,7 +74,7 @@ impl ProtocolDriver for OnvifProtocolDriver {
         _target: &str,
         _timeout: DurationMs,
     ) -> Result<CapabilityDescriptor, PluginError> {
-        Err(PluginError::Unsupported(
+        Err(PluginError::unsupported(
             "ONVIF probe requires cheetah-onvif-driver-tokio network binding".to_string(),
         ))
     }
