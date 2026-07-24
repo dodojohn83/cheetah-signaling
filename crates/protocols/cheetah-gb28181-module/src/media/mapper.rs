@@ -15,7 +15,7 @@
 //! capabilities outside the v1 contract rather than silently degrading.
 
 use super::control::PlaybackAction;
-use super::{MediaCommand, MediaError, MediaTransport};
+use super::{MAX_CODEC_BYTES, MediaCommand, MediaError, MediaTransport};
 use crate::types::DeviceId;
 use cheetah_domain::{MediaControl, MediaPurpose};
 use cheetah_gb28181_core::SipUri;
@@ -193,7 +193,7 @@ pub fn map_start(request: GbStartRequest) -> Result<MediaCommand, MediaError> {
         transport,
     } = endpoint;
 
-    match purpose {
+    let cmd = match purpose {
         GbMediaPurpose::Live => {
             let ssrc = require_video_ssrc(ssrc)?;
             Ok(MediaCommand::StartLive {
@@ -267,6 +267,11 @@ pub fn map_start(request: GbStartRequest) -> Result<MediaCommand, MediaError> {
             let codec = codec.ok_or_else(|| {
                 MediaError::Unsupported("talk requires an audio codec".to_string())
             })?;
+            if codec.len() > MAX_CODEC_BYTES {
+                return Err(MediaError::InvalidState(
+                    "codec exceeds maximum length".to_string(),
+                ));
+            }
             if !SUPPORTED_TALK_CODECS.contains(&codec.as_str()) {
                 return Err(MediaError::Unsupported(codec));
             }
@@ -291,7 +296,9 @@ pub fn map_start(request: GbStartRequest) -> Result<MediaCommand, MediaError> {
                 transport,
             })
         }
-    }
+    }?;
+    cmd.validate()?;
+    Ok(cmd)
 }
 
 /// Maps a control-plane [`MediaControl`] into a playback control command.
@@ -350,12 +357,14 @@ pub fn map_control(
         }
     };
 
-    Ok(MediaCommand::ControlPlayback {
+    let cmd = MediaCommand::ControlPlayback {
         media_session_id,
         action,
         scale,
         range,
-    })
+    };
+    cmd.validate()?;
+    Ok(cmd)
 }
 
 /// Requires a video SSRC for live/playback/download sessions.

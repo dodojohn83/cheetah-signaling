@@ -27,6 +27,7 @@ pub(super) fn on_command(
     media: &mut Gb28181Media,
     cmd: MediaCommand,
 ) -> Result<Vec<MediaOutput>, MediaError> {
+    cmd.validate()?;
     match cmd {
         MediaCommand::StartLive {
             media_session_id,
