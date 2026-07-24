@@ -161,7 +161,7 @@ pub enum ResponseClass {
 pub type Body = Vec<u8>;
 
 /// A SIP request or response.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub enum SipMessage {
     /// SIP request.
     Request {
@@ -282,6 +282,33 @@ fn branch_value(via: &str) -> Option<&str> {
     None
 }
 
+impl std::fmt::Debug for SipMessage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SipMessage::Request {
+                line,
+                headers,
+                body,
+            } => f
+                .debug_struct("Request")
+                .field("line", line)
+                .field("headers", headers)
+                .field("body", &body.len())
+                .finish(),
+            SipMessage::Response {
+                line,
+                headers,
+                body,
+            } => f
+                .debug_struct("Response")
+                .field("line", line)
+                .field("headers", headers)
+                .field("body", &body.len())
+                .finish(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -385,5 +412,31 @@ mod tests {
             msg.content_length().unwrap_err().kind,
             SipErrorKind::InvalidHeader
         );
+    }
+
+    #[test]
+    fn debug_redacts_body_and_sensitive_headers() {
+        let mut headers = SipHeaders::new();
+        headers.append(HeaderName::CallId, HeaderValue::new("call-1"));
+        headers.append(
+            HeaderName::Authorization,
+            HeaderValue::new("Digest response=\"deadbeef\""),
+        );
+
+        let body = b"<?xml version=\"1.0\"?><root>secret payload</root>".to_vec();
+        let msg = SipMessage::Request {
+            line: RequestLine::new(
+                Method::Invite,
+                SipUri::parse("sip:user@example.com").unwrap(),
+            ),
+            headers,
+            body,
+        };
+
+        let debug = format!("{:?}", msg);
+        assert!(debug.contains("call-1"));
+        assert!(!debug.contains("deadbeef"));
+        assert!(!debug.contains("secret payload"));
+        assert!(debug.contains("body: "));
     }
 }
