@@ -4,6 +4,10 @@ use super::element::XmlElement;
 use super::limits::XmlLimits;
 use super::reader::parse_xml;
 use crate::error::AccessError;
+use cheetah_signal_types::clamp_str;
+
+/// Maximum byte length of a single `RecordInfo` string field.
+const MAX_RECORD_INFO_FIELD_BYTES: usize = 4096;
 
 /// Parsed content of a GB28181 `RecordInfo` response.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -45,6 +49,46 @@ pub struct RecordItem {
     pub recorder_id: Option<String>,
     /// File size.
     pub file_size: Option<String>,
+}
+
+impl RecordItem {
+    /// Returns a copy with every string field truncated to
+    /// [`MAX_RECORD_INFO_FIELD_BYTES`] at a UTF-8 boundary.
+    pub fn clamp_fields(&self) -> Self {
+        fn clamp_opt(s: &Option<String>) -> Option<String> {
+            s.as_ref()
+                .map(|v| clamp_str(v, MAX_RECORD_INFO_FIELD_BYTES))
+        }
+        Self {
+            device_id: clamp_str(&self.device_id, MAX_RECORD_INFO_FIELD_BYTES),
+            name: clamp_opt(&self.name),
+            file_path: clamp_opt(&self.file_path),
+            start_time: clamp_opt(&self.start_time),
+            end_time: clamp_opt(&self.end_time),
+            secrecy: clamp_opt(&self.secrecy),
+            record_type: clamp_opt(&self.record_type),
+            recorder_id: clamp_opt(&self.recorder_id),
+            file_size: clamp_opt(&self.file_size),
+        }
+    }
+}
+
+impl RecordInfoResponse {
+    /// Returns a copy with `SN`, `DeviceID`, `Name` and all item fields clamped
+    /// to [`MAX_RECORD_INFO_FIELD_BYTES`].
+    pub fn clamp_fields(&self) -> Self {
+        Self {
+            sn: clamp_str(&self.sn, MAX_RECORD_INFO_FIELD_BYTES),
+            device_id: clamp_str(&self.device_id, MAX_RECORD_INFO_FIELD_BYTES),
+            name: self
+                .name
+                .as_ref()
+                .map(|v| clamp_str(v, MAX_RECORD_INFO_FIELD_BYTES)),
+            sum_num: self.sum_num,
+            num: self.num,
+            items: self.items.iter().map(|i| i.clamp_fields()).collect(),
+        }
+    }
 }
 
 /// Parses a `RecordInfo` response body.
@@ -104,7 +148,8 @@ pub(crate) fn extract_record_info(root: &XmlElement) -> Result<RecordInfoRespons
         sum_num,
         num,
         items,
-    })
+    }
+    .clamp_fields())
 }
 
 fn parse_item(item: &XmlElement) -> Option<RecordItem> {
@@ -170,5 +215,54 @@ mod tests {
         assert_eq!(info.items[0].device_id, "34020000001320000001");
         assert_eq!(info.items[0].file_path.as_deref(), Some("/path/to/file"));
         assert_eq!(info.items[0].file_size.as_deref(), Some("1024"));
+    }
+
+    #[test]
+    fn record_info_clamps_oversized_fields() {
+        let long = "x".repeat(8192);
+        let item = RecordItem {
+            device_id: long.clone(),
+            name: Some(long.clone()),
+            file_path: Some(long.clone()),
+            start_time: Some(long.clone()),
+            end_time: Some(long.clone()),
+            secrecy: Some(long.clone()),
+            record_type: Some(long.clone()),
+            recorder_id: Some(long.clone()),
+            file_size: Some(long.clone()),
+        };
+        let info = RecordInfoResponse {
+            sn: long.clone(),
+            device_id: long.clone(),
+            name: Some(long.clone()),
+            sum_num: 1,
+            num: 1,
+            items: vec![item],
+        }
+        .clamp_fields();
+        assert_eq!(info.sn.len(), MAX_RECORD_INFO_FIELD_BYTES);
+        assert_eq!(info.device_id.len(), MAX_RECORD_INFO_FIELD_BYTES);
+        assert_eq!(
+            info.name.as_ref().unwrap().len(),
+            MAX_RECORD_INFO_FIELD_BYTES
+        );
+        assert_eq!(info.items.len(), 1);
+        let item = &info.items[0];
+        assert_eq!(item.device_id.len(), MAX_RECORD_INFO_FIELD_BYTES);
+        assert_eq!(
+            item.name.as_ref().unwrap().len(),
+            MAX_RECORD_INFO_FIELD_BYTES
+        );
+        assert_eq!(
+            item.file_path.as_ref().unwrap().len(),
+            MAX_RECORD_INFO_FIELD_BYTES
+        );
+        assert!(item.device_id.is_char_boundary(MAX_RECORD_INFO_FIELD_BYTES));
+        assert!(
+            item.file_path
+                .as_ref()
+                .unwrap()
+                .is_char_boundary(MAX_RECORD_INFO_FIELD_BYTES)
+        );
     }
 }
