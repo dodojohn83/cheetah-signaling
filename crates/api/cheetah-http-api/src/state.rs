@@ -227,7 +227,7 @@ impl ApiState {
     pub fn webhook_service(&self) -> Result<&WebhookService, crate::HttpError> {
         self.webhook_service
             .as_ref()
-            .ok_or_else(|| crate::HttpError::NotImplemented("webhooks not configured".to_string()))
+            .ok_or_else(|| crate::HttpError::not_implemented("webhooks not configured"))
     }
 }
 
@@ -295,13 +295,13 @@ impl ApiServer {
         let router = crate::router::build_router(state.clone());
         let addr: SocketAddr = format!("{}:{}", state.config.listen_addr, state.config.port)
             .parse()
-            .map_err(|e| crate::HttpError::Internal(format!("invalid listen address: {e}")))?;
+            .map_err(|e| crate::HttpError::internal(format!("invalid listen address: {e}")))?;
         let listener = tokio::net::TcpListener::bind(addr).await.map_err(|e| {
-            crate::HttpError::Internal(format!("failed to bind HTTP listener: {e}"))
+            crate::HttpError::internal(format!("failed to bind HTTP listener: {e}"))
         })?;
         let local_addr = listener
             .local_addr()
-            .map_err(|e| crate::HttpError::Internal(format!("failed to get local address: {e}")))?;
+            .map_err(|e| crate::HttpError::internal(format!("failed to get local address: {e}")))?;
         let (tx, rx) = tokio::sync::oneshot::channel();
         let server = axum::serve(
             listener,

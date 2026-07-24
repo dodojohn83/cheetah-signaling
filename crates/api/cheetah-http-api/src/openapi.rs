@@ -17,9 +17,9 @@ pub async fn serve_json(
 ) -> Result<Response, HttpError> {
     ctx.require_scope("viewer")?;
     let value: serde_json::Value = serde_yaml::from_str(OPENAPI_YAML)
-        .map_err(|e| HttpError::Internal(format!("failed to parse openapi spec: {e}")))?;
+        .map_err(|e| HttpError::internal(format!("failed to parse openapi spec: {e}")))?;
     let body = serde_json::to_string(&value)
-        .map_err(|e| HttpError::Internal(format!("failed to serialize openapi spec: {e}")))?;
+        .map_err(|e| HttpError::internal(format!("failed to serialize openapi spec: {e}")))?;
     Ok(([(header::CONTENT_TYPE, "application/json")], body).into_response())
 }
 

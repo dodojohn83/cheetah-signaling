@@ -202,7 +202,7 @@ pub async fn rate_limit_middleware(
     if state.rate_limiter.check(&key) {
         next.run(req).await
     } else {
-        crate::HttpError::RateLimited("too many requests".to_string()).into_response()
+        crate::HttpError::rate_limited("too many requests").into_response()
     }
 }
 
