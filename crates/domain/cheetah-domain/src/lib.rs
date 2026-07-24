@@ -56,7 +56,9 @@ pub use media_callback::{
 pub use media_client::{MediaClient, MediaSubscriptionRequest};
 pub use media_event_handler::MediaEventHandler;
 pub use media_key::MediaKey;
-pub use media_node::{MediaCapability, MediaNode, MediaNodeCapacity, MediaNodeHealth, NodeStatus};
+pub use media_node::{
+    MediaCapability, MediaNode, MediaNodeCapacity, MediaNodeHealth, MediaNodeLimits, NodeStatus,
+};
 pub use media_session::{
     MediaPurpose, MediaSession, MediaSessionDesiredState, MediaSessionError, MediaSessionState,
 };

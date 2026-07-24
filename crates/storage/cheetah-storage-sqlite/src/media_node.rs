@@ -1,7 +1,8 @@
 //! Media node repository for SQLite.
 
 use cheetah_domain::{
-    DomainEvent, MediaCapability, MediaNode, MediaNodeCapacity, MediaNodeHealth, NodeStatus,
+    DomainEvent, MediaCapability, MediaNode, MediaNodeCapacity, MediaNodeHealth, MediaNodeLimits,
+    NodeStatus,
 };
 use cheetah_signal_types::{Event, ListCursor, NodeId, Page, PageRequest, UtcTimestamp};
 use cheetah_storage_api::{MediaNodeRepository, StorageError};
@@ -140,6 +141,8 @@ impl TryFrom<MediaNodeRow> for MediaNode {
             revision: row.revision as u64,
         };
         node.recalc_health();
+        node.validate(&MediaNodeLimits::default())
+            .map_err(|e| StorageError::internal(e.to_string()))?;
         Ok(node)
     }
 }
