@@ -35,6 +35,34 @@ fn validate_scale(scale: f64) -> crate::Result<()> {
     Ok(())
 }
 
+/// Maximum relative seek offset in milliseconds.
+///
+/// This is the largest duration that fits between the `time` crate's minimum
+/// and maximum representable dates, so a media node that adds this offset to
+/// any valid `OffsetDateTime` cannot overflow the supported date range.
+const MAX_SEEK_OFFSET_MS: i64 = ((time::Date::MAX.to_julian_day() - time::Date::MIN.to_julian_day())
+    as i64)
+    * 24
+    * 60
+    * 60
+    * 1000;
+
+/// Validates that a relative seek offset is non-negative and fits within the
+/// representable `OffsetDateTime` range.
+fn validate_seek_offset(offset_ms: i64) -> crate::Result<()> {
+    if offset_ms < 0 {
+        return Err(DomainError::invalid_argument(
+            "seek offset must not be negative",
+        ));
+    }
+    if offset_ms > MAX_SEEK_OFFSET_MS {
+        return Err(DomainError::invalid_argument(
+            "seek offset exceeds the maximum representable range",
+        ));
+    }
+    Ok(())
+}
+
 /// Scope used to deduplicate operations and media sessions.
 #[derive(Clone, Debug, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct IdempotencyScope {
@@ -453,6 +481,7 @@ impl MediaControl {
     pub fn validate(&self) -> crate::Result<()> {
         match self {
             Self::Scale { value } => validate_scale(*value),
+            Self::Seek { offset_ms } => validate_seek_offset(*offset_ms),
             _ => Ok(()),
         }
     }
@@ -648,6 +677,23 @@ mod tests {
             payload.validate(),
             Err(DomainError::InvalidArgument { .. })
         ));
+    }
+
+    #[test]
+    fn media_control_seek_rejects_negative_and_out_of_range_offsets() {
+        assert!(matches!(
+            MediaControl::Seek { offset_ms: -1 }.validate(),
+            Err(DomainError::InvalidArgument { .. })
+        ));
+        assert!(matches!(
+            MediaControl::Seek {
+                offset_ms: MAX_SEEK_OFFSET_MS + 1
+            }
+            .validate(),
+            Err(DomainError::InvalidArgument { .. })
+        ));
+        assert!(MediaControl::Seek { offset_ms: 0 }.validate().is_ok());
+        assert!(MediaControl::Seek { offset_ms: 30_000 }.validate().is_ok());
     }
 
     #[test]
