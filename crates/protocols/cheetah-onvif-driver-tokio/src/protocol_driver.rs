@@ -636,10 +636,7 @@ fn clock_offset_seconds_with_local(
     system: &SystemDateAndTime,
     local_utc: time::OffsetDateTime,
 ) -> Result<i64, PluginError> {
-    let device_utc = system
-        .utc
-        .to_utc()
-        .map_err(|e| PluginError::driver(e))?;
+    let device_utc = system.utc.to_utc().map_err(PluginError::driver)?;
     Ok((device_utc - local_utc).whole_seconds())
 }
 

@@ -65,10 +65,7 @@ impl PluginError {
     }
 
     /// Creates an `IncompatibleSdk` error with bounded version strings.
-    pub fn incompatible_sdk(
-        plugin: impl std::fmt::Display,
-        host: impl std::fmt::Display,
-    ) -> Self {
+    pub fn incompatible_sdk(plugin: impl std::fmt::Display, host: impl std::fmt::Display) -> Self {
         Self::IncompatibleSdk {
             plugin: clamp_str(&plugin.to_string(), MAX_PLUGIN_ERROR_VERSION_BYTES),
             host: clamp_str(&host.to_string(), MAX_PLUGIN_ERROR_VERSION_BYTES),
@@ -125,7 +122,7 @@ mod tests {
     #[test]
     fn incompatible_sdk_versions_are_clamped() {
         let long = "x".repeat(MAX_PLUGIN_ERROR_VERSION_BYTES + 10);
-        let err = PluginError::incompatible_sdk(format!("{long}"), "0.1.0");
+        let err = PluginError::incompatible_sdk(&long, "0.1.0");
         if let PluginError::IncompatibleSdk { plugin, host } = err {
             assert_eq!(plugin.len(), MAX_PLUGIN_ERROR_VERSION_BYTES);
             assert_eq!(host, "0.1.0");

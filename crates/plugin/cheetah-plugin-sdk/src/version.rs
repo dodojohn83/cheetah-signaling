@@ -14,6 +14,9 @@ pub fn negotiate_sdk_version(
     if plugin_requirement.matches(host_version)? {
         Ok(host_version.clone())
     } else {
-        Err(PluginError::incompatible_sdk(plugin_requirement, host_version))
+        Err(PluginError::incompatible_sdk(
+            plugin_requirement,
+            host_version,
+        ))
     }
 }
