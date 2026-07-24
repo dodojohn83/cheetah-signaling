@@ -17,12 +17,14 @@ use crate::error::AccessError;
 use crate::ports::{CredentialError, CredentialProvider};
 use crate::types::DeviceId;
 use cheetah_domain::CompatibilityProfile;
-use cheetah_signal_types::{SecretStore, SignalErrorKind};
+use cheetah_signal_types::{SecretStore, SignalErrorKind, clamp_str};
 use secrecy::{ExposeSecret, SecretSlice, SecretString};
 use std::sync::Arc;
 
 /// Minimum accepted digest secret length in bytes.
 const MIN_DIGEST_SECRET_BYTES: usize = 32;
+/// Maximum byte length of a secret reference used in assembly error diagnostics.
+const MAX_ASSEMBLY_SECRET_REF_BYTES: usize = 256;
 
 /// Errors returned while assembling a GB28181 access machine from settings.
 ///
@@ -42,9 +44,30 @@ pub enum GbAssemblyError {
     /// The decoded digest secret was shorter than the minimum length.
     #[error("gb28181 digest secret ({0}) must decode to at least 32 bytes")]
     DigestSecretTooShort(String),
+    /// The configured digest secret reference is too long to be a safe lookup key.
+    #[error("gb28181 digest secret reference is too long ({0})")]
+    DigestSecretRefTooLong(String),
     /// The domain configuration was rejected by the module.
     #[error("invalid gb28181 domain config: {0}")]
     DomainConfig(#[from] AccessError),
+}
+
+impl GbAssemblyError {
+    fn digest_secret_unavailable(reference: &str) -> Self {
+        Self::DigestSecretUnavailable(clamp_str(reference, MAX_ASSEMBLY_SECRET_REF_BYTES))
+    }
+
+    fn digest_secret_not_hex(reference: &str) -> Self {
+        Self::DigestSecretNotHex(clamp_str(reference, MAX_ASSEMBLY_SECRET_REF_BYTES))
+    }
+
+    fn digest_secret_too_short(reference: &str) -> Self {
+        Self::DigestSecretTooShort(clamp_str(reference, MAX_ASSEMBLY_SECRET_REF_BYTES))
+    }
+
+    fn digest_secret_ref_too_long(reference: &str) -> Self {
+        Self::DigestSecretRefTooLong(clamp_str(reference, MAX_ASSEMBLY_SECRET_REF_BYTES))
+    }
 }
 
 /// Declarative settings for constructing a GB28181 access machine.
@@ -174,7 +197,7 @@ impl SecretStoreCredentialProvider {
     pub fn new(store: Arc<dyn SecretStore>, ref_template: Option<String>) -> Self {
         Self {
             store,
-            ref_template,
+            ref_template: ref_template.map(|t| clamp_str(&t, MAX_ASSEMBLY_SECRET_REF_BYTES)),
         }
     }
 }
@@ -239,13 +262,16 @@ fn resolve_digest_secret(
     if reference.is_empty() {
         return Err(GbAssemblyError::MissingDigestSecretRef);
     }
+    if reference.len() > MAX_ASSEMBLY_SECRET_REF_BYTES {
+        return Err(GbAssemblyError::digest_secret_ref_too_long(reference));
+    }
     let secret = store
         .get(reference)
-        .map_err(|_| GbAssemblyError::DigestSecretUnavailable(reference.to_string()))?;
+        .map_err(|_| GbAssemblyError::digest_secret_unavailable(reference))?;
     let bytes = hex::decode(secret.expose_secret().trim())
-        .map_err(|_| GbAssemblyError::DigestSecretNotHex(reference.to_string()))?;
+        .map_err(|_| GbAssemblyError::digest_secret_not_hex(reference))?;
     if bytes.len() < MIN_DIGEST_SECRET_BYTES {
-        return Err(GbAssemblyError::DigestSecretTooShort(reference.to_string()));
+        return Err(GbAssemblyError::digest_secret_too_short(reference));
     }
     Ok(SecretSlice::from(bytes))
 }
@@ -370,6 +396,32 @@ mod tests {
     }
 
     #[test]
+    fn unavailable_secret_error_clamps_oversized_reference() {
+        let store = MapSecretStore::arc(&[]);
+        let long_ref = "secret://".to_string() + &"x".repeat(1024);
+        let settings = GbAccessSettings::new("3402000000", &long_ref);
+        match build_access(&settings, &store) {
+            Err(GbAssemblyError::DigestSecretRefTooLong(reference)) => {
+                assert_eq!(reference.len(), MAX_ASSEMBLY_SECRET_REF_BYTES);
+                assert!(reference.is_char_boundary(reference.len()));
+            }
+            other => panic!("expected DigestSecretRefTooLong, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_domain_config_rejects_oversized_realm() {
+        let store = MapSecretStore::arc(&[("secret://digest", &valid_secret_hex())]);
+        let long_realm = "r".repeat(128);
+        let settings =
+            GbAccessSettings::new("3402000000", "secret://digest").with_realm(long_realm);
+        assert!(matches!(
+            build_domain_config(&settings, &store),
+            Err(GbAssemblyError::DomainConfig(AccessError::Internal(_)))
+        ));
+    }
+
+    #[test]
     fn credential_provider_substitutes_device_id_and_maps_not_found() {
         let store = MapSecretStore::arc(&[("gb/dev/34020000001320000001", "pw")]);
         let provider =
@@ -384,6 +436,26 @@ mod tests {
     fn credential_provider_without_template_returns_none() {
         let store = MapSecretStore::arc(&[]);
         let provider = SecretStoreCredentialProvider::new(store, None);
+        let device = DeviceId::new("34020000001320000001").expect("valid device id");
+        assert!(provider.password_for(&device).unwrap().is_none());
+    }
+
+    #[test]
+    fn build_access_rejects_oversized_digest_secret_ref() {
+        let store = MapSecretStore::arc(&[]);
+        let long_ref = "x".repeat(1024);
+        let settings = GbAccessSettings::new("3402000000", &long_ref);
+        assert!(matches!(
+            build_access(&settings, &store),
+            Err(GbAssemblyError::DigestSecretRefTooLong(_))
+        ));
+    }
+
+    #[test]
+    fn credential_provider_clamps_oversized_password_ref_template() {
+        let store = MapSecretStore::arc(&[]);
+        let long_template = "gb/dev/{device_id}".to_string() + &"x".repeat(1024);
+        let provider = SecretStoreCredentialProvider::new(store, Some(long_template));
         let device = DeviceId::new("34020000001320000001").expect("valid device id");
         assert!(provider.password_for(&device).unwrap().is_none());
     }

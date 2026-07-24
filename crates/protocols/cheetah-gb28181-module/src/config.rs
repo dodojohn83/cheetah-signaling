@@ -7,6 +7,9 @@ use cheetah_gb28181_core::DigestAlgorithm;
 use secrecy::{ExposeSecret, SecretSlice};
 use std::fmt;
 
+/// Maximum byte length of the SIP realm advertised in digest challenges.
+const MAX_REALM_BYTES: usize = 64;
+
 /// Character-set handling for GB28181 XML bodies.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CharsetPolicy {
@@ -71,12 +74,18 @@ impl Gb28181DomainConfig {
         // Consumes the secret into a zeroizing SecretSlice immediately.
         let digest_secret = digest_secret.into();
         let domain_id = DomainId::new(domain_id).ok_or(AccessError::InvalidDomainId)?;
+        let realm = realm.as_ref();
+        if realm.len() > MAX_REALM_BYTES {
+            return Err(AccessError::Internal(
+                "realm exceeds maximum length".to_string(),
+            ));
+        }
         if digest_secret.expose_secret().len() < MIN_SECRET_LEN {
             return Err(AccessError::Internal("digest secret too short".to_string()));
         }
         Ok(Self {
             domain_id,
-            realm: realm.as_ref().to_string(),
+            realm: realm.to_string(),
             digest_secret,
             allow_md5: false,
             preferred_algorithm: DigestAlgorithm::Sha256,
