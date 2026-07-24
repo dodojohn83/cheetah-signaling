@@ -2,6 +2,21 @@
 
 use std::fmt;
 
+/// Maximum byte length of a `SipError` diagnostic message.
+const MAX_MESSAGE_BYTES: usize = 1024;
+
+/// Truncates `s` to at most `max` bytes, never splitting a multi-byte character.
+fn clamp_string_bytes(s: String, max: usize) -> String {
+    if s.len() <= max {
+        return s;
+    }
+    let mut end = max;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    s[..end].to_string()
+}
+
 /// Reason for a SIP message error.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SipErrorKind {
@@ -52,11 +67,14 @@ pub struct SipError {
 
 impl SipError {
     /// Creates a new SIP error.
+    ///
+    /// The diagnostic message is clamped to [`MAX_MESSAGE_BYTES`] so upstream
+    /// errors cannot inflate logs or downstream problem details.
     pub fn new(kind: SipErrorKind, offset: Option<usize>, message: impl Into<String>) -> Self {
         Self {
             kind,
             offset,
-            message: message.into(),
+            message: clamp_string_bytes(message.into(), MAX_MESSAGE_BYTES),
         }
     }
 }
@@ -72,3 +90,23 @@ impl fmt::Display for SipError {
 }
 
 impl std::error::Error for SipError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn message_is_clamped_to_max_bytes() {
+        let huge = "x".repeat(2000);
+        let err = SipError::new(SipErrorKind::InvalidStartLine, Some(0), huge);
+        assert!(err.message.len() <= MAX_MESSAGE_BYTES);
+    }
+
+    #[test]
+    fn clamp_preserves_utf8_boundary() {
+        let s = "α".repeat(600);
+        let err = SipError::new(SipErrorKind::InvalidHeader, None, s);
+        assert!(err.message.is_char_boundary(err.message.len()));
+        assert!(err.message.len() <= MAX_MESSAGE_BYTES);
+    }
+}
