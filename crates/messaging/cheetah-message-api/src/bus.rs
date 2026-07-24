@@ -2,7 +2,11 @@
 
 use cheetah_domain::DomainError;
 use cheetah_signal_contracts::cheetah::common::v1::{CommandEnvelope, EventEnvelope};
+use cheetah_signal_types::clamp_str;
 use prost::Message;
+
+/// Maximum byte length of the message carried by a `BusError` or mapped to a `DomainError`.
+const MAX_BUS_ERROR_BYTES: usize = 1024;
 
 /// Errors that can occur when sending or receiving messages.
 #[derive(Debug, thiserror::Error)]
@@ -116,11 +120,11 @@ impl From<BusError> for DomainError {
     fn from(err: BusError) -> Self {
         match err {
             BusError::Busy => Self::unavailable("message bus busy"),
-            BusError::Unavailable(msg) => Self::unavailable(msg),
+            BusError::Unavailable(msg) => Self::unavailable(clamp_str(&msg, MAX_BUS_ERROR_BYTES)),
             BusError::InvalidPayload(msg) | BusError::UnsupportedEnvelope(msg) => {
-                Self::invalid_argument(msg)
+                Self::invalid_argument(clamp_str(&msg, MAX_BUS_ERROR_BYTES))
             }
-            _ => Self::internal(err.to_string()),
+            _ => Self::internal(clamp_str(&err.to_string(), MAX_BUS_ERROR_BYTES)),
         }
     }
 }
