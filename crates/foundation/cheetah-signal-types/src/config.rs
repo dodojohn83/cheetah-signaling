@@ -30,6 +30,15 @@ const MAX_THREAD_KEEP_ALIVE_MS: i64 = 3_600_000;
 /// context, causing the handler to time out immediately instead of waiting.
 const MAX_HTTP_READ_TIMEOUT_MS: i64 = 300_000;
 
+/// Maximum byte length of the HTTP listen address string.
+const MAX_HTTP_ADDR_BYTES: usize = 256;
+
+/// Maximum allowed HTTP rate-limit requests per second.
+const MAX_HTTP_RATE_LIMIT_RPS: u32 = 100_000;
+
+/// Maximum allowed HTTP rate-limit burst capacity.
+const MAX_HTTP_RATE_LIMIT_BURST: u32 = 10_000;
+
 /// Serializes a `SecretString` as a redacted placeholder, preserving empty defaults.
 ///
 /// Empty secrets are written as `""` so the default configuration round-trips
@@ -220,28 +229,6 @@ impl SignalConfig {
                 ));
             }
         }
-        if self.observability.diagnostic_sample_rate < 0.0
-            || self.observability.diagnostic_sample_rate > 1.0
-        {
-            return Err(SignalError::new(
-                SignalErrorKind::InvalidArgument,
-                "observability.diagnostic_sample_rate must be in [0.0, 1.0]",
-            ));
-        }
-        if self.observability.diagnostic_sample_rate > 0.0
-            && self.observability.diagnostic_max_duration_ms == 0
-        {
-            return Err(SignalError::new(
-                SignalErrorKind::InvalidArgument,
-                "observability.diagnostic_max_duration_ms must be greater than zero when sampling is enabled",
-            ));
-        }
-        if self.storage.max_connections == 0 {
-            return Err(SignalError::new(
-                SignalErrorKind::InvalidArgument,
-                "storage.max_connections must be greater than zero",
-            ));
-        }
         if self.media.default_invite_timeout_ms.as_millis() <= 0 {
             return Err(SignalError::new(
                 SignalErrorKind::InvalidArgument,
@@ -321,6 +308,7 @@ impl SignalConfig {
         self.messaging.validate()?;
         self.plugins.validate()?;
         self.observability.validate()?;
+        self.cluster.validate()?;
         self.secret.validate()?;
         self.onvif.validate()?;
         Ok(())
@@ -506,6 +494,12 @@ impl Default for HttpConfig {
 impl HttpConfig {
     /// Validates HTTP-specific configuration.
     pub fn validate(&self) -> Result<()> {
+        if self.listen_addr.len() > MAX_HTTP_ADDR_BYTES {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                format!("http.listen_addr exceeds {MAX_HTTP_ADDR_BYTES} bytes"),
+            ));
+        }
         let timeout_ms = self.read_timeout_ms.as_millis();
         if timeout_ms <= 0 || timeout_ms > MAX_HTTP_READ_TIMEOUT_MS {
             return Err(SignalError::new(
@@ -537,6 +531,20 @@ impl HttpConfig {
                     "http.cors_allowed_origins entry contains invalid characters",
                 ));
             }
+        }
+        if self.rate_limit_requests_per_second > MAX_HTTP_RATE_LIMIT_RPS {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                format!(
+                    "http.rate_limit_requests_per_second must not exceed {MAX_HTTP_RATE_LIMIT_RPS}"
+                ),
+            ));
+        }
+        if self.rate_limit_burst > MAX_HTTP_RATE_LIMIT_BURST {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                format!("http.rate_limit_burst must not exceed {MAX_HTTP_RATE_LIMIT_BURST}"),
+            ));
         }
         Ok(())
     }
@@ -714,7 +722,7 @@ impl Default for MediaConfig {
 }
 
 /// Plugin runtime configuration.
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 #[serde(deny_unknown_fields)]
 pub struct PluginsConfig {
@@ -724,6 +732,16 @@ pub struct PluginsConfig {
     pub plugin_dir: String,
     /// Maximum plugin instances per node.
     pub max_plugin_instances: u32,
+}
+
+impl Default for PluginsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            plugin_dir: String::new(),
+            max_plugin_instances: 8,
+        }
+    }
 }
 
 /// Upper bound for [`Gb28181Config::session_reaper_max_per_tick`]. Caps how
@@ -1503,7 +1521,7 @@ impl Default for OnvifConfig {
 }
 
 /// Security configuration.
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 #[serde(deny_unknown_fields)]
 pub struct SecurityConfig {
@@ -1531,6 +1549,19 @@ pub struct SecurityConfig {
     pub static_api_key: SecretString,
     /// Token time to live in milliseconds.
     pub token_ttl_ms: DurationMs,
+}
+
+impl Default for SecurityConfig {
+    fn default() -> Self {
+        Self {
+            jwt_public_key_ref: SecretString::default(),
+            jwt_audience: Vec::new(),
+            jwt_issuer: Vec::new(),
+            api_key_hash: SecretString::default(),
+            static_api_key: SecretString::default(),
+            token_ttl_ms: DurationMs::from_seconds(3600),
+        }
+    }
 }
 
 /// Secret provider configuration.
@@ -2134,6 +2165,33 @@ mod http_config_tests {
                 .validate()
                 .is_err()
         );
+    }
+
+    #[test]
+    fn oversized_listen_addr_is_rejected() {
+        let config = HttpConfig {
+            listen_addr: "x".repeat(MAX_HTTP_ADDR_BYTES + 1),
+            ..HttpConfig::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn excessive_rate_limit_rps_is_rejected() {
+        let config = HttpConfig {
+            rate_limit_requests_per_second: MAX_HTTP_RATE_LIMIT_RPS + 1,
+            ..HttpConfig::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn excessive_rate_limit_burst_is_rejected() {
+        let config = HttpConfig {
+            rate_limit_burst: MAX_HTTP_RATE_LIMIT_BURST + 1,
+            ..HttpConfig::default()
+        };
+        assert!(config.validate().is_err());
     }
 }
 

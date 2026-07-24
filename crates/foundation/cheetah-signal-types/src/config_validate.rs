@@ -45,6 +45,18 @@ const MAX_ONVIF_DEFAULT_TENANT_BYTES: usize = 128;
 const MAX_ONVIF_DEFAULT_USERNAME_BYTES: usize = 256;
 const MAX_ONVIF_CREDENTIALS_REF_BYTES: usize = 256;
 
+const MAX_STORAGE_MAX_CONNECTIONS: u32 = 10_000;
+
+const MAX_PLUGIN_INSTANCES: u32 = 10_000;
+
+const MAX_CLUSTER_LEASE_TTL_MS: i64 = 24 * 60 * 60 * 1_000; // 1 day
+const MAX_CLUSTER_HEARTBEAT_INTERVAL_MS: i64 = 24 * 60 * 60 * 1_000; // 1 day
+
+const MAX_OBSERVABILITY_DIAGNOSTIC_DURATION_MS: u64 = 24 * 60 * 60 * 1_000; // 1 day
+const MAX_OBSERVABILITY_DIAGNOSTIC_BODY_BYTES: usize = 64 * 1024 * 1024; // 64 MiB
+
+const MAX_SECURITY_TOKEN_TTL_MS: i64 = 365 * 24 * 60 * 60 * 1_000; // 365 days
+
 fn validate_string(field: &str, value: &str, max_bytes: usize) -> Result<()> {
     if value.len() > max_bytes {
         return Err(SignalError::new(
@@ -68,6 +80,56 @@ fn validate_secret(field: &str, value: &secrecy::SecretString, max_bytes: usize)
         return Err(SignalError::new(
             SignalErrorKind::InvalidArgument,
             format!("{field} exceeds {max_bytes} bytes"),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_positive_i64(field: &str, value: i64, max: i64) -> Result<()> {
+    if value <= 0 || value > max {
+        return Err(SignalError::new(
+            SignalErrorKind::InvalidArgument,
+            format!("{field} must be between 1 and {max}"),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_nonneg_i64(field: &str, value: i64, max: i64) -> Result<()> {
+    if value < 0 || value > max {
+        return Err(SignalError::new(
+            SignalErrorKind::InvalidArgument,
+            format!("{field} must be between 0 and {max}"),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_positive_u32(field: &str, value: u32, max: u32) -> Result<()> {
+    if value == 0 || value > max {
+        return Err(SignalError::new(
+            SignalErrorKind::InvalidArgument,
+            format!("{field} must be between 1 and {max}"),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_positive_u64(field: &str, value: u64, max: u64) -> Result<()> {
+    if value == 0 || value > max {
+        return Err(SignalError::new(
+            SignalErrorKind::InvalidArgument,
+            format!("{field} must be between 1 and {max}"),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_nonneg_usize(field: &str, value: usize, max: usize) -> Result<()> {
+    if value > max {
+        return Err(SignalError::new(
+            SignalErrorKind::InvalidArgument,
+            format!("{field} must be between 0 and {max}"),
         ));
     }
     Ok(())
@@ -121,7 +183,7 @@ impl SystemConfig {
 }
 
 impl SecurityConfig {
-    /// Validates string/list field bounds for the security configuration.
+    /// Validates string/list/numeric field bounds for the security configuration.
     pub fn validate(&self) -> Result<()> {
         validate_secret(
             "security.jwt_public_key_ref",
@@ -150,12 +212,17 @@ impl SecurityConfig {
             &self.static_api_key,
             MAX_STATIC_API_KEY_BYTES,
         )?;
+        validate_positive_i64(
+            "security.token_ttl_ms",
+            self.token_ttl_ms.as_millis(),
+            MAX_SECURITY_TOKEN_TTL_MS,
+        )?;
         Ok(())
     }
 }
 
 impl StorageConfig {
-    /// Validates string field bounds for the storage configuration.
+    /// Validates string and numeric field bounds for the storage configuration.
     pub fn validate(&self) -> Result<()> {
         validate_string(
             "storage.sqlite_path",
@@ -171,6 +238,11 @@ impl StorageConfig {
             "storage.postgres_url_ref",
             self.postgres_url_ref.as_deref(),
             MAX_STORAGE_SECRET_REF_BYTES,
+        )?;
+        validate_positive_u32(
+            "storage.max_connections",
+            self.max_connections,
+            MAX_STORAGE_MAX_CONNECTIONS,
         )?;
         Ok(())
     }
@@ -240,15 +312,39 @@ impl MessagingConfig {
 }
 
 impl PluginsConfig {
-    /// Validates string field bounds for the plugins configuration.
+    /// Validates string and numeric field bounds for the plugins configuration.
     pub fn validate(&self) -> Result<()> {
         validate_string("plugins.plugin_dir", &self.plugin_dir, MAX_PLUGIN_DIR_BYTES)?;
+        validate_positive_u32(
+            "plugins.max_plugin_instances",
+            self.max_plugin_instances,
+            MAX_PLUGIN_INSTANCES,
+        )?;
+        Ok(())
+    }
+}
+
+impl ClusterConfig {
+    /// Validates numeric field bounds for the cluster configuration.
+    pub fn validate(&self) -> Result<()> {
+        if self.enabled {
+            validate_nonneg_i64(
+                "cluster.lease_ttl_ms",
+                self.lease_ttl_ms.as_millis(),
+                MAX_CLUSTER_LEASE_TTL_MS,
+            )?;
+            validate_nonneg_i64(
+                "cluster.heartbeat_interval_ms",
+                self.heartbeat_interval_ms.as_millis(),
+                MAX_CLUSTER_HEARTBEAT_INTERVAL_MS,
+            )?;
+        }
         Ok(())
     }
 }
 
 impl ObservabilityConfig {
-    /// Validates string field bounds for the observability configuration.
+    /// Validates string and numeric field bounds for the observability configuration.
     pub fn validate(&self) -> Result<()> {
         validate_string(
             "observability.metrics_bind_addr",
@@ -259,6 +355,24 @@ impl ObservabilityConfig {
             "observability.tracing_endpoint",
             self.tracing_endpoint.as_deref(),
             MAX_TRACING_ENDPOINT_BYTES,
+        )?;
+        if self.diagnostic_sample_rate < 0.0 || self.diagnostic_sample_rate > 1.0 {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                "observability.diagnostic_sample_rate must be in [0.0, 1.0]",
+            ));
+        }
+        if self.diagnostic_sample_rate > 0.0 {
+            validate_positive_u64(
+                "observability.diagnostic_max_duration_ms",
+                self.diagnostic_max_duration_ms,
+                MAX_OBSERVABILITY_DIAGNOSTIC_DURATION_MS,
+            )?;
+        }
+        validate_nonneg_usize(
+            "observability.diagnostic_max_body_bytes",
+            self.diagnostic_max_body_bytes,
+            MAX_OBSERVABILITY_DIAGNOSTIC_BODY_BYTES,
         )?;
         Ok(())
     }
@@ -400,6 +514,80 @@ mod tests {
     fn observability_config_rejects_long_tracing_endpoint() {
         let config = ObservabilityConfig {
             tracing_endpoint: Some("http://".to_string() + &"x".repeat(MAX_TRACING_ENDPOINT_BYTES)),
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn observability_config_rejects_zero_diagnostic_duration_when_sampling() {
+        let config = ObservabilityConfig {
+            diagnostic_sample_rate: 1.0,
+            diagnostic_max_duration_ms: 0,
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn observability_config_rejects_excessive_diagnostic_body_bytes() {
+        let config = ObservabilityConfig {
+            diagnostic_max_body_bytes: MAX_OBSERVABILITY_DIAGNOSTIC_BODY_BYTES + 1,
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn storage_config_rejects_zero_max_connections() {
+        let config = StorageConfig {
+            max_connections: 0,
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn storage_config_rejects_excessive_max_connections() {
+        let config = StorageConfig {
+            max_connections: MAX_STORAGE_MAX_CONNECTIONS + 1,
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn plugins_config_rejects_zero_max_instances() {
+        let config = PluginsConfig {
+            max_plugin_instances: 0,
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn cluster_config_rejects_excessive_lease_ttl_when_enabled() {
+        let config = ClusterConfig {
+            enabled: true,
+            lease_ttl_ms: crate::DurationMs::from_millis(MAX_CLUSTER_LEASE_TTL_MS + 1),
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn security_config_rejects_zero_token_ttl() {
+        let config = SecurityConfig {
+            token_ttl_ms: crate::DurationMs::from_millis(0),
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn security_config_rejects_excessive_token_ttl() {
+        let config = SecurityConfig {
+            token_ttl_ms: crate::DurationMs::from_millis(MAX_SECURITY_TOKEN_TTL_MS + 1),
             ..Default::default()
         };
         assert!(config.validate().is_err());
