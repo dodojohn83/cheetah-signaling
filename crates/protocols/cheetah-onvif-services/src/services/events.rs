@@ -61,9 +61,8 @@ pub fn create_pull_point_subscription_request(
     writer.write_event(Event::Text(BytesText::new(initial_termination_time)))?;
     writer.write_event(Event::End(BytesEnd::new("tev:InitialTerminationTime")))?;
     writer.write_event(Event::End(BytesEnd::new("tev:CreatePullPointSubscription")))?;
-    let body = String::from_utf8(cursor.into_inner()).map_err(|e| {
-        OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string()))
-    })?;
+    let body = String::from_utf8(cursor.into_inner())
+        .map_err(|e| OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::xml(e)))?;
     Envelope::new(CREATE_PULLPOINT_ACTION, body)
         .with_message_id(message_id)
         .build()
@@ -88,9 +87,8 @@ pub fn pull_messages_request(
     writer.write_event(Event::Text(BytesText::new(&message_limit.to_string())))?;
     writer.write_event(Event::End(BytesEnd::new("tev:MessageLimit")))?;
     writer.write_event(Event::End(BytesEnd::new("tev:PullMessages")))?;
-    let body = String::from_utf8(cursor.into_inner()).map_err(|e| {
-        OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string()))
-    })?;
+    let body = String::from_utf8(cursor.into_inner())
+        .map_err(|e| OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::xml(e)))?;
     Envelope::new(PULL_MESSAGES_ACTION, body)
         .with_message_id(message_id)
         .build()
@@ -112,9 +110,8 @@ pub fn renew_request(
     writer.write_event(Event::Text(BytesText::new(termination_time)))?;
     writer.write_event(Event::End(BytesEnd::new("wsnt:TerminationTime")))?;
     writer.write_event(Event::End(BytesEnd::new("tev:Renew")))?;
-    let body = String::from_utf8(cursor.into_inner()).map_err(|e| {
-        OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string()))
-    })?;
+    let body = String::from_utf8(cursor.into_inner())
+        .map_err(|e| OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::xml(e)))?;
     Envelope::new(RENEW_ACTION, body)
         .with_message_id(message_id)
         .build()
@@ -128,9 +125,8 @@ pub fn unsubscribe_request(message_id: impl Into<String>) -> Result<String, Onvi
     let mut body = BytesStart::new("tev:Unsubscribe");
     body.push_attribute(("xmlns:tev", EVENTS_NS));
     writer.write_event(Event::Empty(body))?;
-    let body = String::from_utf8(cursor.into_inner()).map_err(|e| {
-        OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string()))
-    })?;
+    let body = String::from_utf8(cursor.into_inner())
+        .map_err(|e| OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::xml(e)))?;
     Envelope::new(UNSUBSCRIBE_ACTION, body)
         .with_message_id(message_id)
         .build()
@@ -175,7 +171,7 @@ pub fn parse_create_pull_point_response(
             Ok(Event::Eof) => break,
             Err(e) => {
                 return Err(OnvifServiceError::Onvif(
-                    cheetah_onvif_core::OnvifError::Xml(e.to_string()),
+                    cheetah_onvif_core::OnvifError::xml(e),
                 ));
             }
             _ => {}
@@ -187,9 +183,8 @@ pub fn parse_create_pull_point_response(
             "SubscriptionReference/Address".into(),
         ));
     }
-    let url = url::Url::parse(&sub.subscription_reference).map_err(|e| {
-        OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::InvalidXAddr(e.to_string()))
-    })?;
+    let url = url::Url::parse(&sub.subscription_reference)
+        .map_err(|e| OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::invalid_xaddr(e)))?;
     policy.validate(&url).map_err(OnvifServiceError::Onvif)?;
     Ok(sub)
 }
@@ -214,8 +209,8 @@ pub fn parse_pull_messages_response(
                 if name == "NotificationMessage" {
                     if messages.len() >= max_messages {
                         return Err(OnvifServiceError::Onvif(
-                            cheetah_onvif_core::OnvifError::LimitExceeded(
-                                "pull messages exceed max_messages".into(),
+                            cheetah_onvif_core::OnvifError::limit_exceeded(
+                                "pull messages exceed max_messages",
                             ),
                         ));
                     }
@@ -283,7 +278,7 @@ pub fn parse_pull_messages_response(
             Ok(Event::Eof) => break,
             Err(e) => {
                 return Err(OnvifServiceError::Onvif(
-                    cheetah_onvif_core::OnvifError::Xml(e.to_string()),
+                    cheetah_onvif_core::OnvifError::xml(e),
                 ));
             }
             _ => {}

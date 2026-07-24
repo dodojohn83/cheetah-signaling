@@ -26,7 +26,7 @@ fn local_name(name: &quick_xml::name::QName<'_>) -> String {
 }
 
 fn limit_error(message: impl Into<String>) -> OnvifServiceError {
-    OnvifServiceError::Onvif(OnvifError::LimitExceeded(message.into()))
+    OnvifServiceError::Onvif(OnvifError::limit_exceeded(message.into()))
 }
 
 /// Tracks parser limits while scanning an ONVIF response.
@@ -125,7 +125,7 @@ fn empty_body(name: &str) -> Result<String, OnvifServiceError> {
     element.push_attribute(("xmlns:tds", DEVICE_NS));
     writer.write_event(Event::Empty(element))?;
     String::from_utf8(cursor.into_inner())
-        .map_err(|e| OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string())))
+        .map_err(|e| OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::xml(e)))
 }
 
 /// Builds an unauthenticated `GetDeviceInformation` request.
@@ -194,7 +194,7 @@ pub fn parse_get_device_information_response(
             Ok(Event::Eof) => break,
             Err(e) => {
                 return Err(OnvifServiceError::Onvif(
-                    cheetah_onvif_core::OnvifError::Xml(e.to_string()),
+                    cheetah_onvif_core::OnvifError::xml(e),
                 ));
             }
             _ => {}
@@ -202,7 +202,7 @@ pub fn parse_get_device_information_response(
     }
 
     if info.manufacturer.is_empty() {
-        return Err(OnvifServiceError::MissingField("Manufacturer".to_string()));
+        return Err(OnvifServiceError::missing_field("Manufacturer".to_string()));
     }
 
     Ok(info)
@@ -327,7 +327,7 @@ pub fn parse_get_services_response(
             Ok(Event::Eof) => break,
             Err(e) => {
                 return Err(OnvifServiceError::Onvif(
-                    cheetah_onvif_core::OnvifError::Xml(e.to_string()),
+                    cheetah_onvif_core::OnvifError::xml(e),
                 ));
             }
             _ => {}
@@ -357,10 +357,10 @@ impl ServiceBuilder {
 
     fn build(self, xaddr_policy: &XAddrPolicy) -> Result<Service, OnvifServiceError> {
         if self.namespace.is_empty() {
-            return Err(OnvifServiceError::MissingField("Namespace".to_string()));
+            return Err(OnvifServiceError::missing_field("Namespace".to_string()));
         }
         if self.xaddr.is_empty() {
-            return Err(OnvifServiceError::MissingField("XAddr".to_string()));
+            return Err(OnvifServiceError::missing_field("XAddr".to_string()));
         }
         let url = url::Url::parse(&self.xaddr)?;
         xaddr_policy.validate(&url)?;
@@ -413,7 +413,7 @@ pub fn parse_get_capabilities_response(
             Ok(Event::Eof) => break,
             Err(e) => {
                 return Err(OnvifServiceError::Onvif(
-                    cheetah_onvif_core::OnvifError::Xml(e.to_string()),
+                    cheetah_onvif_core::OnvifError::xml(e),
                 ));
             }
             _ => {}
