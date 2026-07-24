@@ -28,9 +28,14 @@ fn credentials_require_both_username_and_password() {
             false,
             0
         )
+        .unwrap()
         .is_some()
     );
-    assert!(make_credentials(Some("admin"), None, false, 0).is_none());
+    assert!(
+        make_credentials(Some("admin"), None, false, 0)
+            .unwrap()
+            .is_none()
+    );
     assert!(
         make_credentials(
             None,
@@ -38,6 +43,7 @@ fn credentials_require_both_username_and_password() {
             false,
             0
         )
+        .unwrap()
         .is_none()
     );
     assert!(
@@ -47,6 +53,7 @@ fn credentials_require_both_username_and_password() {
             false,
             0
         )
+        .unwrap()
         .is_none()
     );
     assert!(
@@ -56,7 +63,35 @@ fn credentials_require_both_username_and_password() {
             false,
             0
         )
+        .unwrap()
         .is_none()
+    );
+}
+
+#[test]
+fn credentials_reject_oversized_username_and_password() {
+    use secrecy::SecretString;
+
+    let oversized_username = "a".repeat(MAX_ONVIF_USERNAME_BYTES + 1);
+    assert!(
+        make_credentials(
+            Some(&oversized_username),
+            Some(SecretString::from("secret".to_string())),
+            false,
+            0
+        )
+        .is_err()
+    );
+
+    let oversized_password = "a".repeat(MAX_ONVIF_PASSWORD_BYTES + 1);
+    assert!(
+        make_credentials(
+            Some("admin"),
+            Some(SecretString::from(oversized_password)),
+            false,
+            0
+        )
+        .is_err()
     );
 }
 

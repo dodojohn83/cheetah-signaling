@@ -583,31 +583,50 @@ pub(crate) async fn resolve_credentials(
         ));
     }
 
-    Ok(make_credentials(
+    make_credentials(
         effective_username,
         password_secret,
         password_text,
         clock_offset_seconds,
-    ))
+    )
 }
+
+/// Maximum byte length for an ONVIF username.
+pub(crate) const MAX_ONVIF_USERNAME_BYTES: usize = 256;
+/// Maximum byte length for an ONVIF password.
+pub(crate) const MAX_ONVIF_PASSWORD_BYTES: usize = 4096;
 
 pub(crate) fn make_credentials(
     username: Option<&str>,
     password: Option<SecretString>,
     password_text: bool,
     clock_offset_seconds: i64,
-) -> Option<DeviceCredentials> {
-    let username = username?.to_string();
-    let password = password?;
+) -> Result<Option<DeviceCredentials>, PluginError> {
+    let Some(username) = username else {
+        return Ok(None);
+    };
+    let Some(password) = password else {
+        return Ok(None);
+    };
     if username.is_empty() || password.expose_secret().is_empty() {
-        return None;
+        return Ok(None);
     }
-    Some(DeviceCredentials {
-        username,
+    if username.len() > MAX_ONVIF_USERNAME_BYTES {
+        return Err(PluginError::Driver(
+            "ONVIF username exceeds maximum length".into(),
+        ));
+    }
+    if password.expose_secret().len() > MAX_ONVIF_PASSWORD_BYTES {
+        return Err(PluginError::Driver(
+            "ONVIF password exceeds maximum length".into(),
+        ));
+    }
+    Ok(Some(DeviceCredentials {
+        username: username.to_string(),
         password,
         password_text,
         clock_offset_seconds,
-    })
+    }))
 }
 
 pub(crate) fn command_timeout(
