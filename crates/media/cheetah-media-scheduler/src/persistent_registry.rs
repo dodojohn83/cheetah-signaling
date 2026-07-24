@@ -340,18 +340,22 @@ impl MediaNodeRegistry for PersistentMediaNodeRegistry {
         }
 
         let fetched = self.repo.lock().await.get(node_id).await;
-        match fetched {
-            Ok(Some(node)) => {
-                let entry = NodeEntry {
-                    node: node.clone(),
-                    reported_session_count: node.session_count,
-                    reserved: BTreeMap::new(),
-                    instance_id: node.instance_id.clone(),
-                };
-                Some(to_media_node(&entry, now, &self.config))
-            }
-            _ => None,
+        let node = fetched.ok().flatten()?;
+        let entry = NodeEntry {
+            node: node.clone(),
+            reported_session_count: node.session_count,
+            reserved: BTreeMap::new(),
+            instance_id: node.instance_id.clone(),
+        };
+        if !is_active(&entry, now, &self.config) {
+            return None;
         }
+        let view = to_media_node(&entry, now, &self.config);
+        {
+            let mut nodes = self.nodes.write().await;
+            nodes.entry(node_id).or_insert(entry);
+        }
+        Some(view)
     }
 
     async fn list_active(&self, clock: &dyn Clock) -> Vec<MediaNode> {
