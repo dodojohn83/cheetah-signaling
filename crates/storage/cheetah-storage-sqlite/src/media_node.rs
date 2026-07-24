@@ -167,7 +167,7 @@ impl SqliteMediaNodeRepository {
 #[async_trait::async_trait]
 impl MediaNodeRepository for SqliteMediaNodeRepository {
     async fn register(
-        &mut self,
+        &self,
         node: MediaNode,
         mut events: Vec<Event<DomainEvent>>,
     ) -> Result<MediaNode, StorageError> {
@@ -286,7 +286,7 @@ impl MediaNodeRepository for SqliteMediaNodeRepository {
     }
 
     async fn heartbeat(
-        &mut self,
+        &self,
         node_id: NodeId,
         instance_id: String,
         lease_until: UtcTimestamp,
@@ -409,7 +409,7 @@ impl MediaNodeRepository for SqliteMediaNodeRepository {
     }
 
     async fn set_draining(
-        &mut self,
+        &self,
         node_id: NodeId,
         instance_id: String,
         draining: bool,
@@ -454,7 +454,7 @@ impl MediaNodeRepository for SqliteMediaNodeRepository {
     }
 
     async fn deregister(
-        &mut self,
+        &self,
         node_id: NodeId,
         instance_id: String,
         updated_at: UtcTimestamp,

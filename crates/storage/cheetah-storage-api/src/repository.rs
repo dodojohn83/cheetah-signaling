@@ -202,7 +202,7 @@ pub trait MediaNodeRepository: Send + Sync {
     /// with updated revision. `events` are appended to the outbox in the same
     /// transaction after the node is persisted.
     async fn register(
-        &mut self,
+        &self,
         node: MediaNode,
         events: Vec<Event<DomainEvent>>,
     ) -> Result<MediaNode, StorageError>;
@@ -213,7 +213,7 @@ pub trait MediaNodeRepository: Send + Sync {
     /// appended to the outbox in the same transaction after the update.
     #[allow(clippy::too_many_arguments)]
     async fn heartbeat(
-        &mut self,
+        &self,
         node_id: NodeId,
         instance_id: String,
         lease_until: UtcTimestamp,
@@ -238,7 +238,7 @@ pub trait MediaNodeRepository: Send + Sync {
     /// `events` are appended to the outbox in the same transaction after the
     /// update.
     async fn set_draining(
-        &mut self,
+        &self,
         node_id: NodeId,
         instance_id: String,
         draining: bool,
@@ -252,7 +252,7 @@ pub trait MediaNodeRepository: Send + Sync {
     /// `events` are appended to the outbox in the same transaction after the
     /// update.
     async fn deregister(
-        &mut self,
+        &self,
         node_id: NodeId,
         instance_id: String,
         updated_at: UtcTimestamp,

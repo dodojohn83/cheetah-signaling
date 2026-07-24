@@ -14,13 +14,13 @@ use cheetah_signal_types::{
 use cheetah_storage_api::MediaNodeRepository;
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::RwLock;
 
 /// A `MediaNodeRegistry` that persists node metadata through a
 /// `MediaNodeRepository` while keeping the in-memory reservation map.
 pub struct PersistentMediaNodeRegistry {
     config: MediaRegistryConfig,
-    repo: Arc<Mutex<Box<dyn MediaNodeRepository>>>,
+    repo: Arc<dyn MediaNodeRepository>,
     nodes: RwLock<BTreeMap<NodeId, NodeEntry>>,
     id_generator: Arc<dyn IdGenerator>,
     node_id: NodeId,
@@ -44,7 +44,7 @@ impl PersistentMediaNodeRegistry {
     ) -> Self {
         Self {
             config,
-            repo: Arc::new(Mutex::new(repo)),
+            repo: Arc::from(repo),
             nodes: RwLock::new(BTreeMap::new()),
             id_generator,
             node_id,
@@ -101,8 +101,6 @@ impl PersistentMediaNodeRegistry {
             };
             let page = self
                 .repo
-                .lock()
-                .await
                 .list_alive(clock.now_wall(), page_request)
                 .await
                 .map_err(SchedulerError::backend)?;
@@ -182,8 +180,6 @@ impl MediaNodeRegistry for PersistentMediaNodeRegistry {
             } else {
                 let existing = self
                     .repo
-                    .lock()
-                    .await
                     .get(node.node_id)
                     .await
                     .map_err(|e| SchedulerError::Backend(e.to_string()))?;
@@ -213,8 +209,6 @@ impl MediaNodeRegistry for PersistentMediaNodeRegistry {
         let event = self.make_event(clock, &updated);
         let persisted = self
             .repo
-            .lock()
-            .await
             .register(updated, vec![event])
             .await
             .map_err(SchedulerError::backend)?;
@@ -281,8 +275,6 @@ impl MediaNodeRegistry for PersistentMediaNodeRegistry {
 
         let persisted = self
             .repo
-            .lock()
-            .await
             .heartbeat(
                 node_id,
                 lease_id.to_string(),
@@ -334,8 +326,6 @@ impl MediaNodeRegistry for PersistentMediaNodeRegistry {
 
         let persisted = self
             .repo
-            .lock()
-            .await
             .set_draining(node_id, instance_id, drain, now, vec![event])
             .await
             .map_err(SchedulerError::backend)?;
@@ -376,8 +366,6 @@ impl MediaNodeRegistry for PersistentMediaNodeRegistry {
 
         let persisted = self
             .repo
-            .lock()
-            .await
             .deregister(node_id, instance_id, now, protection_lease, vec![event])
             .await
             .map_err(SchedulerError::backend)?;
@@ -407,7 +395,7 @@ impl MediaNodeRegistry for PersistentMediaNodeRegistry {
             }
         }
 
-        let fetched = self.repo.lock().await.get(node_id).await;
+        let fetched = self.repo.get(node_id).await;
         let node = fetched.ok().flatten()?;
         let entry = NodeEntry {
             node: node.clone(),
@@ -441,7 +429,7 @@ impl MediaNodeRegistry for PersistentMediaNodeRegistry {
                     cursor,
                     page_size: MAX_PAGE_SIZE,
                 };
-                match self.repo.lock().await.list_alive(now, page_request).await {
+                match self.repo.list_alive(now, page_request).await {
                     Ok(page) => {
                         let has_more = page.next_cursor.is_some();
                         for node in page.items {
@@ -557,7 +545,7 @@ mod tests {
     #[async_trait::async_trait]
     impl MediaNodeRepository for FakeRepo {
         async fn register(
-            &mut self,
+            &self,
             mut node: MediaNode,
             _events: Vec<Event<DomainEvent>>,
         ) -> Result<MediaNode, StorageError> {
@@ -567,7 +555,7 @@ mod tests {
         }
 
         async fn heartbeat(
-            &mut self,
+            &self,
             _node_id: NodeId,
             instance_id: String,
             lease_until: UtcTimestamp,
@@ -615,7 +603,7 @@ mod tests {
         }
 
         async fn set_draining(
-            &mut self,
+            &self,
             _node_id: NodeId,
             instance_id: String,
             draining: bool,
@@ -641,7 +629,7 @@ mod tests {
         }
 
         async fn deregister(
-            &mut self,
+            &self,
             _node_id: NodeId,
             instance_id: String,
             _updated_at: UtcTimestamp,
