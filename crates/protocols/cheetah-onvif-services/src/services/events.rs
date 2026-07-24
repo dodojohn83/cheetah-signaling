@@ -293,20 +293,44 @@ pub fn parse_pull_messages_response(
     Ok(messages)
 }
 
+const MAX_VENDOR_TOPIC_BYTES: usize = 256;
+
+fn contains_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
+    debug_assert!(needle.is_ascii());
+    if needle.is_empty() {
+        return true;
+    }
+    let n = needle.len();
+    haystack.as_bytes().windows(n).any(|window| {
+        window
+            .iter()
+            .zip(needle.as_bytes().iter())
+            .all(|(a, b)| a.eq_ignore_ascii_case(b))
+    })
+}
+
 /// Maps a known ONVIF topic to a stable northbound event type, or vendor fallback.
+///
+/// Matching is case-insensitive and does not allocate a lowercase copy of the
+/// whole topic. Unknown topics are truncated to [`MAX_VENDOR_TOPIC_BYTES`] to
+/// prevent unbounded event type strings.
 pub fn normalize_topic(topic: &str) -> String {
-    let lower = topic.to_ascii_lowercase();
-    if lower.contains("motion") || lower.contains("cellmotion") {
+    if contains_ignore_ascii_case(topic, "cellmotion")
+        || contains_ignore_ascii_case(topic, "motion")
+    {
         "device.motion_detected".into()
-    } else if lower.contains("digitalinput") || lower.contains("tns1:device/trigger/digitalinput") {
+    } else if contains_ignore_ascii_case(topic, "tns1:device/trigger/digitalinput")
+        || contains_ignore_ascii_case(topic, "digitalinput")
+    {
         "device.digital_input".into()
-    } else if lower.contains("globalscenechange")
-        || lower.contains("videoloss")
-        || lower.contains("videosource")
+    } else if contains_ignore_ascii_case(topic, "globalscenechange")
+        || contains_ignore_ascii_case(topic, "videoloss")
+        || contains_ignore_ascii_case(topic, "videosource")
     {
         "device.video_loss".into()
     } else {
-        format!("vendor.onvif:{topic}")
+        let truncated: String = topic.chars().take(MAX_VENDOR_TOPIC_BYTES).collect();
+        format!("vendor.onvif:{truncated}")
     }
 }
 
@@ -339,6 +363,33 @@ mod tests {
             "device.motion_detected"
         );
         assert!(normalize_topic("tns1:Vendor/Custom").starts_with("vendor.onvif:"));
+    }
+
+    #[test]
+    fn normalize_topic_is_case_insensitive() {
+        assert_eq!(
+            normalize_topic("TNS1:RuleEngine/CellMotionDetector/MOTION"),
+            "device.motion_detected"
+        );
+        assert_eq!(
+            normalize_topic("tns1:Device/Trigger/DigitalInput"),
+            "device.digital_input"
+        );
+        assert_eq!(
+            normalize_topic("tns1:VideoSource/GlobalSceneChange"),
+            "device.video_loss"
+        );
+    }
+
+    #[test]
+    fn normalize_topic_truncates_long_unknown_topic() {
+        let long = "x".repeat(1000);
+        let normalized = normalize_topic(&long);
+        assert!(normalized.starts_with("vendor.onvif:"));
+        assert_eq!(
+            normalized.len(),
+            "vendor.onvif:".len() + MAX_VENDOR_TOPIC_BYTES
+        );
     }
 
     #[test]
