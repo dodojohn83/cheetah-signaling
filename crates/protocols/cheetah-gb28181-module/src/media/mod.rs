@@ -267,10 +267,22 @@ mod error_tests {
 
     #[test]
     fn constructors_passthrough_short_messages() {
-        assert_eq!(MediaError::invalid_state("ready").to_string(), "invalid session state: ready");
-        assert_eq!(MediaError::malformed_sip("missing tag").to_string(), "malformed SIP message: missing tag");
-        assert_eq!(MediaError::malformed_sdp("no c=").to_string(), "malformed SDP: no c=");
-        assert_eq!(MediaError::unsupported("g711").to_string(), "unsupported capability: g711");
+        assert_eq!(
+            MediaError::invalid_state("ready").to_string(),
+            "invalid session state: ready"
+        );
+        assert_eq!(
+            MediaError::malformed_sip("missing tag").to_string(),
+            "malformed SIP message: missing tag"
+        );
+        assert_eq!(
+            MediaError::malformed_sdp("no c=").to_string(),
+            "malformed SDP: no c="
+        );
+        assert_eq!(
+            MediaError::unsupported("g711").to_string(),
+            "unsupported capability: g711"
+        );
     }
 
     #[test]
