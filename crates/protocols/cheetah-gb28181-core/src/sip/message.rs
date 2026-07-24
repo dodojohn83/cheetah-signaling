@@ -57,6 +57,53 @@ impl Method {
             }
         })
     }
+
+    /// Parses a method from its wire name, accepting any case and normalizing
+    /// unknown tokens to upper case.
+    ///
+    /// This is used when the `HeaderNormalization` compatibility capability is
+    /// enabled so that a non-uppercase method (e.g. `register`) does not force a
+    /// temporary allocation of the whole start-line before validation.
+    pub fn parse_normalized(s: &str) -> Result<Self, SipError> {
+        if s.eq_ignore_ascii_case("REGISTER") {
+            return Ok(Method::Register);
+        }
+        if s.eq_ignore_ascii_case("MESSAGE") {
+            return Ok(Method::Message);
+        }
+        if s.eq_ignore_ascii_case("INVITE") {
+            return Ok(Method::Invite);
+        }
+        if s.eq_ignore_ascii_case("ACK") {
+            return Ok(Method::Ack);
+        }
+        if s.eq_ignore_ascii_case("BYE") {
+            return Ok(Method::Bye);
+        }
+        if s.eq_ignore_ascii_case("CANCEL") {
+            return Ok(Method::Cancel);
+        }
+        if s.eq_ignore_ascii_case("OPTIONS") {
+            return Ok(Method::Options);
+        }
+        if s.eq_ignore_ascii_case("SUBSCRIBE") {
+            return Ok(Method::Subscribe);
+        }
+        if s.eq_ignore_ascii_case("NOTIFY") {
+            return Ok(Method::Notify);
+        }
+        if s.eq_ignore_ascii_case("INFO") {
+            return Ok(Method::Info);
+        }
+        if s.chars().all(|c| c.is_ascii_alphabetic() || c == '-') && !s.is_empty() {
+            return Ok(Method::Other(s.to_ascii_uppercase()));
+        }
+        Err(SipError::new(
+            SipErrorKind::InvalidStartLine,
+            None,
+            "invalid method token",
+        ))
+    }
 }
 
 impl std::fmt::Display for Method {
@@ -385,5 +432,29 @@ mod tests {
             msg.content_length().unwrap_err().kind,
             SipErrorKind::InvalidHeader
         );
+    }
+
+    #[test]
+    fn parse_normalized_accepts_lower_case_known_methods() {
+        assert_eq!(
+            Method::parse_normalized("register").unwrap(),
+            Method::Register
+        );
+        assert_eq!(Method::parse_normalized("invite").unwrap(), Method::Invite);
+        assert_eq!(Method::parse_normalized("BYE").unwrap(), Method::Bye);
+    }
+
+    #[test]
+    fn parse_normalized_upper_cases_unknown_token() {
+        assert_eq!(
+            Method::parse_normalized("foo-bar").unwrap(),
+            Method::Other("FOO-BAR".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_normalized_rejects_empty_and_invalid_tokens() {
+        assert!(Method::parse_normalized("").is_err());
+        assert!(Method::parse_normalized("foo bar").is_err());
     }
 }

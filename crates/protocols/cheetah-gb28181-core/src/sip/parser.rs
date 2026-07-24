@@ -518,12 +518,11 @@ fn build_message(
         let _version = parts.next().ok_or_else(|| {
             SipError::new(SipErrorKind::InvalidStartLine, None, "missing version")
         })?;
-        let method_str = if profile_has(profile, CompatibilityCapability::HeaderNormalization) {
-            method_str.to_ascii_uppercase()
+        let method = if profile_has(profile, CompatibilityCapability::HeaderNormalization) {
+            Method::parse_normalized(method_str)?
         } else {
-            method_str.to_string()
+            Method::parse(method_str)?
         };
-        let method = Method::parse(&method_str)?;
         let uri = SipUri::parse(uri_str)?;
         Ok(SipMessage::Request {
             line: RequestLine::new(method, uri),
