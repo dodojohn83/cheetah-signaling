@@ -14,7 +14,12 @@ use cheetah_plugin_sdk::{
     PluginName, ProtocolCapability, ProtocolDirection, ProtocolDriver, ProtocolDriverFactory,
 };
 use cheetah_signal_types::config::OnvifConfig;
-use cheetah_signal_types::{DurationMs, UtcTimestamp};
+use cheetah_signal_types::{DurationMs, UtcTimestamp, clamp_str};
+
+/// Maximum byte length of a metadata value stored in the probe
+/// [`CapabilityDescriptor`]. This matches the bound enforced by
+/// [`CapabilityDescriptor::validate`].
+const MAX_PROBE_METADATA_VALUE_BYTES: usize = 4096;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -109,7 +114,10 @@ impl ProtocolDriver for OnvifTokioProtocolDriver {
             .map_err(plugin_error_from_driver_error)?;
 
         let mut metadata = HashMap::new();
-        metadata.insert("onvif_endpoint".to_string(), redact_uri_userinfo(target));
+        metadata.insert(
+            "onvif_endpoint".to_string(),
+            clamp_str(&redact_uri_userinfo(target), MAX_PROBE_METADATA_VALUE_BYTES),
+        );
 
         // Persist the device clock offset and the wall time at which the probe ran.
         let offset_seconds = clock_offset_seconds(&system_date_and_time)?;
@@ -141,13 +149,15 @@ impl ProtocolDriver for OnvifTokioProtocolDriver {
                     .await
                 {
                     Ok(services) => {
-                        metadata
-                            .insert("services".to_string(), events::services_to_json(&services));
+                        metadata.insert("services_count".to_string(), services.len().to_string());
                         metadata
                             .insert("onvif_services_fetched_at".to_string(), fetched_at.clone());
                     }
                     Err(e) => {
-                        metadata.insert("services_error".to_string(), e.to_string());
+                        metadata.insert(
+                            "services_error".to_string(),
+                            clamp_str(&e.to_string(), MAX_PROBE_METADATA_VALUE_BYTES),
+                        );
                     }
                 }
                 match driver
@@ -155,14 +165,14 @@ impl ProtocolDriver for OnvifTokioProtocolDriver {
                     .await
                 {
                     Ok(caps) => {
-                        metadata.insert(
-                            "capabilities".to_string(),
-                            events::capabilities_to_json(&caps),
-                        );
+                        metadata.insert("capabilities_count".to_string(), caps.len().to_string());
                         metadata.insert("onvif_capabilities_fetched_at".to_string(), fetched_at);
                     }
                     Err(e) => {
-                        metadata.insert("capabilities_error".to_string(), e.to_string());
+                        metadata.insert(
+                            "capabilities_error".to_string(),
+                            clamp_str(&e.to_string(), MAX_PROBE_METADATA_VALUE_BYTES),
+                        );
                     }
                 }
             }
@@ -173,7 +183,10 @@ impl ProtocolDriver for OnvifTokioProtocolDriver {
                 );
             }
             Err(e) => {
-                metadata.insert("credentials_error".to_string(), e.to_string());
+                metadata.insert(
+                    "credentials_error".to_string(),
+                    clamp_str(&e.to_string(), MAX_PROBE_METADATA_VALUE_BYTES),
+                );
             }
         }
 

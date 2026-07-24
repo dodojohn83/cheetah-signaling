@@ -230,11 +230,6 @@ pub(crate) fn services_event_payload(services: &[Service], idempotency_key: &str
     })
 }
 
-/// Serializes the service list to a compact JSON string (for probe metadata).
-pub(crate) fn services_to_json(services: &[Service]) -> String {
-    serde_json::to_string(&services_value(services)).unwrap_or_default()
-}
-
 /// Emits an `onvif.services` event.
 pub(crate) async fn emit_services(
     ctx: &dyn DriverContext,
@@ -286,13 +281,6 @@ pub(crate) fn capabilities_event_payload(
         "idempotency_key": idempotency_key,
         "capabilities": capabilities_value(caps),
     })
-}
-
-/// Serializes the capability map to a compact JSON string (for probe metadata).
-pub(crate) fn capabilities_to_json(
-    caps: &HashMap<CapabilityKind, CapabilityProbeResult>,
-) -> String {
-    serde_json::to_string(&capabilities_value(caps)).unwrap_or_default()
 }
 
 /// Emits an `onvif.capabilities` event.

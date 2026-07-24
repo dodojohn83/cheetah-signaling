@@ -446,8 +446,10 @@ impl ProtocolDriver for OutOfProcessDriver {
             "timeout_ms": timeout.as_millis(),
         });
         let response = self.call_method("probe", payload, timeout).await?;
-        serde_json::from_value(response)
-            .map_err(|e| PluginError::Driver(format!("probe response malformed: {e}")))
+        let descriptor: CapabilityDescriptor = serde_json::from_value(response)
+            .map_err(|e| PluginError::Driver(format!("probe response malformed: {e}")))?;
+        descriptor.validate()?;
+        Ok(descriptor)
     }
 
     async fn health(
@@ -457,8 +459,10 @@ impl ProtocolDriver for OutOfProcessDriver {
     ) -> Result<HealthReport, PluginError> {
         let payload = serde_json::json!({});
         let response = self.call_method("health", payload, timeout).await?;
-        serde_json::from_value(response)
-            .map_err(|e| PluginError::Driver(format!("health response malformed: {e}")))
+        let report: HealthReport = serde_json::from_value(response)
+            .map_err(|e| PluginError::Driver(format!("health response malformed: {e}")))?;
+        report.validate()?;
+        Ok(report)
     }
 }
 

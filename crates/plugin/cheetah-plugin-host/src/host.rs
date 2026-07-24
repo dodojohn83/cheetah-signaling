@@ -350,7 +350,9 @@ impl PluginHost {
         let create_deadline = effective_timeout(deadline.max(factory.creation_timeout()));
         let driver = with_timeout(create_deadline, factory.create(serde_json::Value::Null)).await?;
         let ctx = self.no_op_context(name);
-        with_timeout(deadline, driver.probe(&ctx, target, deadline)).await
+        let descriptor = with_timeout(deadline, driver.probe(&ctx, target, deadline)).await?;
+        descriptor.validate().map_err(PluginHostError::Driver)?;
+        Ok(descriptor)
     }
 
     /// Aggregates health from all instances.
@@ -372,7 +374,7 @@ impl PluginHost {
             )
             .await
             {
-                Ok(report) => reports.push(report),
+                Ok(report) => reports.push(report.clamp_to_bounds()),
                 Err(_) => {
                     return HealthReport {
                         status: HealthStatus::Unhealthy,
