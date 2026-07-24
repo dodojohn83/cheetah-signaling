@@ -2,7 +2,7 @@
 
 use cheetah_domain::Tenant;
 use cheetah_signal_types::{ListCursor, Page, PageRequest, TenantId, UtcTimestamp};
-use cheetah_storage_api::{StorageError, TenantRepository};
+use cheetah_storage_api::{StorageError, TenantRepository, escape_like_pattern};
 use sqlx::{FromRow, PgPool};
 use time::OffsetDateTime;
 
@@ -95,7 +95,9 @@ impl TenantRepository for PostgresTenantRepository {
             && !prefix.is_empty()
         {
             qb.push(" AND name LIKE ");
-            qb.push_bind(format!("{prefix}%"));
+            qb.push_bind(format!("{}%", escape_like_pattern(prefix)));
+            qb.push(" ESCAPE ");
+            qb.push_bind("\\");
         }
 
         if let Some(cursor_value) = &page.cursor {

@@ -21,6 +21,7 @@ pub(crate) mod platform_link;
 pub(crate) mod processed_message;
 pub(crate) mod protocol_session;
 pub(crate) mod step;
+pub(crate) mod tenant;
 pub(crate) mod transaction;
 pub(crate) mod unicode;
 pub(crate) mod webhook;
@@ -47,6 +48,7 @@ pub async fn run_all(storage: &dyn Storage, fixtures: &Fixtures) -> TestResult<(
     owner::run(storage, fixtures).await?;
     ownership::run(storage, fixtures).await?;
     node::run(storage, fixtures).await?;
+    tenant::run(storage, fixtures).await?;
     webhook::run(storage, fixtures).await?;
     step::run(storage, fixtures).await?;
     unicode::run(storage, fixtures).await?;
