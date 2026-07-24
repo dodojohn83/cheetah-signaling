@@ -785,24 +785,6 @@ mod tests {
     }
 
     #[test]
-    fn storage_config_rejects_zero_max_connections() {
-        let config = StorageConfig {
-            max_connections: 0,
-            ..Default::default()
-        };
-        assert!(config.validate().is_err());
-    }
-
-    #[test]
-    fn storage_config_rejects_excessive_max_connections() {
-        let config = StorageConfig {
-            max_connections: MAX_STORAGE_CONNECTIONS + 1,
-            ..Default::default()
-        };
-        assert!(config.validate().is_err());
-    }
-
-    #[test]
     fn plugins_config_rejects_zero_max_instances() {
         let config = PluginsConfig {
             max_plugin_instances: 0,

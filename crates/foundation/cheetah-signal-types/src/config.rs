@@ -183,9 +183,7 @@ impl SignalConfig {
                 ));
             }
         }
-        if self.observability.diagnostic_sample_rate < 0.0
-            || self.observability.diagnostic_sample_rate > 1.0
-        {
+        if !(0.0..=1.0).contains(&self.observability.diagnostic_sample_rate) {
             return Err(SignalError::new(
                 SignalErrorKind::InvalidArgument,
                 "observability.diagnostic_sample_rate must be in [0.0, 1.0]",
