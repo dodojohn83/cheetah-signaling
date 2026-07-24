@@ -620,6 +620,17 @@ async fn register_rejects_oversized_capacity()
     Ok(())
 }
 
+#[tokio::test]
+async fn host_is_internal_zero_timeout_uses_minimum() {
+    // "localhost" resolves via /etc/hosts and should complete even with the
+    // 1ms minimum clamp, whereas an unclamped zero timeout would expire first.
+    let result = host_is_internal("localhost", 80, 0).await;
+    assert!(
+        matches!(result, Ok(true)),
+        "localhost should resolve as internal, got {result:?}"
+    );
+}
+
 #[test]
 fn map_scheduler_error_clamps_long_messages() {
     let huge = "x".repeat(10_000);
