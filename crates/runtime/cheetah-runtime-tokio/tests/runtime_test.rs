@@ -92,7 +92,7 @@ async fn runtime_sends_protocol_event() -> Result<(), RuntimeError> {
     let output = output_rx
         .recv()
         .await
-        .ok_or_else(|| RuntimeError::Internal("no output".into()))?;
+        .ok_or_else(|| RuntimeError::internal("no output"))?;
     assert_eq!(output, "event:3");
     runtime.shutdown().await?;
     Ok(())
@@ -115,7 +115,7 @@ async fn runtime_sends_command() -> Result<(), RuntimeError> {
     let output = output_rx
         .recv()
         .await
-        .ok_or_else(|| RuntimeError::Internal("no output".into()))?;
+        .ok_or_else(|| RuntimeError::internal("no output"))?;
     assert_eq!(output, "command:StartLive");
     runtime.shutdown().await?;
     Ok(())
@@ -137,14 +137,14 @@ async fn runtime_schedules_timer() -> Result<(), RuntimeError> {
     let event = output_rx
         .recv()
         .await
-        .ok_or_else(|| RuntimeError::Internal("no output".into()))?;
+        .ok_or_else(|| RuntimeError::internal("no output"))?;
     assert_eq!(event, "event:3");
 
     tokio::time::sleep(std::time::Duration::from_millis(120)).await;
     let timer = output_rx
         .recv()
         .await
-        .ok_or_else(|| RuntimeError::Internal("no timer".into()))?;
+        .ok_or_else(|| RuntimeError::internal("no timer"))?;
     assert_eq!(timer, "timer:heartbeat");
     runtime.shutdown().await?;
     Ok(())
@@ -166,7 +166,7 @@ async fn session_registry_is_shared_with_actor() -> Result<(), RuntimeError> {
     let output = output_rx
         .recv()
         .await
-        .ok_or_else(|| RuntimeError::Internal("no output".into()))?;
+        .ok_or_else(|| RuntimeError::internal("no output"))?;
     assert_eq!(output, "event:1");
 
     let list = runtime.session_registry().list(tenant_id);
@@ -216,11 +216,11 @@ async fn admission_controller_rejects_overload() -> Result<(), RuntimeError> {
     let output1 = output_rx
         .recv()
         .await
-        .ok_or_else(|| RuntimeError::Internal("no output 1".into()))?;
+        .ok_or_else(|| RuntimeError::internal("no output 1"))?;
     let output2 = output_rx
         .recv()
         .await
-        .ok_or_else(|| RuntimeError::Internal("no output 2".into()))?;
+        .ok_or_else(|| RuntimeError::internal("no output 2"))?;
     assert_eq!(output1, "event:1");
     assert_eq!(output2, "event:2");
 
@@ -245,7 +245,7 @@ async fn shutdown_drains_actor() -> Result<(), RuntimeError> {
     let _ = output_rx
         .recv()
         .await
-        .ok_or_else(|| RuntimeError::Internal("no output".into()))?;
+        .ok_or_else(|| RuntimeError::internal("no output"))?;
     runtime.shutdown().await?;
     assert_eq!(output_rx.recv().await, Some("shutdown".to_string()));
     assert!(output_rx.recv().await.is_none());
@@ -268,7 +268,7 @@ async fn runtime_exposes_health_metrics() -> Result<(), RuntimeError> {
     let _ = output_rx
         .recv()
         .await
-        .ok_or_else(|| RuntimeError::Internal("no output".into()))?;
+        .ok_or_else(|| RuntimeError::internal("no output"))?;
 
     let metrics = runtime.metrics();
     assert!(metrics.messages_enqueued >= 1);
@@ -354,7 +354,7 @@ async fn timer_wheel_fires_many_timers_under_paused_time() -> Result<(), Runtime
         output_rx
             .recv()
             .await
-            .ok_or_else(|| RuntimeError::Internal("timer output channel closed".into()))?;
+            .ok_or_else(|| RuntimeError::internal("timer output channel closed"))?;
         fired += 1;
     }
     assert_eq!(fired, N);

@@ -110,13 +110,13 @@ impl AdmissionPolicyConfig {
     /// Validates that all configured bounds are greater than zero and coherent.
     pub fn validate(&self) -> Result<(), RuntimeError> {
         if self.rate_capacity_tokens == 0 {
-            return Err(RuntimeError::InvalidArgument(
-                "admission.rate_capacity_tokens must be greater than 0".into(),
+            return Err(RuntimeError::invalid_argument(
+                "admission.rate_capacity_tokens must be greater than 0",
             ));
         }
         if self.rate_refill_tokens_per_sec == 0 {
-            return Err(RuntimeError::InvalidArgument(
-                "admission.rate_refill_tokens_per_sec must be greater than 0".into(),
+            return Err(RuntimeError::invalid_argument(
+                "admission.rate_refill_tokens_per_sec must be greater than 0",
             ));
         }
         validate_in_range(
@@ -138,13 +138,13 @@ impl AdmissionPolicyConfig {
             MAX_DEAD_LETTER_CAPACITY,
         )?;
         if self.backlog_high_watermark == 0 {
-            return Err(RuntimeError::InvalidArgument(
-                "admission.backlog_high_watermark must be greater than 0".into(),
+            return Err(RuntimeError::invalid_argument(
+                "admission.backlog_high_watermark must be greater than 0",
             ));
         }
         if self.backlog_low_watermark > self.backlog_high_watermark {
-            return Err(RuntimeError::InvalidArgument(
-                "admission.backlog_low_watermark must not exceed backlog_high_watermark".into(),
+            return Err(RuntimeError::invalid_argument(
+                "admission.backlog_low_watermark must not exceed backlog_high_watermark",
             ));
         }
         Ok(())
@@ -192,8 +192,8 @@ impl RuntimeConfig {
             MAX_TIMER_COMMAND_CHANNEL_CAPACITY,
         )?;
         if self.timer_tick_resolution_ms == 0 {
-            return Err(RuntimeError::InvalidArgument(
-                "timer_tick_resolution_ms must be greater than 0".into(),
+            return Err(RuntimeError::invalid_argument(
+                "timer_tick_resolution_ms must be greater than 0",
             ));
         }
         validate_in_range(
@@ -216,7 +216,7 @@ impl RuntimeConfig {
         )?;
         validate_in_range("max_sessions", self.max_sessions, 1, MAX_SESSIONS)?;
         if self.actor_idle_timeout_ms > MAX_ACTOR_IDLE_TIMEOUT_MS {
-            return Err(RuntimeError::InvalidArgument(format!(
+            return Err(RuntimeError::invalid_argument(format!(
                 "actor_idle_timeout_ms must not exceed {MAX_ACTOR_IDLE_TIMEOUT_MS}"
             )));
         }
@@ -227,7 +227,7 @@ impl RuntimeConfig {
 
 fn validate_in_range(name: &str, value: usize, min: usize, max: usize) -> Result<(), RuntimeError> {
     if value < min || value > max {
-        return Err(RuntimeError::InvalidArgument(format!(
+        return Err(RuntimeError::invalid_argument(format!(
             "{name} must be between {min} and {max}"
         )));
     }
