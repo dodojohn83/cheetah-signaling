@@ -285,7 +285,7 @@ impl OutOfProcessDriver {
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
         let log_plugin_name = runtime.command.display().to_string();
-        let max_log_line_len = runtime.max_log_line_len;
+        let max_log_line_len = clamp_log_line_len(runtime.max_log_line_len);
         tokio::spawn(async move {
             let _ = forward_logs(
                 log_plugin_name,
@@ -319,9 +319,10 @@ impl OutOfProcessDriver {
                 PluginError::Driver(format!("failed to connect to plugin at {endpoint}: {e}"))
             })?;
 
+        let max_message_size = clamp_message_size(runtime.max_message_size);
         let client = PluginRuntimeClient::new(channel)
-            .max_decoding_message_size(runtime.max_message_size)
-            .max_encoding_message_size(runtime.max_message_size);
+            .max_decoding_message_size(max_message_size)
+            .max_encoding_message_size(max_message_size);
 
         Ok(Self {
             client: Mutex::new(client),
@@ -463,9 +464,25 @@ impl ProtocolDriver for OutOfProcessDriver {
 }
 
 const MAX_RPC_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
+/// Maximum bytes to read for a single plugin stdout/stderr line.
+/// A misconfigured huge value would let a newline-free flood allocate an
+/// unbounded `Vec<u8>` before the log sanitizer runs.
+const MAX_LOG_LINE_LEN: usize = 1024 * 1024;
+/// Maximum gRPC request/response payload size in bytes.
+const MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
+const MIN_LOG_LINE_LEN: usize = 1;
+const MIN_MESSAGE_SIZE: usize = 1024;
 
 fn clamp_timeout(timeout: DurationMs) -> Duration {
     Duration::from_millis(timeout.as_millis().max(0) as u64).min(MAX_RPC_TIMEOUT)
+}
+
+fn clamp_log_line_len(value: usize) -> usize {
+    value.clamp(MIN_LOG_LINE_LEN, MAX_LOG_LINE_LEN)
+}
+
+fn clamp_message_size(value: usize) -> usize {
+    value.clamp(MIN_MESSAGE_SIZE, MAX_MESSAGE_SIZE)
 }
 
 fn decode_response(
@@ -748,5 +765,19 @@ mod tests {
 
         let huge = clamp_timeout(DurationMs::from_millis(i64::MAX));
         assert_eq!(huge, MAX_RPC_TIMEOUT);
+    }
+
+    #[test]
+    fn clamp_log_line_len_bounds_input() {
+        assert_eq!(clamp_log_line_len(0), MIN_LOG_LINE_LEN);
+        assert_eq!(clamp_log_line_len(8_192), 8_192);
+        assert_eq!(clamp_log_line_len(usize::MAX), MAX_LOG_LINE_LEN);
+    }
+
+    #[test]
+    fn clamp_message_size_bounds_input() {
+        assert_eq!(clamp_message_size(0), MIN_MESSAGE_SIZE);
+        assert_eq!(clamp_message_size(4 * 1024 * 1024), 4 * 1024 * 1024);
+        assert_eq!(clamp_message_size(usize::MAX), MAX_MESSAGE_SIZE);
     }
 }
