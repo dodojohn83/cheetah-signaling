@@ -28,7 +28,7 @@ use cheetah_storage_api::{NodeRepository, OwnerRepository, Storage};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
@@ -126,7 +126,7 @@ impl Gb28181CommandBus for MultiListenerCommandBus {
 /// kinds, recording an `UNKNOWN_OUTCOME` without forging success when the
 /// outcome cannot be determined.
 pub struct OwnerCommandHandler {
-    plugin_host: Arc<Mutex<PluginHost>>,
+    plugin_host: Arc<PluginHost>,
     clock: Arc<dyn Clock>,
     storage: Arc<dyn Storage>,
     gb_bus: Option<Arc<dyn Gb28181CommandBus>>,
@@ -135,7 +135,7 @@ pub struct OwnerCommandHandler {
 impl OwnerCommandHandler {
     /// Creates a new handler.
     pub fn new(
-        plugin_host: Arc<Mutex<PluginHost>>,
+        plugin_host: Arc<PluginHost>,
         clock: Arc<dyn Clock>,
         storage: Arc<dyn Storage>,
         gb_bus: Option<Arc<dyn Gb28181CommandBus>>,
@@ -280,20 +280,20 @@ impl OwnerCommandHandler {
             }
         };
 
-        let result = {
-            let host = self.plugin_host.lock().await;
-            let Ok(name) = PluginName::new(plugin_name) else {
-                return Ok(CommandHandlerResult::rejected(format!(
-                    "invalid plugin name: {plugin_name}"
-                )));
-            };
-            let Some(instance_id) = host.instance_id_for_name(&name) else {
-                return Ok(CommandHandlerResult::rejected(format!(
-                    "plugin not found: {plugin_name}"
-                )));
-            };
-            host.handle_command(instance_id, driver_command).await
+        let Ok(name) = PluginName::new(plugin_name) else {
+            return Ok(CommandHandlerResult::rejected(format!(
+                "invalid plugin name: {plugin_name}"
+            )));
         };
+        let Some(instance_id) = self.plugin_host.instance_id_for_name(&name) else {
+            return Ok(CommandHandlerResult::rejected(format!(
+                "plugin not found: {plugin_name}"
+            )));
+        };
+        let result = self
+            .plugin_host
+            .handle_command(instance_id, driver_command)
+            .await;
 
         match result {
             Ok(()) => Ok(CommandHandlerResult::accepted(
@@ -869,5 +869,15 @@ mod tests {
             .await
             .expect_err("unknown listener must error");
         assert_eq!(err.kind(), SignalErrorKind::Internal);
+    }
+
+    /// `OwnerCommandHandler` must be `Send + Sync` so it can be held in an
+    /// `Arc<dyn CommandHandler>` and called concurrently without an async mutex.
+    #[test]
+    fn owner_command_handler_is_send_and_sync() {
+        fn assert_send<T: Send>() {}
+        fn assert_sync<T: Sync>() {}
+        assert_send::<OwnerCommandHandler>();
+        assert_sync::<OwnerCommandHandler>();
     }
 }

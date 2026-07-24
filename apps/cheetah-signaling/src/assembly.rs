@@ -119,7 +119,7 @@ pub struct SignalingRuntime {
     pub grpc_addr: SocketAddr,
     /// Plugin host with built-in factories and validated external manifests.
     #[allow(dead_code)]
-    pub plugin_host: Arc<tokio::sync::Mutex<PluginHost>>,
+    pub plugin_host: Arc<PluginHost>,
     /// Readiness flag: true only after all startup stages have completed.
     pub ready: Arc<AtomicBool>,
     /// Observed health of supervised background components.
@@ -1192,7 +1192,7 @@ pub async fn start(
         .await?;
     }
 
-    let plugin_host = Arc::new(tokio::sync::Mutex::new(plugin_host));
+    let plugin_host = Arc::new(plugin_host);
 
     // Inbox consumer is spawned after GB28181 driver bind so the owner's command
     // handler can inject outbound commands into the driver.
