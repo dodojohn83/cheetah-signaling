@@ -78,7 +78,7 @@ impl Envelope {
 
         writer.write_event(Event::End(BytesEnd::new("s:Envelope")))?;
 
-        String::from_utf8(cursor.into_inner()).map_err(|e| OnvifError::Xml(e.to_string()))
+        String::from_utf8(cursor.into_inner()).map_err(OnvifError::xml)
     }
 }
 
@@ -128,7 +128,7 @@ pub fn parse_fault(xml: &str) -> OnvifResult<Fault> {
                 text.clear();
             }
             Ok(Event::Eof) => break,
-            Err(e) => return Err(OnvifError::Xml(e.to_string())),
+            Err(e) => return Err(OnvifError::xml(e)),
             _ => {}
         }
     }

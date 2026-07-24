@@ -91,7 +91,7 @@ pub fn build_probe(
     writer.write_event(Event::End(BytesEnd::new("s:Body")))?;
     writer.write_event(Event::End(BytesEnd::new("s:Envelope")))?;
 
-    String::from_utf8(cursor.into_inner()).map_err(|e| OnvifError::Xml(e.to_string()))
+    String::from_utf8(cursor.into_inner()).map_err(OnvifError::xml)
 }
 
 /// Builds a WS-Discovery `Resolve` request for a known endpoint reference.
@@ -134,7 +134,7 @@ pub fn build_resolve(
     writer.write_event(Event::End(BytesEnd::new("s:Body")))?;
     writer.write_event(Event::End(BytesEnd::new("s:Envelope")))?;
 
-    String::from_utf8(cursor.into_inner()).map_err(|e| OnvifError::Xml(e.to_string()))
+    String::from_utf8(cursor.into_inner()).map_err(OnvifError::xml)
 }
 
 fn write_header_element<W: std::io::Write>(

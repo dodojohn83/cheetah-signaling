@@ -48,7 +48,7 @@ fn video_source_body(local: &str, video_source_token: &str) -> Result<String, On
     writer.write_event(Event::End(BytesEnd::new("timg:VideoSourceToken")))?;
     writer.write_event(Event::End(BytesEnd::new(&body_name)))?;
     String::from_utf8(cursor.into_inner())
-        .map_err(|e| OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string())))
+        .map_err(|e| OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::xml(e)))
 }
 
 /// Builds GetImagingSettings (read-only).
@@ -86,7 +86,7 @@ pub fn set_imaging_settings_request(
     _video_source_token: &str,
     _message_id: impl Into<String>,
 ) -> Result<String, OnvifServiceError> {
-    Err(OnvifServiceError::Unsupported(
+    Err(OnvifServiceError::unsupported(
         "ONVIF SetImagingSettings is not enabled in v1; imaging writes may be irreversible"
             .to_string(),
     ))
@@ -102,12 +102,12 @@ fn parse_f64(text: &str, field: &str) -> Result<Option<f64>, OnvifServiceError> 
     if text.is_empty() {
         return Ok(None);
     }
-    text.parse::<f64>()
-        .map(Some)
-        .map_err(|e| OnvifServiceError::InvalidValue {
-            field: field.to_string(),
-            message: format!("expected a valid floating point value: {e}"),
-        })
+    text.parse::<f64>().map(Some).map_err(|e| {
+        OnvifServiceError::invalid_value(
+            field,
+            format!("expected a valid floating point value: {e}"),
+        )
+    })
 }
 
 /// Parses GetImagingSettingsResponse into diagnostic fields.
@@ -157,7 +157,7 @@ pub fn parse_get_imaging_settings_response(
             Ok(Event::Eof) => break,
             Err(e) => {
                 return Err(OnvifServiceError::Onvif(
-                    cheetah_onvif_core::OnvifError::Xml(e.to_string()),
+                    cheetah_onvif_core::OnvifError::xml(e),
                 ));
             }
             _ => {}

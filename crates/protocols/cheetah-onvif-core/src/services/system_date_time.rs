@@ -36,16 +36,16 @@ impl DateTime {
     /// Returns an error if any component is out of range.
     pub fn to_primitive(&self) -> OnvifResult<PrimitiveDateTime> {
         let month = Month::try_from(self.month).map_err(|_| {
-            OnvifError::InvalidField(format!("DateTime month out of range: {}", self.month))
+            OnvifError::invalid_field(format!("DateTime month out of range: {}", self.month))
         })?;
         let date = Date::from_calendar_date(self.year, month, self.day).map_err(|_| {
-            OnvifError::InvalidField(format!(
+            OnvifError::invalid_field(format!(
                 "DateTime date out of range: {}-{}-{}",
                 self.year, self.month, self.day
             ))
         })?;
         let time = Time::from_hms(self.hour, self.minute, self.second).map_err(|_| {
-            OnvifError::InvalidField(format!(
+            OnvifError::invalid_field(format!(
                 "DateTime time out of range: {}:{}:{}",
                 self.hour, self.minute, self.second
             ))
@@ -177,14 +177,14 @@ pub fn parse_get_system_date_and_time_response(xml: &str) -> OnvifResult<SystemD
                 text.clear();
             }
             Ok(Event::Eof) => break,
-            Err(e) => return Err(OnvifError::Xml(e.to_string())),
+            Err(e) => return Err(OnvifError::xml(e)),
             _ => {}
         }
     }
 
-    let utc = utc.ok_or_else(|| OnvifError::MissingField("UTCDateTime".to_string()))?;
+    let utc = utc.ok_or_else(|| OnvifError::missing_field("UTCDateTime".to_string()))?;
     let date_time_type =
-        date_time_type.ok_or_else(|| OnvifError::MissingField("DateTimeType".to_string()))?;
+        date_time_type.ok_or_else(|| OnvifError::missing_field("DateTimeType".to_string()))?;
     let daylight_savings = daylight_savings.unwrap_or(false);
 
     Ok(SystemDateAndTime {
@@ -223,7 +223,7 @@ impl DateTimeBuilder {
 }
 
 fn missing(field: &str) -> OnvifError {
-    OnvifError::MissingField(format!("DateTime/{field}"))
+    OnvifError::missing_field(format!("DateTime/{field}"))
 }
 
 fn parse_component<T: std::str::FromStr>(text: &str, name: &str) -> OnvifResult<Option<T>> {
@@ -232,7 +232,7 @@ fn parse_component<T: std::str::FromStr>(text: &str, name: &str) -> OnvifResult<
         return Ok(None);
     }
     text.parse::<T>().map(Some).map_err(|_| {
-        OnvifError::InvalidField(format!("DateTime/{name} is not a valid integer: {text}"))
+        OnvifError::invalid_field(format!("DateTime/{name} is not a valid integer: {text}"))
     })
 }
 

@@ -91,7 +91,7 @@ pub fn parse_probe_matches(
                         match builder.build(discovered_at) {
                             Ok(m) => {
                                 if matches.len() >= limits.max_matches {
-                                    return Err(OnvifError::LimitExceeded(
+                                    return Err(OnvifError::limit_exceeded(
                                         "max probe matches".to_string(),
                                     ));
                                 }
@@ -113,7 +113,7 @@ pub fn parse_probe_matches(
                 text.clear();
             }
             Ok(Event::Eof) => break,
-            Err(e) => return Err(OnvifError::Xml(e.to_string())),
+            Err(e) => return Err(OnvifError::xml(e)),
             _ => {}
         }
     }
@@ -191,7 +191,7 @@ pub fn parse_hello_bye(
                 text.clear();
             }
             Ok(Event::Eof) => break,
-            Err(e) => return Err(OnvifError::Xml(e.to_string())),
+            Err(e) => return Err(OnvifError::xml(e)),
             _ => {}
         }
     }
@@ -203,7 +203,7 @@ pub fn parse_hello_bye(
         Some("bye") => Ok(super::EitherHelloBye::Bye(
             builder.build_bye(discovered_at)?,
         )),
-        _ => Err(OnvifError::MissingField("Hello or Bye".to_string())),
+        _ => Err(OnvifError::missing_field("Hello or Bye".to_string())),
     }
 }
 
@@ -276,7 +276,7 @@ pub fn parse_resolve_matches(
                         match builder.build(discovered_at) {
                             Ok(m) => {
                                 if matches.len() >= limits.max_matches {
-                                    return Err(OnvifError::LimitExceeded(
+                                    return Err(OnvifError::limit_exceeded(
                                         "max resolve matches".to_string(),
                                     ));
                                 }
@@ -298,7 +298,7 @@ pub fn parse_resolve_matches(
                 text.clear();
             }
             Ok(Event::Eof) => break,
-            Err(e) => return Err(OnvifError::Xml(e.to_string())),
+            Err(e) => return Err(OnvifError::xml(e)),
             _ => {}
         }
     }
@@ -489,6 +489,6 @@ fn parse_optional_metadata_version(text: &str) -> OnvifResult<Option<MetadataVer
         return Ok(None);
     }
     text.parse::<MetadataVersion>().map(Some).map_err(|_| {
-        OnvifError::InvalidField(format!("MetadataVersion is not a valid integer: {text}"))
+        OnvifError::invalid_field(format!("MetadataVersion is not a valid integer: {text}"))
     })
 }
