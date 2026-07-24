@@ -109,9 +109,8 @@ pub fn continuous_move_request(
     }
 
     writer.write_event(Event::End(BytesEnd::new("tptz:ContinuousMove")))?;
-    let body = String::from_utf8(cursor.into_inner()).map_err(|e| {
-        OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string()))
-    })?;
+    let body = String::from_utf8(cursor.into_inner())
+        .map_err(|e| OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::xml(e)))?;
     Envelope::new(CONTINUOUS_MOVE_ACTION, body)
         .with_message_id(message_id)
         .build()
@@ -185,9 +184,8 @@ fn move_with_vector(
     writer.write_event(Event::End(BytesEnd::new(&vector_el)))?;
     writer.write_event(Event::End(BytesEnd::new(&body_name)))?;
 
-    let body = String::from_utf8(cursor.into_inner()).map_err(|e| {
-        OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string()))
-    })?;
+    let body = String::from_utf8(cursor.into_inner())
+        .map_err(|e| OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::xml(e)))?;
     Envelope::new(action, body)
         .with_message_id(message_id)
         .build()
@@ -223,9 +221,8 @@ pub fn stop_request(
     writer.write_event(Event::End(BytesEnd::new("tptz:Zoom")))?;
     writer.write_event(Event::End(BytesEnd::new("tptz:Stop")))?;
 
-    let body = String::from_utf8(cursor.into_inner()).map_err(|e| {
-        OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string()))
-    })?;
+    let body = String::from_utf8(cursor.into_inner())
+        .map_err(|e| OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::xml(e)))?;
     Envelope::new(STOP_ACTION, body)
         .with_message_id(message_id)
         .build()
@@ -244,9 +241,8 @@ pub fn get_presets_request(
     writer.write_event(Event::Start(body))?;
     write_profile_token(&mut writer, profile_token)?;
     writer.write_event(Event::End(BytesEnd::new("tptz:GetPresets")))?;
-    let body = String::from_utf8(cursor.into_inner()).map_err(|e| {
-        OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string()))
-    })?;
+    let body = String::from_utf8(cursor.into_inner())
+        .map_err(|e| OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::xml(e)))?;
     Envelope::new(GET_PRESETS_ACTION, body)
         .with_message_id(message_id)
         .build()
@@ -269,9 +265,8 @@ pub fn goto_preset_request(
     writer.write_event(Event::Text(BytesText::new(preset_token)))?;
     writer.write_event(Event::End(BytesEnd::new("tptz:PresetToken")))?;
     writer.write_event(Event::End(BytesEnd::new("tptz:GotoPreset")))?;
-    let body = String::from_utf8(cursor.into_inner()).map_err(|e| {
-        OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::Xml(e.to_string()))
-    })?;
+    let body = String::from_utf8(cursor.into_inner())
+        .map_err(|e| OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::xml(e)))?;
     Envelope::new(GOTO_PRESET_ACTION, body)
         .with_message_id(message_id)
         .build()
@@ -320,7 +315,7 @@ pub fn parse_get_presets_response(
                 if name == "Preset" {
                     if let Some(mut preset) = current.take() {
                         if preset.token.is_empty() {
-                            return Err(OnvifServiceError::MissingField("Preset/@token".into()));
+                            return Err(OnvifServiceError::missing_field("Preset/@token"));
                         }
                         if preset.name.is_empty() {
                             preset.name = preset.token.clone();
@@ -338,7 +333,7 @@ pub fn parse_get_presets_response(
             Ok(Event::Eof) => break,
             Err(e) => {
                 return Err(OnvifServiceError::Onvif(
-                    cheetah_onvif_core::OnvifError::Xml(e.to_string()),
+                    cheetah_onvif_core::OnvifError::xml(e),
                 ));
             }
             _ => {}

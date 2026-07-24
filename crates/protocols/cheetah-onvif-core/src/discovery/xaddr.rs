@@ -59,7 +59,7 @@ impl XAddrPolicy {
     /// Validates a single URL against this policy.
     pub fn validate(&self, url: &Url) -> OnvifResult<()> {
         if !self.allowed_schemes.iter().any(|s| s == url.scheme()) {
-            return Err(OnvifError::SsrfRejected(format!(
+            return Err(OnvifError::ssrf_rejected(format!(
                 "scheme {} not allowed",
                 url.scheme()
             )));
@@ -69,33 +69,33 @@ impl XAddrPolicy {
             && !self.allowed_ports.is_empty()
             && !self.allowed_ports.contains(&port)
         {
-            return Err(OnvifError::SsrfRejected(format!(
+            return Err(OnvifError::ssrf_rejected(format!(
                 "port {} not allowed",
                 port
             )));
         }
 
         if !url.username().is_empty() || url.password().is_some() {
-            return Err(OnvifError::SsrfRejected("userinfo not allowed".to_string()));
+            return Err(OnvifError::ssrf_rejected(
+                "userinfo not allowed".to_string(),
+            ));
         }
 
         // Reject internal/leading double slashes (e.g. `/onvif//service`) while
         // still allowing root paths (`/`) and trailing slashes (`/onvif/`).
         if url.path().contains("//") {
-            return Err(OnvifError::SsrfRejected(
+            return Err(OnvifError::ssrf_rejected(
                 "empty path segment not allowed".to_string(),
             ));
         }
 
-        let host = url
-            .host()
-            .ok_or_else(|| OnvifError::InvalidXAddr(url.to_string()))?;
+        let host = url.host().ok_or_else(|| OnvifError::invalid_xaddr(url))?;
 
         match host {
             Host::Domain(domain) => {
                 if domain == "localhost" {
                     if !self.allow_loopback {
-                        return Err(OnvifError::SsrfRejected(
+                        return Err(OnvifError::ssrf_rejected(
                             "localhost not allowed".to_string(),
                         ));
                     }
@@ -105,7 +105,7 @@ impl XAddrPolicy {
                     return self.check_ip(ip);
                 }
                 if !self.allow_domain_names {
-                    return Err(OnvifError::SsrfRejected(
+                    return Err(OnvifError::ssrf_rejected(
                         "domain name hosts not allowed".to_string(),
                     ));
                 }
@@ -120,22 +120,22 @@ impl XAddrPolicy {
     fn check_ip(&self, ip: std::net::IpAddr) -> OnvifResult<()> {
         let (loopback, link_local, private, unspecified) = classify(ip);
         if !self.allow_unspecified && unspecified {
-            return Err(OnvifError::SsrfRejected(
+            return Err(OnvifError::ssrf_rejected(
                 "unspecified address not allowed".to_string(),
             ));
         }
         if !self.allow_loopback && loopback {
-            return Err(OnvifError::SsrfRejected(
+            return Err(OnvifError::ssrf_rejected(
                 "loopback address not allowed".to_string(),
             ));
         }
         if !self.allow_link_local && link_local {
-            return Err(OnvifError::SsrfRejected(
+            return Err(OnvifError::ssrf_rejected(
                 "link-local address not allowed".to_string(),
             ));
         }
         if !self.allow_private && private {
-            return Err(OnvifError::SsrfRejected(
+            return Err(OnvifError::ssrf_rejected(
                 "private address not allowed".to_string(),
             ));
         }
@@ -167,7 +167,7 @@ impl XAddrPolicy {
         self.validate(target)?;
 
         if original.scheme() == "https" && target.scheme() == "http" {
-            return Err(OnvifError::SsrfRejected(
+            return Err(OnvifError::ssrf_rejected(
                 "redirect from https to http not allowed".to_string(),
             ));
         }
@@ -175,7 +175,7 @@ impl XAddrPolicy {
         if original.host() != target.host()
             || original.port_or_known_default() != target.port_or_known_default()
         {
-            return Err(OnvifError::SsrfRejected(
+            return Err(OnvifError::ssrf_rejected(
                 "redirect to different authority not allowed".to_string(),
             ));
         }

@@ -98,5 +98,5 @@ pub(crate) fn local_name(name: &quick_xml::name::QName<'_>) -> String {
 }
 
 pub(crate) fn limit_error(message: impl Into<String>) -> OnvifServiceError {
-    OnvifServiceError::Onvif(OnvifError::LimitExceeded(message.into()))
+    OnvifServiceError::Onvif(OnvifError::limit_exceeded(message.into()))
 }
