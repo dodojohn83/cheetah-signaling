@@ -641,7 +641,7 @@ mod tests {
             policy.validate_sdp_connection(&multicast, 10000),
             Err(EndpointPolicyError::MalformedAddress)
         );
-        // Lowercase addrtype is accepted without allocating an uppercase copy.
+        // Lowercase/mixed-case addrtypes are accepted without allocating.
         let lower = SdpConnection {
             nettype: "IN".to_string(),
             addrtype: "ip4".to_string(),
@@ -651,7 +651,7 @@ mod tests {
             policy.validate_sdp_connection(&lower, 10000).unwrap(),
             "192.168.1.50".parse::<IpAddr>().unwrap()
         );
-        // Mixed-case addrtype is also accepted.
+
         let mixed = SdpConnection {
             nettype: "IN".to_string(),
             addrtype: "Ip6".to_string(),
@@ -660,6 +660,16 @@ mod tests {
         assert_eq!(
             policy.validate_sdp_connection(&mixed, 10000).unwrap(),
             "::1".parse::<IpAddr>().unwrap()
+        );
+
+        let ipv6 = SdpConnection {
+            nettype: "IN".to_string(),
+            addrtype: "ip6".to_string(),
+            address: "2001:db8::1".to_string(),
+        };
+        assert_eq!(
+            policy.validate_sdp_connection(&ipv6, 10000).unwrap(),
+            "2001:db8::1".parse::<IpAddr>().unwrap()
         );
     }
 
