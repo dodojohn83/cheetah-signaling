@@ -412,6 +412,7 @@ impl ProtocolDriver for OutOfProcessDriver {
         command: DriverCommand,
         timeout: DurationMs,
     ) -> Result<(), PluginError> {
+        command.validate()?;
         let payload = serde_json::json!({
             "plugin_name": ctx.plugin_name().to_string(),
             "command": command,
@@ -426,6 +427,7 @@ impl ProtocolDriver for OutOfProcessDriver {
         };
 
         for event in events {
+            event.validate()?;
             ctx.device_sink()
                 .emit_event(event)
                 .await

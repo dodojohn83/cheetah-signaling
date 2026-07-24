@@ -22,6 +22,18 @@ const MAX_HEALTH_MESSAGE_BYTES: usize = 1024;
 const MAX_HEALTH_METRICS_ENTRIES: usize = 64;
 /// Maximum byte length of a [`HealthReport`] metric key.
 const MAX_HEALTH_METRIC_KEY_BYTES: usize = 128;
+/// Maximum byte length of a [`DriverCommand`] command type.
+const MAX_DRIVER_COMMAND_COMMAND_TYPE_BYTES: usize = 128;
+/// Maximum byte length of a [`DriverCommand`] idempotency key.
+const MAX_DRIVER_COMMAND_IDEMPOTENCY_KEY_BYTES: usize = 256;
+/// Maximum byte length of a [`DriverCommand`] JSON payload.
+const MAX_DRIVER_COMMAND_PAYLOAD_BYTES: usize = 64 * 1024;
+/// Maximum byte length of a [`ProtocolEvent`] event type.
+const MAX_PROTOCOL_EVENT_TYPE_BYTES: usize = 128;
+/// Maximum byte length of a [`ProtocolEvent`] JSON payload.
+/// This matches the message envelope limit so that events produced by
+/// drivers are not rejected later in the bus pipeline.
+const MAX_PROTOCOL_EVENT_PAYLOAD_BYTES: usize = 4 * 1024 * 1024;
 
 /// A command delivered to a protocol driver.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -45,6 +57,56 @@ pub struct ProtocolEvent {
     pub payload: serde_json::Value,
     /// Source tenant, if known.
     pub tenant_id: Option<TenantId>,
+}
+
+impl DriverCommand {
+    /// Validates that the command fits within configured bounds.
+    pub fn validate(&self) -> Result<(), PluginError> {
+        if self.command_type.len() > MAX_DRIVER_COMMAND_COMMAND_TYPE_BYTES {
+            return Err(PluginError::Driver(format!(
+                "command type exceeds {} bytes",
+                MAX_DRIVER_COMMAND_COMMAND_TYPE_BYTES
+            )));
+        }
+        if self.idempotency_key.len() > MAX_DRIVER_COMMAND_IDEMPOTENCY_KEY_BYTES {
+            return Err(PluginError::Driver(format!(
+                "idempotency key exceeds {} bytes",
+                MAX_DRIVER_COMMAND_IDEMPOTENCY_KEY_BYTES
+            )));
+        }
+        let payload_bytes = serde_json::to_vec(&self.payload)
+            .map_err(|e| PluginError::Driver(format!("failed to serialize payload: {e}")))?
+            .len();
+        if payload_bytes > MAX_DRIVER_COMMAND_PAYLOAD_BYTES {
+            return Err(PluginError::Driver(format!(
+                "payload exceeds {} bytes",
+                MAX_DRIVER_COMMAND_PAYLOAD_BYTES
+            )));
+        }
+        Ok(())
+    }
+}
+
+impl ProtocolEvent {
+    /// Validates that the event fits within configured bounds.
+    pub fn validate(&self) -> Result<(), PluginError> {
+        if self.event_type.len() > MAX_PROTOCOL_EVENT_TYPE_BYTES {
+            return Err(PluginError::Driver(format!(
+                "event type exceeds {} bytes",
+                MAX_PROTOCOL_EVENT_TYPE_BYTES
+            )));
+        }
+        let payload_bytes = serde_json::to_vec(&self.payload)
+            .map_err(|e| PluginError::Driver(format!("failed to serialize payload: {e}")))?
+            .len();
+        if payload_bytes > MAX_PROTOCOL_EVENT_PAYLOAD_BYTES {
+            return Err(PluginError::Driver(format!(
+                "event payload exceeds {} bytes",
+                MAX_PROTOCOL_EVENT_PAYLOAD_BYTES
+            )));
+        }
+        Ok(())
+    }
 }
 
 /// A monotonic second counter used by drivers for timeouts and replay windows.
@@ -336,5 +398,40 @@ mod tests {
                 k.len() <= MAX_HEALTH_METRIC_KEY_BYTES
             }
         );
+    }
+
+    #[test]
+    fn driver_command_rejects_oversized_fields() {
+        let command = DriverCommand {
+            command_type: "x".repeat(MAX_DRIVER_COMMAND_COMMAND_TYPE_BYTES + 1),
+            payload: serde_json::Value::Null,
+            idempotency_key: String::new(),
+            deadline: UtcTimestamp::from_epoch_millis_saturating(0),
+        };
+        assert!(command.validate().is_err());
+    }
+
+    #[test]
+    fn driver_command_rejects_oversized_payload() {
+        let payload = serde_json::json!({"data": "x".repeat(MAX_DRIVER_COMMAND_PAYLOAD_BYTES + 1)});
+        let command = DriverCommand {
+            command_type: "ptz".to_string(),
+            payload,
+            idempotency_key: "key-1".to_string(),
+            deadline: UtcTimestamp::from_epoch_millis_saturating(0),
+        };
+        assert!(command.validate().is_err());
+    }
+
+    #[test]
+    fn protocol_event_rejects_oversized_type_and_payload() {
+        let event_type = "x".repeat(MAX_PROTOCOL_EVENT_TYPE_BYTES + 1);
+        let payload = serde_json::json!({"data": "x".repeat(MAX_PROTOCOL_EVENT_PAYLOAD_BYTES + 1)});
+        let event = ProtocolEvent {
+            event_type,
+            payload,
+            tenant_id: None,
+        };
+        assert!(event.validate().is_err());
     }
 }
