@@ -45,6 +45,23 @@ const MAX_ONVIF_DEFAULT_TENANT_BYTES: usize = 128;
 const MAX_ONVIF_DEFAULT_USERNAME_BYTES: usize = 256;
 const MAX_ONVIF_CREDENTIALS_REF_BYTES: usize = 256;
 
+const MAX_ONVIF_TIMEOUT_MS: i64 = 24 * 60 * 60 * 1_000; // 1 day
+const MAX_ONVIF_INTERVAL_MS: i64 = 24 * 60 * 60 * 1_000; // 1 day
+const MAX_ONVIF_TTL_MS: i64 = 30 * MAX_ONVIF_INTERVAL_MS; // 30 days
+
+const MAX_ONVIF_RESPONSE_BYTES: usize = 64 * 1024 * 1024; // 64 MiB
+const MAX_ONVIF_CONCURRENCY: usize = 1_000_000;
+const MAX_ONVIF_ENDPOINT_CAPACITY: usize = 1_000_000;
+const MAX_ONVIF_DATAGRAM_BYTES: usize = 2 * 1024 * 1024; // 2 MiB
+const MAX_ONVIF_XML_DEPTH: usize = 10_000;
+const MAX_ONVIF_XML_NODES: usize = 1_000_000;
+const MAX_ONVIF_DISCOVERY_MATCHES: usize = 10_000;
+const MAX_ONVIF_RATE_PER_SOURCE: u32 = 100_000;
+const MAX_ONVIF_RATE_SOURCES: usize = 100_000;
+const MAX_ONVIF_MAX_CONCURRENT_PROBES: u32 = 10_000;
+const MAX_ONVIF_ALLOWED_PORTS: usize = 64;
+const MAX_ONVIF_RATE_WINDOW_SECONDS: u64 = 24 * 60 * 60; // 1 day
+
 const MAX_STORAGE_MAX_CONNECTIONS: u32 = 10_000;
 
 const MAX_PLUGIN_INSTANCES: u32 = 10_000;
@@ -56,7 +73,6 @@ const MAX_OBSERVABILITY_DIAGNOSTIC_DURATION_MS: u64 = 24 * 60 * 60 * 1_000; // 1
 const MAX_OBSERVABILITY_DIAGNOSTIC_BODY_BYTES: usize = 64 * 1024 * 1024; // 64 MiB
 
 const MAX_SECURITY_TOKEN_TTL_MS: i64 = 365 * 24 * 60 * 60 * 1_000; // 365 days
-
 fn validate_string(field: &str, value: &str, max_bytes: usize) -> Result<()> {
     if value.len() > max_bytes {
         return Err(SignalError::new(
@@ -95,7 +111,7 @@ fn validate_positive_i64(field: &str, value: i64, max: i64) -> Result<()> {
     Ok(())
 }
 
-fn validate_nonneg_i64(field: &str, value: i64, max: i64) -> Result<()> {
+fn validate_nonnegative_i64(field: &str, value: i64, max: i64) -> Result<()> {
     if value < 0 || value > max {
         return Err(SignalError::new(
             SignalErrorKind::InvalidArgument,
@@ -160,6 +176,16 @@ fn validate_string_list(
                 format!("{field}[{i}] exceeds {max_item_bytes} bytes"),
             ));
         }
+    }
+    Ok(())
+}
+
+fn validate_positive_usize(field: &str, value: usize, max: usize) -> Result<()> {
+    if value == 0 || value > max {
+        return Err(SignalError::new(
+            SignalErrorKind::InvalidArgument,
+            format!("{field} must be between 1 and {max}"),
+        ));
     }
     Ok(())
 }
@@ -328,12 +354,12 @@ impl ClusterConfig {
     /// Validates numeric field bounds for the cluster configuration.
     pub fn validate(&self) -> Result<()> {
         if self.enabled {
-            validate_nonneg_i64(
+            validate_nonnegative_i64(
                 "cluster.lease_ttl_ms",
                 self.lease_ttl_ms.as_millis(),
                 MAX_CLUSTER_LEASE_TTL_MS,
             )?;
-            validate_nonneg_i64(
+            validate_nonnegative_i64(
                 "cluster.heartbeat_interval_ms",
                 self.heartbeat_interval_ms.as_millis(),
                 MAX_CLUSTER_HEARTBEAT_INTERVAL_MS,
@@ -396,7 +422,7 @@ impl SecretConfig {
 }
 
 impl OnvifConfig {
-    /// Validates string/list field bounds for the ONVIF configuration.
+    /// Validates string/list and numeric bounds for the ONVIF configuration.
     pub fn validate(&self) -> Result<()> {
         validate_string_list(
             "onvif.allowed_schemes",
@@ -404,6 +430,22 @@ impl OnvifConfig {
             MAX_ONVIF_SCHEMES,
             MAX_ONVIF_SCHEME_BYTES,
         )?;
+
+        if self.allowed_ports.len() > MAX_ONVIF_ALLOWED_PORTS {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                format!("onvif.allowed_ports must not exceed {MAX_ONVIF_ALLOWED_PORTS} entries"),
+            ));
+        }
+        for (i, port) in self.allowed_ports.iter().enumerate() {
+            if *port == 0 {
+                return Err(SignalError::new(
+                    SignalErrorKind::InvalidArgument,
+                    format!("onvif.allowed_ports[{i}] must not be zero"),
+                ));
+            }
+        }
+
         validate_optional_string(
             "onvif.default_tenant_id",
             self.default_tenant_id.as_deref(),
@@ -419,6 +461,104 @@ impl OnvifConfig {
             self.default_credentials_ref.as_deref(),
             MAX_ONVIF_CREDENTIALS_REF_BYTES,
         )?;
+
+        validate_positive_i64(
+            "onvif.connect_timeout_ms",
+            self.connect_timeout_ms.as_millis(),
+            MAX_ONVIF_TIMEOUT_MS,
+        )?;
+        validate_positive_i64(
+            "onvif.request_timeout_ms",
+            self.request_timeout_ms.as_millis(),
+            MAX_ONVIF_TIMEOUT_MS,
+        )?;
+        validate_positive_i64(
+            "onvif.probe_timeout_ms",
+            self.probe_timeout_ms.as_millis(),
+            MAX_ONVIF_TIMEOUT_MS,
+        )?;
+        validate_positive_i64(
+            "onvif.discovery_timeout_ms",
+            self.discovery_timeout_ms.as_millis(),
+            MAX_ONVIF_TIMEOUT_MS,
+        )?;
+        validate_nonnegative_i64(
+            "onvif.discovery_interval_ms",
+            self.discovery_interval_ms.as_millis(),
+            MAX_ONVIF_INTERVAL_MS,
+        )?;
+        validate_nonnegative_i64(
+            "onvif.capability_ttl_ms",
+            self.capability_ttl_ms.as_millis(),
+            MAX_ONVIF_TTL_MS,
+        )?;
+
+        validate_positive_usize(
+            "onvif.max_response_bytes",
+            self.max_response_bytes,
+            MAX_ONVIF_RESPONSE_BYTES,
+        )?;
+        validate_positive_usize(
+            "onvif.max_concurrent_requests",
+            self.max_concurrent_requests,
+            MAX_ONVIF_CONCURRENCY,
+        )?;
+        validate_positive_usize(
+            "onvif.per_device_concurrency",
+            self.per_device_concurrency,
+            MAX_ONVIF_CONCURRENCY,
+        )?;
+        validate_positive_usize(
+            "onvif.max_tracked_device_endpoints",
+            self.max_tracked_device_endpoints,
+            MAX_ONVIF_ENDPOINT_CAPACITY,
+        )?;
+        validate_positive_usize(
+            "onvif.discovery_max_datagram_bytes",
+            self.discovery_max_datagram_bytes,
+            MAX_ONVIF_DATAGRAM_BYTES,
+        )?;
+        validate_positive_usize(
+            "onvif.discovery_max_xml_depth",
+            self.discovery_max_xml_depth,
+            MAX_ONVIF_XML_DEPTH,
+        )?;
+        validate_positive_usize(
+            "onvif.discovery_max_xml_nodes",
+            self.discovery_max_xml_nodes,
+            MAX_ONVIF_XML_NODES,
+        )?;
+        validate_positive_usize(
+            "onvif.discovery_max_matches",
+            self.discovery_max_matches,
+            MAX_ONVIF_DISCOVERY_MATCHES,
+        )?;
+        validate_positive_u32(
+            "onvif.discovery_rate_max_per_source",
+            self.discovery_rate_max_per_source,
+            MAX_ONVIF_RATE_PER_SOURCE,
+        )?;
+        validate_positive_usize(
+            "onvif.discovery_rate_max_sources",
+            self.discovery_rate_max_sources,
+            MAX_ONVIF_RATE_SOURCES,
+        )?;
+        validate_positive_u32(
+            "onvif.max_concurrent_probes",
+            self.max_concurrent_probes,
+            MAX_ONVIF_MAX_CONCURRENT_PROBES,
+        )?;
+        validate_positive_usize(
+            "onvif.capability_cache_capacity",
+            self.capability_cache_capacity,
+            MAX_ONVIF_ENDPOINT_CAPACITY,
+        )?;
+        validate_positive_u64(
+            "onvif.discovery_rate_window_seconds",
+            self.discovery_rate_window_seconds,
+            MAX_ONVIF_RATE_WINDOW_SECONDS,
+        )?;
+
         Ok(())
     }
 }
@@ -426,6 +566,7 @@ impl OnvifConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::DurationMs;
 
     #[test]
     fn system_config_rejects_long_node_name() {
@@ -597,6 +738,95 @@ mod tests {
     fn onvif_config_rejects_empty_allowed_scheme() {
         let config = OnvifConfig {
             allowed_schemes: vec!["http".to_string(), "".to_string()],
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn onvif_config_accepts_defaults() {
+        assert!(OnvifConfig::default().validate().is_ok());
+    }
+
+    #[test]
+    fn onvif_config_rejects_negative_timeout() {
+        let config = OnvifConfig {
+            connect_timeout_ms: DurationMs::from_millis(-1),
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn onvif_config_rejects_excessive_timeout() {
+        let config = OnvifConfig {
+            request_timeout_ms: DurationMs::from_millis(MAX_ONVIF_TIMEOUT_MS + 1),
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn onvif_config_rejects_zero_response_bytes() {
+        let config = OnvifConfig {
+            max_response_bytes: 0,
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn onvif_config_rejects_excessive_response_bytes() {
+        let config = OnvifConfig {
+            max_response_bytes: MAX_ONVIF_RESPONSE_BYTES + 1,
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn onvif_config_rejects_zero_port_in_allowed_ports() {
+        let config = OnvifConfig {
+            allowed_ports: vec![0],
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn onvif_config_rejects_too_many_allowed_ports() {
+        let config = OnvifConfig {
+            allowed_ports: (1..=MAX_ONVIF_ALLOWED_PORTS + 1)
+                .map(|p| p as u16)
+                .collect(),
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn onvif_config_rejects_negative_discovery_interval() {
+        let config = OnvifConfig {
+            discovery_interval_ms: DurationMs::from_millis(-1),
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn onvif_config_accepts_zero_discovery_interval_and_ttl() {
+        let config = OnvifConfig {
+            discovery_interval_ms: DurationMs::from_millis(0),
+            capability_ttl_ms: DurationMs::from_millis(0),
+            ..Default::default()
+        };
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn onvif_config_rejects_excessive_max_concurrent_probes() {
+        let config = OnvifConfig {
+            max_concurrent_probes: MAX_ONVIF_MAX_CONCURRENT_PROBES + 1,
             ..Default::default()
         };
         assert!(config.validate().is_err());

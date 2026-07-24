@@ -135,52 +135,6 @@ impl SignalConfig {
         }
         self.gb28181.validate()?;
         self.http.validate()?;
-        if self.onvif.enabled {
-            if self.onvif.connect_timeout_ms.as_millis() <= 0 {
-                return Err(SignalError::new(
-                    SignalErrorKind::InvalidArgument,
-                    "onvif.connect_timeout_ms must be greater than zero",
-                ));
-            }
-            if self.onvif.request_timeout_ms.as_millis() <= 0 {
-                return Err(SignalError::new(
-                    SignalErrorKind::InvalidArgument,
-                    "onvif.request_timeout_ms must be greater than zero",
-                ));
-            }
-            if self.onvif.max_response_bytes == 0 {
-                return Err(SignalError::new(
-                    SignalErrorKind::InvalidArgument,
-                    "onvif.max_response_bytes must be greater than zero",
-                ));
-            }
-            if self.onvif.max_concurrent_requests == 0 {
-                return Err(SignalError::new(
-                    SignalErrorKind::InvalidArgument,
-                    "onvif.max_concurrent_requests must be greater than zero",
-                ));
-            }
-            if self.onvif.max_concurrent_probes == 0 {
-                return Err(SignalError::new(
-                    SignalErrorKind::InvalidArgument,
-                    "onvif.max_concurrent_probes must be greater than zero",
-                ));
-            }
-            if !self.onvif.allowed_schemes.is_empty()
-                && !self.onvif.allowed_schemes.iter().all(|s| !s.is_empty())
-            {
-                return Err(SignalError::new(
-                    SignalErrorKind::InvalidArgument,
-                    "onvif.allowed_schemes must not contain empty entries",
-                ));
-            }
-            if self.onvif.discovery_interval_ms.as_millis() < 0 {
-                return Err(SignalError::new(
-                    SignalErrorKind::InvalidArgument,
-                    "onvif.discovery_interval_ms must not be negative",
-                ));
-            }
-        }
         if self.http.port == 0 {
             return Err(SignalError::new(
                 SignalErrorKind::InvalidArgument,
