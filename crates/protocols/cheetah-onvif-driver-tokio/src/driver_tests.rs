@@ -53,3 +53,15 @@ async fn idle_device_permits_are_evicted_when_map_exceeds_capacity() {
         "idle first entry should be evicted to keep map bounded"
     );
 }
+
+#[test]
+fn parser_limits_track_max_response_bytes() {
+    // Use a response size larger than the parser default to verify it is
+    // aligned with the HTTP client buffer bound.
+    let config = DriverConfig {
+        max_response_bytes: 2 * 1024 * 1024, // 2 MiB
+        ..Default::default()
+    };
+    let driver = OnvifHttpDriver::new(&config).expect("driver should build");
+    assert_eq!(driver.limits.max_input_bytes, config.max_response_bytes);
+}
