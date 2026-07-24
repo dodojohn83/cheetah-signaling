@@ -26,6 +26,9 @@ use crate::{HeaderName, SipError, SipMessage};
 
 /// Default maximum number of live dialogs per shard/worker.
 pub const DEFAULT_MAX_DIALOGS: usize = 4096;
+/// Absolute maximum number of live dialogs per shard/worker. Larger values
+/// disable eviction and allow the HashMap to grow without bound.
+const MAX_DIALOGS_LIMIT: usize = 1_048_576;
 /// Default idle/terminated time-to-live before a dialog is reclaimed.
 pub const DEFAULT_DIALOG_TTL: Duration = Duration::from_secs(1800);
 
@@ -79,7 +82,8 @@ pub struct DialogManager {
 
 impl DialogManager {
     /// Creates a manager with the given configuration.
-    pub fn new(config: DialogManagerConfig) -> Self {
+    pub fn new(mut config: DialogManagerConfig) -> Self {
+        config.max_dialogs = config.max_dialogs.clamp(1, MAX_DIALOGS_LIMIT);
         Self {
             config,
             dialogs: HashMap::new(),
@@ -276,6 +280,42 @@ mod tests {
 
     fn manager() -> DialogManager {
         DialogManager::new(DialogManagerConfig::default())
+    }
+
+    fn invite_with_call_id(call_id: &str) -> SipMessage {
+        parse(&format!(
+            "INVITE sip:bob@example.com SIP/2.0\r\n\
+             Via: SIP/2.0/UDP 192.0.2.1:5060;branch=z9hG4bKinv\r\n\
+             From: <sip:alice@example.com>;tag=alice-tag\r\n\
+             To: <sip:bob@example.com>\r\n\
+             Contact: <sip:alice@192.0.2.1:5060>\r\n\
+             Call-ID: {call_id}\r\n\
+             CSeq: 1 INVITE\r\n\
+             Content-Length: 0\r\n\r\n",
+        ))
+    }
+
+    #[test]
+    fn max_dialogs_is_clamped() {
+        let mut huge = DialogManager::new(DialogManagerConfig {
+            max_dialogs: usize::MAX,
+            ttl: DEFAULT_DIALOG_TTL,
+        });
+        huge.establish_uas(&invite_with_call_id("huge-1"), "tag", Duration::ZERO)
+            .unwrap();
+        huge.establish_uas(&invite_with_call_id("huge-2"), "tag", Duration::ZERO)
+            .unwrap();
+        assert_eq!(huge.len(), 2, "huge max_dialogs must be clamped, not zero");
+
+        let mut zero = DialogManager::new(DialogManagerConfig {
+            max_dialogs: 0,
+            ttl: DEFAULT_DIALOG_TTL,
+        });
+        zero.establish_uas(&invite_with_call_id("zero-1"), "tag", Duration::ZERO)
+            .unwrap();
+        zero.establish_uas(&invite_with_call_id("zero-2"), "tag", Duration::ZERO)
+            .unwrap();
+        assert_eq!(zero.len(), 1, "zero max_dialogs must be clamped to 1");
     }
 
     #[test]
