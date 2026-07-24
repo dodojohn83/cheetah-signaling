@@ -91,32 +91,32 @@ impl CatalogFilter {
         if let Some(tenant_id) = &self.tenant_id
             && tenant_id.len() > MAX_CATALOG_FILTER_TENANT_BYTES
         {
-            return Err(CascadeError::Internal(format!(
+            return Err(CascadeError::internal(format!(
                 "catalog_filter.tenant_id exceeds {MAX_CATALOG_FILTER_TENANT_BYTES} bytes"
             )));
         }
 
         if self.whitelisted_device_ids.len() > MAX_CATALOG_FILTER_LIST_ENTRIES {
-            return Err(CascadeError::Internal(format!(
+            return Err(CascadeError::internal(format!(
                 "catalog_filter.whitelisted_device_ids exceeds {MAX_CATALOG_FILTER_LIST_ENTRIES} entries"
             )));
         }
         for id in &self.whitelisted_device_ids {
             if id.len() > MAX_CATALOG_FILTER_DEVICE_ID_BYTES {
-                return Err(CascadeError::Internal(format!(
+                return Err(CascadeError::internal(format!(
                     "catalog_filter.whitelisted_device_ids entry exceeds {MAX_CATALOG_FILTER_DEVICE_ID_BYTES} bytes"
                 )));
             }
         }
 
         if self.tags.len() > MAX_CATALOG_FILTER_LIST_ENTRIES {
-            return Err(CascadeError::Internal(format!(
+            return Err(CascadeError::internal(format!(
                 "catalog_filter.tags exceeds {MAX_CATALOG_FILTER_LIST_ENTRIES} entries"
             )));
         }
         for tag in &self.tags {
             if tag.len() > MAX_CATALOG_FILTER_TAG_BYTES {
-                return Err(CascadeError::Internal(format!(
+                return Err(CascadeError::internal(format!(
                     "catalog_filter.tags entry exceeds {MAX_CATALOG_FILTER_TAG_BYTES} bytes"
                 )));
             }
@@ -125,7 +125,7 @@ impl CatalogFilter {
         if let Some(prefix) = &self.org_path_prefix
             && prefix.len() > MAX_CATALOG_FILTER_ORG_PREFIX_BYTES
         {
-            return Err(CascadeError::Internal(format!(
+            return Err(CascadeError::internal(format!(
                 "catalog_filter.org_path_prefix exceeds {MAX_CATALOG_FILTER_ORG_PREFIX_BYTES} bytes"
             )));
         }
@@ -340,7 +340,7 @@ pub(crate) fn build_catalog_pages(
 
         let mut page = provider
             .query_page(query, cursor.as_deref(), max_per_packet)
-            .map_err(|e| CascadeError::Internal(e.to_string()))?;
+            .map_err(|e| CascadeError::internal(e.to_string()))?;
         pages_emitted += 1;
 
         // Defensive clamp: a provider must not return more items than the page
@@ -363,7 +363,7 @@ pub(crate) fn build_catalog_pages(
                 let local_tag = format!("{platform_id}-{now}-{request_counter}");
                 let branch = format!("z9hG4bK-{call_id}-{cseq}-{request_counter}");
                 let xml = build_catalog_response(&query.sn, &query.device_id, 0, &[])
-                    .map_err(|e| CascadeError::Internal(format!("XML encode failed: {e}")))?;
+                    .map_err(|e| CascadeError::internal(format!("XML encode failed: {e}")))?;
                 messages.push(build_catalog_message(
                     config, &call_id, cseq, &local_tag, &branch, &xml,
                 )?);
@@ -379,7 +379,7 @@ pub(crate) fn build_catalog_pages(
         let local_tag = format!("{platform_id}-{now}-{request_counter}");
         let branch = format!("z9hG4bK-{call_id}-{cseq}-{request_counter}");
         let xml = build_catalog_response(&query.sn, &query.device_id, sum_num, &page.items)
-            .map_err(|e| CascadeError::Internal(format!("XML encode failed: {e}")))?;
+            .map_err(|e| CascadeError::internal(format!("XML encode failed: {e}")))?;
         messages.push(build_catalog_message(
             config, &call_id, cseq, &local_tag, &branch, &xml,
         )?);

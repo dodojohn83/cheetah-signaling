@@ -222,7 +222,7 @@ fn build_unauthorized_response(
     challenge: &cheetah_gb28181_core::DigestChallenge,
 ) -> Result<SipMessage, crate::cascade::CascadeError> {
     let SipMessage::Request { headers, .. } = request else {
-        return Err(crate::cascade::CascadeError::Internal(
+        return Err(crate::cascade::CascadeError::internal(
             "caller ensured a request".to_string(),
         ));
     };

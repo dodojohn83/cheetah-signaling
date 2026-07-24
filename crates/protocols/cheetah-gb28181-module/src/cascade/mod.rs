@@ -21,10 +21,18 @@ use cheetah_gb28181_core::{
     DigestChallenge, DigestClient, DigestContext, DigestError, DigestReplayCache, SipMessage,
     SipUri,
 };
+use cheetah_signal_types::clamp_str;
 use secrecy::{SecretBox, SecretString};
 use std::collections::BTreeMap;
 use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
+
+/// Maximum byte length of a `CascadeError` diagnostic message.
+const MAX_CASCADE_ERROR_BYTES: usize = 1024;
+
+fn clamp_cascade_message(message: impl std::fmt::Display) -> String {
+    clamp_str(&message.to_string(), MAX_CASCADE_ERROR_BYTES)
+}
 
 /// Builds the network-zone policy applied to the cascade upstream endpoint.
 ///
@@ -60,7 +68,7 @@ where
 /// Rejects values that would inject extra SIP header lines.
 pub(crate) fn validate_token(value: &str) -> Result<(), CascadeError> {
     if value.contains('\r') || value.contains('\n') {
-        return Err(CascadeError::Internal(
+        return Err(CascadeError::internal(
             "SIP header token contains forbidden line break".to_string(),
         ));
     }
@@ -224,12 +232,12 @@ impl CascadeConfig {
         allow_internal_upstreams: bool,
     ) -> Result<Self, CascadeError> {
         if register_interval_seconds == 0 {
-            return Err(CascadeError::Internal(
+            return Err(CascadeError::internal(
                 "register_interval_seconds must be greater than zero".to_string(),
             ));
         }
         if register_refresh_margin_seconds == 0 {
-            return Err(CascadeError::Internal(
+            return Err(CascadeError::internal(
                 "register_refresh_margin_seconds must be greater than zero".to_string(),
             ));
         }
@@ -241,7 +249,7 @@ impl CascadeConfig {
         // The advertised (local) platform address must be explicitly
         // configured, never derived from an untrusted Host/Contact header.
         require_explicit_advertised_host(local_uri.host()).map_err(|e| {
-            CascadeError::Internal(format!("local advertised host is not explicit: {e}"))
+            CascadeError::internal(format!("local advertised host is not explicit: {e}"))
         })?;
 
         // Validate the outbound upstream endpoint (scheme/transport/port and,
@@ -249,7 +257,7 @@ impl CascadeConfig {
         // DNS re-verification (see `verify_upstream_resolved_addresses`).
         upstream_endpoint_policy(allow_internal_upstreams)
             .validate_sip_endpoint(&upstream)
-            .map_err(|e| CascadeError::Internal(format!("invalid upstream endpoint: {e}")))?;
+            .map_err(|e| CascadeError::internal(format!("invalid upstream endpoint: {e}")))?;
 
         let mut config = Self {
             domain_id,
@@ -340,7 +348,7 @@ impl CascadeConfig {
 
         if let Some(ua) = &self.user_agent {
             if ua.len() > MAX_USER_AGENT_BYTES {
-                return Err(CascadeError::Internal(format!(
+                return Err(CascadeError::internal(format!(
                     "user_agent exceeds {MAX_USER_AGENT_BYTES} bytes"
                 )));
             }
@@ -363,7 +371,7 @@ impl CascadeConfig {
         let credential_ref = credential_ref.into();
         validate_token(&credential_ref)?;
         if server_secret.as_ref().len() < 32 {
-            return Err(CascadeError::Internal(
+            return Err(CascadeError::internal(
                 "catalog inbound digest server secret must be at least 32 bytes".to_string(),
             ));
         }
@@ -395,7 +403,7 @@ impl CascadeConfig {
     ) -> Result<(), CascadeError> {
         upstream_endpoint_policy(self.allow_internal_upstreams)
             .verify_resolved_addresses(addresses)
-            .map_err(|e| CascadeError::Internal(format!("upstream address rejected: {e}")))
+            .map_err(|e| CascadeError::internal(format!("upstream address rejected: {e}")))
     }
 }
 
@@ -474,21 +482,43 @@ pub enum CascadeError {
     Internal(String),
 }
 
+impl CascadeError {
+    /// Creates an `InvalidState` error with a bounded message.
+    pub fn invalid_state(message: impl std::fmt::Display) -> Self {
+        Self::InvalidState(clamp_cascade_message(message))
+    }
+
+    /// Creates a `MalformedSip` error with a bounded message.
+    pub fn malformed_sip(message: impl std::fmt::Display) -> Self {
+        Self::MalformedSip(clamp_cascade_message(message))
+    }
+
+    /// Creates an `AuthenticationFailed` error with a bounded message.
+    pub fn authentication_failed(message: impl std::fmt::Display) -> Self {
+        Self::AuthenticationFailed(clamp_cascade_message(message))
+    }
+
+    /// Creates an `Internal` error with a bounded message.
+    pub fn internal(message: impl std::fmt::Display) -> Self {
+        Self::Internal(clamp_cascade_message(message))
+    }
+}
+
 impl From<DigestError> for CascadeError {
     fn from(e: DigestError) -> Self {
-        CascadeError::AuthenticationFailed(e.to_string())
+        Self::authentication_failed(e)
     }
 }
 
 impl From<cheetah_gb28181_core::SipError> for CascadeError {
     fn from(e: cheetah_gb28181_core::SipError) -> Self {
-        CascadeError::MalformedSip(e.to_string())
+        Self::malformed_sip(e)
     }
 }
 
 impl From<CatalogError> for CascadeError {
     fn from(e: CatalogError) -> Self {
-        CascadeError::Internal(e.to_string())
+        Self::internal(e)
     }
 }
 

@@ -71,7 +71,7 @@ pub(crate) fn enqueue<P: super::CascadeCredentialProvider>(
             let body =
                 build_device_status_notify(&sn, &device_id, presence == DevicePresence::Online)
                     .map_err(|e| {
-                        CascadeError::Internal(format!("failed to encode DeviceStatus XML: {e}"))
+                        CascadeError::internal(format!("failed to encode DeviceStatus XML: {e}"))
                     })?;
             PendingReport {
                 kind: ReportKind::Presence,
@@ -108,7 +108,7 @@ pub(crate) fn enqueue<P: super::CascadeCredentialProvider>(
                 time.as_deref(),
                 info.as_deref(),
             )
-            .map_err(|e| CascadeError::Internal(format!("failed to encode Alarm XML: {e}")))?;
+            .map_err(|e| CascadeError::internal(format!("failed to encode Alarm XML: {e}")))?;
             PendingReport {
                 kind: ReportKind::Alarm,
                 device_id,
@@ -141,7 +141,7 @@ pub(crate) fn enqueue<P: super::CascadeCredentialProvider>(
                 altitude.as_deref(),
             )
             .map_err(|e| {
-                CascadeError::Internal(format!("failed to encode MobilePosition XML: {e}"))
+                CascadeError::internal(format!("failed to encode MobilePosition XML: {e}"))
             })?;
             PendingReport {
                 kind: ReportKind::MobilePosition,

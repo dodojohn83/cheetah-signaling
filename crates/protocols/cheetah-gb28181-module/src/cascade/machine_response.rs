@@ -25,9 +25,9 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
             SipMessage::Response { .. } => {
                 let cseq = msg
                     .cseq()
-                    .map_err(|e| CascadeError::MalformedSip(e.to_string()))?;
+                    .map_err(|e| CascadeError::malformed_sip(e.to_string()))?;
                 let call_id = msg.call_id().ok_or_else(|| {
-                    CascadeError::MalformedSip("missing Call-ID header".to_string())
+                    CascadeError::malformed_sip("missing Call-ID header".to_string())
                 })?;
                 (cseq.0, cseq.1, call_id.to_string())
             }
@@ -307,13 +307,13 @@ impl<P: CascadeCredentialProvider> Gb28181Cascade<P> {
         mut reg: Registering,
     ) -> Result<Vec<CascadeOutput>, CascadeError> {
         let challenge = extract_challenge(&msg)?.ok_or_else(|| {
-            CascadeError::MalformedSip("401 response missing WWW-Authenticate".to_string())
+            CascadeError::malformed_sip("401 response missing WWW-Authenticate".to_string())
         })?;
 
         let next_cseq = reg
             .cseq
             .checked_add(1)
-            .ok_or_else(|| CascadeError::Internal("CSeq overflow".to_string()))?;
+            .ok_or_else(|| CascadeError::internal("CSeq overflow".to_string()))?;
         let next_branch = self.next_branch(&reg.call_id, next_cseq);
         let next_attempt = reg.attempt + 1;
         let auth = self.build_authorization(&challenge, next_cseq, next_attempt, now)?;

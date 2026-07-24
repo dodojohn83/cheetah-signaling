@@ -137,7 +137,7 @@ impl<P: CascadeCredentialProvider> CascadeManager<P> {
     ) -> Result<CascadeConfig, CascadeRoutingError> {
         let endpoint = link.endpoint();
         let domain_id = DomainId::new(endpoint.domain.clone()).ok_or_else(|| {
-            CascadeRoutingError::Cascade(CascadeError::Internal("invalid domain id".to_string()))
+            CascadeRoutingError::Cascade(CascadeError::internal("invalid domain id".to_string()))
         })?;
         let local_uri = parse_uri(&format!("sip:{}@{}", local_identity, endpoint.domain))?;
         let upstream_uri = parse_uri(&format!(

@@ -86,17 +86,17 @@ fn build_notify_body<P: CascadeCredentialProvider>(
     let device_id = cascade.platform_id().to_string();
     let xml = match sub.event_package.as_str() {
         "Catalog" => build_catalog_response(&sn, &device_id, 0, &[]).map_err(|e| {
-            CascadeError::Internal(format!("failed to encode Catalog NOTIFY body: {e}"))
+            CascadeError::internal(format!("failed to encode Catalog NOTIFY body: {e}"))
         })?,
         "Alarm" => {
             build_alarm_notify(&sn, &device_id, None, None, None, None, None).map_err(|e| {
-                CascadeError::Internal(format!("failed to encode Alarm NOTIFY body: {e}"))
+                CascadeError::internal(format!("failed to encode Alarm NOTIFY body: {e}"))
             })?
         }
         "MobilePosition" => {
             build_mobile_position_notify(&sn, &device_id, None, None, None, None, None, None)
                 .map_err(|e| {
-                    CascadeError::Internal(format!(
+                    CascadeError::internal(format!(
                         "failed to encode MobilePosition NOTIFY body: {e}"
                     ))
                 })?
