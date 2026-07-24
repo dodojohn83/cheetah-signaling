@@ -4,6 +4,21 @@ use super::error::{SipError, SipErrorKind};
 use super::headers::{HeaderName, SipHeaders};
 use super::uri::SipUri;
 
+/// Maximum byte length of a SIP response reason phrase carried by [`StatusLine`].
+const MAX_REASON_PHRASE_BYTES: usize = 256;
+
+/// Truncates `s` to at most `max` bytes, never splitting a multi-byte character.
+fn clamp_str(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        return s.to_string();
+    }
+    let mut end = max;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    s[..end].to_string()
+}
+
 /// SIP methods required for GB28181.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum Method {
@@ -116,11 +131,14 @@ pub struct StatusLine {
 
 impl StatusLine {
     /// Creates a new status line.
+    ///
+    /// The reason phrase is clamped to [`MAX_REASON_PHRASE_BYTES`] so that
+    /// application-constructed responses cannot carry arbitrarily large text.
     pub fn new(code: u16, reason: impl Into<String>) -> Self {
         Self {
             version: SIP_2_0.to_string(),
             code,
-            reason: reason.into(),
+            reason: clamp_str(&reason.into(), MAX_REASON_PHRASE_BYTES),
         }
     }
 
@@ -385,5 +403,20 @@ mod tests {
             msg.content_length().unwrap_err().kind,
             SipErrorKind::InvalidHeader
         );
+    }
+
+    #[test]
+    fn status_line_reason_is_clamped_to_max_bytes() {
+        let huge = "x".repeat(MAX_REASON_PHRASE_BYTES + 10);
+        let line = StatusLine::new(200, &huge);
+        assert!(line.reason.len() <= MAX_REASON_PHRASE_BYTES);
+        assert!(line.reason.is_char_boundary(line.reason.len()));
+        assert!(line.reason.starts_with('x'));
+    }
+
+    #[test]
+    fn status_line_preserves_short_reason() {
+        let line = StatusLine::new(404, "Not Found");
+        assert_eq!(line.reason, "Not Found");
     }
 }
