@@ -10,8 +10,15 @@ use cheetah_runtime_api::{
     ActorContext, DeviceActor, DeviceKey, RuntimeConfig, RuntimeMessage, RuntimeMetrics, Scheduler,
     SessionRegistry,
 };
-use cheetah_signal_types::Clock;
+use cheetah_signal_types::{Clock, clamp_str};
 use tokio::sync::mpsc;
+
+/// Maximum byte length of an actor error logged by the shard worker.
+const MAX_ACTOR_ERROR_BYTES: usize = 1024;
+
+fn clamp_actor_error<E: std::fmt::Display>(e: E) -> String {
+    clamp_str(&e.to_string(), MAX_ACTOR_ERROR_BYTES)
+}
 
 /// Per-shard configuration derived from the runtime configuration.
 #[derive(Clone, Copy, Debug)]
@@ -177,7 +184,8 @@ async fn process_ready_queue<A: DeviceActor>(
                         }
                     }
                     Err(e) => {
-                        tracing::warn!(?key, "failed to create actor: {e}");
+                        let error_msg = clamp_actor_error(e);
+                        tracing::warn!(?key, "failed to create actor: {}", error_msg);
                         ready_queue.remove(&key);
                         continue;
                     }
@@ -209,7 +217,8 @@ async fn process_ready_queue<A: DeviceActor>(
                         }
                     }
                     Err(e) => {
-                        tracing::warn!(?key, "actor handle error: {e}");
+                        let error_msg = clamp_actor_error(e);
+                        tracing::warn!(?key, "actor handle error: {}", error_msg);
                     }
                 }
 
@@ -266,7 +275,8 @@ async fn shutdown_all<A: DeviceActor>(actors: BTreeMap<DeviceKey, A>, ctx: &Shar
                 }
             }
             Err(e) => {
-                tracing::warn!(?key, "actor shutdown error: {e}");
+                let error_msg = clamp_actor_error(e);
+                tracing::warn!(?key, "actor shutdown error: {}", error_msg);
             }
         }
     }
