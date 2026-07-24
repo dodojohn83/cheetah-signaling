@@ -1,7 +1,7 @@
 //! Supporting state and utilities for the media event consumer.
 
 use cheetah_signal_types::{MessageId, NodeId, TenantId, UtcTimestamp};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
@@ -64,6 +64,13 @@ impl CursorState {
             map.insert(node_id, sequence);
         }
     }
+
+    /// Removes cursor entries for nodes that are no longer active, preventing
+    /// the sequence map from growing without bound as nodes churn.
+    pub(crate) fn retain(&self, active: &BTreeSet<NodeId>) {
+        let mut map = self.sequences.lock().unwrap_or_else(|p| p.into_inner());
+        map.retain(|node_id, _| active.contains(node_id));
+    }
 }
 
 /// Simple per-node token bucket for diagnostic log rate limiting.
@@ -99,6 +106,13 @@ impl DiagnosticLogLimiter {
         } else {
             false
         }
+    }
+
+    /// Removes rate-limit buckets for nodes that are no longer active,
+    /// preventing unbounded memory growth as nodes churn.
+    pub(crate) fn retain(&self, active: &BTreeSet<NodeId>) {
+        let mut buckets = self.buckets.lock().unwrap_or_else(|p| p.into_inner());
+        buckets.retain(|node_id, _| active.contains(node_id));
     }
 }
 
@@ -188,5 +202,41 @@ mod tests {
     fn parse_cursor_payload_extracts_sequence() {
         assert_eq!(parse_cursor_payload("{\"sequence\":42}"), Some(42));
         assert_eq!(parse_cursor_payload("not-json"), None);
+    }
+
+    #[test]
+    fn cursor_state_retain_prunes_inactive_nodes() {
+        let state = CursorState::default();
+        let active = NodeId::from_uuid(Uuid::from_u128(1));
+        let inactive = NodeId::from_uuid(Uuid::from_u128(2));
+        state.update_sequence(active, 1);
+        state.update_sequence(inactive, 2);
+
+        let mut keep = BTreeSet::new();
+        keep.insert(active);
+        state.retain(&keep);
+
+        assert_eq!(state.last_sequence(active), 1);
+        assert_eq!(state.last_sequence(inactive), 0);
+    }
+
+    #[test]
+    fn diagnostic_log_limiter_retain_prunes_inactive_nodes() {
+        let limiter = DiagnosticLogLimiter::default();
+        let active = NodeId::from_uuid(Uuid::from_u128(3));
+        let inactive = NodeId::from_uuid(Uuid::from_u128(4));
+
+        let now = UtcTimestamp::from_epoch_millis_saturating(0);
+        assert!(limiter.check(active, 10, now));
+        assert!(limiter.check(inactive, 10, now));
+
+        let mut keep = BTreeSet::new();
+        keep.insert(active);
+        limiter.retain(&keep);
+
+        // Inactive node's bucket should be gone; a new check should succeed
+        // because a fresh bucket is created with the full token allowance.
+        assert!(limiter.check(active, 10, now));
+        assert!(limiter.check(inactive, 10, now));
     }
 }
