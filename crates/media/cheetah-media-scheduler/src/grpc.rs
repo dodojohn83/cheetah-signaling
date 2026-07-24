@@ -23,6 +23,9 @@ use std::sync::Arc;
 use std::time::Duration;
 use tonic::{Request, Response, Status};
 
+/// Minimum DNS lookup timeout so a misconfigured `0` ms does not expire before the
+/// kernel can schedule the I/O.
+const MIN_DNS_LOOKUP_TIMEOUT: Duration = Duration::from_millis(1);
 const MAX_DNS_LOOKUP_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Maps the scheduler's `MediaRegistryConfig` onto domain `MediaNodeLimits`.
@@ -609,7 +612,9 @@ async fn host_is_internal(host: &str, port: u16, timeout_ms: u64) -> Result<bool
     }
 
     let lookup = tokio::time::timeout(
-        Duration::from_millis(timeout_ms).min(MAX_DNS_LOOKUP_TIMEOUT),
+        Duration::from_millis(timeout_ms)
+            .max(MIN_DNS_LOOKUP_TIMEOUT)
+            .min(MAX_DNS_LOOKUP_TIMEOUT),
         tokio::net::lookup_host((host, port)),
     )
     .await
