@@ -887,6 +887,8 @@ pub const MAX_COMPATIBILITY_OVERRIDE_ENTRIES: usize = 64;
 pub const MAX_COMPATIBILITY_OVERRIDE_ENTRY_BYTES: usize = 64;
 /// Maximum number of GB28181 listeners.
 const MAX_GB28181_LISTENERS: usize = 256;
+/// Maximum number of GB28181 compatibility profiles.
+const MAX_GB28181_COMPATIBILITY_PROFILES: usize = 1_024;
 /// Maximum byte length of a GB28181 listener identifier.
 const MAX_GB28181_LISTENER_ID_BYTES: usize = 64;
 /// Maximum byte length of a GB28181 listener realm.
@@ -1068,6 +1070,15 @@ impl Gb28181Config {
                 SignalErrorKind::InvalidArgument,
                 format!(
                     "gb28181.session_reaper_max_per_tick must be between 1 and {SESSION_REAPER_MAX_PER_TICK_LIMIT}"
+                ),
+            ));
+        }
+
+        if self.compatibility_profiles.len() > MAX_GB28181_COMPATIBILITY_PROFILES {
+            return Err(SignalError::new(
+                SignalErrorKind::InvalidArgument,
+                format!(
+                    "gb28181.compatibility_profiles must not exceed {MAX_GB28181_COMPATIBILITY_PROFILES} entries"
                 ),
             ));
         }
@@ -1861,6 +1872,17 @@ mod gb28181_listener_tests {
                 &format!("realm-{i}"),
                 port,
             ));
+        }
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn too_many_compatibility_profiles_is_rejected() {
+        let mut cfg = Gb28181Config::default();
+        for i in 0..=MAX_GB28181_COMPATIBILITY_PROFILES {
+            let mut p = profile_with_overrides(Gb28181CompatibilityOverridesConfig::default());
+            p.id = format!("profile-{i}");
+            cfg.compatibility_profiles.push(p);
         }
         assert!(cfg.validate().is_err());
     }
