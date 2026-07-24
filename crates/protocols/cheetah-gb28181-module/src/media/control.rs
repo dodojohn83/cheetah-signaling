@@ -41,8 +41,8 @@ impl PlaybackAction {
 /// Rejects values that would inject extra MANSRTSP lines.
 fn validate_mansrtsp_field(value: &str) -> Result<(), AccessError> {
     if value.contains('\r') || value.contains('\n') {
-        return Err(AccessError::Internal(
-            "MANSRTSP field contains forbidden line break".to_string(),
+        return Err(AccessError::internal(
+            "MANSRTSP field contains forbidden line break",
         ));
     }
     Ok(())
@@ -65,23 +65,22 @@ pub fn build_info_mansrtsp(
     let remote_tag = session
         .remote_tag
         .as_ref()
-        .ok_or_else(|| AccessError::Internal("missing remote tag for INFO".to_string()))?;
+        .ok_or_else(|| AccessError::internal("missing remote tag for INFO"))?;
 
     let mut body = String::new();
-    write!(body, "{} MANSRTSP/1.0\r\n", action.method())
-        .map_err(|e| AccessError::Internal(e.to_string()))?;
-    write!(body, "CSeq: {cseq}\r\n").map_err(|e| AccessError::Internal(e.to_string()))?;
+    write!(body, "{} MANSRTSP/1.0\r\n", action.method()).map_err(|e| AccessError::internal(e))?;
+    write!(body, "CSeq: {cseq}\r\n").map_err(|e| AccessError::internal(e))?;
     if let Some(s) = scale {
         if !s.is_finite() {
-            return Err(AccessError::Internal("non-finite Scale value".to_string()));
+            return Err(AccessError::internal("non-finite Scale value"));
         }
         let value = format!("{s}");
         validate_mansrtsp_field(&value)?;
-        write!(body, "Scale: {value}\r\n").map_err(|e| AccessError::Internal(e.to_string()))?;
+        write!(body, "Scale: {value}\r\n").map_err(|e| AccessError::internal(e))?;
     }
     if let Some(r) = range {
         validate_mansrtsp_field(r)?;
-        write!(body, "Range: {r}\r\n").map_err(|e| AccessError::Internal(e.to_string()))?;
+        write!(body, "Range: {r}\r\n").map_err(|e| AccessError::internal(e))?;
     }
     let body_bytes = body.into_bytes();
 

@@ -299,9 +299,9 @@ pub(crate) fn extract_device_control_response(
 ) -> Result<DeviceControlResponse, AccessError> {
     let cmd_type = root
         .child_text("CmdType")
-        .ok_or_else(|| AccessError::InvalidXml("missing CmdType".to_string()))?;
+        .ok_or_else(|| AccessError::invalid_xml("missing CmdType"))?;
     if cmd_type != "DeviceControl" {
-        return Err(AccessError::UnsupportedCmdType(cmd_type));
+        return Err(AccessError::unsupported_cmd_type(cmd_type));
     }
 
     Ok(DeviceControlResponse {

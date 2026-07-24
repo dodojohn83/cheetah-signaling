@@ -56,14 +56,14 @@ pub fn parse_record_info(body: &[u8]) -> Result<RecordInfoResponse, AccessError>
 pub(crate) fn extract_record_info(root: &XmlElement) -> Result<RecordInfoResponse, AccessError> {
     let cmd_type = root
         .child_text("CmdType")
-        .ok_or_else(|| AccessError::InvalidXml("missing CmdType".to_string()))?;
+        .ok_or_else(|| AccessError::invalid_xml("missing CmdType"))?;
     if cmd_type != "RecordInfo" {
-        return Err(AccessError::UnsupportedCmdType(cmd_type));
+        return Err(AccessError::unsupported_cmd_type(cmd_type));
     }
 
     let record_list = root
         .child("RecordList")
-        .ok_or_else(|| AccessError::InvalidXml("missing RecordList".to_string()))?;
+        .ok_or_else(|| AccessError::invalid_xml("missing RecordList"))?;
 
     let sn = root.require_child_text("SN")?;
     let device_id = root.require_child_text("DeviceID")?;
@@ -129,7 +129,7 @@ fn parse_u32(value: &str) -> Result<u32, AccessError> {
     value
         .trim()
         .parse()
-        .map_err(|_| AccessError::InvalidXml(format!("invalid numeric value: {value}")))
+        .map_err(|_| AccessError::invalid_xml(format!("invalid numeric value: {value}")))
 }
 
 #[cfg(test)]

@@ -13,6 +13,10 @@
 //!   injection by driving any `GbAccessMachine` implementation.
 
 #![warn(missing_docs)]
+// `AccessError` constructors are generic over `impl Display`; clippy's
+// `redundant_closure` would require a function item, which is not supported
+// for generic `impl Trait` parameters, so suppress the lint crate-wide.
+#![allow(clippy::redundant_closure)]
 
 pub mod access;
 pub mod assembly;

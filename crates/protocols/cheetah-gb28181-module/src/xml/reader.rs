@@ -28,7 +28,7 @@ pub fn parse_xml_with_profile(
     profile: &CompatibilityProfile,
 ) -> Result<XmlElement, AccessError> {
     if body.len() > limits.max_body_bytes {
-        return Err(AccessError::InvalidXml("body too large".to_string()));
+        return Err(AccessError::invalid_xml("body too large"));
     }
 
     let decoded = decode_body(body, profile)?;
@@ -43,7 +43,7 @@ pub fn parse_xml_with_profile(
 
     loop {
         if event_count > limits.max_events {
-            return Err(AccessError::InvalidXml("too many XML events".to_string()));
+            return Err(AccessError::invalid_xml("too many XML events"));
         }
         event_count += 1;
 
@@ -53,7 +53,7 @@ pub fn parse_xml_with_profile(
             Ok(Event::Comment(_)) => {}
             Ok(Event::Start(e)) => {
                 if stack.len() >= limits.max_depth {
-                    return Err(AccessError::InvalidXml("XML nesting too deep".to_string()));
+                    return Err(AccessError::invalid_xml("XML nesting too deep"));
                 }
                 let element = start_element(&e, &reader, limits, &mut total_attributes)?;
                 stack.push(element);
@@ -62,16 +62,12 @@ pub fn parse_xml_with_profile(
                 let element = start_element(&e, &reader, limits, &mut total_attributes)?;
                 if let Some(parent) = stack.last_mut() {
                     if parent.children.len() >= limits.max_children_per_element {
-                        return Err(AccessError::InvalidXml(
-                            "too many children per element".to_string(),
-                        ));
+                        return Err(AccessError::invalid_xml("too many children per element"));
                     }
                     parent.children.push(element);
                 } else {
                     if root.is_some() {
-                        return Err(AccessError::InvalidXml(
-                            "multiple top-level elements".to_string(),
-                        ));
+                        return Err(AccessError::invalid_xml("multiple top-level elements"));
                     }
                     root = Some(element);
                 }
@@ -80,10 +76,10 @@ pub fn parse_xml_with_profile(
                 if let Some(top) = stack.last_mut() {
                     let text = e
                         .decode()
-                        .map_err(|_| AccessError::InvalidXml("bad entity".to_string()))?;
+                        .map_err(|_| AccessError::invalid_xml("bad entity"))?;
                     top.text.push_str(text.trim());
                     if top.text.len() > limits.max_text_len {
-                        return Err(AccessError::InvalidXml("text node too long".to_string()));
+                        return Err(AccessError::invalid_xml("text node too long"));
                     }
                 }
             }
@@ -91,37 +87,33 @@ pub fn parse_xml_with_profile(
                 let name = decode_name(e.name().local_name().as_ref(), &reader)?;
                 let mut top = stack
                     .pop()
-                    .ok_or_else(|| AccessError::InvalidXml("unexpected end tag".to_string()))?;
+                    .ok_or_else(|| AccessError::invalid_xml("unexpected end tag"))?;
                 if top.name != name {
-                    return Err(AccessError::InvalidXml("mismatched XML tags".to_string()));
+                    return Err(AccessError::invalid_xml("mismatched XML tags"));
                 }
                 top.text = top.text.trim().to_string();
                 if let Some(parent) = stack.last_mut() {
                     if parent.children.len() >= limits.max_children_per_element {
-                        return Err(AccessError::InvalidXml(
-                            "too many children per element".to_string(),
-                        ));
+                        return Err(AccessError::invalid_xml("too many children per element"));
                     }
                     parent.children.push(top);
                 } else {
                     if root.is_some() {
-                        return Err(AccessError::InvalidXml(
-                            "multiple top-level elements".to_string(),
-                        ));
+                        return Err(AccessError::invalid_xml("multiple top-level elements"));
                     }
                     root = Some(top);
                 }
             }
             Ok(Event::DocType(_)) => {
-                return Err(AccessError::InvalidXml("DOCTYPE not allowed".to_string()));
+                return Err(AccessError::invalid_xml("DOCTYPE not allowed"));
             }
             Ok(Event::Eof) => break,
-            Err(e) => return Err(AccessError::InvalidXml(e.to_string())),
+            Err(e) => return Err(AccessError::invalid_xml(e)),
             _ => {}
         }
     }
 
-    root.ok_or_else(|| AccessError::InvalidXml("empty XML document".to_string()))
+    root.ok_or_else(|| AccessError::invalid_xml("empty XML document"))
 }
 
 fn decode_body<'a>(
@@ -144,8 +136,8 @@ fn decode_body<'a>(
             }
         }
     }
-    Err(AccessError::InvalidXml(
-        "invalid byte sequence for declared encoding".to_string(),
+    Err(AccessError::invalid_xml(
+        "invalid byte sequence for declared encoding",
     ))
 }
 
@@ -165,25 +157,21 @@ fn start_element(
 
     let mut attr_count = 0usize;
     for attr in e.attributes() {
-        let attr = attr.map_err(|_| AccessError::InvalidXml("bad attribute".to_string()))?;
+        let attr = attr.map_err(|_| AccessError::invalid_xml("bad attribute"))?;
         let key = decode_name(attr.key.local_name().as_ref(), reader)?;
         validate_len(&key, limits.max_name_len, "attribute name too long")?;
         let value = reader
             .decoder()
             .decode(attr.value.as_ref())
-            .map_err(|_| AccessError::InvalidXml("invalid attribute value".to_string()))?
+            .map_err(|_| AccessError::invalid_xml("invalid attribute value"))?
             .into_owned();
         attr_count += 1;
         *total_attributes += 1;
         if attr_count > limits.max_attributes_per_element {
-            return Err(AccessError::InvalidXml(
-                "too many attributes on element".to_string(),
-            ));
+            return Err(AccessError::invalid_xml("too many attributes on element"));
         }
         if *total_attributes > limits.max_total_attributes {
-            return Err(AccessError::InvalidXml(
-                "too many attributes in document".to_string(),
-            ));
+            return Err(AccessError::invalid_xml("too many attributes in document"));
         }
         validate_len(&value, limits.max_text_len, "attribute value too long")?;
         element.attributes.insert(key, value);
@@ -196,13 +184,13 @@ fn decode_name(name: &[u8], reader: &Reader<&[u8]>) -> Result<String, AccessErro
     reader
         .decoder()
         .decode(name)
-        .map_err(|_| AccessError::InvalidXml("invalid name".to_string()))
+        .map_err(|_| AccessError::invalid_xml("invalid name"))
         .map(|s| s.into_owned())
 }
 
 fn validate_len(s: &str, max: usize, msg: &str) -> Result<(), AccessError> {
     if s.len() > max {
-        return Err(AccessError::InvalidXml(msg.to_string()));
+        return Err(AccessError::invalid_xml(msg));
     }
     Ok(())
 }

@@ -71,16 +71,16 @@ pub(crate) fn extract_keepalive_response(
     root: &XmlElement,
 ) -> Result<KeepaliveResponse, AccessError> {
     if root.name != "Response" {
-        return Err(AccessError::InvalidXml(format!(
+        return Err(AccessError::invalid_xml(format!(
             "expected Response root, got {}",
             root.name
         )));
     }
     let cmd_type = root
         .child_text("CmdType")
-        .ok_or_else(|| AccessError::InvalidXml("missing CmdType".to_string()))?;
+        .ok_or_else(|| AccessError::invalid_xml("missing CmdType"))?;
     if cmd_type != "Keepalive" {
-        return Err(AccessError::UnsupportedCmdType(cmd_type));
+        return Err(AccessError::unsupported_cmd_type(cmd_type));
     }
 
     Ok(KeepaliveResponse {
@@ -94,9 +94,9 @@ pub(crate) fn extract_keepalive_response(
 pub(crate) fn extract_keepalive(root: &XmlElement) -> Result<KeepaliveInfo, AccessError> {
     let cmd_type = root
         .child_text("CmdType")
-        .ok_or_else(|| AccessError::InvalidXml("missing CmdType".to_string()))?;
+        .ok_or_else(|| AccessError::invalid_xml("missing CmdType"))?;
     if cmd_type != "Keepalive" {
-        return Err(AccessError::UnsupportedCmdType(cmd_type));
+        return Err(AccessError::unsupported_cmd_type(cmd_type));
     }
 
     Ok(KeepaliveInfo {

@@ -15,9 +15,7 @@ fn text_child(name: &str, text: &str) -> XmlElement {
 }
 
 fn gb_time(ts: UtcTimestamp) -> Result<String, AccessError> {
-    let s = ts
-        .to_rfc3339()
-        .map_err(|e| AccessError::Internal(e.to_string()))?;
+    let s = ts.to_rfc3339().map_err(|e| AccessError::internal(e))?;
     // GB28181 wire format is YYYY-MM-DDTHH:MM:SS without timezone suffix.
     Ok(s.get(..19).unwrap_or(&s).to_string())
 }
@@ -80,12 +78,12 @@ impl QueryRequest {
 
         match self.kind {
             QueryKind::RecordInfo => {
-                let start = self.start_time.ok_or_else(|| {
-                    AccessError::InvalidXml("RecordInfo requires start_time".to_string())
-                })?;
-                let end = self.end_time.ok_or_else(|| {
-                    AccessError::InvalidXml("RecordInfo requires end_time".to_string())
-                })?;
+                let start = self
+                    .start_time
+                    .ok_or_else(|| AccessError::invalid_xml("RecordInfo requires start_time"))?;
+                let end = self
+                    .end_time
+                    .ok_or_else(|| AccessError::invalid_xml("RecordInfo requires end_time"))?;
                 children.push(text_child("StartTime", &gb_time(start)?));
                 children.push(text_child("EndTime", &gb_time(end)?));
                 children.push(text_child("Type", "all"));

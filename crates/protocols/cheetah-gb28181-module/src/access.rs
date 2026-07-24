@@ -70,11 +70,11 @@ impl<P: CredentialProvider> Gb28181Access<P> {
     pub fn new(config: Gb28181DomainConfig, credential_provider: P) -> Result<Self, AccessError> {
         let max_registrations = config.max_registrations();
         let ctx = DigestContext::new(config.realm(), config.digest_secret().expose_secret())
-            .map_err(|e| AccessError::Internal(e.to_string()))?
+            .map_err(|e| AccessError::internal(e))?
             .allow_md5(config.allow_md5())
             .preferred_algorithm(config.preferred_algorithm())
             .qop(Some(DigestQop::Auth))
-            .map_err(|e| AccessError::Internal(e.to_string()))?;
+            .map_err(|e| AccessError::internal(e))?;
         let auth_rate_limiter = AuthRateLimiter::new(
             config.auth_max_failures_per_source(),
             config.auth_rate_window_seconds(),
@@ -173,7 +173,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
             message,
         } = input;
         let SipMessage::Request { line, headers, .. } = &message else {
-            return Err(AccessError::Internal("expected request".to_string()));
+            return Err(AccessError::internal("expected request"));
         };
 
         let device_id = match device_id_from_request(line, headers) {
@@ -440,15 +440,15 @@ impl<P: CredentialProvider> Gb28181Access<P> {
         message: &SipMessage,
     ) -> Result<Vec<AccessOutput<Gb28181Event>>, AccessError> {
         let SipMessage::Request { headers, body, .. } = message else {
-            return Err(AccessError::Internal("expected request".to_string()));
+            return Err(AccessError::internal("expected request"));
         };
 
         let content_type_header = headers.get(&HeaderName::ContentType).map(|v| v.as_str());
         let content_type =
             resolve_vendor_content_type(content_type_header, self.config.compatibility())?;
         if content_type == ContentType::Mansrtsp {
-            return Err(AccessError::UnsupportedContentType(
-                "MANSRTSP not accepted on MESSAGE".to_string(),
+            return Err(AccessError::unsupported_content_type(
+                "MANSRTSP not accepted on MESSAGE",
             ));
         }
 
@@ -463,10 +463,10 @@ impl<P: CredentialProvider> Gb28181Access<P> {
             parse_xml_with_profile(body, &XmlLimits::default(), self.config.compatibility())?;
         let cmd_type = root
             .child_text("CmdType")
-            .ok_or_else(|| AccessError::InvalidXml("missing CmdType".to_string()))?;
+            .ok_or_else(|| AccessError::invalid_xml("missing CmdType"))?;
         let xml_device_id = root
             .require_child_text("DeviceID")
-            .map_err(|_| AccessError::InvalidXml("missing DeviceID".to_string()))?;
+            .map_err(|_| AccessError::invalid_xml("missing DeviceID"))?;
 
         if from_device_id.as_ref() != xml_device_id {
             return Err(AccessError::InvalidDeviceId);
@@ -605,7 +605,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
                     outcome,
                 }
             }
-            other => return Err(AccessError::UnsupportedCmdType(other.to_string())),
+            other => return Err(AccessError::unsupported_cmd_type(other)),
         };
 
         let Some(touch) = self.registrations.touch(&device_id, source, now) else {
@@ -722,7 +722,7 @@ impl<P: CredentialProvider> Gb28181Access<P> {
         } else {
             self.digest_context.generate_challenge(now)
         }
-        .map_err(|e| AccessError::Internal(e.to_string()))?;
+        .map_err(|e| AccessError::internal(e))?;
         Ok(vec![AccessOutput::SendResponse(build_challenge_response(
             request,
             &challenge,

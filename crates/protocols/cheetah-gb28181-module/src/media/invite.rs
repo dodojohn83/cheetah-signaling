@@ -12,8 +12,8 @@ use cheetah_gb28181_core::{
 /// Rejects values that would inject extra SIP header lines.
 fn validate_sip_header_token(value: &str) -> Result<(), AccessError> {
     if value.contains('\r') || value.contains('\n') {
-        return Err(AccessError::Internal(
-            "SIP header token contains forbidden line break".to_string(),
+        return Err(AccessError::internal(
+            "SIP header token contains forbidden line break",
         ));
     }
     Ok(())
@@ -209,7 +209,7 @@ pub fn build_bye(
     let remote_tag = session
         .remote_tag
         .as_ref()
-        .ok_or_else(|| AccessError::Internal("missing remote tag for BYE".to_string()))?;
+        .ok_or_else(|| AccessError::internal("missing remote tag for BYE"))?;
 
     let mut headers = SipHeaders::new();
     let local_host = local_uri.host();
@@ -349,8 +349,8 @@ pub fn build_sdp_offer(params: &SdpParams) -> Result<String, AccessError> {
             MediaTransport::TcpPassive => SdpSetup::Passive,
             MediaTransport::TcpActive => SdpSetup::Active,
             _ => {
-                return Err(AccessError::Internal(
-                    "unexpected non-TCP transport in TCP branch".to_string(),
+                return Err(AccessError::internal(
+                    "unexpected non-TCP transport in TCP branch",
                 ));
             }
         };
@@ -393,7 +393,7 @@ pub fn build_sdp_offer(params: &SdpParams) -> Result<String, AccessError> {
         ..Default::default()
     };
 
-    encode_sdp(&session).map_err(|e| AccessError::Internal(e.to_string()))
+    encode_sdp(&session).map_err(|e| AccessError::internal(e))
 }
 
 /// Extracts the first URI from a `Contact` header value.

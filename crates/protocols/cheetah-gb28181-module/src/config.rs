@@ -72,7 +72,7 @@ impl Gb28181DomainConfig {
         let digest_secret = digest_secret.into();
         let domain_id = DomainId::new(domain_id).ok_or(AccessError::InvalidDomainId)?;
         if digest_secret.expose_secret().len() < MIN_SECRET_LEN {
-            return Err(AccessError::Internal("digest secret too short".to_string()));
+            return Err(AccessError::internal("digest secret too short"));
         }
         Ok(Self {
             domain_id,
@@ -211,7 +211,7 @@ impl Gb28181DomainConfig {
         const MIN_SECRET_LEN: usize = 32;
         let secret = secret.into();
         if secret.expose_secret().len() < MIN_SECRET_LEN {
-            return Err(AccessError::Internal("digest secret too short".to_string()));
+            return Err(AccessError::internal("digest secret too short"));
         }
         self.digest_secret = secret;
         Ok(self)

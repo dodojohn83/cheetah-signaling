@@ -70,7 +70,7 @@ pub(crate) fn resolve_vendor_content_type(
     }
     let without_params = raw.split(';').next().unwrap_or(raw).trim();
     if without_params.len() > MAX_CONTENT_TYPE_BYTES {
-        return Err(AccessError::UnsupportedContentType(
+        return Err(AccessError::unsupported_content_type(
             truncate_content_type_error(without_params),
         ));
     }
@@ -91,7 +91,7 @@ pub(crate) fn resolve_vendor_content_type(
         }
     }
 
-    Err(AccessError::UnsupportedContentType(
+    Err(AccessError::unsupported_content_type(
         truncate_content_type_error(without_params),
     ))
 }

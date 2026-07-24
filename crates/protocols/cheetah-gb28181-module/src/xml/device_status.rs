@@ -65,9 +65,9 @@ pub(crate) fn extract_device_status(
 ) -> Result<DeviceStatusResponse, AccessError> {
     let cmd_type = root
         .child_text("CmdType")
-        .ok_or_else(|| AccessError::InvalidXml("missing CmdType".to_string()))?;
+        .ok_or_else(|| AccessError::invalid_xml("missing CmdType"))?;
     if cmd_type != "DeviceStatus" {
-        return Err(AccessError::UnsupportedCmdType(cmd_type));
+        return Err(AccessError::unsupported_cmd_type(cmd_type));
     }
 
     Ok(DeviceStatusResponse {

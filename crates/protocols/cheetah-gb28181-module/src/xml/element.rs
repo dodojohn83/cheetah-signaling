@@ -32,7 +32,7 @@ impl XmlElement {
     pub fn require_child_text(&self, name: &str) -> Result<String, AccessError> {
         self.child_text(name)
             .filter(|t| !t.is_empty())
-            .ok_or_else(|| AccessError::InvalidXml(format!("missing {name}")))
+            .ok_or_else(|| AccessError::invalid_xml(format!("missing {name}")))
     }
 
     /// Collects leaf children whose names are not in `known` into an extension
