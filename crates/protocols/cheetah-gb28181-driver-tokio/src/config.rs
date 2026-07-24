@@ -25,6 +25,17 @@ pub const DEFAULT_COMMAND_CHANNEL_CAPACITY: usize = 1024;
 const MAX_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
 /// Minimum tick interval to avoid `tokio::time::interval` panicking on a zero period.
 const MIN_TICK_INTERVAL: Duration = Duration::from_millis(1);
+/// Maximum UDP datagram size in bytes. Larger values cannot be represented in a
+/// single UDP packet and would allocate an oversized receive buffer.
+const MAX_DATAGRAM_SIZE: usize = 65_535;
+/// Maximum per-read chunk size for TCP streams. Capping this prevents a
+/// misconfigured value from allocating an enormous temporary buffer.
+const MAX_TCP_READ_CHUNK_BYTES: usize = 1024 * 1024;
+/// Maximum command channel capacity. A zero or huge capacity can break backpressure.
+const MAX_COMMAND_CHANNEL_CAPACITY: usize = 65_536;
+/// Maximum TCP connections limits. These are per-driver bounds, not global.
+const MAX_TCP_CONNECTIONS: usize = 65_536;
+const MAX_TCP_CONNECTIONS_PER_SOURCE: usize = 4096;
 
 fn clamp_timeout(d: Duration) -> Duration {
     d.min(MAX_TIMEOUT).max(Duration::from_millis(1))
@@ -32,6 +43,26 @@ fn clamp_timeout(d: Duration) -> Duration {
 
 fn clamp_tick_interval(d: Duration) -> Duration {
     d.min(MAX_TIMEOUT).max(MIN_TICK_INTERVAL)
+}
+
+fn clamp_max_datagram_size(size: usize) -> usize {
+    size.clamp(1, MAX_DATAGRAM_SIZE)
+}
+
+fn clamp_tcp_read_chunk_bytes(bytes: usize) -> usize {
+    bytes.clamp(1, MAX_TCP_READ_CHUNK_BYTES)
+}
+
+fn clamp_command_channel_capacity(capacity: usize) -> usize {
+    capacity.clamp(1, MAX_COMMAND_CHANNEL_CAPACITY)
+}
+
+fn clamp_max_tcp_connections(max: usize) -> usize {
+    max.clamp(1, MAX_TCP_CONNECTIONS)
+}
+
+fn clamp_max_tcp_connections_per_source(max: usize) -> usize {
+    max.clamp(1, MAX_TCP_CONNECTIONS_PER_SOURCE)
 }
 
 /// GB28181 transport driver configuration.
@@ -131,7 +162,7 @@ impl DriverConfig {
 
     /// Sets the maximum incoming datagram size.
     pub fn with_max_datagram_size(mut self, size: usize) -> Self {
-        self.max_datagram_size = size;
+        self.max_datagram_size = clamp_max_datagram_size(size);
         self
     }
 
@@ -143,19 +174,19 @@ impl DriverConfig {
 
     /// Sets the global TCP connection limit.
     pub fn with_max_tcp_connections(mut self, max: usize) -> Self {
-        self.max_tcp_connections = max;
+        self.max_tcp_connections = clamp_max_tcp_connections(max);
         self
     }
 
     /// Sets the per-source TCP connection limit.
     pub fn with_max_tcp_connections_per_source(mut self, max: usize) -> Self {
-        self.max_tcp_connections_per_source = max;
+        self.max_tcp_connections_per_source = clamp_max_tcp_connections_per_source(max);
         self
     }
 
     /// Sets the per-read chunk size for TCP streams.
     pub fn with_tcp_read_chunk_bytes(mut self, bytes: usize) -> Self {
-        self.tcp_read_chunk_bytes = bytes;
+        self.tcp_read_chunk_bytes = clamp_tcp_read_chunk_bytes(bytes);
         self
     }
 
@@ -191,7 +222,7 @@ impl DriverConfig {
 
     /// Sets the per-driver command channel capacity.
     pub fn with_command_channel_capacity(mut self, capacity: usize) -> Self {
-        self.command_channel_capacity = capacity;
+        self.command_channel_capacity = clamp_command_channel_capacity(capacity);
         self
     }
 }
@@ -205,6 +236,36 @@ impl Default for DriverConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn capacities_and_buffer_sizes_are_clamped() {
+        let cfg = DriverConfig::new(SocketAddr::from(([0, 0, 0, 0], 5060)))
+            .with_max_datagram_size(0)
+            .with_tcp_read_chunk_bytes(0)
+            .with_command_channel_capacity(0)
+            .with_max_tcp_connections(0)
+            .with_max_tcp_connections_per_source(0);
+        assert_eq!(cfg.max_datagram_size, 1);
+        assert_eq!(cfg.tcp_read_chunk_bytes, 1);
+        assert_eq!(cfg.command_channel_capacity, 1);
+        assert_eq!(cfg.max_tcp_connections, 1);
+        assert_eq!(cfg.max_tcp_connections_per_source, 1);
+
+        let cfg = DriverConfig::new(SocketAddr::from(([0, 0, 0, 0], 5060)))
+            .with_max_datagram_size(usize::MAX)
+            .with_tcp_read_chunk_bytes(usize::MAX)
+            .with_command_channel_capacity(usize::MAX)
+            .with_max_tcp_connections(usize::MAX)
+            .with_max_tcp_connections_per_source(usize::MAX);
+        assert_eq!(cfg.max_datagram_size, MAX_DATAGRAM_SIZE);
+        assert_eq!(cfg.tcp_read_chunk_bytes, MAX_TCP_READ_CHUNK_BYTES);
+        assert_eq!(cfg.command_channel_capacity, MAX_COMMAND_CHANNEL_CAPACITY);
+        assert_eq!(cfg.max_tcp_connections, MAX_TCP_CONNECTIONS);
+        assert_eq!(
+            cfg.max_tcp_connections_per_source,
+            MAX_TCP_CONNECTIONS_PER_SOURCE
+        );
+    }
 
     #[test]
     fn timeouts_and_tick_interval_are_clamped() {
