@@ -10,6 +10,9 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use tracing::{info, warn};
 
+/// Maximum number of nodes retained in the per-node assignment rate limiter.
+const MAX_TRACKED_NODES: usize = 1_000_000;
+
 /// Assigns devices to cluster nodes while preserving existing owners when
 /// possible and respecting node health, zone, protocol support and load.
 pub struct DeviceAssignmentService {
@@ -291,10 +294,14 @@ struct RateLimiter {
 impl RateLimiter {
     fn new(config: RateLimitConfig) -> Self {
         let window = DurationMs::from_millis(1_000);
+        let max_tracked_nodes = config.max_tracked_nodes.min(MAX_TRACKED_NODES);
         Self {
             global: SlidingWindow::new(config.global_per_second, window),
-            per_node: HashMap::with_capacity(config.max_tracked_nodes),
-            config,
+            per_node: HashMap::with_capacity(max_tracked_nodes),
+            config: RateLimitConfig {
+                max_tracked_nodes,
+                ..config
+            },
         }
     }
 
@@ -913,6 +920,16 @@ mod tests {
         let result = service.assign(tenant, device2, "gb28181", None).await;
         assert!(matches!(result, Err(DeviceAssignmentError::RateLimited)));
         Ok(())
+    }
+
+    #[test]
+    fn rate_limiter_clamps_huge_tracked_nodes() {
+        let config = RateLimitConfig {
+            max_tracked_nodes: usize::MAX,
+            ..RateLimitConfig::default()
+        };
+        let limiter = RateLimiter::new(config);
+        assert_eq!(limiter.config.max_tracked_nodes, MAX_TRACKED_NODES);
     }
 
     #[tokio::test]
