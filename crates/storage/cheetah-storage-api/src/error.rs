@@ -1,6 +1,10 @@
 //! Storage errors.
 
 use cheetah_domain::DomainError;
+use cheetah_signal_types::clamp_str;
+
+/// Maximum byte length of a human-readable message carried by a `StorageError`.
+const MAX_STORAGE_ERROR_BYTES: usize = 1024;
 
 /// Errors returned by storage adapters.
 #[derive(Debug, thiserror::Error)]
@@ -60,54 +64,58 @@ pub enum StorageError {
     },
 }
 
+fn clamp_message(message: impl std::fmt::Display) -> String {
+    clamp_str(&message.to_string(), MAX_STORAGE_ERROR_BYTES)
+}
+
 impl StorageError {
     /// Creates a backend error.
-    pub fn backend(message: impl Into<String>) -> Self {
+    pub fn backend(message: impl std::fmt::Display) -> Self {
         Self::Backend {
-            message: message.into(),
+            message: clamp_message(message),
         }
     }
 
     /// Creates a migration error.
-    pub fn migration(version: i64, message: impl Into<String>) -> Self {
+    pub fn migration(version: i64, message: impl std::fmt::Display) -> Self {
         Self::Migration {
             version,
-            message: message.into(),
+            message: clamp_message(message),
         }
     }
 
     /// Creates a config error.
-    pub fn config(message: impl Into<String>) -> Self {
+    pub fn config(message: impl std::fmt::Display) -> Self {
         Self::Config {
-            message: message.into(),
+            message: clamp_message(message),
         }
     }
 
     /// Creates a connection error.
-    pub fn connection(message: impl Into<String>) -> Self {
+    pub fn connection(message: impl std::fmt::Display) -> Self {
         Self::Connection {
-            message: message.into(),
+            message: clamp_message(message),
         }
     }
 
     /// Creates an unavailable error.
-    pub fn unavailable(message: impl Into<String>) -> Self {
+    pub fn unavailable(message: impl std::fmt::Display) -> Self {
         Self::Unavailable {
-            message: message.into(),
+            message: clamp_message(message),
         }
     }
 
     /// Creates an invalid argument error.
-    pub fn invalid_argument(message: impl Into<String>) -> Self {
+    pub fn invalid_argument(message: impl std::fmt::Display) -> Self {
         Self::InvalidArgument {
-            message: message.into(),
+            message: clamp_message(message),
         }
     }
 
     /// Creates an internal error.
-    pub fn internal(message: impl Into<String>) -> Self {
+    pub fn internal(message: impl std::fmt::Display) -> Self {
         Self::Internal {
-            message: message.into(),
+            message: clamp_message(message),
         }
     }
 
@@ -124,7 +132,10 @@ impl From<StorageError> for DomainError {
             | StorageError::Connection { message }
             | StorageError::Unavailable { message } => Self::Unavailable { message },
             StorageError::Migration { version, message } => Self::Internal {
-                message: format!("migration {version}: {message}"),
+                message: clamp_str(
+                    &format!("migration {version}: {message}"),
+                    MAX_STORAGE_ERROR_BYTES,
+                ),
             },
             StorageError::Config { message } | StorageError::Internal { message } => {
                 Self::Internal { message }

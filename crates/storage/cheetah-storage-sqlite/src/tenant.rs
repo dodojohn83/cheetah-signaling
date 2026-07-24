@@ -74,7 +74,7 @@ impl TenantRepository for SqliteTenantRepository {
         .bind(if tenant.deleted { 1i32 } else { 0i32 })
         .execute(&self.write_pool)
         .await
-        .map_err(|e| StorageError::backend(e.to_string()))?;
+        .map_err(StorageError::backend)?;
         Ok(())
     }
 
@@ -87,7 +87,7 @@ impl TenantRepository for SqliteTenantRepository {
         .bind(tenant_id.as_uuid())
         .fetch_optional(&self.read_pool)
         .await
-        .map_err(|e| StorageError::backend(e.to_string()))?;
+        .map_err(StorageError::backend)?;
         row.map(TryInto::try_into).transpose()
     }
 
@@ -130,7 +130,7 @@ impl TenantRepository for SqliteTenantRepository {
             .build_query_as::<TenantRow>()
             .fetch_all(&self.read_pool)
             .await
-            .map_err(|e| StorageError::backend(e.to_string()))?;
+            .map_err(StorageError::backend)?;
 
         let mut tenants: Vec<Tenant> = rows
             .into_iter()

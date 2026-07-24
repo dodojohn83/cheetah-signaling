@@ -83,7 +83,7 @@ async fn append_outbox_events(
         .bind(event.source.as_uuid())
         .execute(&mut *conn)
         .await
-        .map_err(|e| StorageError::backend(e.to_string()))?;
+        .map_err(StorageError::backend)?;
     }
     Ok(())
 }
@@ -177,7 +177,7 @@ impl MediaNodeRepository for SqliteMediaNodeRepository {
             .write_pool
             .begin()
             .await
-            .map_err(|e| StorageError::backend(e.to_string()))?;
+            .map_err(StorageError::backend)?;
 
         let existing: Option<(String, i64, i64)> = sqlx::query_as(
             "SELECT instance_id, instance_epoch, revision FROM media_nodes WHERE node_id = ?",
@@ -185,7 +185,7 @@ impl MediaNodeRepository for SqliteMediaNodeRepository {
         .bind(node.node_id.as_uuid())
         .fetch_optional(&mut *tx)
         .await
-        .map_err(|e| StorageError::backend(e.to_string()))?;
+        .map_err(StorageError::backend)?;
 
         let new_revision = existing
             .as_ref()
@@ -230,7 +230,7 @@ impl MediaNodeRepository for SqliteMediaNodeRepository {
                 .bind(updated_at)
                 .execute(&mut *tx)
                 .await
-                .map_err(|e| StorageError::backend(e.to_string()))?;
+                .map_err(StorageError::backend)?;
             }
             Some(_) => {
                 sqlx::query(
@@ -265,7 +265,7 @@ impl MediaNodeRepository for SqliteMediaNodeRepository {
                 .bind(node.node_id.as_uuid())
                 .execute(&mut *tx)
                 .await
-                .map_err(|e| StorageError::backend(e.to_string()))?;
+                .map_err(StorageError::backend)?;
             }
         }
 
@@ -276,14 +276,12 @@ impl MediaNodeRepository for SqliteMediaNodeRepository {
         .bind(node.node_id.as_uuid())
         .fetch_one(&mut *tx)
         .await
-        .map_err(|e| StorageError::backend(e.to_string()))?;
+        .map_err(StorageError::backend)?;
 
         let persisted: MediaNode = row.try_into()?;
         append_outbox_events(&mut tx, &mut events, &persisted).await?;
 
-        tx.commit()
-            .await
-            .map_err(|e| StorageError::backend(e.to_string()))?;
+        tx.commit().await.map_err(StorageError::backend)?;
         Ok(persisted)
     }
 
@@ -301,7 +299,7 @@ impl MediaNodeRepository for SqliteMediaNodeRepository {
             .write_pool
             .begin()
             .await
-            .map_err(|e| StorageError::backend(e.to_string()))?;
+            .map_err(StorageError::backend)?;
 
         let row: Option<MediaNodeRow> = sqlx::query_as::<sqlx::Sqlite, MediaNodeRow>(&format!(
             "UPDATE media_nodes SET
@@ -320,7 +318,7 @@ impl MediaNodeRepository for SqliteMediaNodeRepository {
         .bind(&instance_id)
         .fetch_optional(&mut *tx)
         .await
-        .map_err(|e| StorageError::backend(e.to_string()))?;
+        .map_err(StorageError::backend)?;
 
         let result = match row {
             Some(row) => {
@@ -331,9 +329,7 @@ impl MediaNodeRepository for SqliteMediaNodeRepository {
             None => None,
         };
 
-        tx.commit()
-            .await
-            .map_err(|e| StorageError::backend(e.to_string()))?;
+        tx.commit().await.map_err(StorageError::backend)?;
         Ok(result)
     }
 
@@ -345,7 +341,7 @@ impl MediaNodeRepository for SqliteMediaNodeRepository {
         .bind(node_id.as_uuid())
         .fetch_optional(&self.read_pool)
         .await
-        .map_err(|e| StorageError::backend(e.to_string()))?;
+        .map_err(StorageError::backend)?;
 
         row.map(TryInto::try_into).transpose()
     }
@@ -382,7 +378,7 @@ impl MediaNodeRepository for SqliteMediaNodeRepository {
             .build_query_as::<MediaNodeRow>()
             .fetch_all(&self.read_pool)
             .await
-            .map_err(|e| StorageError::backend(e.to_string()))?;
+            .map_err(StorageError::backend)?;
 
         let has_more = rows.len() > page_size;
         let next_cursor = if has_more {
@@ -425,7 +421,7 @@ impl MediaNodeRepository for SqliteMediaNodeRepository {
             .write_pool
             .begin()
             .await
-            .map_err(|e| StorageError::backend(e.to_string()))?;
+            .map_err(StorageError::backend)?;
 
         let row: Option<MediaNodeRow> = sqlx::query_as::<sqlx::Sqlite, MediaNodeRow>(
             &format!(
@@ -442,7 +438,7 @@ impl MediaNodeRepository for SqliteMediaNodeRepository {
         .bind(&instance_id)
         .fetch_optional(&mut *tx)
         .await
-        .map_err(|e| StorageError::backend(e.to_string()))?;
+        .map_err(StorageError::backend)?;
 
         let result = match row {
             Some(row) => {
@@ -453,9 +449,7 @@ impl MediaNodeRepository for SqliteMediaNodeRepository {
             None => None,
         };
 
-        tx.commit()
-            .await
-            .map_err(|e| StorageError::backend(e.to_string()))?;
+        tx.commit().await.map_err(StorageError::backend)?;
         Ok(result)
     }
 
@@ -471,7 +465,7 @@ impl MediaNodeRepository for SqliteMediaNodeRepository {
             .write_pool
             .begin()
             .await
-            .map_err(|e| StorageError::backend(e.to_string()))?;
+            .map_err(StorageError::backend)?;
 
         let row: Option<MediaNodeRow> = sqlx::query_as::<sqlx::Sqlite, MediaNodeRow>(
             &format!(
@@ -487,7 +481,7 @@ impl MediaNodeRepository for SqliteMediaNodeRepository {
         .bind(&instance_id)
         .fetch_optional(&mut *tx)
         .await
-        .map_err(|e| StorageError::backend(e.to_string()))?;
+        .map_err(StorageError::backend)?;
 
         let result = match row {
             Some(row) => {
@@ -498,9 +492,7 @@ impl MediaNodeRepository for SqliteMediaNodeRepository {
             None => None,
         };
 
-        tx.commit()
-            .await
-            .map_err(|e| StorageError::backend(e.to_string()))?;
+        tx.commit().await.map_err(StorageError::backend)?;
         Ok(result)
     }
 }

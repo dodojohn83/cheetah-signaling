@@ -63,7 +63,7 @@ impl TenantRepository for PostgresTenantRepository {
         .bind(tenant.deleted)
         .execute(&self.write_pool)
         .await
-        .map_err(|e| StorageError::backend(e.to_string()))?;
+        .map_err(StorageError::backend)?;
         Ok(())
     }
 
@@ -76,7 +76,7 @@ impl TenantRepository for PostgresTenantRepository {
         .bind(tenant_id.as_uuid())
         .fetch_optional(&self.read_pool)
         .await
-        .map_err(|e| StorageError::backend(e.to_string()))?;
+        .map_err(StorageError::backend)?;
         Ok(row.map(Into::into))
     }
 
@@ -119,7 +119,7 @@ impl TenantRepository for PostgresTenantRepository {
             .build_query_as::<TenantRow>()
             .fetch_all(&self.read_pool)
             .await
-            .map_err(|e| StorageError::backend(e.to_string()))?;
+            .map_err(StorageError::backend)?;
 
         let mut tenants: Vec<Tenant> = rows.into_iter().map(Into::into).collect();
         let has_more = tenants.len() > page_size;
