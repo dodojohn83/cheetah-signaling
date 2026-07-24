@@ -309,10 +309,9 @@ impl EndpointPolicy {
         }
         let ip = parse_host_ip(connection.address.trim())
             .ok_or(EndpointPolicyError::MalformedAddress)?;
-        let matches_type = matches!(
-            (connection.addrtype.to_ascii_uppercase().as_str(), ip),
-            ("IP4", IpAddr::V4(_)) | ("IP6", IpAddr::V6(_))
-        );
+        let matches_type = (connection.addrtype.eq_ignore_ascii_case("IP4")
+            && matches!(ip, IpAddr::V4(_)))
+            || (connection.addrtype.eq_ignore_ascii_case("IP6") && matches!(ip, IpAddr::V6(_)));
         if !matches_type {
             return Err(EndpointPolicyError::UnsupportedAddrType);
         }
@@ -641,6 +640,26 @@ mod tests {
         assert_eq!(
             policy.validate_sdp_connection(&multicast, 10000),
             Err(EndpointPolicyError::MalformedAddress)
+        );
+        // Lowercase addrtype is accepted without allocating an uppercase copy.
+        let lower = SdpConnection {
+            nettype: "IN".to_string(),
+            addrtype: "ip4".to_string(),
+            address: "192.168.1.50".to_string(),
+        };
+        assert_eq!(
+            policy.validate_sdp_connection(&lower, 10000).unwrap(),
+            "192.168.1.50".parse::<IpAddr>().unwrap()
+        );
+        // Mixed-case addrtype is also accepted.
+        let mixed = SdpConnection {
+            nettype: "IN".to_string(),
+            addrtype: "Ip6".to_string(),
+            address: "::1".to_string(),
+        };
+        assert_eq!(
+            policy.validate_sdp_connection(&mixed, 10000).unwrap(),
+            "::1".parse::<IpAddr>().unwrap()
         );
     }
 
