@@ -5,25 +5,11 @@
 //! The redactor only strips whole values of known sensitive SIP/XML fields; it
 //! does not attempt to guess arbitrary secrets.
 
+use crate::clamp_string_bytes;
 use std::fmt;
 
 /// Maximum byte length of a `SafeDetails` string.
 const MAX_SAFE_DETAILS_BYTES: usize = 4096;
-
-/// Truncates `s` to at most `max` bytes, never splitting a multi-byte character.
-fn clamp_string_bytes(s: String, max: usize) -> String {
-    if s.len() <= max {
-        return s;
-    }
-    let mut end = 0;
-    for (i, c) in s.char_indices() {
-        if i + c.len_utf8() > max {
-            break;
-        }
-        end = i + c.len_utf8();
-    }
-    s[..end].to_string()
-}
 
 /// Patterns whose line/element contents are replaced with `[REDACTED]`.
 const SENSITIVE_KEYS: &[&str] = &[

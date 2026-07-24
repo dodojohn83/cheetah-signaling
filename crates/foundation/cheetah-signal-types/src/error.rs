@@ -10,9 +10,9 @@ const MAX_FIELD_VIOLATION_FIELD_BYTES: usize = 256;
 const MAX_FIELD_VIOLATION_DESCRIPTION_BYTES: usize = 1024;
 
 /// Truncates `s` to at most `max` bytes, never splitting a multi-byte character.
-fn clamp_string_bytes(s: String, max: usize) -> String {
+pub fn clamp_str(s: &str, max: usize) -> String {
     if s.len() <= max {
-        return s;
+        return s.to_string();
     }
     let mut end = 0;
     for (i, c) in s.char_indices() {
@@ -22,6 +22,14 @@ fn clamp_string_bytes(s: String, max: usize) -> String {
         end = i + c.len_utf8();
     }
     s[..end].to_string()
+}
+
+/// Truncates a owned string to at most `max` bytes, never splitting a multi-byte character.
+pub fn clamp_string_bytes(s: String, max: usize) -> String {
+    if s.len() <= max {
+        return s;
+    }
+    clamp_str(&s, max)
 }
 
 /// Categorization of failures that can be returned to callers.
