@@ -1,6 +1,25 @@
 //! Domain errors and `Result` alias.
 
-use cheetah_signal_types::{SignalError, SignalErrorKind};
+use cheetah_signal_types::{SignalError, SignalErrorKind, clamp_str};
+
+/// Maximum byte length of a human-readable `DomainError` message.
+const MAX_DOMAIN_ERROR_MESSAGE_BYTES: usize = 1024;
+/// Maximum byte length of a `DomainError` entity or state name.
+const MAX_DOMAIN_ERROR_FIELD_BYTES: usize = 128;
+/// Maximum byte length of a `DomainError` identifier.
+const MAX_DOMAIN_ERROR_ID_BYTES: usize = 256;
+
+fn clamp_msg(message: impl std::fmt::Display) -> String {
+    clamp_str(&message.to_string(), MAX_DOMAIN_ERROR_MESSAGE_BYTES)
+}
+
+fn clamp_field(value: impl std::fmt::Display) -> String {
+    clamp_str(&value.to_string(), MAX_DOMAIN_ERROR_FIELD_BYTES)
+}
+
+fn clamp_id(value: impl std::fmt::Display) -> String {
+    clamp_str(&value.to_string(), MAX_DOMAIN_ERROR_ID_BYTES)
+}
 
 /// Errors returned by domain aggregates and application ports.
 #[derive(Debug, Clone, thiserror::Error)]
@@ -82,59 +101,62 @@ pub enum DomainError {
 
 impl DomainError {
     /// Creates a `NotFound` error for the given entity and id.
-    pub fn not_found(entity: impl Into<String>, id: impl Into<String>) -> Self {
+    pub fn not_found(entity: impl std::fmt::Display, id: impl std::fmt::Display) -> Self {
         Self::NotFound {
-            entity: entity.into(),
-            id: id.into(),
+            entity: clamp_field(entity),
+            id: clamp_id(id),
         }
     }
 
     /// Creates an `InvalidArgument` error with the given message.
-    pub fn invalid_argument(message: impl Into<String>) -> Self {
+    pub fn invalid_argument(message: impl std::fmt::Display) -> Self {
         Self::InvalidArgument {
-            message: message.into(),
+            message: clamp_msg(message),
         }
     }
 
     /// Creates an `Unavailable` error with the given message.
-    pub fn unavailable(message: impl Into<String>) -> Self {
+    pub fn unavailable(message: impl std::fmt::Display) -> Self {
         Self::Unavailable {
-            message: message.into(),
+            message: clamp_msg(message),
         }
     }
 
     /// Creates an `Internal` error with the given message.
-    pub fn internal(message: impl Into<String>) -> Self {
+    pub fn internal(message: impl std::fmt::Display) -> Self {
         Self::Internal {
-            message: message.into(),
+            message: clamp_msg(message),
         }
     }
 
     /// Creates an `InvalidTransition` error.
     pub fn invalid_transition(
-        entity: impl Into<String>,
-        from: impl Into<String>,
-        to: impl Into<String>,
+        entity: impl std::fmt::Display,
+        from: impl std::fmt::Display,
+        to: impl std::fmt::Display,
     ) -> Self {
         Self::InvalidTransition {
-            entity: entity.into(),
-            from: from.into(),
-            to: to.into(),
+            entity: clamp_field(entity),
+            from: clamp_field(from),
+            to: clamp_field(to),
         }
     }
 
     /// Creates an `AlreadyTerminal` error.
-    pub fn already_terminal(entity: impl Into<String>, status: impl Into<String>) -> Self {
+    pub fn already_terminal(
+        entity: impl std::fmt::Display,
+        status: impl std::fmt::Display,
+    ) -> Self {
         Self::AlreadyTerminal {
-            entity: entity.into(),
-            status: status.into(),
+            entity: clamp_field(entity),
+            status: clamp_field(status),
         }
     }
 
     /// Creates a `NoOwner` error.
-    pub fn no_owner(device_id: impl Into<String>) -> Self {
+    pub fn no_owner(device_id: impl std::fmt::Display) -> Self {
         Self::NoOwner {
-            device_id: device_id.into(),
+            device_id: clamp_id(device_id),
         }
     }
 
@@ -144,9 +166,9 @@ impl DomainError {
     }
 
     /// Creates an `Unsupported` error.
-    pub fn not_supported(message: impl Into<String>) -> Self {
+    pub fn not_supported(message: impl std::fmt::Display) -> Self {
         Self::Unsupported {
-            message: message.into(),
+            message: clamp_msg(message),
         }
     }
 }
