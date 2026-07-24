@@ -6,6 +6,12 @@
 use crate::error::{OnvifError, OnvifResult};
 use url::{Host, Url};
 
+/// Maximum byte length of a discovered or configured XAddr string.
+///
+/// This prevents `url::Url::parse` and downstream caches/keys from holding
+/// unbounded memory when a misbehaving device or actor advertises a huge URL.
+const MAX_XADDR_BYTES: usize = 4096;
+
 /// SSRF policy for discovered transport addresses.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct XAddrPolicy {
@@ -144,12 +150,15 @@ impl XAddrPolicy {
 
     /// Filters a list of XAddrs, returning only those that pass this policy.
     ///
-    /// Malformed or rejected addresses are skipped rather than failing the
-    /// entire list, so a device that advertises a mix of usable and blocked
-    /// XAddrs is not discarded outright.
+    /// Malformed, oversized or rejected addresses are skipped rather than
+    /// failing the entire list, so a device that advertises a mix of usable and
+    /// blocked XAddrs is not discarded outright.
     pub fn filter(&self, xaddrs: &[String]) -> Vec<String> {
         let mut out = Vec::with_capacity(xaddrs.len());
         for addr in xaddrs {
+            if addr.len() > MAX_XADDR_BYTES {
+                continue;
+            }
             if let Ok(url) = Url::parse(addr)
                 && self.validate(&url).is_ok()
             {
@@ -363,6 +372,20 @@ mod tests {
             "http://127.0.0.1/onvif".to_string(),
             "http://[::ffff:192.168.1.1]/onvif".to_string(),
             "ftp://192.0.2.1/onvif".to_string(),
+        ];
+        assert_eq!(
+            policy.filter(&addrs),
+            vec!["http://192.0.2.1/onvif".to_string()]
+        );
+    }
+
+    #[test]
+    fn filter_skips_oversized_xaddr_without_parsing() {
+        let policy = XAddrPolicy::default();
+        let path = "a".repeat(MAX_XADDR_BYTES);
+        let addrs = vec![
+            format!("http://192.0.2.1/onvif/{path}"),
+            "http://192.0.2.1/onvif".to_string(),
         ];
         assert_eq!(
             policy.filter(&addrs),
