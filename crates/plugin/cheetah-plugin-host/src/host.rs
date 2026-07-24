@@ -20,6 +20,12 @@ use tokio::time::timeout;
 /// Maximum plugin-host RPC timeout; larger values overflow `tokio::time` deadlines.
 const MAX_DRIVER_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
 
+/// Maximum bytes for a secret name passed by a driver to the host.
+///
+/// This prevents a misbehaving or compromised in-process driver from forcing
+/// the configured `SecretProvider` to allocate an unbounded key.
+const MAX_SECRET_NAME_BYTES: usize = 256;
+
 fn clamp_driver_timeout(timeout: DurationMs) -> Duration {
     Duration::from_millis(timeout.as_millis().max(0) as u64).min(MAX_DRIVER_TIMEOUT)
 }
@@ -129,6 +135,11 @@ impl DriverContext for HostDriverContext {
     }
 
     async fn secret(&self, name: &str) -> Result<Option<SecretString>, PluginError> {
+        if name.len() > MAX_SECRET_NAME_BYTES {
+            return Err(PluginError::driver(format!(
+                "secret name exceeds {MAX_SECRET_NAME_BYTES} bytes"
+            )));
+        }
         self.secret_provider.get_secret(name).await
     }
 
@@ -568,5 +579,21 @@ mod tests {
 
         let huge = DurationMs::from_millis(i64::MAX);
         assert_eq!(clamp_driver_timeout(huge), MAX_DRIVER_TIMEOUT);
+    }
+
+    #[tokio::test]
+    #[allow(clippy::unwrap_used)]
+    async fn secret_rejects_oversized_name() {
+        let ctx = HostDriverContext::with_secret_provider(
+            PluginName::new("test/secret").unwrap(),
+            serde_json::Value::Null,
+            ResourceBudget::default(),
+            Arc::new(NoOpSink),
+            Arc::new(NoOpSource),
+            Arc::new(NoopSecretProvider),
+        );
+        let name = "x".repeat(MAX_SECRET_NAME_BYTES + 1);
+        let result = ctx.secret(&name).await;
+        assert!(matches!(result, Err(PluginError::Driver(_))));
     }
 }
