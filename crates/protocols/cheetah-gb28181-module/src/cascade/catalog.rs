@@ -2,11 +2,6 @@
 
 use std::sync::Arc;
 
-/// Maximum number of catalog items a single SIP MESSAGE can carry.
-const MAX_CATALOG_ITEMS_PER_PACKET: usize = 10_000;
-/// Maximum number of catalog response pages emitted for one upstream query.
-const MAX_CATALOG_QUERY_PAGES: usize = 10_000;
-
 use cheetah_gb28181_core::{
     Body, HeaderName, HeaderValue, Method, RequestLine, SipHeaders, SipMessage, SipUri, StatusLine,
 };
@@ -280,8 +275,9 @@ pub(crate) fn build_catalog_pages(
 
     // Independent upper bound so a misbehaving or concurrently-growing provider
     // cannot make this loop run unbounded.
-    let max_per_packet = max_per_packet.clamp(1, MAX_CATALOG_ITEMS_PER_PACKET);
-    let max_pages = (config.catalog_max_query_pages as usize).clamp(1, MAX_CATALOG_QUERY_PAGES);
+    let max_per_packet = max_per_packet.clamp(1, super::MAX_CATALOG_ITEMS_PER_PACKET as usize);
+    let max_pages =
+        (config.catalog_max_query_pages as usize).clamp(1, super::MAX_CATALOG_QUERY_PAGES as usize);
     let max_total_items = max_per_packet.saturating_mul(max_pages);
 
     loop {

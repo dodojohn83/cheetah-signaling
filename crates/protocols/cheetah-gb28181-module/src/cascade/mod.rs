@@ -67,6 +67,25 @@ pub(crate) fn validate_token(value: &str) -> Result<(), CascadeError> {
     Ok(())
 }
 
+/// Maximum number of catalog items a single SIP MESSAGE can carry.
+const MAX_CATALOG_ITEMS_PER_PACKET: u32 = 10_000;
+/// Maximum number of catalog response pages emitted for one upstream query.
+const MAX_CATALOG_QUERY_PAGES: u32 = 10_000;
+/// Maximum number of concurrent upstream play bridge sessions.
+const MAX_MEDIA_BRIDGE_SESSIONS: u32 = 10_000;
+/// Maximum number of concurrent upstream subscriptions.
+const MAX_SUBSCRIPTIONS: u32 = 10_000;
+/// Maximum number of pending upstream event reports to queue.
+const MAX_REPORT_QUEUE_SIZE: u32 = 10_000;
+/// Maximum consecutive failed REGISTER attempts before disconnecting.
+const MAX_RETRIES: u32 = 100;
+/// Maximum backoff delay (1 hour).
+const MAX_BACKOFF_MS: u64 = 3_600_000;
+/// Maximum jitter added to backoff (1 minute).
+const MAX_JITTER_MS: u64 = 60_000;
+/// Maximum subscription expiry (30 days).
+const MAX_SUBSCRIPTION_EXPIRY_SECONDS: u32 = 2_592_000;
+
 /// Configuration for one upstream GB28181 cascade platform.
 #[derive(Clone, Debug)]
 pub struct CascadeConfig {
@@ -220,7 +239,7 @@ impl CascadeConfig {
             .validate_sip_endpoint(&upstream)
             .map_err(|e| CascadeError::Internal(format!("invalid upstream endpoint: {e}")))?;
 
-        Ok(Self {
+        let mut config = Self {
             domain_id,
             local_uri,
             upstream,
@@ -256,7 +275,56 @@ impl CascadeConfig {
             subscription_default_expiry_seconds: 3600,
             subscription_min_expiry_seconds: 60,
             subscription_max_expiry_seconds: 86400,
-        })
+        };
+        config.sanitize();
+        Ok(config)
+    }
+
+    /// Clamps all numeric limits to sensible production ceilings so a
+    /// misconfigured or malicious cascade policy cannot allocate unbounded
+    /// memory or retry forever.
+    pub fn sanitize(&mut self) {
+        self.catalog_max_items_per_packet = self
+            .catalog_max_items_per_packet
+            .clamp(1, MAX_CATALOG_ITEMS_PER_PACKET);
+        self.catalog_max_query_pages = self
+            .catalog_max_query_pages
+            .clamp(1, MAX_CATALOG_QUERY_PAGES);
+        self.media_bridge_max_sessions = self
+            .media_bridge_max_sessions
+            .clamp(0, MAX_MEDIA_BRIDGE_SESSIONS);
+        self.subscription_max_subscriptions = self
+            .subscription_max_subscriptions
+            .clamp(0, MAX_SUBSCRIPTIONS);
+        self.report_max_queue_size = self.report_max_queue_size.clamp(0, MAX_REPORT_QUEUE_SIZE);
+        self.max_retries = self.max_retries.clamp(0, MAX_RETRIES);
+        self.base_backoff_ms = self.base_backoff_ms.clamp(0, MAX_BACKOFF_MS);
+        self.max_backoff_ms = self
+            .max_backoff_ms
+            .clamp(self.base_backoff_ms, MAX_BACKOFF_MS);
+        self.jitter_ms = self.jitter_ms.clamp(0, MAX_JITTER_MS);
+        self.subscription_default_expiry_seconds = self
+            .subscription_default_expiry_seconds
+            .clamp(0, MAX_SUBSCRIPTION_EXPIRY_SECONDS);
+        self.subscription_min_expiry_seconds = self
+            .subscription_min_expiry_seconds
+            .clamp(0, MAX_SUBSCRIPTION_EXPIRY_SECONDS);
+        self.subscription_max_expiry_seconds = self
+            .subscription_max_expiry_seconds
+            .clamp(0, MAX_SUBSCRIPTION_EXPIRY_SECONDS);
+        // Ensure min/max expiry ordering is coherent even if a caller sets
+        // inconsistent values after construction.
+        let min_expiry = self
+            .subscription_min_expiry_seconds
+            .min(self.subscription_max_expiry_seconds);
+        let max_expiry = self
+            .subscription_min_expiry_seconds
+            .max(self.subscription_max_expiry_seconds);
+        self.subscription_min_expiry_seconds = min_expiry;
+        self.subscription_max_expiry_seconds = max_expiry;
+        self.subscription_default_expiry_seconds = self
+            .subscription_default_expiry_seconds
+            .clamp(min_expiry, max_expiry);
     }
 
     /// Enables SIP Digest authentication for incoming `Catalog` `MESSAGE`

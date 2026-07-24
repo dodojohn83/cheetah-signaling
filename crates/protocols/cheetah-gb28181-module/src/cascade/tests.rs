@@ -799,3 +799,41 @@ mod catalog;
 mod catalog_security;
 mod report;
 mod tests_keepalive;
+
+#[test]
+fn cascade_config_sanitizes_oversized_limits() {
+    let mut cfg = config();
+    cfg.media_bridge_max_sessions = u32::MAX;
+    cfg.subscription_max_subscriptions = u32::MAX;
+    cfg.report_max_queue_size = u32::MAX;
+    cfg.max_retries = u32::MAX;
+    cfg.base_backoff_ms = u64::MAX;
+    cfg.max_backoff_ms = u64::MAX;
+    cfg.jitter_ms = u64::MAX;
+    cfg.catalog_max_items_per_packet = u32::MAX;
+    cfg.catalog_max_query_pages = u32::MAX;
+    cfg.subscription_default_expiry_seconds = u32::MAX;
+    cfg.subscription_min_expiry_seconds = u32::MAX;
+    cfg.subscription_max_expiry_seconds = u32::MAX;
+
+    cfg.sanitize();
+
+    assert_eq!(
+        cfg.media_bridge_max_sessions,
+        super::MAX_MEDIA_BRIDGE_SESSIONS
+    );
+    assert_eq!(cfg.subscription_max_subscriptions, super::MAX_SUBSCRIPTIONS);
+    assert_eq!(cfg.report_max_queue_size, super::MAX_REPORT_QUEUE_SIZE);
+    assert_eq!(cfg.max_retries, super::MAX_RETRIES);
+    assert_eq!(cfg.base_backoff_ms, super::MAX_BACKOFF_MS);
+    assert_eq!(cfg.max_backoff_ms, super::MAX_BACKOFF_MS);
+    assert_eq!(cfg.jitter_ms, super::MAX_JITTER_MS);
+    assert_eq!(
+        cfg.catalog_max_items_per_packet,
+        super::MAX_CATALOG_ITEMS_PER_PACKET
+    );
+    assert_eq!(cfg.catalog_max_query_pages, super::MAX_CATALOG_QUERY_PAGES);
+    assert!(cfg.subscription_min_expiry_seconds <= cfg.subscription_max_expiry_seconds);
+    assert!(cfg.subscription_default_expiry_seconds >= cfg.subscription_min_expiry_seconds);
+    assert!(cfg.subscription_default_expiry_seconds <= cfg.subscription_max_expiry_seconds);
+}
