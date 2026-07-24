@@ -153,7 +153,7 @@ impl UsernameToken {
 
             writer.write_event(Event::End(BytesEnd::new("wsse:UsernameToken")))?;
         }
-        String::from_utf8(out).map_err(|e| OnvifError::Xml(e.to_string()))
+        String::from_utf8(out).map_err(OnvifError::xml)
     }
 }
 

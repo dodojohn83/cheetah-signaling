@@ -74,7 +74,7 @@ impl OnvifHttpDriver {
             let mut guard = self
                 .device_permits
                 .lock()
-                .map_err(|_| DriverError::Config("device permit map poisoned".into()))?;
+                .map_err(|_| DriverError::config("device permit map poisoned"))?;
 
             while guard.len() >= self.max_tracked_device_endpoints {
                 let evictable: Vec<String> = guard
@@ -97,7 +97,7 @@ impl OnvifHttpDriver {
             }
 
             if guard.len() >= self.max_tracked_device_endpoints && !guard.contains_key(endpoint) {
-                return Err(DriverError::Overloaded(format!(
+                return Err(DriverError::overloaded(format!(
                     "max tracked device endpoints ({}) reached",
                     self.max_tracked_device_endpoints
                 )));
@@ -114,9 +114,9 @@ impl OnvifHttpDriver {
         let permit = tokio::time::timeout(timeout, semaphore.acquire_owned())
             .await
             .map_err(|_| {
-                DriverError::Timeout(format!("timed out acquiring device permit for {endpoint}"))
+                DriverError::timeout(format!("timed out acquiring device permit for {endpoint}"))
             })?
-            .map_err(|_| DriverError::Config("device permit semaphore closed".into()))?;
+            .map_err(|_| DriverError::config("device permit semaphore closed"))?;
         Ok(permit)
     }
 
@@ -385,7 +385,7 @@ impl OnvifHttpDriver {
         if let Some(result) = last_empty {
             return Ok(result);
         }
-        Err(last_err.unwrap_or_else(|| DriverError::Config("no media dialect succeeded".into())))
+        Err(last_err.unwrap_or_else(|| DriverError::config("no media dialect succeeded")))
     }
 
     async fn get_profiles_dialect(
@@ -715,7 +715,7 @@ fn resolve_timeout(deadline: Option<Instant>) -> DriverResult<Option<Duration>> 
         Some(deadline) => {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
-                Err(DriverError::Timeout("deadline exceeded".into()))
+                Err(DriverError::timeout("deadline exceeded"))
             } else {
                 Ok(Some(remaining))
             }
