@@ -3,7 +3,9 @@
 use crate::config::MediaRegistryConfig;
 use crate::error::SchedulerError;
 use crate::metrics::MediaMetrics;
-use crate::model::{MediaCapability, MediaNode, MediaNodeCapacity, MediaNodeHealth, NodeStatus};
+use crate::model::{
+    MediaCapability, MediaNode, MediaNodeCapacity, MediaNodeHealth, MediaNodeLimits, NodeStatus,
+};
 use crate::registry::MediaNodeRegistry;
 use cheetah_signal_contracts::cheetah::common::v1::{
     DeregisterMediaNodeRequest, DeregisterMediaNodeResponse, DrainMediaNodeRequest,
@@ -21,6 +23,22 @@ use std::time::Duration;
 use tonic::{Request, Response, Status};
 
 const MAX_DNS_LOOKUP_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Maps the scheduler's `MediaRegistryConfig` onto domain `MediaNodeLimits`.
+fn media_node_limits(config: &MediaRegistryConfig) -> MediaNodeLimits {
+    let defaults = MediaNodeLimits::production();
+    MediaNodeLimits {
+        max_string_field_bytes: config.max_string_field_length,
+        max_endpoint_bytes: config.max_endpoint_uri_length,
+        max_network_zones: config.max_network_zones,
+        max_capabilities: config.max_capabilities,
+        max_capability_operations: config.max_capability_operations,
+        max_capability_constraints: config.max_capability_constraints,
+        max_media_addresses: defaults.max_media_addresses,
+        max_labels: defaults.max_labels,
+        max_label_value_bytes: defaults.max_label_value_bytes,
+    }
+}
 
 /// Peer identity extracted from the TLS layer and inserted into request extensions.
 #[derive(Clone, Debug)]
@@ -159,6 +177,8 @@ impl MediaClusterRegistry for MediaClusterRegistryService {
             contract_version: 1,
             revision: 0,
         };
+        node.validate(&media_node_limits(&self.config))
+            .map_err(|e| Status::invalid_argument(e.to_string()))?;
 
         let node = self
             .registry
