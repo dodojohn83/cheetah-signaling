@@ -71,6 +71,18 @@ pub(crate) fn validate_token(value: &str) -> Result<(), CascadeError> {
 const MAX_CATALOG_ITEMS_PER_PACKET: u32 = 10_000;
 /// Maximum number of catalog response pages emitted for one upstream query.
 const MAX_CATALOG_QUERY_PAGES: u32 = 10_000;
+/// Maximum byte length of an optional `User-Agent` header value.
+const MAX_USER_AGENT_BYTES: usize = 256;
+/// Maximum byte length of an optional tenant id catalog filter.
+const MAX_CATALOG_FILTER_TENANT_BYTES: usize = 256;
+/// Maximum byte length of the optional organization path prefix catalog filter.
+const MAX_CATALOG_FILTER_ORG_PREFIX_BYTES: usize = 512;
+/// Maximum number of entries in whitelisted device id or tag catalog filter lists.
+const MAX_CATALOG_FILTER_LIST_ENTRIES: usize = 1024;
+/// Maximum byte length of a single whitelisted device id filter entry.
+const MAX_CATALOG_FILTER_DEVICE_ID_BYTES: usize = 256;
+/// Maximum byte length of a single tag filter entry.
+const MAX_CATALOG_FILTER_TAG_BYTES: usize = 128;
 /// Maximum number of concurrent upstream play bridge sessions.
 const MAX_MEDIA_BRIDGE_SESSIONS: u32 = 10_000;
 /// Maximum number of concurrent upstream subscriptions.
@@ -276,14 +288,14 @@ impl CascadeConfig {
             subscription_min_expiry_seconds: 60,
             subscription_max_expiry_seconds: 86400,
         };
-        config.sanitize();
+        config.sanitize()?;
         Ok(config)
     }
 
-    /// Clamps all numeric limits to sensible production ceilings so a
+    /// Clamps all numeric limits and validates string fields so a
     /// misconfigured or malicious cascade policy cannot allocate unbounded
-    /// memory or retry forever.
-    pub fn sanitize(&mut self) {
+    /// memory, retry forever, or inject header values.
+    pub fn sanitize(&mut self) -> Result<(), CascadeError> {
         self.catalog_max_items_per_packet = self
             .catalog_max_items_per_packet
             .clamp(1, MAX_CATALOG_ITEMS_PER_PACKET);
@@ -325,6 +337,18 @@ impl CascadeConfig {
         self.subscription_default_expiry_seconds = self
             .subscription_default_expiry_seconds
             .clamp(min_expiry, max_expiry);
+
+        if let Some(ua) = &self.user_agent {
+            if ua.len() > MAX_USER_AGENT_BYTES {
+                return Err(CascadeError::Internal(format!(
+                    "user_agent exceeds {MAX_USER_AGENT_BYTES} bytes"
+                )));
+            }
+            validate_token(ua)?;
+        }
+
+        self.catalog_filter.validate()?;
+        Ok(())
     }
 
     /// Enables SIP Digest authentication for incoming `Catalog` `MESSAGE`

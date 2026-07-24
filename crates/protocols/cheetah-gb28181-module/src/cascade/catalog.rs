@@ -6,7 +6,11 @@ use cheetah_gb28181_core::{
     Body, HeaderName, HeaderValue, Method, RequestLine, SipHeaders, SipMessage, SipUri, StatusLine,
 };
 
-use crate::cascade::{CascadeConfig, CascadeError, validate_token};
+use crate::cascade::{
+    CascadeConfig, CascadeError, MAX_CATALOG_FILTER_DEVICE_ID_BYTES,
+    MAX_CATALOG_FILTER_LIST_ENTRIES, MAX_CATALOG_FILTER_ORG_PREFIX_BYTES,
+    MAX_CATALOG_FILTER_TAG_BYTES, MAX_CATALOG_FILTER_TENANT_BYTES, validate_token,
+};
 use crate::xml::catalog::{CatalogItem, build_catalog_response};
 
 /// Filter applied by the catalog provider so the shared catalog never leaks
@@ -78,6 +82,55 @@ impl CatalogFilter {
             && self.whitelisted_device_ids.is_empty()
             && self.tags.is_empty()
             && self.org_path_prefix.is_none()
+    }
+
+    /// Validates that the filter strings and collections are within bounded
+    /// sizes so a misconfigured or malicious cascade policy cannot allocate
+    /// unbounded memory or force an oversized SIP `MESSAGE` body.
+    pub(crate) fn validate(&self) -> Result<(), CascadeError> {
+        if let Some(tenant_id) = &self.tenant_id
+            && tenant_id.len() > MAX_CATALOG_FILTER_TENANT_BYTES
+        {
+            return Err(CascadeError::Internal(format!(
+                "catalog_filter.tenant_id exceeds {MAX_CATALOG_FILTER_TENANT_BYTES} bytes"
+            )));
+        }
+
+        if self.whitelisted_device_ids.len() > MAX_CATALOG_FILTER_LIST_ENTRIES {
+            return Err(CascadeError::Internal(format!(
+                "catalog_filter.whitelisted_device_ids exceeds {MAX_CATALOG_FILTER_LIST_ENTRIES} entries"
+            )));
+        }
+        for id in &self.whitelisted_device_ids {
+            if id.len() > MAX_CATALOG_FILTER_DEVICE_ID_BYTES {
+                return Err(CascadeError::Internal(format!(
+                    "catalog_filter.whitelisted_device_ids entry exceeds {MAX_CATALOG_FILTER_DEVICE_ID_BYTES} bytes"
+                )));
+            }
+        }
+
+        if self.tags.len() > MAX_CATALOG_FILTER_LIST_ENTRIES {
+            return Err(CascadeError::Internal(format!(
+                "catalog_filter.tags exceeds {MAX_CATALOG_FILTER_LIST_ENTRIES} entries"
+            )));
+        }
+        for tag in &self.tags {
+            if tag.len() > MAX_CATALOG_FILTER_TAG_BYTES {
+                return Err(CascadeError::Internal(format!(
+                    "catalog_filter.tags entry exceeds {MAX_CATALOG_FILTER_TAG_BYTES} bytes"
+                )));
+            }
+        }
+
+        if let Some(prefix) = &self.org_path_prefix
+            && prefix.len() > MAX_CATALOG_FILTER_ORG_PREFIX_BYTES
+        {
+            return Err(CascadeError::Internal(format!(
+                "catalog_filter.org_path_prefix exceeds {MAX_CATALOG_FILTER_ORG_PREFIX_BYTES} bytes"
+            )));
+        }
+
+        Ok(())
     }
 }
 
