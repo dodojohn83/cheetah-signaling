@@ -156,6 +156,27 @@ fn session_reaper_knobs_are_bounded() {
 }
 
 #[test]
+fn observability_diagnostic_sample_rate_rejects_nan_and_out_of_range() {
+    let mut config = SignalConfig::default();
+    assert!(config.validate().is_ok());
+
+    config.observability.diagnostic_sample_rate = f64::NAN;
+    assert!(config.validate().is_err());
+
+    config.observability.diagnostic_sample_rate = f64::INFINITY;
+    assert!(config.validate().is_err());
+
+    config.observability.diagnostic_sample_rate = -1.0;
+    assert!(config.validate().is_err());
+
+    config.observability.diagnostic_sample_rate = 1.5;
+    assert!(config.validate().is_err());
+
+    config.observability.diagnostic_sample_rate = 0.5;
+    assert!(config.validate().is_ok());
+}
+
+#[test]
 fn generated_ids_use_uuidv7() -> Result<(), SignalError> {
     let id1 = MessageId::generate();
     let id2 = MessageId::generate();
