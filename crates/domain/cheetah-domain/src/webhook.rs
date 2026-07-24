@@ -50,23 +50,22 @@ impl std::str::FromStr for DeliveryStatus {
     type Err = DomainError;
 
     fn from_str(s: &str) -> Result<Self> {
-        let status = if s.eq_ignore_ascii_case("pending") {
-            Self::Pending
+        if s.eq_ignore_ascii_case("pending") {
+            Ok(Self::Pending)
         } else if s.eq_ignore_ascii_case("in_progress") {
-            Self::InProgress
+            Ok(Self::InProgress)
         } else if s.eq_ignore_ascii_case("succeeded") {
-            Self::Succeeded
+            Ok(Self::Succeeded)
         } else if s.eq_ignore_ascii_case("failed") {
-            Self::Failed
+            Ok(Self::Failed)
         } else if s.eq_ignore_ascii_case("dead_letter") {
-            Self::DeadLetter
+            Ok(Self::DeadLetter)
         } else {
-            let display = s.chars().take(64).collect::<String>();
-            return Err(DomainError::invalid_argument(format!(
+            let display = crate::truncate_for_error(s);
+            Err(DomainError::invalid_argument(format!(
                 "unknown delivery status: {display}"
-            )));
-        };
-        Ok(status)
+            )))
+        }
     }
 }
 

@@ -75,27 +75,26 @@ impl std::str::FromStr for MediaSessionState {
     type Err = DomainError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let state = if s.eq_ignore_ascii_case("requested") {
-            Self::Requested
+        if s.eq_ignore_ascii_case("requested") {
+            Ok(Self::Requested)
         } else if s.eq_ignore_ascii_case("allocating") {
-            Self::Allocating
+            Ok(Self::Allocating)
         } else if s.eq_ignore_ascii_case("inviting") {
-            Self::Inviting
+            Ok(Self::Inviting)
         } else if s.eq_ignore_ascii_case("active") {
-            Self::Active
+            Ok(Self::Active)
         } else if s.eq_ignore_ascii_case("stopping") {
-            Self::Stopping
+            Ok(Self::Stopping)
         } else if s.eq_ignore_ascii_case("stopped") {
-            Self::Stopped
+            Ok(Self::Stopped)
         } else if s.eq_ignore_ascii_case("failed") {
-            Self::Failed
+            Ok(Self::Failed)
         } else {
-            let display = s.chars().take(64).collect::<String>();
-            return Err(DomainError::invalid_argument(format!(
-                "unknown state: {display}"
-            )));
-        };
-        Ok(state)
+            let display = crate::truncate_for_error(s);
+            Err(DomainError::invalid_argument(format!(
+                "unknown media session state: {display}"
+            )))
+        }
     }
 }
 
@@ -144,24 +143,20 @@ impl std::str::FromStr for MediaPurpose {
     type Err = DomainError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let purpose = if s.eq_ignore_ascii_case("live") {
-            Self::Live
+        if s.eq_ignore_ascii_case("live") {
+            Ok(Self::Live)
         } else if s.eq_ignore_ascii_case("playback") {
-            Self::Playback
+            Ok(Self::Playback)
         } else if s.eq_ignore_ascii_case("talk") {
-            Self::Talk
+            Ok(Self::Talk)
         } else if s.eq_ignore_ascii_case("broadcast") {
-            Self::Broadcast
+            Ok(Self::Broadcast)
         } else {
-            Self::Unknown
-        };
-        if purpose == Self::Unknown {
-            let display = s.chars().take(64).collect::<String>();
-            return Err(DomainError::invalid_argument(format!(
+            let display = crate::truncate_for_error(s);
+            Err(DomainError::invalid_argument(format!(
                 "unknown media purpose: {display}"
-            )));
+            )))
         }
-        Ok(purpose)
     }
 }
 

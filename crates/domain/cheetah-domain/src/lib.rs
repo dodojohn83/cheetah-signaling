@@ -101,3 +101,11 @@ pub use webhook::{
     DeliveryStatus, MAX_WEBHOOK_EVENT_TYPE_BYTES, WebhookConfig, WebhookDelivery,
     sign_webhook_payload, validate_event_type,
 };
+
+/// Maximum characters from an untrusted string to include in an error message.
+pub(crate) const MAX_FROM_STR_DISPLAY_LEN: usize = 64;
+
+/// Truncates `s` to [`MAX_FROM_STR_DISPLAY_LEN`] characters for safe error diagnostics.
+pub(crate) fn truncate_for_error(s: &str) -> String {
+    s.chars().take(MAX_FROM_STR_DISPLAY_LEN).collect()
+}
