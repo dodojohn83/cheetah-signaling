@@ -151,6 +151,28 @@ async fn resolve_credentials_returns_error_for_missing_secret() {
 }
 
 #[tokio::test]
+async fn resolve_credentials_rejects_oversized_credentials_ref() {
+    let oversized_ref = "a".repeat(MAX_ONVIF_CREDENTIALS_REF_BYTES + 1);
+    let ctx = FakeDriverContext::with_secret("onvif.default.password", "fallback");
+    let mut config = OnvifConfig::default();
+    config.default_username = Some("admin".to_string());
+    config.default_credentials_ref = Some(oversized_ref.clone());
+
+    let err = resolve_credentials(
+        &ctx,
+        &config,
+        Some("admin"),
+        Some(&oversized_ref),
+        None,
+        false,
+        0,
+    )
+    .await
+    .expect_err("oversized credentials_ref should error");
+    assert!(err.to_string().contains("credentials_ref"));
+}
+
+#[tokio::test]
 async fn resolve_credentials_prefers_inline_password_over_config_default() {
     let ctx = FakeDriverContext::with_secret("onvif.default.password", "default_secret");
     let mut config = OnvifConfig::default();
