@@ -7,7 +7,7 @@
 use crate::config::ParserLimits;
 use crate::error::OnvifServiceError;
 use crate::services::parse::{ParseContext, local_name};
-use cheetah_onvif_core::discovery::XAddrPolicy;
+use cheetah_onvif_core::discovery::{MAX_XADDR_BYTES, XAddrPolicy, parse_xaddr};
 use cheetah_onvif_core::soap::Envelope;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
 use quick_xml::{Reader, Writer};
@@ -400,9 +400,7 @@ fn parse_media_uri(
 /// not trigger the XAddr userinfo rejection; credentials must still be redacted
 /// before logging or northbound emission via [`redact_uri_userinfo`].
 pub fn validate_media_uri(uri: &str, base: &XAddrPolicy) -> Result<(), OnvifServiceError> {
-    let parsed = url::Url::parse(uri).map_err(|e| {
-        OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::InvalidXAddr(e.to_string()))
-    })?;
+    let parsed = parse_xaddr(uri)?;
     let mut policy = base.clone();
     for scheme in ["rtsp", "rtsps", "http", "https"] {
         if !policy.allowed_schemes.iter().any(|s| s == scheme) {
@@ -448,7 +446,10 @@ pub fn parse_get_snapshot_uri_response(
 
 /// Redacts userinfo from a URI for logs and northbound APIs.
 pub fn redact_uri_userinfo(uri: &str) -> String {
-    match url::Url::parse(uri) {
+    if uri.len() > MAX_XADDR_BYTES {
+        return format!("[xaddr exceeds {MAX_XADDR_BYTES} bytes]");
+    }
+    match parse_xaddr(uri) {
         Ok(mut parsed) => {
             let _ = parsed.set_username("");
             let _ = parsed.set_password(None);
@@ -523,5 +524,22 @@ mod tests {
         let redacted = redact_uri_userinfo("rtsp://user:secret@192.0.2.10/stream");
         assert!(!redacted.contains("secret"));
         assert!(redacted.contains("192.0.2.10"));
+    }
+
+    #[test]
+    fn validate_media_uri_rejects_oversized_uri() {
+        let path = "a".repeat(MAX_XADDR_BYTES);
+        let uri = format!("rtsp://192.0.2.10:554/stream/{path}");
+        let policy = XAddrPolicy::default().with_allow_private(true);
+        assert!(validate_media_uri(&uri, &policy).is_err());
+    }
+
+    #[test]
+    fn redact_userinfo_clamps_oversized_uri() {
+        let path = "a".repeat(MAX_XADDR_BYTES);
+        let uri = format!("rtsp://user:secret@192.0.2.10:554/stream/{path}");
+        let redacted = redact_uri_userinfo(&uri);
+        assert!(!redacted.contains("secret"));
+        assert!(redacted.contains("xaddr exceeds"));
     }
 }

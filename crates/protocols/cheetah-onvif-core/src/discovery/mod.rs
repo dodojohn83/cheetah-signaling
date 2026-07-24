@@ -21,7 +21,7 @@ pub use types::{
     Bye, EndpointReference, Hello, Probe, ProbeMatch, ProbeMatches, Resolve, ResolveMatch,
     ResolveMatches, Scopes, XAddrs,
 };
-pub use xaddr::{XAddrPolicy, filter_xaddrs};
+pub use xaddr::{MAX_XADDR_BYTES, XAddrPolicy, filter_xaddrs, parse_xaddr};
 
 const SOAP_ENVELOPE: &str = "http://www.w3.org/2003/05/soap-envelope";
 const WSA: &str = "http://schemas.xmlsoap.org/ws/2004/08/addressing";

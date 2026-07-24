@@ -3,7 +3,7 @@
 use crate::config::ParserLimits;
 use crate::error::OnvifServiceError;
 use crate::services::parse::{ParseContext, local_name};
-use cheetah_onvif_core::discovery::XAddrPolicy;
+use cheetah_onvif_core::discovery::{XAddrPolicy, parse_xaddr};
 use cheetah_onvif_core::soap::Envelope;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
 use quick_xml::{Reader, Writer};
@@ -187,9 +187,7 @@ pub fn parse_create_pull_point_response(
             "SubscriptionReference/Address".into(),
         ));
     }
-    let url = url::Url::parse(&sub.subscription_reference).map_err(|e| {
-        OnvifServiceError::Onvif(cheetah_onvif_core::OnvifError::InvalidXAddr(e.to_string()))
-    })?;
+    let url = parse_xaddr(&sub.subscription_reference)?;
     policy.validate(&url).map_err(OnvifServiceError::Onvif)?;
     Ok(sub)
 }
@@ -339,7 +337,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use super::*;
-    use cheetah_onvif_core::discovery::XAddrPolicy;
+    use cheetah_onvif_core::discovery::{MAX_XADDR_BYTES, XAddrPolicy};
 
     #[test]
     fn create_pull_point_request_has_timeout() {
@@ -440,5 +438,25 @@ mod tests {
         // Truncated prefix must be valid UTF-8 and not exceed the 128-byte window.
         assert!(ext.len() <= 128);
         assert!(String::from_utf8(ext.as_bytes().to_vec()).is_ok());
+    }
+
+    #[test]
+    fn parse_create_pull_point_rejects_oversized_subscription_reference() {
+        let path = "a".repeat(MAX_XADDR_BYTES);
+        let address = format!("http://192.0.2.10/onvif/{path}");
+        let xml = format!(
+            r#"
+        <s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">
+          <s:Body>
+            <tev:CreatePullPointSubscriptionResponse xmlns:tev="http://www.onvif.org/ver10/events/wsdl">
+              <tev:SubscriptionReference>
+                <a:Address xmlns:a="http://www.w3.org/2005/08/addressing">{address}</a:Address>
+              </tev:SubscriptionReference>
+            </tev:CreatePullPointSubscriptionResponse>
+          </s:Body>
+        </s:Envelope>"#
+        );
+        let policy = XAddrPolicy::default().with_allow_private(true);
+        assert!(parse_create_pull_point_response(&xml, &ParserLimits::default(), &policy).is_err());
     }
 }

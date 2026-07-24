@@ -4,7 +4,7 @@ use crate::config::ParserLimits;
 use crate::error::OnvifServiceError;
 use crate::types::{CapabilityKind, CapabilityProbeResult, DeviceInformation, Service};
 use cheetah_onvif_core::OnvifError;
-use cheetah_onvif_core::discovery::XAddrPolicy;
+use cheetah_onvif_core::discovery::{XAddrPolicy, parse_xaddr};
 use cheetah_onvif_core::services::system_date_time;
 use cheetah_onvif_core::soap::Envelope;
 use quick_xml::events::{BytesStart, Event};
@@ -362,7 +362,7 @@ impl ServiceBuilder {
         if self.xaddr.is_empty() {
             return Err(OnvifServiceError::MissingField("XAddr".to_string()));
         }
-        let url = url::Url::parse(&self.xaddr)?;
+        let url = parse_xaddr(&self.xaddr)?;
         xaddr_policy.validate(&url)?;
         let version = self.version_or_default();
         Ok(Service {
@@ -485,6 +485,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use super::*;
+    use cheetah_onvif_core::discovery::MAX_XADDR_BYTES;
 
     fn limits() -> ParserLimits {
         ParserLimits {
@@ -658,5 +659,27 @@ mod tests {
   </s:Body>
 </s:Envelope>"#;
         assert!(parse_get_device_information_response(xml, &shallow_limits).is_err());
+    }
+
+    #[test]
+    fn parses_services_response_rejects_oversized_xaddr() {
+        let path = "a".repeat(MAX_XADDR_BYTES);
+        let xaddr = format!("http://192.0.2.1/onvif/{path}");
+        let xml = format!(
+            r#"<?xml version="1.0"?>
+<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">
+  <s:Body>
+    <tds:GetServicesResponse xmlns:tds="http://www.onvif.org/ver10/device/wsdl">
+      <tds:Service>
+        <tds:Namespace>http://www.onvif.org/ver10/device/wsdl</tds:Namespace>
+        <tds:XAddr>{xaddr}</tds:XAddr>
+        <tds:Version><tt:Major xmlns:tt="http://www.onvif.org/ver10/schema">1</tt:Major><tt:Minor xmlns:tt="http://www.onvif.org/ver10/schema">0</tt:Minor></tds:Version>
+      </tds:Service>
+    </tds:GetServicesResponse>
+  </s:Body>
+</s:Envelope>"#
+        );
+        let policy = XAddrPolicy::default().with_allow_private(true);
+        assert!(parse_get_services_response(&xml, &ParserLimits::default(), &policy).is_err());
     }
 }

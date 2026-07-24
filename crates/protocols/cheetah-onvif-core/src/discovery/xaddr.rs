@@ -10,7 +10,7 @@ use url::{Host, Url};
 ///
 /// This prevents `url::Url::parse` and downstream caches/keys from holding
 /// unbounded memory when a misbehaving device or actor advertises a huge URL.
-const MAX_XADDR_BYTES: usize = 4096;
+pub const MAX_XADDR_BYTES: usize = 4096;
 
 /// SSRF policy for discovered transport addresses.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -228,6 +228,19 @@ pub fn filter_xaddrs(xaddrs: &[String], allow_private: bool) -> Vec<String> {
     policy.filter(xaddrs)
 }
 
+/// Parses an XAddr string after rejecting URLs that exceed [`MAX_XADDR_BYTES`].
+///
+/// This prevents `url::Url::parse` from allocating an unbounded `Url` when a
+/// device or caller supplies an oversized address.
+pub fn parse_xaddr(url: &str) -> OnvifResult<Url> {
+    if url.len() > MAX_XADDR_BYTES {
+        return Err(OnvifError::InvalidXAddr(format!(
+            "xaddr exceeds {MAX_XADDR_BYTES} bytes"
+        )));
+    }
+    Url::parse(url).map_err(|e| OnvifError::InvalidXAddr(e.to_string()))
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
@@ -407,5 +420,13 @@ mod tests {
         let original = Url::parse("http://example.com/onvif").unwrap();
         let target = Url::parse("http://attacker.com/onvif").unwrap();
         assert!(policy.validate_redirect(&original, &target).is_err());
+    }
+
+    #[test]
+    fn parse_xaddr_rejects_oversized_url() {
+        let path = "a".repeat(MAX_XADDR_BYTES);
+        let oversized = format!("http://192.0.2.1/onvif/{path}");
+        assert!(parse_xaddr(&oversized).is_err());
+        assert!(parse_xaddr("http://192.0.2.1/onvif").is_ok());
     }
 }
