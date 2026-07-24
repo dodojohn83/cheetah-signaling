@@ -115,3 +115,42 @@ async fn execute_with_zero_or_huge_config_values_does_not_block() {
     let result = response.result.expect("missing command result");
     assert_eq!(result.status, CommandStatus::Completed as i32);
 }
+
+const MAX_GRPC_MESSAGE_BYTES: usize = 8 * 1024 * 1024;
+
+#[derive(Default)]
+struct OversizedMediaControl;
+
+#[async_trait::async_trait]
+impl MediaControl for OversizedMediaControl {
+    async fn execute(
+        &self,
+        _request: Request<MediaControlExecuteRequest>,
+    ) -> Result<Response<MediaControlExecuteResponse>, Status> {
+        Ok(Response::new(MediaControlExecuteResponse {
+            result: Some(CommandResult {
+                status: CommandStatus::Completed as i32,
+                operation_id: "x".repeat(MAX_GRPC_MESSAGE_BYTES + 1),
+                error: None,
+            }),
+        }))
+    }
+}
+
+#[tokio::test]
+async fn execute_rejects_oversized_response() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let service = MediaControlServer::new(OversizedMediaControl);
+    tokio::spawn(async move {
+        tonic::transport::Server::builder()
+            .add_service(service)
+            .serve_with_incoming(TcpListenerStream::new(listener))
+            .await
+            .unwrap();
+    });
+
+    let client = MediaControlClient::new(MediaClientConfig::test());
+    let result = client.execute(&format!("http://{addr}"), request()).await;
+    assert!(result.is_err(), "oversized response must be rejected");
+}

@@ -37,6 +37,8 @@ const MAX_RPC_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
 
 /// Maximum backoff sleep between retry attempts.
 const MAX_BACKOFF: Duration = Duration::from_secs(24 * 60 * 60);
+/// Maximum encoded/decoded gRPC message size for media control traffic.
+const MAX_GRPC_MESSAGE_BYTES: usize = 8 * 1024 * 1024;
 
 fn clamp_timeout_ms(timeout_ms: u64) -> Duration {
     Duration::from_millis(timeout_ms).min(MAX_RPC_TIMEOUT)
@@ -274,7 +276,9 @@ impl MediaControlClient {
                 sleep(clamp_backoff_ms(delay)).await;
             }
 
-            let mut client = TonicMediaControlClient::new(entry.channel.clone());
+            let mut client = TonicMediaControlClient::new(entry.channel.clone())
+                .max_decoding_message_size(MAX_GRPC_MESSAGE_BYTES)
+                .max_encoding_message_size(MAX_GRPC_MESSAGE_BYTES);
             let body = MediaControlExecuteRequest {
                 command: Some(command_envelope.clone()),
             };
@@ -377,7 +381,9 @@ impl MediaControlClient {
                 sleep(clamp_backoff_ms(delay)).await;
             }
 
-            let mut client = TonicMediaQueryClient::new(entry.channel.clone());
+            let mut client = TonicMediaQueryClient::new(entry.channel.clone())
+                .max_decoding_message_size(MAX_GRPC_MESSAGE_BYTES)
+                .max_encoding_message_size(MAX_GRPC_MESSAGE_BYTES);
             let grpc_request = Request::new(body.clone());
             let result = timeout(
                 clamp_timeout_ms(self.config.request_timeout_ms),
@@ -680,7 +686,9 @@ impl MediaControlClient {
         request: SubscribeRequest,
     ) -> Result<tonic::codec::Streaming<MediaEvent>, MediaClientError> {
         let channel = self.connect(endpoint).await?;
-        let mut client = MediaEventStreamServiceClient::new(channel);
+        let mut client = MediaEventStreamServiceClient::new(channel)
+            .max_decoding_message_size(MAX_GRPC_MESSAGE_BYTES)
+            .max_encoding_message_size(MAX_GRPC_MESSAGE_BYTES);
         let response = client
             .subscribe(request)
             .await
