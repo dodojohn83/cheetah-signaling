@@ -12,6 +12,9 @@ use cheetah_signal_types::{DeviceId, ProtocolIdentity, TenantId};
 pub(crate) fn build_parent_protocols(records: &[OldRecord]) -> ParentProtocols {
     let mut map = ParentProtocols::new();
     for record in records {
+        if record.validate().is_err() {
+            continue;
+        }
         if matches!(
             record.entity_type,
             EntityType::Device | EntityType::Gb28181Platform | EntityType::OnvifEndpoint
