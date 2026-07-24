@@ -629,7 +629,7 @@ pub enum MessagingBackend {
 }
 
 /// Cluster configuration.
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 #[serde(deny_unknown_fields)]
 pub struct ClusterConfig {
@@ -639,6 +639,16 @@ pub struct ClusterConfig {
     pub lease_ttl_ms: DurationMs,
     /// Heartbeat interval for cluster members.
     pub heartbeat_interval_ms: DurationMs,
+}
+
+impl Default for ClusterConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            lease_ttl_ms: DurationMs::from_millis(5_000),
+            heartbeat_interval_ms: DurationMs::from_millis(1_000),
+        }
+    }
 }
 
 /// Whether at least one alive media node is required for process readiness.

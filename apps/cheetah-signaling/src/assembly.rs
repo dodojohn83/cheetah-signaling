@@ -79,11 +79,15 @@ use tracing::{info, warn};
 use uuid::Uuid;
 use x509_parser::prelude::{FromDer, X509Certificate};
 
+/// Minimum background worker interval; a zero period panics `tokio::time::interval`.
+const MIN_WORKER_INTERVAL: Duration = Duration::from_millis(1);
 /// Maximum background worker interval; larger values overflow `tokio::time` deadlines.
 const MAX_WORKER_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 
 fn clamp_interval_ms(ms: u64) -> Duration {
-    Duration::from_millis(ms).min(MAX_WORKER_INTERVAL)
+    Duration::from_millis(ms)
+        .max(MIN_WORKER_INTERVAL)
+        .min(MAX_WORKER_INTERVAL)
 }
 
 /// Health status of a single runtime component.
@@ -1744,7 +1748,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn clamp_interval_ms_saturates_at_max() {
+    fn clamp_interval_ms_clamps_to_min_and_max() {
+        assert_eq!(clamp_interval_ms(0), MIN_WORKER_INTERVAL);
         assert_eq!(clamp_interval_ms(1_000), Duration::from_millis(1_000));
         assert_eq!(clamp_interval_ms(u64::MAX), MAX_WORKER_INTERVAL);
     }
