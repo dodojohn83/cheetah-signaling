@@ -2,6 +2,7 @@
 
 use crate::auth::{DeviceCredentials, inject_username_token};
 use crate::config::DriverConfig;
+use crate::discovery::validate_endpoint;
 use crate::error::{DriverError, DriverResult};
 use bytes::BytesMut;
 use cheetah_onvif_core::discovery::XAddrPolicy;
@@ -11,7 +12,6 @@ use reqwest::{Client, StatusCode};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Semaphore;
-use url::Url;
 
 /// SOAP-over-HTTP client for ONVIF service calls.
 #[derive(Debug, Clone)]
@@ -89,9 +89,7 @@ impl SoapClient {
         envelope_xml: &str,
         timeout: Option<Duration>,
     ) -> DriverResult<String> {
-        let url = Url::parse(endpoint)
-            .map_err(|e| DriverError::Onvif(cheetah_onvif_core::OnvifError::invalid_xaddr(e)))?;
-        self.policy.validate(&url).map_err(DriverError::Onvif)?;
+        let url = validate_endpoint(endpoint, &self.policy)?;
 
         let overall_timeout = timeout.unwrap_or(self.request_timeout);
         let start = std::time::Instant::now();
