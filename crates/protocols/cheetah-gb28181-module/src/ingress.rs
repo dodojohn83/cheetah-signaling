@@ -34,7 +34,7 @@ use std::net::IpAddr;
 use cheetah_domain::{
     CompatibilityProfile, LocalIdentity, ProtocolSessionRepository, SipTransport,
 };
-use cheetah_signal_types::{DeviceId, NodeId, OwnerEpoch, ProtocolIdentity, TenantId};
+use cheetah_signal_types::{DeviceId, NodeId, OwnerEpoch, ProtocolIdentity, TenantId, clamp_str};
 
 use crate::session::{
     ProtocolSessionLink, RegisterOutcome, RegisterParams, SessionContext, SessionLinkError,
@@ -42,6 +42,11 @@ use crate::session::{
 
 /// Maximum accepted byte length of a domain or user-part string.
 const MAX_IDENTITY_BYTES: usize = 253;
+/// Maximum byte length of a CIDR string passed to [`NetworkZone::parse`].
+/// The longest valid textual CIDR (`IPv6` with scope id) is well under this.
+const MAX_CIDR_BYTES: usize = 128;
+/// Maximum byte length of an `IngressConfigError` diagnostic string.
+const MAX_INGRESS_CONFIG_ERROR_BYTES: usize = 512;
 
 /// SIP method whose access is being validated.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -67,6 +72,14 @@ pub enum IngressConfigError {
     /// A network zone could not be parsed as a CIDR block.
     #[error("invalid network zone: {0}")]
     InvalidZone(String),
+}
+
+impl IngressConfigError {
+    /// Creates an `InvalidZone` error with a bounded copy of `cidr` so the
+    /// diagnostic cannot carry an arbitrary-sized input.
+    pub fn invalid_zone(cidr: &str) -> Self {
+        Self::InvalidZone(clamp_str(cidr, MAX_INGRESS_CONFIG_ERROR_BYTES))
+    }
 }
 
 /// Validation / routing error produced while admitting a request.
@@ -130,23 +143,27 @@ impl NetworkZone {
     /// Parses a CIDR block such as `203.0.113.0/24` or `2001:db8::/32`.
     ///
     /// The prefix length must be within the address family's range (`0..=32`
-    /// for IPv4, `0..=128` for IPv6).
+    /// for IPv4, `0..=128` for IPv6). Inputs longer than [`MAX_CIDR_BYTES`]
+    /// are rejected early to avoid allocating a huge diagnostic on failure.
     pub fn parse(cidr: &str) -> Result<Self, IngressConfigError> {
+        if cidr.len() > MAX_CIDR_BYTES {
+            return Err(IngressConfigError::invalid_zone(cidr));
+        }
         let (addr, prefix) = cidr
             .split_once('/')
-            .ok_or_else(|| IngressConfigError::InvalidZone(cidr.to_string()))?;
+            .ok_or_else(|| IngressConfigError::invalid_zone(cidr))?;
         let base: IpAddr = addr
             .parse()
-            .map_err(|_| IngressConfigError::InvalidZone(cidr.to_string()))?;
+            .map_err(|_| IngressConfigError::invalid_zone(cidr))?;
         let prefix_len: u8 = prefix
             .parse()
-            .map_err(|_| IngressConfigError::InvalidZone(cidr.to_string()))?;
+            .map_err(|_| IngressConfigError::invalid_zone(cidr))?;
         let max = match base {
             IpAddr::V4(_) => 32,
             IpAddr::V6(_) => 128,
         };
         if prefix_len > max {
-            return Err(IngressConfigError::InvalidZone(cidr.to_string()));
+            return Err(IngressConfigError::invalid_zone(cidr));
         }
         Ok(Self { base, prefix_len })
     }
@@ -543,6 +560,18 @@ mod tests {
         assert!(NetworkZone::parse("203.0.113.0/33").is_err());
         assert!(NetworkZone::parse("2001:db8::/129").is_err());
         assert!(NetworkZone::parse("not-a-cidr").is_err());
+    }
+
+    #[test]
+    fn network_zone_rejects_oversized_cidr_and_clamps_error() {
+        let long = "x".repeat(2048);
+        let cidr = format!("{long}/24");
+        let err = NetworkZone::parse(&cidr).unwrap_err();
+        let IngressConfigError::InvalidZone(msg) = err else {
+            panic!("expected InvalidZone error");
+        };
+        assert_eq!(msg.len(), MAX_INGRESS_CONFIG_ERROR_BYTES);
+        assert!(msg.is_char_boundary(msg.len()));
     }
 
     #[test]
