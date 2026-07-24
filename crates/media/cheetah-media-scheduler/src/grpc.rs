@@ -13,7 +13,8 @@ use cheetah_signal_contracts::cheetah::common::v1::{
 use cheetah_signal_contracts::cheetah::media::v1 as media_proto;
 use cheetah_signal_grpc::cheetah::common::v1::media_cluster_registry_server::MediaClusterRegistry;
 use cheetah_signal_types::{
-    AuditEvent, AuditLog, AuditOutcome, Clock, IdGenerator, NodeId, SafeDetails, is_internal_ip,
+    AuditEvent, AuditLog, AuditOutcome, Clock, IdGenerator, NodeId, SafeDetails, clamp_str,
+    is_internal_ip,
 };
 use std::str::FromStr;
 use std::sync::Arc;
@@ -593,7 +594,12 @@ async fn host_is_internal(host: &str, port: u16, timeout_ms: u64) -> Result<bool
     )
     .await
     .map_err(|_| Status::invalid_argument("control endpoint DNS lookup timed out"))?
-    .map_err(|e| Status::invalid_argument(format!("control endpoint DNS lookup failed: {e}")))?;
+    .map_err(|e| {
+        Status::invalid_argument(clamp_str(
+            &format!("control endpoint DNS lookup failed: {e}"),
+            MAX_SCHEDULER_STATUS_BYTES,
+        ))
+    })?;
 
     for addr in lookup {
         if is_internal_ip(addr.ip()) {
@@ -603,13 +609,17 @@ async fn host_is_internal(host: &str, port: u16, timeout_ms: u64) -> Result<bool
     Ok(false)
 }
 
+/// Maximum byte length of a `tonic::Status` message generated from a scheduler error.
+const MAX_SCHEDULER_STATUS_BYTES: usize = 1024;
+
 fn map_scheduler_error(e: SchedulerError) -> Status {
+    let msg = clamp_str(&e.to_string(), MAX_SCHEDULER_STATUS_BYTES);
     match e {
-        SchedulerError::NodeNotFound(_) => Status::not_found(e.to_string()),
-        SchedulerError::CapacityExhausted(_) => Status::resource_exhausted(e.to_string()),
-        SchedulerError::IdentityMismatch { .. } => Status::permission_denied(e.to_string()),
-        SchedulerError::InvalidArgument(_) => Status::invalid_argument(e.to_string()),
-        _ => Status::internal(e.to_string()),
+        SchedulerError::NodeNotFound(_) => Status::not_found(msg),
+        SchedulerError::CapacityExhausted(_) => Status::resource_exhausted(msg),
+        SchedulerError::IdentityMismatch { .. } => Status::permission_denied(msg),
+        SchedulerError::InvalidArgument(_) => Status::invalid_argument(msg),
+        _ => Status::internal(msg),
     }
 }
 

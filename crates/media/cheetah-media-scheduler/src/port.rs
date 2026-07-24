@@ -9,7 +9,7 @@ use cheetah_domain::{
 use cheetah_signal_types::Page;
 use cheetah_signal_types::{
     ChannelId, Clock, DeviceId, MediaBindingId, MediaSessionId, MetricsExporter, NodeId,
-    PageRequest, TenantId, UtcTimestamp,
+    PageRequest, TenantId, UtcTimestamp, clamp_str,
 };
 use std::sync::Arc;
 use std::time::Instant;
@@ -336,22 +336,26 @@ async fn reserve(
     ))
 }
 
+/// Maximum byte length of a `DomainError` message generated from a scheduler error.
+const MAX_SCHEDULER_ERROR_BYTES: usize = 1024;
+
 fn map_scheduler_error(e: crate::error::SchedulerError) -> DomainError {
+    let msg = clamp_str(&e.to_string(), MAX_SCHEDULER_ERROR_BYTES);
     match e {
         crate::error::SchedulerError::Domain(err) => err,
         crate::error::SchedulerError::EventStream(_) | crate::error::SchedulerError::Backend(_) => {
-            DomainError::unavailable(e.to_string())
+            DomainError::unavailable(msg)
         }
         crate::error::SchedulerError::NoNode(_)
         | crate::error::SchedulerError::CapacityExhausted(_)
-        | crate::error::SchedulerError::NodeDraining(_) => DomainError::unavailable(e.to_string()),
+        | crate::error::SchedulerError::NodeDraining(_) => DomainError::unavailable(msg),
         crate::error::SchedulerError::NodeNotFound(_)
         | crate::error::SchedulerError::ReservationNotFound { .. } => {
-            DomainError::not_found("media_node", e.to_string())
+            DomainError::not_found("media_node", msg)
         }
         crate::error::SchedulerError::InvalidArgument(_)
         | crate::error::SchedulerError::IdentityMismatch { .. } => {
-            DomainError::invalid_argument(e.to_string())
+            DomainError::invalid_argument(msg)
         }
     }
 }
