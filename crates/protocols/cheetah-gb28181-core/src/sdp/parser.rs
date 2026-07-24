@@ -9,6 +9,19 @@ use super::session::{
 /// Maximum bytes to include of an SDP attribute value in error messages.
 const MAX_SDP_ATTR_DISPLAY_BYTES: usize = 64;
 
+/// Maximum number of SDP lines.
+const MAX_SDP_LINES: usize = 1_048_576;
+/// Maximum length of one SDP line in bytes.
+const MAX_SDP_LINE_LEN: usize = 64 * 1024;
+/// Maximum total SDP body size in bytes.
+const MAX_SDP_BODY_SIZE: usize = 64 * 1024 * 1024;
+/// Maximum media descriptions in an SDP body.
+const MAX_SDP_MEDIA: usize = 4096;
+/// Maximum attributes per media or session block.
+const MAX_SDP_ATTRIBUTES: usize = 16_384;
+/// Maximum unknown attributes to preserve per block.
+const MAX_SDP_UNKNOWN_ATTRIBUTES: usize = 4096;
+
 /// Truncates `s` at a UTF-8 character boundary so it is at most `max` bytes.
 fn truncate_at_char_boundary(s: &str, max: usize) -> &str {
     if s.len() <= max {
@@ -63,10 +76,25 @@ impl SdpParserConfig {
             max_unknown_attributes: 4,
         }
     }
+
+    /// Clamps every limit to a safe, non-zero range.
+    pub fn clamp(&self) -> Self {
+        Self {
+            max_lines: self.max_lines.clamp(1, MAX_SDP_LINES),
+            max_line_len: self.max_line_len.clamp(1, MAX_SDP_LINE_LEN),
+            max_size: self.max_size.clamp(1, MAX_SDP_BODY_SIZE),
+            max_media: self.max_media.clamp(1, MAX_SDP_MEDIA),
+            max_attributes: self.max_attributes.clamp(1, MAX_SDP_ATTRIBUTES),
+            max_unknown_attributes: self
+                .max_unknown_attributes
+                .clamp(1, MAX_SDP_UNKNOWN_ATTRIBUTES),
+        }
+    }
 }
 
 /// Parses an SDP body into a structured session.
 pub fn parse_sdp(body: &[u8], config: &SdpParserConfig) -> Result<SdpSession, SdpError> {
+    let config = config.clamp();
     if body.len() > config.max_size {
         return Err(SdpError::LimitExceeded(format!(
             "SDP body size {} exceeds max {}",
@@ -98,7 +126,7 @@ pub fn parse_sdp(body: &[u8], config: &SdpParserConfig) -> Result<SdpSession, Sd
         }
     }
 
-    ParserState::new(lines, config).parse()
+    ParserState::new(lines, &config).parse()
 }
 
 struct ParserState<'a> {
@@ -551,6 +579,38 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::*;
+
+    #[test]
+    fn parser_config_limits_are_clamped() {
+        let oversized = SdpParserConfig {
+            max_lines: usize::MAX,
+            max_line_len: usize::MAX,
+            max_size: usize::MAX,
+            max_media: usize::MAX,
+            max_attributes: usize::MAX,
+            max_unknown_attributes: usize::MAX,
+        };
+        let clamped = oversized.clamp();
+        assert_eq!(clamped.max_lines, MAX_SDP_LINES);
+        assert_eq!(clamped.max_line_len, MAX_SDP_LINE_LEN);
+        assert_eq!(clamped.max_size, MAX_SDP_BODY_SIZE);
+        assert_eq!(clamped.max_media, MAX_SDP_MEDIA);
+        assert_eq!(clamped.max_attributes, MAX_SDP_ATTRIBUTES);
+        assert_eq!(clamped.max_unknown_attributes, MAX_SDP_UNKNOWN_ATTRIBUTES);
+
+        let zero_config = SdpParserConfig {
+            max_lines: 0,
+            max_line_len: 0,
+            max_size: 0,
+            max_media: 0,
+            max_attributes: 0,
+            max_unknown_attributes: 0,
+        };
+        let clamped = zero_config.clamp();
+        assert_eq!(clamped.max_lines, 1);
+        assert_eq!(clamped.max_line_len, 1);
+        assert_eq!(clamped.max_size, 1);
+    }
 
     #[test]
     fn parses_minimal_gb28181_sdp() {
