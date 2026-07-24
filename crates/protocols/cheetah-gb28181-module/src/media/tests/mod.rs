@@ -235,3 +235,35 @@ mod mapper_tests;
 mod override_tests;
 mod playback_tests;
 mod sdp_tests;
+
+#[test]
+fn process_rejects_oversized_media_address() {
+    let mut cmd = start_live(MediaSessionId::generate());
+    if let MediaCommand::StartLive { media_address, .. } = &mut cmd {
+        *media_address = "x".repeat(MAX_MEDIA_ADDRESS_BYTES + 1);
+    } else {
+        panic!("expected StartLive");
+    }
+    let mut media = Gb28181Media::new(config());
+    assert!(media.process(MediaInput::Command(cmd)).is_err());
+}
+
+#[test]
+fn process_rejects_oversized_control_playback_range() {
+    let sid = MediaSessionId::generate();
+    let mut media = Gb28181Media::new(config());
+    media
+        .process(MediaInput::Command(start_playback(sid)))
+        .unwrap();
+    media
+        .process(MediaInput::Message(build_test_200_ok()))
+        .unwrap();
+
+    let cmd = MediaCommand::ControlPlayback {
+        media_session_id: sid,
+        action: PlaybackAction::Play,
+        scale: None,
+        range: Some("x".repeat(MAX_RANGE_BYTES + 1)),
+    };
+    assert!(media.process(MediaInput::Command(cmd)).is_err());
+}

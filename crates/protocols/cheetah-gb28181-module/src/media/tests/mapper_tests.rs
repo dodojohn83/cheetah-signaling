@@ -345,3 +345,42 @@ fn scale_maps_to_play_with_scale() {
         _ => panic!("expected ControlPlayback"),
     }
 }
+
+#[test]
+fn map_start_rejects_oversized_media_address() {
+    let mut req = base_request(GbMediaPurpose::Live);
+    req.endpoint.media_address = "x".repeat(MAX_MEDIA_ADDRESS_BYTES + 1);
+    assert!(map_start(req).is_err());
+}
+
+#[test]
+fn map_start_rejects_oversized_ssrc() {
+    let mut req = base_request(GbMediaPurpose::Live);
+    req.endpoint.ssrc = Some("x".repeat(MAX_SSRC_BYTES + 1));
+    assert!(map_start(req).is_err());
+}
+
+#[test]
+fn map_start_rejects_oversized_subject_session() {
+    let mut req = base_request(GbMediaPurpose::Live);
+    req.routing.subject_session = "x".repeat(MAX_SIP_TOKEN_BYTES + 1);
+    assert!(map_start(req).is_err());
+}
+
+#[test]
+fn map_start_rejects_oversized_codec() {
+    let mut req = base_request(GbMediaPurpose::Talk);
+    req.endpoint.ssrc = None;
+    req.codec = Some("x".repeat(MAX_CODEC_BYTES + 1));
+    assert!(map_start(req).is_err());
+}
+
+#[test]
+fn map_start_rejects_oversized_recording_window() {
+    let mut req = base_request(GbMediaPurpose::Playback);
+    req.window = Some(GbRecordWindow {
+        start_time: "x".repeat(MAX_RECORD_TIME_BYTES + 1),
+        end_time: "1704153600".to_string(),
+    });
+    assert!(map_start(req).is_err());
+}

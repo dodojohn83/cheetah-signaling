@@ -70,6 +70,20 @@ pub struct MediaConfig {
     pub compatibility: CompatibilityProfile,
 }
 
+/// Maximum byte length of the `c=`/origin media address in start commands.
+pub(crate) const MAX_MEDIA_ADDRESS_BYTES: usize = 256;
+/// Maximum byte length of the `a=y:` SSRC token.
+pub(crate) const MAX_SSRC_BYTES: usize = 64;
+/// Maximum byte length of SIP tokens reused in start commands (Call-ID, tags,
+/// branch, Subject).
+pub(crate) const MAX_SIP_TOKEN_BYTES: usize = 256;
+/// Maximum byte length of a recording window epoch token.
+pub(crate) const MAX_RECORD_TIME_BYTES: usize = 64;
+/// Maximum byte length of an audio codec token.
+pub(crate) const MAX_CODEC_BYTES: usize = 64;
+/// Maximum byte length of a playback range token.
+pub(crate) const MAX_RANGE_BYTES: usize = 256;
+
 /// Command that drives a GB28181 media session.
 #[allow(clippy::large_enum_variant, missing_docs)]
 #[derive(Clone, Debug)]
@@ -169,6 +183,189 @@ pub enum MediaCommand {
     },
     /// Stop or cancel an established or pending media session.
     StopMediaSession { media_session_id: MediaSessionId },
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_start_command(
+    call_id: &str,
+    local_tag: &str,
+    branch: &str,
+    subject_session: &str,
+    media_address: &str,
+    ssrc: Option<&str>,
+    start_time: Option<&str>,
+    end_time: Option<&str>,
+    codec: Option<&str>,
+) -> Result<(), MediaError> {
+    let check = |s: &str, max: usize, msg: &'static str| -> Result<(), MediaError> {
+        if s.len() > max {
+            Err(MediaError::InvalidState(msg.to_string()))
+        } else {
+            Ok(())
+        }
+    };
+
+    check(
+        call_id,
+        MAX_SIP_TOKEN_BYTES,
+        "call_id exceeds maximum length",
+    )?;
+    check(
+        local_tag,
+        MAX_SIP_TOKEN_BYTES,
+        "local_tag exceeds maximum length",
+    )?;
+    check(branch, MAX_SIP_TOKEN_BYTES, "branch exceeds maximum length")?;
+    check(
+        subject_session,
+        MAX_SIP_TOKEN_BYTES,
+        "subject_session exceeds maximum length",
+    )?;
+    check(
+        media_address,
+        MAX_MEDIA_ADDRESS_BYTES,
+        "media_address exceeds maximum length",
+    )?;
+    if let Some(ssrc) = ssrc {
+        check(ssrc, MAX_SSRC_BYTES, "ssrc exceeds maximum length")?;
+    }
+    if let Some(start_time) = start_time {
+        check(
+            start_time,
+            MAX_RECORD_TIME_BYTES,
+            "start_time exceeds maximum length",
+        )?;
+    }
+    if let Some(end_time) = end_time {
+        check(
+            end_time,
+            MAX_RECORD_TIME_BYTES,
+            "end_time exceeds maximum length",
+        )?;
+    }
+    if let Some(codec) = codec {
+        check(codec, MAX_CODEC_BYTES, "codec exceeds maximum length")?;
+    }
+    Ok(())
+}
+
+impl MediaCommand {
+    /// Validates that all string fields are bounded before the command is used
+    /// to build SIP/SDP output or stored in the session table.
+    pub(crate) fn validate(&self) -> Result<(), MediaError> {
+        match self {
+            Self::StartLive {
+                call_id,
+                local_tag,
+                branch,
+                subject_session,
+                media_address,
+                ssrc,
+                ..
+            } => validate_start_command(
+                call_id,
+                local_tag,
+                branch,
+                subject_session,
+                media_address,
+                Some(ssrc),
+                None,
+                None,
+                None,
+            ),
+            Self::StartPlayback {
+                call_id,
+                local_tag,
+                branch,
+                subject_session,
+                media_address,
+                ssrc,
+                start_time,
+                end_time,
+                ..
+            } => validate_start_command(
+                call_id,
+                local_tag,
+                branch,
+                subject_session,
+                media_address,
+                Some(ssrc),
+                Some(start_time),
+                Some(end_time),
+                None,
+            ),
+            Self::StartDownload {
+                call_id,
+                local_tag,
+                branch,
+                subject_session,
+                media_address,
+                ssrc,
+                start_time,
+                end_time,
+                ..
+            } => validate_start_command(
+                call_id,
+                local_tag,
+                branch,
+                subject_session,
+                media_address,
+                Some(ssrc),
+                Some(start_time),
+                Some(end_time),
+                None,
+            ),
+            Self::StartTalk {
+                call_id,
+                local_tag,
+                branch,
+                subject_session,
+                media_address,
+                codec,
+                ..
+            } => validate_start_command(
+                call_id,
+                local_tag,
+                branch,
+                subject_session,
+                media_address,
+                None,
+                None,
+                None,
+                Some(codec),
+            ),
+            Self::StartBroadcast {
+                call_id,
+                local_tag,
+                branch,
+                subject_session,
+                media_address,
+                codec,
+                ..
+            } => validate_start_command(
+                call_id,
+                local_tag,
+                branch,
+                subject_session,
+                media_address,
+                None,
+                None,
+                None,
+                Some(codec),
+            ),
+            Self::ControlPlayback { range, .. } => {
+                if let Some(range) = range
+                    && range.len() > MAX_RANGE_BYTES
+                {
+                    return Err(MediaError::InvalidState(
+                        "playback range exceeds maximum length".to_string(),
+                    ));
+                }
+                Ok(())
+            }
+            Self::StopMediaSession { .. } => Ok(()),
+        }
+    }
 }
 
 /// An input delivered to the media state machine.
